@@ -1,0 +1,8 @@
+# 项目配置注释
+[mcp_servers.fixture_project]
+command = "fixture-command"
+args = ["--stdio"]
+env = { FIXTURE_TOKEN = "fixture-codex-project-mcp-secret" }
+
+[unmanaged]
+keep = "project-value"

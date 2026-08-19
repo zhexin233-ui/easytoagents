@@ -1,0 +1,19 @@
+# 必须保留的文件头注释
+model = "fixture-model"
+model_provider = "easytoagents_fixture"
+
+[model_providers.easytoagents_fixture]
+name = "Fixture Provider"
+base_url = "https://fixture.invalid/v1"
+experimental_bearer_token = "fixture-codex-provider-secret"
+
+[mcp_servers.fixture_user]
+url = "https://fixture.invalid/mcp"
+http_headers = { Authorization = "Bearer fixture-codex-user-mcp-secret" }
+
+[projects."/fixture/project"]
+trust_level = "trusted"
+
+[plugins]
+# 此注释和表不属于应用管理范围
+enabled = true

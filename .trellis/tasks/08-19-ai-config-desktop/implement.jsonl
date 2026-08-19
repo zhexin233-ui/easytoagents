@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "统一 Rust RPC、生成 TypeScript DTO、Adapter 与前端状态之间的跨层合同。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 Tool Adapter、同步状态、预览和错误合同，避免 Claude/Codex 分支复制。"}
+{"file": ".trellis/tasks/08-19-ai-config-desktop/research/official-config-paths.md", "reason": "实现 Claude/Codex 当前官方路径、配置层级、trust 与加载规则。"}
+{"file": ".trellis/tasks/08-19-ai-config-desktop/research/reference-projects.md", "reason": "借鉴参考项目的中央库、同步与冲突设计，并规避已记录风险。"}

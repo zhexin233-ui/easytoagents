@@ -1,0 +1,6 @@
+{
+  "strictPluginOnlyCustomization": true,
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "fixture-claude-policy-secret"
+  }
+}

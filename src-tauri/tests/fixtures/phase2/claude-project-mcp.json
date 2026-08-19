@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "fixture-project": {
+      "command": "fixture-command",
+      "args": ["--stdio"],
+      "env": {
+        "FIXTURE_TOKEN": "fixture-claude-project-mcp-secret"
+      }
+    }
+  },
+  "projectNote": "keep-project-note"
+}

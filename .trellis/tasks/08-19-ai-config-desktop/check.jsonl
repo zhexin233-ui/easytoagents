@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核验 RPC、DTO、数据库投影与 UI 消费的一致性。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查重复 Adapter、状态转换、常量与 payload 解析。"}
+{"file": ".trellis/tasks/08-19-ai-config-desktop/research/official-config-paths.md", "reason": "核验写入目标、作用域、优先级和工具策略是否符合官方契约。"}
+{"file": ".trellis/tasks/08-19-ai-config-desktop/research/reference-projects.md", "reason": "对照参考实现风险检查原子写、回滚、路径与冲突处理。"}

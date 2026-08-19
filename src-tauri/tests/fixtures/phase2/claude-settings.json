@@ -1,0 +1,10 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://fixture.invalid",
+    "ANTHROPIC_API_KEY": "fixture-claude-provider-secret"
+  },
+  "strictPluginOnlyCustomization": false,
+  "permissions": {
+    "allow": ["Read"]
+  }
+}
