@@ -187,6 +187,7 @@ pub struct ExplicitEnvironment {
     codex_home: PathBuf,
     uses_default_claude_config_dir: bool,
     claude_installation_version: Option<String>,
+    claude_provider_policy: PolicyState,
     availability: ToolAvailability,
 }
 
@@ -211,6 +212,7 @@ impl ExplicitEnvironment {
             codex_home,
             uses_default_claude_config_dir,
             claude_installation_version: None,
+            claude_provider_policy: PolicyState::Unknown,
             availability,
         })
     }
@@ -228,6 +230,12 @@ impl ExplicitEnvironment {
         }
         self.claude_installation_version = Some(version);
         Ok(self)
+    }
+
+    /// 宿主管理状态必须由运行时边界显式探测；未提供证据时保持 unknown。
+    pub fn with_claude_provider_policy(mut self, policy: PolicyState) -> Self {
+        self.claude_provider_policy = policy;
+        self
     }
 
     pub fn home(&self) -> &Path {
@@ -248,6 +256,10 @@ impl ExplicitEnvironment {
 
     pub fn claude_installation_version(&self) -> Option<&str> {
         self.claude_installation_version.as_deref()
+    }
+
+    pub fn claude_provider_policy(&self) -> PolicyState {
+        self.claude_provider_policy
     }
 
     pub fn uses_default_claude_config_dir(&self) -> bool {
@@ -1472,6 +1484,10 @@ mod tests {
         assert_eq!(discover(), PromptOverrideState::Present);
         fs::write(codex_root.join("AGENTS.override.md"), "").unwrap();
         assert_eq!(discover(), PromptOverrideState::NotPresent);
+        fs::write(codex_root.join("AGENTS.override.md"), " \n\t").unwrap();
+        assert_eq!(discover(), PromptOverrideState::NotPresent);
+        fs::write(codex_root.join("AGENTS.override.md"), [0xff]).unwrap();
+        assert_eq!(discover(), PromptOverrideState::Unknown);
         fs::remove_file(codex_root.join("AGENTS.override.md")).unwrap();
         let outside = home.join("outside-override.md");
         fs::write(&outside, "未知链接内容").unwrap();

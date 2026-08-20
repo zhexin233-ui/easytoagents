@@ -1,0 +1,471 @@
+/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试需要直接核验 mock。 */
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  commands,
+  type PreviewPlan,
+  type PromptProfileDto,
+  type ProviderProfileDto,
+} from "@/bindings/commands";
+import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
+
+vi.mock("@/bindings/commands", () => ({
+  commands: {
+    listProviderProfiles: vi.fn(),
+    listPromptProfiles: vi.fn(),
+    getToolProfileStatus: vi.fn(),
+    createProviderProfile: vi.fn(),
+    updateProviderProfile: vi.fn(),
+    copyProviderProfile: vi.fn(),
+    setActiveProviderProfile: vi.fn(),
+    deleteProviderProfile: vi.fn(),
+    discoverProviderImport: vi.fn(),
+    confirmProviderImport: vi.fn(),
+    previewProviderSync: vi.fn(),
+    createPromptProfile: vi.fn(),
+    updatePromptProfile: vi.fn(),
+    setActivePromptProfile: vi.fn(),
+    deletePromptProfile: vi.fn(),
+    discoverPromptImport: vi.fn(),
+    confirmPromptImport: vi.fn(),
+    previewPromptSync: vi.fn(),
+    applyProfilePreview: vi.fn(),
+  },
+}));
+
+const provider: ProviderProfileDto = {
+  id: "00000000-0000-4000-8000-000000000401",
+  tool: "claude",
+  name: "主渠道",
+  apiBaseUrl: "https://provider.example.com/v1",
+  apiKeyConfigured: true,
+  defaultModel: "claude-fixture",
+  options: {
+    credentialEnvKey: "ANTHROPIC_API_KEY",
+    extraEnv: {},
+    providerId: null,
+    wireApi: null,
+  },
+  isActive: false,
+  rowVersion: 2,
+};
+
+const promptProfile: PromptProfileDto = {
+  id: "00000000-0000-4000-8000-000000000402",
+  tool: "claude",
+  name: "默认提示词",
+  body: "# 原始规则",
+  isActive: false,
+  importedFromPath: null,
+  rowVersion: 3,
+};
+
+const preview: PreviewPlan = {
+  previewId: "00000000-0000-4000-8000-000000000499",
+  scope: "global",
+  projectId: null,
+  dbVersion: 4,
+  warningCodes: [],
+  targets: [
+    {
+      targetId: "00000000-0000-4000-8000-000000000498",
+      descriptor: {
+        tool: "claude",
+        artifactKind: "provider",
+        scope: "global",
+        projectRoot: null,
+        path: "/isolated/home/.claude/settings.json",
+        format: "json",
+        managedSelectorRoots: ["env"],
+        sensitiveSelectors: ["env"],
+        capability: { state: "supported", diagnosticCode: null },
+        policy: "allowed",
+        trust: "not_required",
+        promptOverride: "not_applicable",
+        symlinkPolicy: "reject",
+      },
+      ownership: { kind: "selectors", paths: [["env", "ANTHROPIC_API_KEY"]] },
+      changeKind: "update",
+      status: "in_sync",
+      currentFullHash: "a".repeat(64),
+      currentManagedHash: "b".repeat(64),
+      desiredManagedHash: "c".repeat(64),
+      targetRowVersion: 1,
+      rowVersions: [],
+      redactedDiff: {
+        before: { env: { ANTHROPIC_API_KEY: "[REDACTED]" } },
+        after: { env: { ANTHROPIC_API_KEY: "[REDACTED]" } },
+      },
+      warningCodes: [],
+      errorCode: null,
+      git: null,
+      excludeFromGit: false,
+    },
+  ],
+};
+
+function renderPage() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <ToolProfilesPage tool="claude" />
+    </QueryClientProvider>,
+  );
+}
+
+function sectionByHeading(name: string): HTMLElement {
+  const section = screen.getByRole("heading", { name }).closest("section");
+  if (!section) {
+    throw new Error(`未找到 ${name} 区域`);
+  }
+  return section;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+    status: "ok",
+    data: [],
+  });
+  vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+    status: "ok",
+    data: [],
+  });
+  vi.mocked(commands.getToolProfileStatus).mockResolvedValue({
+    status: "ok",
+    data: {
+      tool: "claude",
+      providerTargetPath: "/isolated/home/.claude/settings.json",
+      promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
+      promptOverride: "not_applicable",
+      providerPolicy: "allowed",
+      newSessionNotice: "新会话生效",
+      bearerTokenWarning: null,
+    },
+  });
+  vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+    status: "ok",
+    data: null,
+  });
+  vi.mocked(commands.discoverPromptImport).mockResolvedValue({
+    status: "ok",
+    data: null,
+  });
+  vi.mocked(commands.previewProviderSync).mockResolvedValue({
+    status: "ok",
+    data: preview,
+  });
+  vi.mocked(commands.previewPromptSync).mockResolvedValue({
+    status: "ok",
+    data: preview,
+  });
+  vi.mocked(commands.setActiveProviderProfile).mockResolvedValue({
+    status: "ok",
+    data: provider,
+  });
+  vi.mocked(commands.setActivePromptProfile).mockResolvedValue({
+    status: "ok",
+    data: promptProfile,
+  });
+  vi.mocked(commands.applyProfilePreview).mockResolvedValue({
+    status: "ok",
+    data: {
+      runId: preview.previewId,
+      status: "succeeded",
+      appliedTargets: 1,
+      snapshotCount: 1,
+    },
+  });
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("ToolProfilesPage", () => {
+  it("创建渠道时使用遮罩密钥输入并只调用生成 command", async () => {
+    vi.mocked(commands.createProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: { ...provider, isActive: true },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
+    expect(keyInput).toHaveAttribute("type", "password");
+
+    fireEvent.change(within(section).getByLabelText("名称"), {
+      target: { value: "新渠道" },
+    });
+    fireEvent.change(within(section).getByLabelText("API 地址"), {
+      target: { value: "https://new.example.com/v1" },
+    });
+    fireEvent.change(keyInput, { target: { value: "fixture-ui-secret" } });
+    fireEvent.change(within(section).getByLabelText("默认模型"), {
+      target: { value: "claude-new" },
+    });
+    fireEvent.click(within(section).getByRole("button", { name: "创建渠道" }));
+
+    await waitFor(() =>
+      expect(commands.createProviderProfile).toHaveBeenCalledWith({
+        tool: "claude",
+        name: "新渠道",
+        apiBaseUrl: "https://new.example.com/v1",
+        apiKey: "fixture-ui-secret",
+        defaultModel: "claude-new",
+        options: {
+          credentialEnvKey: "ANTHROPIC_API_KEY",
+          extraEnv: {},
+          wireApi: null,
+        },
+        activate: true,
+      }),
+    );
+    expect(
+      await within(section).findByText(
+        "中央渠道档案已保存，原生配置尚未修改。",
+      ),
+    ).toBeVisible();
+  });
+
+  it("编辑已存在渠道时默认保留遮罩密钥", async () => {
+    const providerWithExtraEnv: ProviderProfileDto = {
+      ...provider,
+      options: {
+        ...provider.options,
+        extraEnv: {
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet",
+        },
+      },
+    };
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [providerWithExtraEnv],
+    });
+    vi.mocked(commands.updateProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: { ...provider, name: "已重命名" },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "编辑" }),
+    );
+    const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
+    expect(keyInput).toHaveValue("");
+    expect(keyInput).toHaveAttribute("placeholder", "留空以保留现有密钥");
+    fireEvent.change(within(section).getByLabelText("名称"), {
+      target: { value: "已重命名" },
+    });
+    fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
+    await waitFor(() =>
+      expect(commands.updateProviderProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: provider.id,
+          name: "已重命名",
+          apiKey: { action: "keep" },
+          rowVersion: provider.rowVersion,
+        }),
+      ),
+    );
+    expect(
+      vi.mocked(commands.updateProviderProfile).mock.calls[0]?.[0].options
+        .extraEnv,
+    ).toEqual({
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet",
+    });
+  });
+
+  it("切换档案后打开统一预览并消费持久化 preview", async () => {
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [provider],
+    });
+    vi.mocked(commands.previewProviderSync).mockResolvedValue({
+      status: "ok",
+      data: { ...preview, warningCodes: ["FIXTURE_PLAN_WARNING"] },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "切换并预览" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(commands.setActiveProviderProfile).toHaveBeenCalledWith("claude", {
+      id: provider.id,
+      rowVersion: provider.rowVersion,
+    });
+    expect(screen.getByText("FIXTURE_PLAN_WARNING")).toBeVisible();
+    expect(
+      screen.getByText("/isolated/home/.claude/settings.json"),
+    ).toBeVisible();
+    expect(screen.getAllByText(/\[REDACTED\]/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
+      }),
+    );
+  });
+
+  it("分别显示 RPC 错误码与错误状态", async () => {
+    vi.mocked(commands.createProviderProfile).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "INVALID_INPUT",
+        message: "输入内容无效",
+        recoverable: true,
+        action: "rescan",
+      },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.change(within(section).getByLabelText("名称"), {
+      target: { value: "错误档案" },
+    });
+    fireEvent.change(within(section).getByLabelText("API 地址"), {
+      target: { value: "https://invalid.example.com" },
+    });
+    fireEvent.change(within(section).getByLabelText("API Key（默认遮罩）"), {
+      target: { value: "fixture-error-secret" },
+    });
+    fireEvent.change(within(section).getByLabelText("默认模型"), {
+      target: { value: "fixture-model" },
+    });
+    fireEvent.click(within(section).getByRole("button", { name: "创建渠道" }));
+    expect(await within(section).findByRole("alert")).toHaveTextContent(
+      "INVALID_INPUT：输入内容无效",
+    );
+  });
+
+  it("可创建独立的提示词档案", async () => {
+    vi.mocked(commands.createPromptProfile).mockResolvedValue({
+      status: "ok",
+      data: {
+        id: "00000000-0000-4000-8000-000000000402",
+        tool: "claude",
+        name: "代码审查",
+        body: "# 审查规则",
+        isActive: true,
+        importedFromPath: null,
+        rowVersion: 1,
+      },
+    });
+    renderPage();
+    const section = sectionByHeading("全局提示词");
+    fireEvent.change(within(section).getByLabelText("名称"), {
+      target: { value: "代码审查" },
+    });
+    fireEvent.change(within(section).getByLabelText("Markdown 正文"), {
+      target: { value: "# 审查规则" },
+    });
+    fireEvent.click(
+      within(section).getByRole("button", { name: "创建提示词" }),
+    );
+    await waitFor(() =>
+      expect(commands.createPromptProfile).toHaveBeenCalledWith({
+        tool: "claude",
+        name: "代码审查",
+        body: "# 审查规则",
+        activate: true,
+      }),
+    );
+  });
+
+  it("可编辑并切换提示词，应用时消费提示词 preview", async () => {
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfile],
+    });
+    vi.mocked(commands.updatePromptProfile).mockResolvedValue({
+      status: "ok",
+      data: { ...promptProfile, name: "更新后的提示词", body: "# 新规则" },
+    });
+    renderPage();
+    const section = sectionByHeading("全局提示词");
+
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "编辑" }),
+    );
+    fireEvent.change(within(section).getByLabelText("名称"), {
+      target: { value: "更新后的提示词" },
+    });
+    fireEvent.change(within(section).getByLabelText("Markdown 正文"), {
+      target: { value: "# 新规则" },
+    });
+    fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
+    await waitFor(() =>
+      expect(commands.updatePromptProfile).toHaveBeenCalledWith({
+        id: promptProfile.id,
+        name: "更新后的提示词",
+        body: "# 新规则",
+        rowVersion: promptProfile.rowVersion,
+      }),
+    );
+
+    fireEvent.click(
+      within(section).getByRole("button", { name: "切换并预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.setActivePromptProfile).toHaveBeenCalledWith("claude", {
+        id: promptProfile.id,
+        rowVersion: promptProfile.rowVersion,
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        artifactKind: "prompt",
+      }),
+    );
+  });
+
+  it("以可访问状态展示加载、空列表与未知宿主管理证据", async () => {
+    vi.mocked(commands.listProviderProfiles).mockReturnValue(
+      new Promise<never>(() => {}),
+    );
+    vi.mocked(commands.getToolProfileStatus).mockResolvedValue({
+      status: "ok",
+      data: {
+        tool: "claude",
+        providerTargetPath: "/isolated/home/.claude/settings.json",
+        promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
+        promptOverride: "not_applicable",
+        providerPolicy: "unknown",
+        newSessionNotice: "新会话生效",
+        bearerTokenWarning: null,
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText("正在加载渠道档案…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    expect(
+      await screen.findByText(/无法确认 Claude Provider 是否由宿主管理/),
+    ).toBeVisible();
+    expect(await screen.findByText(/尚无提示词档案/)).toBeVisible();
+  });
+});

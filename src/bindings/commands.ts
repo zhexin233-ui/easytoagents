@@ -7,6 +7,158 @@
 export const commands = {
 async getAppInfo() : Promise<AppInfoDto> {
     return await TAURI_INVOKE("get_app_info");
+},
+async listProviderProfiles(tool: Tool) : Promise<Result<ProviderProfileDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_provider_profiles", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createProviderProfile(input: ProviderProfileInput) : Promise<Result<ProviderProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_provider_profile", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateProviderProfile(input: UpdateProviderProfileInput) : Promise<Result<ProviderProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_provider_profile", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async copyProviderProfile(input: CopyProviderProfileInput) : Promise<Result<ProviderProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_provider_profile", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setActiveProviderProfile(tool: Tool, input: VersionedProfileInput) : Promise<Result<ProviderProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_active_provider_profile", { tool, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteProviderProfile(input: VersionedProfileInput) : Promise<Result<DeleteProfileResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_provider_profile", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listPromptProfiles(tool: Tool) : Promise<Result<PromptProfileDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_prompt_profiles", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createPromptProfile(input: PromptProfileInput) : Promise<Result<PromptProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_prompt_profile", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updatePromptProfile(input: UpdatePromptProfileInput) : Promise<Result<PromptProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_prompt_profile", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setActivePromptProfile(tool: Tool, input: VersionedProfileInput) : Promise<Result<PromptProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_active_prompt_profile", { tool, input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deletePromptProfile(input: VersionedProfileInput) : Promise<Result<DeleteProfileResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_prompt_profile", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getToolProfileStatus(tool: Tool) : Promise<Result<ToolProfileStatusDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_tool_profile_status", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverProviderImport(tool: Tool) : Promise<Result<ProviderImportPreviewDto | null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_provider_import", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async confirmProviderImport(input: ConfirmImportInput) : Promise<Result<ProviderProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_provider_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverPromptImport(tool: Tool) : Promise<Result<PromptImportPreviewDto | null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_prompt_import", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async confirmPromptImport(input: ConfirmImportInput) : Promise<Result<PromptProfileDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_prompt_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewProviderSync(tool: Tool) : Promise<Result<PreviewPlan, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_provider_sync", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewPromptSync(tool: Tool) : Promise<Result<PreviewPlan, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_prompt_sync", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyProfilePreview(input: ApplyProfilePreviewInput) : Promise<Result<ApplyResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_profile_preview", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -25,6 +177,7 @@ async getAppInfo() : Promise<AppInfoDto> {
  */
 export type AppError = { code: ErrorCode; message: string; details?: Partial<{ [key in string]: JsonValue }> | null; recoverable: boolean; action?: RecoveryAction | null }
 export type AppInfoDto = { name: string; version: string }
+export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
 /**
  * 受管资源种类。
@@ -35,8 +188,12 @@ export type CapabilityState = "supported" | "unsupported" | "tool_not_installed"
  * 预览中的单目标变化。
  */
 export type ChangeKind = "add" | "update" | "delete" | "unchanged" | "warning" | "conflict"
+export type ClaudeCredentialEnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN"
+export type ConfirmImportInput = { previewId: string; name: string }
+export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
 export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "project" | "managed_target" | "managed_item"
 export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: string; rowVersion: number }
+export type DeleteProfileResultDto = { id: string; deleted: boolean }
 /**
  * RPC、journal 和同步记录共用的稳定错误码。
  */
@@ -50,13 +207,22 @@ export type McpTransport = "stdio" | "streamable_http"
 export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
 export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
+export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; body: string }
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
+export type PromptProfileDto = { id: string; tool: Tool; name: string; body: string; isActive: boolean; importedFromPath: string | null; rowVersion: number }
+export type PromptProfileInput = { tool: Tool; name: string; body: string; activate: boolean }
+export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue }
+export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null }
+export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null }
+export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
+export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
 export type RestorePreview = { previewId: string; snapshotId: string; targetPath: string; currentType: TargetType; snapshotType: TargetType }
 /**
  * 资源应用范围。
  */
 export type Scope = "global" | "project"
+export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: string }
 export type SkillStatus = "ready" | "invalid" | "missing"
 export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; createdAt: string }
 export type SymlinkPolicy = "reject" | "managed_children_only"
@@ -78,7 +244,11 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
  * 正式支持的原生工具。
  */
 export type Tool = "claude" | "codex"
+export type ToolProfileStatusDto = { tool: Tool; providerTargetPath: string; promptTargetPath: string; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
+export type UpdatePromptProfileInput = { id: string; name: string; body: string; rowVersion: number }
+export type UpdateProviderProfileInput = { id: string; name: string; apiBaseUrl: string; apiKey: SecretUpdate; defaultModel: string; options: ProviderOptionsInput; rowVersion: number }
+export type VersionedProfileInput = { id: string; rowVersion: number }
 
 /** tauri-specta globals **/
 

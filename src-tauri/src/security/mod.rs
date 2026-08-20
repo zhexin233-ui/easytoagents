@@ -191,6 +191,16 @@ fn looks_like_secret_value(value: &str) -> bool {
         || (lowercase.starts_with("token=") && value.len() > 6)
 }
 
+/// 判断普通 RPC 扩展字段是否包含按键名或值形态可识别的秘密。
+///
+/// 原生配置导入可以把未知字段留在私有数据库中，但把字段作为普通 DTO 返回前，
+/// 必须先用同一套检测规则证明它不是已识别秘密。
+pub(crate) fn contains_detectable_secret(key: &str, value: &str) -> bool {
+    is_sensitive_key(key)
+        || looks_like_secret_value(value.trim())
+        || redact_inline_secret_values(value) != value
+}
+
 fn redact_inline_secret_values(value: &str) -> String {
     let mut redacted = redact_tokens_after_pattern(value, "bearer ", false);
     for marker in [

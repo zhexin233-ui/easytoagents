@@ -252,3 +252,98 @@ apply_persisted_preview(
     &NoApplyFault,
 )?;
 ```
+
+## Scenario: Provider and global-prompt profiles
+
+### 1. Scope / Trigger
+
+- Trigger: Provider/Prompt CRUD, activation, native import, desired projection,
+  profile RPC DTO, or profile-page behavior changes.
+
+### 2. Signatures
+
+- Provider service entry points use typed `ProviderProfileInput`,
+  `UpdateProviderProfileInput`, `CopyProviderProfileInput`, and
+  `VersionedProfileInput`; list responses are `ProviderProfileDto` and never
+  contain an API-key value.
+- Prompt service entry points use `PromptProfileInput`,
+  `UpdatePromptProfileInput`, and `VersionedProfileInput`; list responses are
+  `PromptProfileDto`.
+- Native takeover is a two-step contract:
+  `discover_*_import(...) -> *ImportPreviewDto`, then
+  `confirm_*_import(ConfirmImportInput) -> *ProfileDto`.
+- Native synchronization is a separate two-step contract:
+  `preview_{provider,prompt}_sync(tool) -> PreviewPlan`, then
+  `apply_profile_preview(ApplyProfilePreviewInput) -> ApplyResult`.
+
+### 3. Contracts
+
+- Profile names are unique per tool with `NOCASE` semantics. Update, activation,
+  and deletion require the caller's `row_version`; active-row changes and the
+  one-active-per-tool invariant are committed in one `IMMEDIATE` transaction.
+- Provider and Prompt CRUD change only SQLite central intent. Native discovery is
+  read-only, stores a redacted import preview, and rescans the full hash before a
+  confirmation atomically adopts the profile and baseline.
+- Claude Provider ownership is the union of previous and desired profile-declared
+  env keys. Unknown or host-managed policy blocks. Unrelated env and settings remain
+  unowned.
+- Codex Provider ownership is `model`, `model_provider`, and only the previous/current
+  managed provider IDs. Built-in IDs (`openai`, `ollama`, `lmstudio`) and unrelated
+  tables remain unowned; an imported custom table preserves supported extension fields.
+- API keys never appear in list/status DTOs. Recognizable secret-bearing extension
+  env values are rejected from ordinary DTO fields; imported Codex extensions remain
+  private and the whole managed provider table is sensitive in previews.
+- Prompt bodies are non-blank Markdown written byte-for-byte. Deleting the active
+  profile produces a new Phase 3 preview; it never writes from the CRUD command.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Stale update/activate/delete `row_version` | `CONFLICT`; transaction rolls back |
+| Case-only duplicate name in the same tool | `CONFLICT` |
+| Cross-tool copy | New UUID/Provider ID; validate target fields/options again |
+| URL with credentials, query, fragment, or non-HTTP(S) scheme | `INVALID_INPUT` |
+| Codex reserved Provider ID or non-`responses` wire API | reject/ignore built-in; never overwrite |
+| Claude host evidence unknown, malformed, or present | policy-blocked preview; zero external writes |
+| Import target hash changes before confirmation | `STALE_PREVIEW`; preserve target |
+| Native target changes after sync preview | `STALE_PREVIEW`/conflict; preserve target |
+
+### 5. Good/Base/Bad Cases
+
+- Good: create an inactive tool-specific profile, activate it with the current
+  `row_version`, inspect a redacted persisted preview, and apply it through the
+  Phase 3 engine while unrelated native fields remain byte/semantically intact.
+- Base: CRUD changes only SQLite central intent and returns a masked DTO; native
+  files are unchanged until a separate preview is consumed.
+- Bad: a stale activation, host-managed Claude setting, reserved Codex provider,
+  credential-bearing URL, secret extension value, or changed import target fails
+  closed without an external write.
+
+### 6. Tests Required
+
+- Use only temporary explicit homes/config roots and explicit policy/availability.
+- Cover case-insensitive uniqueness, activation/deletion CAS, independent copy,
+  stable Codex IDs, Claude old-key cleanup, Codex unknown-table/comment preservation,
+  lossless Prompt import, stale import/apply, and active-profile deletion cleanup.
+- Search serialized import previews, sync previews, RPC DTOs, `sync_items`, and journals
+  for every fixture key/token/header; expected matches are zero.
+- Regenerate and check Specta bindings whenever a profile command or DTO changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// CRUD must not write a native file or expose the stored key.
+let profile = repository.update_provider(input)?;
+fs::write(target, serde_json::to_vec(&profile)?)?;
+```
+
+#### Correct
+
+```rust
+let profile = update_provider_profile(database, input)?;
+let preview = preview_provider_sync(database, context, tool)?;
+let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind::Provider)?;
+```

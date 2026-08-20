@@ -53,7 +53,7 @@ impl ToolAdapter for CodexAdapter {
                 path_text(&config_path)?,
                 TargetFormat::Toml,
                 vec!["model", "model_provider", "model_providers"],
-                vec!["model_providers/*/experimental_bearer_token"],
+                vec!["model_providers/*"],
                 capability.clone(),
                 TargetTrustState::NotRequired,
                 PromptOverrideState::NotApplicable,
@@ -181,8 +181,11 @@ fn descriptor(
 fn discover_prompt_override(path: &Path) -> PromptOverrideState {
     match read_discovery_file(path) {
         DiscoveryFile::Missing => PromptOverrideState::NotPresent,
-        DiscoveryFile::File(bytes) if bytes.is_empty() => PromptOverrideState::NotPresent,
-        DiscoveryFile::File(_) => PromptOverrideState::Present,
+        DiscoveryFile::File(bytes) => match std::str::from_utf8(&bytes) {
+            Ok(text) if text.trim().is_empty() => PromptOverrideState::NotPresent,
+            Ok(_) => PromptOverrideState::Present,
+            Err(_) => PromptOverrideState::Unknown,
+        },
         DiscoveryFile::Unavailable => PromptOverrideState::Unknown,
     }
 }

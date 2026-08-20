@@ -109,13 +109,13 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## Phase 4：Provider 与全局提示词纵向功能
 
-- [ ] 实现 Provider CRUD、每工具单 active、跨工具复制与字段重新校验。
-- [ ] Claude Adapter 只管理 `$CLAUDE_CONFIG_DIR/settings.json` 选定 env keys。
-- [ ] Codex Adapter 只管理 model/provider table，并以脱敏方式处理 `experimental_bearer_token`。
-- [ ] 实现首次 Provider discovery/import preview。
-- [ ] 实现 Prompt CRUD、首次无损导入、`$CLAUDE_CONFIG_DIR/CLAUDE.md` 与 `$CODEX_HOME/AGENTS.md` 应用。
-- [ ] 检测 Codex `AGENTS.override.md` 遮蔽并提示新会话生效。
-- [ ] 完成 Claude/Codex 渠道与提示词页面、表单、遮罩输入和统一预览。
+- [x] 实现 Provider CRUD、每工具单 active、跨工具复制与字段重新校验。
+- [x] Claude Adapter 只管理 `$CLAUDE_CONFIG_DIR/settings.json` 选定 env keys。
+- [x] Codex Adapter 只管理 model/provider table，并以脱敏方式处理 `experimental_bearer_token`。
+- [x] 实现首次 Provider discovery/import preview。
+- [x] 实现 Prompt CRUD、首次无损导入、`$CLAUDE_CONFIG_DIR/CLAUDE.md` 与 `$CODEX_HOME/AGENTS.md` 应用。
+- [x] 检测 Codex `AGENTS.override.md` 遮蔽并提示新会话生效。
+- [x] 完成 Claude/Codex 渠道与提示词页面、表单、遮罩输入和统一预览。
 
 验收映射：AC2、AC3。
 

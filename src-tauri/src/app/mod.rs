@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+    adapters::ExplicitEnvironment,
     db::Database,
     error::AppError,
     security::{
@@ -127,10 +128,25 @@ pub struct AppState {
     paths: AppPaths,
     redactor: RwLock<SecretRedactor>,
     interrupted_run: RwLock<Option<InterruptedRunPlan>>,
+    environment: Option<ExplicitEnvironment>,
 }
 
 impl AppState {
     pub fn initialize(paths: AppPaths) -> Result<Self, AppError> {
+        Self::initialize_internal(paths, None)
+    }
+
+    pub fn initialize_with_environment(
+        paths: AppPaths,
+        environment: ExplicitEnvironment,
+    ) -> Result<Self, AppError> {
+        Self::initialize_internal(paths, Some(environment))
+    }
+
+    fn initialize_internal(
+        paths: AppPaths,
+        environment: Option<ExplicitEnvironment>,
+    ) -> Result<Self, AppError> {
         paths.initialize()?;
         let database = Database::open(&paths)?;
         paths.audit_permissions()?;
@@ -141,6 +157,7 @@ impl AppState {
             paths,
             redactor: RwLock::new(SecretRedactor::default()),
             interrupted_run: RwLock::new(interrupted_run),
+            environment,
         })
     }
 
@@ -163,6 +180,12 @@ impl AppState {
 
     pub fn interrupted_run(&self) -> &RwLock<Option<InterruptedRunPlan>> {
         &self.interrupted_run
+    }
+
+    pub fn environment(&self) -> Result<&ExplicitEnvironment, AppError> {
+        self.environment
+            .as_ref()
+            .ok_or_else(|| AppError::invalid_input("environment", "运行时工具环境尚未显式初始化"))
     }
 }
 
@@ -290,7 +313,7 @@ mod tests {
         assert_eq!(state.paths(), &paths);
         assert_eq!(
             state.database().lock().unwrap().schema_version().unwrap(),
-            2
+            3
         );
         assert_eq!(state.redactor().read().unwrap().redact_text("safe"), "safe");
     }

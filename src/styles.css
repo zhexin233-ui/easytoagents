@@ -56,3 +56,18 @@ textarea,
 select {
   font: inherit;
 }
+
+@utility field {
+  width: 100%;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  background: white;
+  padding: 0.6rem 0.75rem;
+  color: var(--foreground);
+  outline: none;
+}
+
+.field:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 24%, transparent);
+}

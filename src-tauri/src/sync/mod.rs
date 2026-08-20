@@ -1085,7 +1085,9 @@ mod tests {
     }
 
     fn isolated_environment(home: &std::path::Path) -> ExplicitEnvironment {
-        ExplicitEnvironment::new(home, None, None, ToolAvailability::all_installed()).unwrap()
+        ExplicitEnvironment::new(home, None, None, ToolAvailability::all_installed())
+            .unwrap()
+            .with_claude_provider_policy(PolicyState::Allowed)
     }
 
     fn claude_targets(environment: &ExplicitEnvironment) -> Vec<crate::adapters::TargetDescriptor> {

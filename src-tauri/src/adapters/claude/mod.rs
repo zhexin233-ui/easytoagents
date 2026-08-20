@@ -76,7 +76,7 @@ impl ToolAdapter for ClaudeAdapter {
                 vec!["env"],
                 vec!["env"],
                 tool_capability.clone(),
-                PolicyState::Allowed,
+                environment.claude_provider_policy(),
                 SymlinkPolicy::Reject,
             ),
             descriptor(
