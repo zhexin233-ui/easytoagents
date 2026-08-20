@@ -638,7 +638,8 @@ pub enum ObservedDocument {
     SymlinkDirectory(BTreeMap<String, DirectoryEntry>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "paths")]
 pub enum ManagedOwnership {
     WholeDocument,
     Selectors(Vec<Vec<String>>),

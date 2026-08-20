@@ -140,3 +140,115 @@ let preview = json!({ "before": raw, "after": desired });
 let environment = ExplicitEnvironment::new(home, claude_root, codex_root, availability)?;
 let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
 ```
+
+## Scenario: Durable apply and conservative recovery
+
+### 1. Scope / Trigger
+
+- Trigger: any preview-consumption, native-config write, snapshot, journal, rollback,
+  interrupted-run detection, restore, or local Git exclude change.
+
+### 2. Signatures
+
+- `apply_persisted_preview(&Mutex<()>, &mut Database, &AppPaths, preview_id,
+  &[ApplyTargetInput], &dyn ApplyFaultInjector) -> Result<ApplyResult, AppError>`
+  is the only Phase 3 native-target write entry.
+- `detect_interrupted_run(&Database, &AppPaths) -> Result<Option<InterruptedRunPlan>, AppError>`
+  exposes conservative startup recovery state without mutating targets.
+- `preview_restore(&mut Database, &AppPaths, snapshot_id, allowed_root)
+  -> Result<RestorePreview, AppError>` binds current state to a one-shot restore preview.
+- `restore_snapshot(&Mutex<()>, &mut Database, &AppPaths, restore_preview_id,
+  allowed_root, central_root) -> Result<ApplyResult, AppError>` consumes that preview.
+
+### 3. Contracts
+
+- Claim an applicable preview inside one SQLite `IMMEDIATE` transaction. Recheck its
+  status, expiry, scope/project, descriptor identity, target path, all bound row
+  versions, and the absence of any `applying`, `restoring`, or `rollback_failed`
+  writer before changing the claim state.
+- Complete every parse/type/permission/path/hash/row-version preflight before the first
+  snapshot or external write. Snapshot files and the recovery journal must be durable
+  before a target mutation starts; private directories are `0700` and files `0600`.
+- Bind every planned mutation to both its preflight `before` fingerprint and its intended
+  `after` fingerprint. Recheck the former before snapshot creation, again immediately
+  before rename/remove, and recheck database row versions before each target write. If an
+  external writer changes the entry after the application rename, preserve that external
+  state instead of treating it as the application's rollback fingerprint.
+- A file/link replacement uses an unpredictable, application-owned temporary sibling:
+  write, flush, `fsync` the temporary entry, rename, durably record `renamed`, then
+  `fsync` the parent. Persist the temporary fingerprint before rename and remove it
+  during recovery only when path, naming convention, parent, and fingerprint all match.
+- Persist `ready_to_finalize_database` before the success transaction. A database
+  finalize error is commit-ambiguous and must remain blocked for recovery; failure to
+  persist a decorative post-commit journal must never roll back externally committed
+  state.
+- Roll back changed targets in strict reverse order. A rollback failure preserves all
+  journals and snapshots and leaves a blocking `rollback_failed` run.
+- Restoring one snapshot from a partial multi-target run does not retire the source run.
+  Mark it `rolled_back` only after every journal target's current fingerprint equals
+  its recorded `before` fingerprint; otherwise it remains blocking.
+- A snapshot of a managed Skill child link or owned `.git/info/exclude` block remains
+  attached to the parent `managed_target`, but its path is intentionally different.
+  Restore must prove that derived relationship from the persisted descriptor/ownership
+  (immediate managed child name or Git-resolved local exclude path); exact main-target
+  equality alone is insufficient, while a generic descendant check is unsafe.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Same preview submitted twice or from two processes | At most one claim; loser receives stable conflict |
+| Any identity, row-version, hash, path, ancestor, type, parse, or permission mismatch | Stable stale/parse/type/permission/conflict error and zero external writes |
+| Crash before rename | Keep durable snapshot/journal; never infer that rename occurred |
+| Crash after rename or before/after database finalize | Keep blocking evidence; never guess rollback or overwrite |
+| Temporary path now contains another entry | Report conflict and preserve it |
+| Rollback or restore fails after any mutation | Reverse recovery where proven safe; preserve all evidence and block later writes |
+| Tracked Git path | Warning only; never modify `.gitignore` or the index |
+| Confirmed untracked Git path | Idempotently update only the owned `.git/info/exclude` marker block |
+
+### 5. Good/Base/Bad Cases
+
+- Good: an unchanged persisted preview is claimed once, every target is snapshotted,
+  atomically replaced, verified, and finalized in one SQLite success transaction.
+- Base: a crash before rename leaves a durable `applying` run, snapshot, and journal;
+  startup blocks new writes and returns an evidence-based recovery plan.
+- Bad: a path, fingerprint, ancestor, descriptor, or row version changes between
+  preflight and rename. Apply returns a stable stale/conflict error and preserves the
+  external writer's state.
+
+### 6. Tests Required
+
+- Exercise same/different preview claims through independent SQLite connections.
+- Inject crashes immediately before/after rename, on target N, and immediately
+  before/after database finalize; assert conservative startup plans and no guessed
+  overwrite.
+- Cover reverse multi-target rollback, rollback failure, second-snapshot restore,
+  stale snapshot row versions, derived Skill/Git snapshots, unknown
+  directories/symlinks/temporary entries, and partial source-run restoration that must
+  continue blocking.
+- Audit preview, error, journal, and RPC serialization for fixture secrets. Keep all
+  native Claude/Codex fixtures under explicit temporary roots.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// A single early check leaves a TOCTOU window before rename.
+verify_preview_once(preview_id)?;
+fs::rename(temporary, target)?;
+```
+
+#### Correct
+
+```rust
+// The engine binds fingerprints and row versions, then revalidates at each mutation boundary.
+apply_persisted_preview(
+    write_operations,
+    database,
+    paths,
+    preview_id,
+    inputs,
+    &NoApplyFault,
+)?;
+```

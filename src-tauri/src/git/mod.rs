@@ -1,8 +1,10 @@
-//! 项目 Git 状态与本机排除规则的只读检测。
+//! 项目 Git 状态检测，以及只由 Apply 引擎消费的本机排除区块渲染。
 
 use std::{
+    collections::BTreeSet,
+    fs,
     io::Read,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
@@ -14,6 +16,8 @@ use specta::Type;
 use crate::{domain::ProjectRoot, error::AppError};
 
 const GIT_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const EXCLUDE_BLOCK_START: &str = "# >>> EasyToAgents managed local exclusions >>>";
+const EXCLUDE_BLOCK_END: &str = "# <<< EasyToAgents managed local exclusions <<<";
 const GIT_REDIRECT_ENVIRONMENT: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -133,6 +137,151 @@ pub fn inspect_path(
     })
 }
 
+/// 通过 Git 自身解析本地 exclude；返回值仍会做绝对路径和入口类型复核。
+pub(crate) fn resolve_local_exclude(project_root: &ProjectRoot) -> Result<PathBuf, AppError> {
+    let project_path = Path::new(project_root.as_str());
+    let output = run_git(
+        project_path,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(AppError::not_found("gitRepository", project_root.as_str()));
+    }
+    let path = PathBuf::from(command_path_text(&output.stdout)?);
+    if !path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::CurDir | Component::ParentDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(AppError::invalid_input(
+            "gitExclude",
+            "Git 返回的 exclude 路径不安全",
+        ));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::invalid_input("gitExclude", "Git exclude 缺少父目录"))?;
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|_| AppError::not_found("gitExcludeDirectory", &parent.to_string_lossy()))?;
+    if canonical_parent != parent {
+        return Err(AppError::conflict(
+            "gitExclude",
+            "Git exclude 父目录包含未知链接",
+        ));
+    }
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Err(AppError::conflict("gitExclude", "Git exclude 不是普通文件"));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(AppError::permission(
+                &path.to_string_lossy(),
+                "lstat_git_exclude",
+            ));
+        }
+        Err(_) => {
+            return Err(AppError::invalid_input(
+                "gitExclude",
+                "Git exclude 无法安全读取",
+            ));
+        }
+    }
+    Ok(path)
+}
+
+/// 只替换应用自己的标记区块，保留所有用户规则；重复调用结果相同。
+pub(crate) fn render_local_exclude(
+    existing: &[u8],
+    patterns: impl IntoIterator<Item = String>,
+) -> Result<Vec<u8>, AppError> {
+    let existing = std::str::from_utf8(existing)
+        .map_err(|_| AppError::parse(".git/info/exclude", "git_exclude"))?;
+    let starts = existing
+        .match_indices(EXCLUDE_BLOCK_START)
+        .collect::<Vec<_>>();
+    let ends = existing
+        .match_indices(EXCLUDE_BLOCK_END)
+        .collect::<Vec<_>>();
+    if starts.len() > 1 || ends.len() > 1 || starts.len() != ends.len() {
+        return Err(AppError::conflict(
+            "gitExclude",
+            "应用标记区块重复或不完整，拒绝猜测覆盖",
+        ));
+    }
+    let mut managed_patterns = BTreeSet::new();
+    let without_managed = match (starts.first(), ends.first()) {
+        (Some(&(start, _)), Some(&(end, _))) if start <= end => {
+            if !marker_is_whole_line(existing, start, EXCLUDE_BLOCK_START)
+                || !marker_is_whole_line(existing, end, EXCLUDE_BLOCK_END)
+            {
+                return Err(AppError::conflict("gitExclude", "应用标记必须独占整行"));
+            }
+            let body_start = start + EXCLUDE_BLOCK_START.len();
+            let body = &existing[body_start..end];
+            for pattern in body.lines().map(str::trim).filter(|line| !line.is_empty()) {
+                validate_exclude_pattern(pattern)?;
+                managed_patterns.insert(pattern.to_owned());
+            }
+            let suffix = end + EXCLUDE_BLOCK_END.len();
+            format!("{}{}", &existing[..start], &existing[suffix..])
+        }
+        (None, None) => existing.to_owned(),
+        _ => {
+            return Err(AppError::conflict(
+                "gitExclude",
+                "应用标记区块顺序无效，拒绝猜测覆盖",
+            ));
+        }
+    };
+    for pattern in patterns {
+        validate_exclude_pattern(&pattern)?;
+        managed_patterns.insert(pattern);
+    }
+    let managed = format!(
+        "{EXCLUDE_BLOCK_START}\n{}\n{EXCLUDE_BLOCK_END}",
+        managed_patterns.into_iter().collect::<Vec<_>>().join("\n")
+    );
+    let base = without_managed.trim_end_matches(['\r', '\n']);
+    let rendered = if base.is_empty() {
+        format!("{managed}\n")
+    } else {
+        format!("{base}\n\n{managed}\n")
+    };
+    Ok(rendered.into_bytes())
+}
+
+fn marker_is_whole_line(document: &str, start: usize, marker: &str) -> bool {
+    let before_is_boundary = start == 0 || document.as_bytes().get(start - 1) == Some(&b'\n');
+    let end = start + marker.len();
+    let after_is_boundary =
+        end == document.len() || matches!(document.as_bytes().get(end), Some(b'\r' | b'\n'));
+    before_is_boundary && after_is_boundary
+}
+
+fn validate_exclude_pattern(pattern: &str) -> Result<(), AppError> {
+    if pattern.is_empty()
+        || pattern.starts_with('!')
+        || pattern.contains(['\r', '\n', '\0'])
+        || pattern.split('/').any(|part| part == "..")
+    {
+        return Err(AppError::invalid_input(
+            "gitExcludePattern",
+            "本地排除规则包含不安全内容",
+        ));
+    }
+    Ok(())
+}
+
 fn run_git(current_dir: &Path, arguments: &[&str]) -> Result<GitOutput, AppError> {
     let mut command = Command::new("git");
     command
@@ -201,8 +350,8 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::inspect_path;
-    use crate::adapters::canonicalize_project_root;
+    use super::{inspect_path, render_local_exclude};
+    use crate::{adapters::canonicalize_project_root, error::ErrorCode};
 
     #[test]
     fn reads_tracked_and_local_exclude_status_without_modifying_git_files() {
@@ -300,5 +449,22 @@ mod tests {
         let status = inspect_path(&project, &project_path.join(".mcp.json")).unwrap();
         assert!(!status.is_repository);
         assert!(!project_path.join(".git").exists());
+    }
+
+    #[test]
+    fn managed_exclude_block_is_additive_idempotent_and_rejects_duplicate_markers() {
+        let first = render_local_exclude(b"# user rule\n", ["/.mcp.json".to_owned()]).unwrap();
+        let second = render_local_exclude(&first, ["/.codex/config.toml".to_owned()]).unwrap();
+        let second_text = String::from_utf8(second.clone()).unwrap();
+        assert!(second_text.contains("/.mcp.json"));
+        assert!(second_text.contains("/.codex/config.toml"));
+        assert_eq!(
+            render_local_exclude(&second, ["/.mcp.json".to_owned()]).unwrap(),
+            second
+        );
+
+        let duplicated = format!("{second_text}\n{second_text}");
+        let error = render_local_exclude(duplicated.as_bytes(), ["/next".to_owned()]).unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
     }
 }

@@ -42,6 +42,10 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<sync::DatabaseRowVersion>()
         .typ::<sync::PreviewTargetPlan>()
         .typ::<sync::PreviewPlan>()
+        .typ::<sync::ApplyResult>()
+        .typ::<sync::SnapshotSummary>()
+        .typ::<sync::InterruptedRunPlan>()
+        .typ::<sync::RestorePreview>()
         .commands(collect_commands![commands::get_app_info])
 }
 
@@ -56,6 +60,14 @@ pub fn run() {
     let command_builder = create_command_builder::<tauri::Wry>();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            },
+        ))
         .invoke_handler(command_builder.invoke_handler())
         .setup(move |app| {
             command_builder.mount_events(app);

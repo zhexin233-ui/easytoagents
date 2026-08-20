@@ -191,6 +191,43 @@ impl AppError {
             ])
     }
 
+    pub fn preview_already_consumed(preview_id: &str, status: &str) -> Self {
+        Self::new(ErrorCode::PreviewAlreadyConsumed, "该预览已经被消费", true)
+            .with_action(RecoveryAction::Rescan)
+            .with_safe_details([
+                ("previewId", Value::String(preview_id.to_owned())),
+                ("status", Value::String(status.to_owned())),
+            ])
+    }
+
+    pub fn write_in_progress(run_id: &str, status: &str) -> Self {
+        Self::new(ErrorCode::WriteInProgress, "已有写入或恢复正在进行", true)
+            .with_action(RecoveryAction::Restore)
+            .with_safe_details([
+                ("runId", Value::String(run_id.to_owned())),
+                ("status", Value::String(status.to_owned())),
+            ])
+    }
+
+    pub fn atomic_write(path: &str, operation: &str) -> Self {
+        Self::new(ErrorCode::AtomicWriteFailed, "原子写入失败", true)
+            .with_action(RecoveryAction::Restore)
+            .with_safe_details([
+                ("path", Value::String(path.to_owned())),
+                ("operation", Value::String(operation.to_owned())),
+            ])
+    }
+
+    pub fn rollback_failed(run_id: &str, path: &str, snapshot_id: &str) -> Self {
+        Self::new(ErrorCode::RollbackFailed, "自动回滚失败", true)
+            .with_action(RecoveryAction::Restore)
+            .with_safe_details([
+                ("runId", Value::String(run_id.to_owned())),
+                ("path", Value::String(path.to_owned())),
+                ("snapshotId", Value::String(snapshot_id.to_owned())),
+            ])
+    }
+
     pub fn permission(path: &str, operation: &str) -> Self {
         Self::new(ErrorCode::PermissionDenied, "目标路径权限不足", true)
             .with_action(RecoveryAction::FixPermissions)

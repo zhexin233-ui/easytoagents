@@ -12,6 +12,7 @@ use crate::{
     security::{
         audit_private_tree, ensure_private_directory, reject_symlink_components, SecretRedactor,
     },
+    sync::{detect_interrupted_run, InterruptedRunPlan},
 };
 
 const APPLICATION_SUPPORT_DIRECTORY: &str = "EasyToAgents";
@@ -122,8 +123,10 @@ impl AppPaths {
 
 pub struct AppState {
     database: Mutex<Database>,
+    write_operations: Mutex<()>,
     paths: AppPaths,
     redactor: RwLock<SecretRedactor>,
+    interrupted_run: RwLock<Option<InterruptedRunPlan>>,
 }
 
 impl AppState {
@@ -131,10 +134,13 @@ impl AppState {
         paths.initialize()?;
         let database = Database::open(&paths)?;
         paths.audit_permissions()?;
+        let interrupted_run = detect_interrupted_run(&database, &paths)?;
         Ok(Self {
             database: Mutex::new(database),
+            write_operations: Mutex::new(()),
             paths,
             redactor: RwLock::new(SecretRedactor::default()),
+            interrupted_run: RwLock::new(interrupted_run),
         })
     }
 
@@ -146,8 +152,17 @@ impl AppState {
         &self.paths
     }
 
+    /// Apply 与 Restore 共用同一把进程内互斥锁；SQLite 部分唯一索引负责跨实例兜底。
+    pub fn write_operations(&self) -> &Mutex<()> {
+        &self.write_operations
+    }
+
     pub fn redactor(&self) -> &RwLock<SecretRedactor> {
         &self.redactor
+    }
+
+    pub fn interrupted_run(&self) -> &RwLock<Option<InterruptedRunPlan>> {
+        &self.interrupted_run
     }
 }
 
@@ -275,7 +290,7 @@ mod tests {
         assert_eq!(state.paths(), &paths);
         assert_eq!(
             state.database().lock().unwrap().schema_version().unwrap(),
-            1
+            2
         );
         assert_eq!(state.redactor().read().unwrap().redact_text("safe"), "safe");
     }

@@ -1,6 +1,13 @@
-//! 只读发现、双 hash 漂移分类与 Preview 持久化。
-//!
-//! Phase 2 只读取外部目标；唯一写入是把已经脱敏的 Preview 结构保存到应用数据库。
+//! 只读发现、双 hash 漂移分类、Preview 持久化与受控写入编排。
+
+mod apply;
+
+pub use apply::{
+    apply_persisted_preview, detect_interrupted_run, list_snapshots, preview_restore,
+    restore_snapshot, ApplyFaultDecision, ApplyFaultEvent, ApplyFaultInjector, ApplyResult,
+    ApplyTargetInput, InterruptedRunPlan, ManagedItemApply, NoApplyFault, RestorePreview,
+    SnapshotSummary,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -478,11 +485,14 @@ pub struct DatabaseRowVersion {
 
 pub struct PreviewTargetRequest {
     pub descriptor: TargetDescriptor,
+    pub ownership: ManagedOwnership,
     pub baseline: ManagedTargetBaseline,
     pub scan: TargetScan,
     pub desired_projection: Value,
     pub row_versions: Vec<DatabaseRowVersion>,
     pub git: Option<GitPathStatus>,
+    /// 只有预览界面显式确认后才能置为 true；tracked 目标会被强制忽略。
+    pub exclude_from_git: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -490,16 +500,19 @@ pub struct PreviewTargetRequest {
 pub struct PreviewTargetPlan {
     pub target_id: String,
     pub descriptor: TargetDescriptor,
+    pub ownership: ManagedOwnership,
     pub change_kind: ChangeKind,
     pub status: SyncStatus,
     pub current_full_hash: Option<String>,
     pub current_managed_hash: Option<String>,
+    pub desired_managed_hash: String,
     pub target_row_version: u32,
     pub row_versions: Vec<DatabaseRowVersion>,
     pub redacted_diff: Value,
     pub warning_codes: Vec<String>,
     pub error_code: Option<ErrorCode>,
     pub git: Option<GitPathStatus>,
+    pub exclude_from_git: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -598,6 +611,11 @@ pub fn build_preview_plan(
                 warning_codes.push(WARNING_GIT_IGNORED.to_owned());
             }
         }
+        let exclude_from_git = request
+            .git
+            .as_ref()
+            .is_some_and(|git| git.is_repository && !git.tracked)
+            && request.exclude_from_git;
         warning_codes.sort();
         warning_codes.dedup();
         if change_kind == ChangeKind::Unchanged && !warning_codes.is_empty() {
@@ -632,16 +650,19 @@ pub fn build_preview_plan(
         targets.push(PreviewTargetPlan {
             target_id: request.baseline.target_id,
             descriptor: request.descriptor,
+            ownership: request.ownership,
             change_kind,
             status: assessment.status,
             current_full_hash,
             current_managed_hash,
+            desired_managed_hash: desired_hash,
             target_row_version,
             row_versions: request.row_versions,
             redacted_diff,
             warning_codes,
             error_code,
             git: request.git,
+            exclude_from_git,
         });
     }
 
@@ -704,12 +725,26 @@ fn fingerprint_row_versions(rows: &[DatabaseRowVersion]) -> u32 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedPreviewEnvelope {
+    pub descriptor: TargetDescriptor,
+    pub ownership: ManagedOwnership,
     pub current_full_hash: Option<String>,
     pub current_managed_hash: Option<String>,
+    pub desired_managed_hash: String,
     pub target_row_version: u32,
     pub row_versions: Vec<DatabaseRowVersion>,
     pub redacted_diff: Value,
     pub git: Option<GitPathStatus>,
+    pub exclude_from_git: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_snapshot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_snapshot_row_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_current_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_target_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_root: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -753,14 +788,23 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
         )
         .map_err(|_| AppError::database(&database_path, "insert_preview_run"))?;
 
-    for target in &plan.targets {
+    for (target_order, target) in plan.targets.iter().enumerate() {
         let envelope = PersistedPreviewEnvelope {
+            descriptor: target.descriptor.clone(),
+            ownership: target.ownership.clone(),
             current_full_hash: target.current_full_hash.clone(),
             current_managed_hash: target.current_managed_hash.clone(),
+            desired_managed_hash: target.desired_managed_hash.clone(),
             target_row_version: target.target_row_version,
             row_versions: target.row_versions.clone(),
             redacted_diff: target.redacted_diff.clone(),
             git: target.git.clone(),
+            exclude_from_git: target.exclude_from_git,
+            restore_snapshot_id: None,
+            restore_snapshot_row_version: None,
+            restore_current_fingerprint: None,
+            restore_target_path: None,
+            allowed_root: None,
         };
         let envelope_json = serde_json::to_string(&envelope)
             .map_err(|_| AppError::database(&database_path, "serialize_preview_item"))?;
@@ -770,8 +814,8 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
             .execute(
                 "INSERT INTO sync_items(
                     id, run_id, target_id, change_kind, status,
-                    redacted_diff_json, warning_codes_json, error_code
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    redacted_diff_json, warning_codes_json, error_code, target_order
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     Uuid::new_v4().to_string(),
                     plan.preview_id,
@@ -781,6 +825,7 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
                     envelope_json,
                     warning_codes_json,
                     target.error_code.map(ErrorCode::as_str),
+                    target_order,
                 ],
             )
             .map_err(|_| AppError::database(&database_path, "insert_preview_item"))?;
@@ -872,7 +917,7 @@ pub fn load_persisted_preview(
         .connection()
         .query_row(
             "SELECT scope, project_id, db_version
-             FROM sync_runs WHERE id = ?1 AND kind = 'preview'",
+             FROM sync_runs WHERE id = ?1",
             [preview_id],
             |row| {
                 Ok((
@@ -893,7 +938,7 @@ pub fn load_persisted_preview(
                     item.redacted_diff_json, item.warning_codes_json, item.error_code
              FROM sync_items AS item
              JOIN managed_targets AS target ON target.id = item.target_id
-             WHERE item.run_id = ?1 ORDER BY item.created_at, item.id",
+             WHERE item.run_id = ?1 ORDER BY item.target_order, item.id",
         )
         .map_err(|_| AppError::database(&path, "prepare_preview_items"))?;
     let rows = statement
@@ -1519,6 +1564,7 @@ mod tests {
             None,
             vec![PreviewTargetRequest {
                 descriptor,
+                ownership: ManagedOwnership::WholeDocument,
                 baseline: ManagedTargetBaseline {
                     target_id: TARGET_ID.to_owned(),
                     target_row_version: 1,
@@ -1529,6 +1575,7 @@ mod tests {
                 desired_projection: json!("fixture prompt"),
                 row_versions: Vec::new(),
                 git: None,
+                exclude_from_git: false,
             }],
             &SecretRedactor::default(),
         )
@@ -1554,6 +1601,7 @@ mod tests {
             None,
             vec![PreviewTargetRequest {
                 descriptor,
+                ownership: ManagedOwnership::WholeDocument,
                 baseline: ManagedTargetBaseline {
                     target_id: TARGET_ID.to_owned(),
                     target_row_version: 1,
@@ -1568,6 +1616,7 @@ mod tests {
                     row_version: 2,
                 }],
                 git: None,
+                exclude_from_git: false,
             }],
             &SecretRedactor::default(),
         )
@@ -1609,6 +1658,7 @@ mod tests {
             None,
             vec![PreviewTargetRequest {
                 descriptor,
+                ownership,
                 baseline: ManagedTargetBaseline {
                     target_id: TARGET_ID.to_owned(),
                     target_row_version: 1,
@@ -1619,6 +1669,7 @@ mod tests {
                 desired_projection,
                 row_versions: Vec::new(),
                 git: None,
+                exclude_from_git: false,
             }],
             &SecretRedactor::default(),
         )
@@ -1689,6 +1740,7 @@ mod tests {
             None,
             vec![PreviewTargetRequest {
                 descriptor: descriptor.clone(),
+                ownership,
                 baseline,
                 scan,
                 desired_projection: desired,
@@ -1698,6 +1750,7 @@ mod tests {
                     row_version: 11,
                 }],
                 git: None,
+                exclude_from_git: false,
             }],
             &redactor,
         )
@@ -1800,11 +1853,13 @@ mod tests {
             None,
             vec![PreviewTargetRequest {
                 descriptor,
+                ownership: ManagedOwnership::WholeDocument,
                 baseline,
                 scan: TargetScan::Missing,
                 desired_projection: json!("fixture prompt"),
                 row_versions: Vec::new(),
                 git: None,
+                exclude_from_git: false,
             }],
             &SecretRedactor::default(),
         )

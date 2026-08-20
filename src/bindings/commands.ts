@@ -25,6 +25,7 @@ async getAppInfo() : Promise<AppInfoDto> {
  */
 export type AppError = { code: ErrorCode; message: string; details?: Partial<{ [key in string]: JsonValue }> | null; recoverable: boolean; action?: RecoveryAction | null }
 export type AppInfoDto = { name: string; version: string }
+export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
 /**
  * 受管资源种类。
  */
@@ -41,18 +42,23 @@ export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: str
  */
 export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED"
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
+export type InterruptedRunPlan = { runId: string; status: string; journalAvailable: boolean; targets: InterruptedTargetPlan[] }
+export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type ManagedOwnership = { kind: "whole_document" } | { kind: "selectors"; paths: string[][] } | { kind: "symlink_names"; paths: string[] }
 export type McpTransport = "stdio" | "streamable_http"
 export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
-export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null }
+export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
+export type RestorePreview = { previewId: string; snapshotId: string; targetPath: string; currentType: TargetType; snapshotType: TargetType }
 /**
  * 资源应用范围。
  */
 export type Scope = "global" | "project"
 export type SkillStatus = "ready" | "invalid" | "missing"
+export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; createdAt: string }
 export type SymlinkPolicy = "reject" | "managed_children_only"
 export type SyncRunKind = "preview" | "apply" | "restore"
 export type SyncRunStatus = "previewed" | "applying" | "restoring" | "succeeded" | "failed" | "stale" | "rolled_back" | "rollback_failed"

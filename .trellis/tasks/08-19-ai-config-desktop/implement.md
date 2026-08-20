@@ -80,22 +80,22 @@ pnpm test --run
 
 ## Phase 3：Apply、原子写、快照与恢复
 
-- [ ] 实现 Tauri 单实例入口、进程内 Apply/Restore mutex、全库单活动写入部分唯一索引、SQLite 条件事务原子认领 preview token、重复/并发消费错误与 `STALE_PREVIEW` 校验。
-- [ ] 实现 snapshot journal、权限/类型/link target 记录。
-- [ ] 实现同目录临时文件、flush/fsync、atomic rename 和临时 symlink rename。
-- [ ] 实现多目标顺序 apply、写后解析验证、逆序 rollback、`ROLLBACK_FAILED`。
-- [ ] 实现崩溃遗留 applying/restoring run 检测和写入阻断。
-- [ ] 实现 restore 前二次快照和恢复预览。
-- [ ] 实现 `.git/info/exclude` 应用标记区块的显式、幂等写入；绝不修改 `.gitignore`。
+- [x] 实现 Tauri 单实例入口、进程内 Apply/Restore mutex、全库单活动写入部分唯一索引、SQLite 条件事务原子认领 preview token、重复/并发消费错误与 `STALE_PREVIEW` 校验。
+- [x] 实现 snapshot journal、权限/类型/link target 记录。
+- [x] 实现同目录临时文件、flush/fsync、atomic rename 和临时 symlink rename。
+- [x] 实现多目标顺序 apply、写后解析验证、逆序 rollback、`ROLLBACK_FAILED`。
+- [x] 实现崩溃遗留 applying/restoring run 检测和写入阻断。
+- [x] 实现 restore 前二次快照和恢复预览。
+- [x] 实现 `.git/info/exclude` 应用标记区块的显式、幂等写入；绝不修改 `.gitignore`。
 
 关键测试：
 
-- [ ] 在第 N 个目标注入失败，前 N-1 个目标恢复且无半写文件。
-- [ ] 同一 preview 的两个并发 apply 只有一个能认领；两个不同 preview 并发时也只有一个活动写入，失败方不产生外部修改。
-- [ ] 在 atomic rename 前后及第 N 个目标注入崩溃；重启后阻止新写入并能按 journal 生成恢复计划。
-- [ ] preview 后外部改动导致 apply 拒绝。
-- [ ] 普通目录、未知 symlink、中央库外 link target 不被删除。
-- [ ] tracked 文件只警告；untracked exclude 仅确认后写入。
+- [x] 在第 N 个目标注入失败，前 N-1 个目标恢复且无半写文件。
+- [x] 同一 preview 的两个并发 apply 只有一个能认领；两个不同 preview 并发时也只有一个活动写入，失败方不产生外部修改。
+- [x] 在 atomic rename 前后及第 N 个目标注入崩溃；重启后阻止新写入并能按 journal 生成恢复计划。
+- [x] preview 后外部改动导致 apply 拒绝。
+- [x] 普通目录、未知 symlink、中央库外 link target 不被删除。
+- [x] tracked 文件只警告；untracked exclude 仅确认后写入。
 
 验收映射：AC9、AC10、AC11、AC12。
 

@@ -15,11 +15,18 @@ use crate::{
     security::{create_private_file, ensure_private_directory, ensure_private_file},
 };
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("migrations/0001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "snapshot_target_identity",
+        sql: include_str!("migrations/0002_snapshot_target_identity.sql"),
+    },
+];
 
 struct Migration {
     version: i64,
@@ -343,7 +350,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 1);
+        assert_eq!(database.schema_version().unwrap(), 2);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
