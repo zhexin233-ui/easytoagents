@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+pub mod mcp;
 pub mod profiles;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]

@@ -130,13 +130,13 @@ pnpm test --run
 
 ## Phase 5：MCP 中央列表与全局/项目分配
 
-- [ ] 实现 MCP 结构化验证、stdio/streamable_http 表单与扩展字段保留。
-- [ ] 实现中央 CRUD、名称唯一和敏感 header/env 脱敏。
-- [ ] 实现 Claude `$HOME/.claude.json`、`.mcp.json` 的受管条目合并；非默认 Claude 配置根必须先通过 capability probe。
-- [ ] 实现 Codex `$CODEX_HOME/config.toml` 与项目 `[mcp_servers.*]` 合并并保留其他 TOML 表。
-- [ ] 实现全局与项目 assignment：全局项在项目中只读继承、不保存重复 assignment，项目只能追加其他项；外部同名冲突阻断。
-- [ ] 更新/重命名/删除仅清理由 managed_items 基线确认的旧条目。
-- [ ] 完成 MCP 中央列表、详情、目标状态和项目选择器。
+- [x] 实现 MCP 结构化验证、stdio/streamable_http 表单与扩展字段保留。
+- [x] 实现中央 CRUD、名称唯一和敏感 header/env 脱敏。
+- [x] 实现 Claude `$HOME/.claude.json`、`.mcp.json` 的受管条目合并；非默认 Claude 配置根必须先通过 capability probe。
+- [x] 实现 Codex `$CODEX_HOME/config.toml` 与项目 `[mcp_servers.*]` 合并并保留其他 TOML 表。
+- [x] 实现全局与项目 assignment：全局项在项目中只读继承、不保存重复 assignment，项目只能追加其他项；外部同名冲突阻断。
+- [x] 更新/重命名/删除仅清理由 managed_items 基线确认的旧条目。
+- [x] 完成 MCP 中央列表、详情、目标状态和项目选择器。
 
 验收映射：AC4、AC6、AC7、AC10。
 

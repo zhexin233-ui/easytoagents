@@ -39,6 +39,7 @@ pub const WARNING_EXTERNAL_NON_OWNED_CHANGE: &str = "EXTERNAL_NON_OWNED_CHANGE";
 pub const WARNING_GIT_TRACKED: &str = "GIT_TRACKED";
 pub const WARNING_GIT_IGNORED: &str = "GIT_IGNORED";
 pub const ERROR_EXTERNAL_OWNED_CHANGE: &str = "EXTERNAL_OWNED_CHANGE";
+pub const ERROR_MANAGED_ITEM_BASELINE_MISMATCH: &str = "MANAGED_ITEM_BASELINE_MISMATCH";
 pub const ERROR_TARGET_TYPE_CHANGED: &str = "TARGET_TYPE_CHANGED";
 pub const ERROR_CLAUDE_POLICY_UNKNOWN: &str = "CLAUDE_POLICY_UNKNOWN";
 pub const ERROR_CODEX_TRUST_UNKNOWN: &str = "CODEX_TRUST_UNKNOWN";
@@ -63,6 +64,8 @@ impl ObservedTarget {
 pub enum TargetScan {
     Observed(Box<ObservedTarget>),
     Missing,
+    /// 领域服务已读取目标，但逐项受管基线不再匹配；不得进入合并或清理流程。
+    ManagedItemBaselineMismatch,
     ParseError,
     PermissionDenied,
     TargetTypeChanged(TargetType),
@@ -370,6 +373,11 @@ pub fn assess_drift(
 
     match scan {
         TargetScan::Missing => assessment(SyncStatus::Missing, true, Vec::new()),
+        TargetScan::ManagedItemBaselineMismatch => assessment(
+            SyncStatus::ExternalOwnedChange,
+            false,
+            vec![ERROR_MANAGED_ITEM_BASELINE_MISMATCH.to_owned()],
+        ),
         TargetScan::ParseError => assessment(
             SyncStatus::ParseError,
             false,

@@ -6,6 +6,7 @@ const links = [
   { to: "/", label: "总览", end: true },
   { to: "/claude", label: "Claude", end: false },
   { to: "/codex", label: "Codex", end: false },
+  { to: "/mcp", label: "MCP", end: false },
 ] as const;
 
 export function AppShell() {

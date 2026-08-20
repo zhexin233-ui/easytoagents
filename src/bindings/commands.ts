@@ -159,6 +159,110 @@ async applyProfilePreview(input: ApplyProfilePreviewInput) : Promise<Result<Appl
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async listMcpServers() : Promise<Result<McpServerDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_mcp_servers") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getMcpServer(id: string) : Promise<Result<McpServerDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_mcp_server", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createMcpServer(input: McpServerInput) : Promise<Result<McpServerDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_mcp_server", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateMcpServer(input: UpdateMcpServerInput) : Promise<Result<McpServerDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_mcp_server", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setMcpEnabled(input: VersionedMcpInput, enabled: boolean) : Promise<Result<McpServerDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_mcp_enabled", { input, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteMcpServer(input: VersionedMcpInput) : Promise<Result<DeleteMcpResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_mcp_server", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setGlobalMcpAssignment(input: SetGlobalMcpAssignmentInput) : Promise<Result<McpServerDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_global_mcp_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setProjectMcpAssignment(input: SetProjectMcpAssignmentInput) : Promise<Result<McpServerDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_project_mcp_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listMcpProjects() : Promise<Result<McpProjectDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_mcp_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listMcpProjectOptions(input: McpProjectOptionsInput) : Promise<Result<McpProjectOptionDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_mcp_project_options", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listGlobalMcpTargetStatuses() : Promise<Result<McpTargetStatusDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_global_mcp_target_statuses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewMcpSync(input: PreviewMcpSyncInput) : Promise<Result<PreviewPlan, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_mcp_sync", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyMcpPreview(input: ApplyMcpPreviewInput) : Promise<Result<ApplyResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_mcp_preview", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -177,6 +281,7 @@ async applyProfilePreview(input: ApplyProfilePreviewInput) : Promise<Result<Appl
  */
 export type AppError = { code: ErrorCode; message: string; details?: Partial<{ [key in string]: JsonValue }> | null; recoverable: boolean; action?: RecoveryAction | null }
 export type AppInfoDto = { name: string; version: string }
+export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
 /**
@@ -193,6 +298,7 @@ export type ConfirmImportInput = { previewId: string; name: string }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
 export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "project" | "managed_target" | "managed_item"
 export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: string; rowVersion: number }
+export type DeleteMcpResultDto = { id: string; deleted: boolean }
 export type DeleteProfileResultDto = { id: string; deleted: boolean }
 /**
  * RPC、journal 和同步记录共用的稳定错误码。
@@ -203,8 +309,16 @@ export type InterruptedRunPlan = { runId: string; status: string; journalAvailab
 export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type ManagedOwnership = { kind: "whole_document" } | { kind: "selectors"; paths: string[][] } | { kind: "symlink_names"; paths: string[] }
+export type McpProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
+export type McpProjectOptionDto = { mcpId: string; name: string; enabled: boolean; state: McpProjectSelectionState; selectable: boolean; rowVersion: number }
+export type McpProjectOptionsInput = { projectId: string; tool: Tool }
+export type McpProjectSelectionState = "inherited" | "selected" | "available"
+export type McpServerDto = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headerNames: string[]; envNames: string[]; redactedExtra: JsonValue; enabled: boolean; globalTools: Tool[]; rowVersion: number }
+export type McpServerInput = { name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: Partial<{ [key in string]: string }>; env: Partial<{ [key in string]: string }>; extra: JsonValue; enabled: boolean }
+export type McpTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type McpTransport = "stdio" | "streamable_http"
 export type PolicyState = "allowed" | "blocked" | "unknown"
+export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
 export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
 export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; body: string }
@@ -223,6 +337,10 @@ export type RestorePreview = { previewId: string; snapshotId: string; targetPath
  */
 export type Scope = "global" | "project"
 export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: string }
+export type SensitiveJsonUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: JsonValue }
+export type SensitiveMapUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: Partial<{ [key in string]: string }> }
+export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned: boolean; rowVersion: number }
+export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
 export type SkillStatus = "ready" | "invalid" | "missing"
 export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; createdAt: string }
 export type SymlinkPolicy = "reject" | "managed_children_only"
@@ -246,8 +364,10 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
 export type Tool = "claude" | "codex"
 export type ToolProfileStatusDto = { tool: Tool; providerTargetPath: string; promptTargetPath: string; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
+export type UpdateMcpServerInput = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: SensitiveMapUpdate; env: SensitiveMapUpdate; extra: SensitiveJsonUpdate; enabled: boolean; rowVersion: number }
 export type UpdatePromptProfileInput = { id: string; name: string; body: string; rowVersion: number }
 export type UpdateProviderProfileInput = { id: string; name: string; apiBaseUrl: string; apiKey: SecretUpdate; defaultModel: string; options: ProviderOptionsInput; rowVersion: number }
+export type VersionedMcpInput = { id: string; rowVersion: number }
 export type VersionedProfileInput = { id: string; rowVersion: number }
 
 /** tauri-specta globals **/

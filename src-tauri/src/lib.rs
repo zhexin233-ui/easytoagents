@@ -11,6 +11,7 @@ pub mod db;
 pub mod domain;
 pub mod error;
 pub mod git;
+pub mod mcp;
 pub mod profiles;
 pub mod security;
 pub mod skills;
@@ -65,6 +66,22 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<profiles::ApplyProfilePreviewInput>()
         .typ::<profiles::ToolProfileStatusDto>()
         .typ::<profiles::DeleteProfileResultDto>()
+        .typ::<mcp::McpServerInput>()
+        .typ::<mcp::SensitiveMapUpdate>()
+        .typ::<mcp::SensitiveJsonUpdate>()
+        .typ::<mcp::UpdateMcpServerInput>()
+        .typ::<mcp::VersionedMcpInput>()
+        .typ::<mcp::McpServerDto>()
+        .typ::<mcp::DeleteMcpResultDto>()
+        .typ::<mcp::SetGlobalMcpAssignmentInput>()
+        .typ::<mcp::SetProjectMcpAssignmentInput>()
+        .typ::<mcp::McpProjectSelectionState>()
+        .typ::<mcp::McpProjectOptionDto>()
+        .typ::<mcp::McpProjectDto>()
+        .typ::<mcp::McpProjectOptionsInput>()
+        .typ::<mcp::PreviewMcpSyncInput>()
+        .typ::<mcp::ApplyMcpPreviewInput>()
+        .typ::<mcp::McpTargetStatusDto>()
         .commands(collect_commands![
             commands::get_app_info,
             commands::profiles::list_provider_profiles,
@@ -86,6 +103,19 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::profiles::preview_provider_sync,
             commands::profiles::preview_prompt_sync,
             commands::profiles::apply_profile_preview,
+            commands::mcp::list_mcp_servers,
+            commands::mcp::get_mcp_server,
+            commands::mcp::create_mcp_server,
+            commands::mcp::update_mcp_server,
+            commands::mcp::set_mcp_enabled,
+            commands::mcp::delete_mcp_server,
+            commands::mcp::set_global_mcp_assignment,
+            commands::mcp::set_project_mcp_assignment,
+            commands::mcp::list_mcp_projects,
+            commands::mcp::list_mcp_project_options,
+            commands::mcp::list_global_mcp_target_statuses,
+            commands::mcp::preview_mcp_sync,
+            commands::mcp::apply_mcp_preview,
         ])
 }
 

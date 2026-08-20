@@ -1230,6 +1230,7 @@ fn refine_claude_provider_policy(descriptor: &mut TargetDescriptor) {
         }
         TargetScan::Missing => {}
         TargetScan::ParseError
+        | TargetScan::ManagedItemBaselineMismatch
         | TargetScan::PermissionDenied
         | TargetScan::Unavailable
         | TargetScan::TargetTypeChanged(_)
@@ -1269,7 +1270,9 @@ fn scan_error(descriptor: &TargetDescriptor, scan: &TargetScan) -> AppError {
         TargetScan::TargetTypeChanged(_) => {
             AppError::conflict("targetPath", "目标类型与配置格式不一致")
         }
-        TargetScan::Failed => AppError::new(ErrorCode::Conflict, "目标无法安全读取", true),
+        TargetScan::Failed | TargetScan::ManagedItemBaselineMismatch => {
+            AppError::new(ErrorCode::Conflict, "目标无法安全读取", true)
+        }
         TargetScan::Missing | TargetScan::Observed(_) => {
             AppError::new(ErrorCode::Conflict, "目标状态不符合导入条件", true)
         }

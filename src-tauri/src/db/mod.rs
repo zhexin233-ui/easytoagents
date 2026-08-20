@@ -15,6 +15,7 @@ use crate::{
     security::{create_private_file, ensure_private_directory, ensure_private_file},
 };
 
+pub mod mcp;
 pub mod profiles;
 
 const MIGRATIONS: &[Migration] = &[

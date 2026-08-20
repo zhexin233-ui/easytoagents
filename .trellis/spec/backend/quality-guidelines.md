@@ -347,3 +347,92 @@ let profile = update_provider_profile(database, input)?;
 let preview = preview_provider_sync(database, context, tool)?;
 let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind::Provider)?;
 ```
+
+## Scenario: MCP central intent and inherited project projections
+
+### 1. Scope / Trigger
+
+- Trigger: MCP CRUD, sensitive-field editing, global/project assignment, native MCP
+  projection, managed-item cleanup, or MCP preview/apply changes.
+
+### 2. Signatures
+
+- List/detail responses use `McpServerDto`; they expose header/env names and a
+  redacted extension projection, never header/env values.
+- Sensitive edits use `SensitiveMapUpdate` and `SensitiveJsonUpdate` with explicit
+  `keep`, `clear`, or `replace` actions.
+- Native synchronization remains two-step:
+  `preview_mcp_sync(PreviewMcpSyncInput) -> PreviewPlan`, then
+  `apply_mcp_preview(ApplyMcpPreviewInput) -> ApplyResult`.
+
+### 3. Contracts
+
+- MCP names are globally unique with `NOCASE` semantics. CRUD, enable changes, and
+  both assignment mutations use optimistic row-version checks and never write native
+  files.
+- `stdio` requires command and permits only args/env; `streamable_http` requires an
+  absolute credential-free HTTP(S) URL and permits only headers. Fragments and
+  detectable secrets in ordinary DTO-visible args or URL query pairs are rejected.
+- Header/env values and detectable extension secrets are registered with the central
+  redactor before preview persistence. RPC, errors, sync items, and journals contain
+  no such values.
+- A project stores only project-specific assignments. Globally assigned items are
+  read-only inherited options and are included in ownership only to detect an external
+  same-name project entry. When a project has only inherited items and no collision or
+  previous managed item, preview has no target and must not create an empty project
+  configuration file.
+- Rename, disable, unassignment, and deletion remove an old native entry only when its
+  `managed_items.last_applied_item_hash` still matches the observed item. Apply binds
+  every managed-item row version and updates/removes baselines in its success
+  transaction.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Case-only duplicate name or stale row version | `CONFLICT`; central intent unchanged |
+| Global item selected again at project scope | Domain and SQLite conflict; no duplicate assignment |
+| External project item has an inherited/desired name | Conflict preview; external item unchanged |
+| Managed item is missing or its item hash changed | `external_owned_change`; rename/delete/apply blocked |
+| Non-default Claude user MCP lacks version-bound evidence | Unsupported/blocked; never guess `$HOME/.claude.json` |
+| Codex project trust is unknown or untrusted | Untrusted preview; zero external writes |
+| Project has only inherited items and no collision | Empty preview target list; no project file creation |
+
+### 5. Good/Base/Bad Cases
+
+- Good: create a validated central MCP, assign it globally, preview/apply the
+  native entry, then rename it while the per-item baseline still matches; only
+  the proven old entry is removed and unrelated native content survives.
+- Base: CRUD and assignment changes update SQLite intent and return masked DTOs;
+  external files remain unchanged until a non-empty persisted preview is applied.
+- Bad: an inherited duplicate, external same-name entry, stale row version,
+  changed managed item, unknown capability/trust, or detectable secret in an
+  ordinary DTO-visible field blocks without creating or deleting a native entry.
+
+### 6. Tests Required
+
+- Use explicit temporary homes/config roots/projects only. Cover JSON/TOML unknown
+  field and comment preservation, project inheritance, external same-name conflicts,
+  rename/removal, item drift, stale CAS, Claude capability/policy, and Codex trust.
+- Audit serialized DTOs, previews, `sync_items`, errors, and journals for every fixture
+  header/env/extension secret and any rejected args/query token; expected matches are
+  zero.
+- Regenerate/check Specta bindings whenever an MCP command or DTO changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Names alone do not prove ownership and inherited items are not project rows.
+native.remove(&server.name);
+repository.set_project_assignment(project, tool, server.id, false)?;
+```
+
+#### Correct
+
+```rust
+validate_managed_item_hash(observed_item, managed_item.last_applied_item_hash)?;
+let preview = preview_mcp_sync(database, context, input)?;
+let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.project_id)?;
+```

@@ -120,3 +120,85 @@ const result = unwrapResult(
   }),
 );
 ```
+
+## Scenario: Typed MCP central library and project assignment page
+
+### 1. Scope / Trigger
+
+- Trigger: MCP form/list/status UI, global/project assignment, MCP query keys, or MCP
+  preview/apply behavior changes.
+
+### 2. Signatures
+
+- Create/edit forms send generated `McpServerInput` or `UpdateMcpServerInput`;
+  sensitive maps/extensions use the generated keep/clear/replace union.
+- Assignment mutations send the displayed MCP/project row versions plus exact
+  tool/project identity.
+- Preview/apply uses `PreviewMcpSyncInput`, `PreviewPlan`, and
+  `ApplyMcpPreviewInput` from generated bindings.
+
+### 3. Contracts
+
+- MCP feature code imports generated commands and DTOs only. Query options live in
+  `src/lib/mcp-api.ts`, and every successful central mutation invalidates the MCP key
+  family because row versions and inheritance can change together.
+- Header/env inputs are password fields. Editing starts with `keep`; secret values are
+  never reconstructed from header/env names or redacted extension values.
+- Global inheritance is visibly read-only and cannot call the project-assignment
+  mutation. Disabled central items remain distinguishable from selected/inherited
+  state.
+- Project and option loading, failure, and empty states are distinct and accessible.
+  Codex trust prevents an obviously blocked preview in the UI, while the backend still
+  rechecks current native trust.
+- Apply consumes the exact persisted MCP preview ID, tool, and project identity through
+  `ChangePreviewDialog`; CRUD and assignment success never apply implicitly.
+
+### 4. Validation & Error Matrix
+
+| UI condition | Required rendering/behavior |
+| --- | --- |
+| Editing sensitive map/extra | Default to `keep`; never reconstruct or display old values |
+| Global inherited project option | Read-only inherited label; no disable/remove mutation |
+| Disabled MCP | Distinct disabled label independent of assignment state |
+| Project/options pending, error, or empty | Separate accessible state for each query |
+| Codex project not trusted | Disable obvious preview action; backend remains authoritative |
+| Preview has zero targets | Show no-write explanation; do not open an Apply dialog |
+| Conflict/error target | Show codes and keep Apply disabled |
+
+### 5. Good/Base/Bad Cases
+
+- Good: edit an MCP while keeping sensitive values, assign it to a trusted project,
+  inspect a non-empty redacted preview, and apply its exact preview ID.
+- Base: central CRUD/assignment invalidates MCP query keys and displays a no-native-
+  write notice.
+- Bad: render secret values, let a project disable an inherited item, open Apply for
+  an empty preview, or synthesize a payload outside generated bindings.
+
+### 6. Tests Required
+
+- Mock only the generated `commands` object with an isolated `QueryClient`.
+- Assert create/update secret payloads, row versions, inherited disabled controls,
+  exact project/tool identity, redacted previews, and exact preview ID consumption.
+- Cover list/project-option loading, errors, empty states, and the absence of secret
+  values in rendered editing state.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+setHeaders(server.headers);
+await commands.setProjectMcpAssignment({ ...option, assigned: false });
+```
+
+#### Correct
+
+```tsx
+const update: UpdateMcpServerInput = {
+  ...safeFields,
+  headers: { action: "keep" },
+  env: { action: "keep" },
+  extra: { action: "keep" },
+  rowVersion: server.rowVersion,
+};
+```
