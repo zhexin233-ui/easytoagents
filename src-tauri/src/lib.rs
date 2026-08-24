@@ -12,7 +12,9 @@ pub mod domain;
 pub mod error;
 pub mod git;
 pub mod mcp;
+pub mod overview;
 pub mod profiles;
+pub mod projects;
 pub mod security;
 pub mod skills;
 pub mod sync;
@@ -96,8 +98,32 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<skills::PreviewSkillSyncInput>()
         .typ::<skills::ApplySkillPreviewInput>()
         .typ::<skills::SkillTargetStatusDto>()
+        .typ::<projects::ProjectPathStatus>()
+        .typ::<projects::GitRepositoryStatus>()
+        .typ::<projects::ProjectTargetStatusDto>()
+        .typ::<projects::ProjectDto>()
+        .typ::<projects::RegisterProjectInput>()
+        .typ::<projects::VersionedProjectInput>()
+        .typ::<projects::RemoveProjectResultDto>()
+        .typ::<overview::DashboardToolSummaryDto>()
+        .typ::<overview::RecentSyncRunDto>()
+        .typ::<overview::DashboardSummaryDto>()
+        .typ::<overview::SnapshotRestoreInput>()
+        .typ::<overview::ApplySnapshotRestoreInput>()
+        .typ::<overview::CompleteOnboardingResultDto>()
         .commands(collect_commands![
             commands::get_app_info,
+            commands::overview::get_dashboard_summary,
+            commands::overview::complete_onboarding,
+            commands::overview::list_snapshots,
+            commands::overview::get_interrupted_run,
+            commands::overview::preview_snapshot_restore,
+            commands::overview::restore_snapshot,
+            commands::projects::list_projects,
+            commands::projects::get_project,
+            commands::projects::register_project,
+            commands::projects::rescan_project,
+            commands::projects::remove_project,
             commands::profiles::list_provider_profiles,
             commands::profiles::create_provider_profile,
             commands::profiles::update_provider_profile,

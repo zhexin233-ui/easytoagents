@@ -8,6 +8,7 @@ const links = [
   { to: "/codex", label: "Codex", end: false },
   { to: "/mcp", label: "MCP", end: false },
   { to: "/skills", label: "Skills", end: false },
+  { to: "/projects", label: "项目", end: false },
 ] as const;
 
 export function AppShell() {

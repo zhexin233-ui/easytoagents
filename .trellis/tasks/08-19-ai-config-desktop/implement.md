@@ -172,12 +172,12 @@ pnpm test --run
 
 ## Phase 7：项目、总览与首次接管流程
 
-- [ ] 实现项目登记、规范化去重、Git/Codex trust/Claude policy 状态。
-- [ ] 完成项目列表与详情双工具组合页，持续显示全局继承与 blocked/conflict。
-- [ ] 完成首次启动向导：检测 → 选择导入/接管 → 预览 → 应用；支持跳过工具。
-- [ ] 完成总览卡片、最近同步、冲突入口和唯一下一步的空状态。
-- [ ] 统一 ChangePreviewDialog、SyncStatusBadge、BlockingState、SnapshotRestoreDialog。
-- [ ] 验证键盘导航、焦点管理、表单标签、对话框语义和颜色非唯一状态表达。
+- [x] 实现项目登记、规范化去重、Git/Codex trust/Claude policy 状态。
+- [x] 完成项目列表与详情双工具组合页，持续显示全局继承与 blocked/conflict。
+- [x] 完成首次启动向导：检测 → 选择导入/接管 → 预览 → 应用；支持跳过工具。
+- [x] 完成总览卡片、最近同步、冲突入口和唯一下一步的空状态。
+- [x] 统一 ChangePreviewDialog、SyncStatusBadge、BlockingState、SnapshotRestoreDialog。
+- [x] 验证键盘导航、焦点管理、表单标签、对话框语义和颜色非唯一状态表达。
 
 验收映射：AC1、AC6、AC9、AC12、AC13。
 

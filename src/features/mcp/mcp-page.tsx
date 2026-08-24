@@ -9,10 +9,12 @@ import {
   type McpServerInput,
   type McpTransport,
   type PreviewPlan,
+  type SetProjectMcpAssignmentInput,
   type Tool,
   type UpdateMcpServerInput,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import {
   globalMcpStatusesQueryOptions,
@@ -145,29 +147,8 @@ export function McpPage() {
   });
 
   const projectAssignmentMutation = useMutation({
-    mutationFn: async ({
-      mcpId,
-      rowVersion,
-      assigned,
-    }: {
-      mcpId: string;
-      rowVersion: number;
-      assigned: boolean;
-    }) => {
-      if (!selectedProject) {
-        throw new Error("请先选择已登记项目。");
-      }
-      return unwrapResult(
-        await commands.setProjectMcpAssignment({
-          projectId: selectedProject.id,
-          tool: projectTool,
-          mcpId,
-          assigned,
-          mcpRowVersion: rowVersion,
-          projectRowVersion: selectedProject.rowVersion,
-        }),
-      );
-    },
+    mutationFn: async (input: SetProjectMcpAssignmentInput) =>
+      unwrapResult(await commands.setProjectMcpAssignment(input)),
     onSuccess: invalidateMcp,
   });
 
@@ -283,7 +264,10 @@ export function McpPage() {
                 className="field"
                 value={form.name}
                 onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
+                  setForm((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
                 }
                 required
               />
@@ -293,13 +277,13 @@ export function McpPage() {
                 className="field"
                 value={form.transport}
                 onChange={(event) =>
-                  setForm({
-                    ...form,
+                  setForm((current) => ({
+                    ...current,
                     transport:
                       event.target.value === "streamable_http"
                         ? "streamable_http"
                         : "stdio",
-                  })
+                  }))
                 }
               >
                 <option value="stdio">stdio</option>
@@ -313,7 +297,10 @@ export function McpPage() {
                     className="field"
                     value={form.command}
                     onChange={(event) =>
-                      setForm({ ...form, command: event.target.value })
+                      setForm((current) => ({
+                        ...current,
+                        command: event.target.value,
+                      }))
                     }
                     required
                   />
@@ -323,7 +310,10 @@ export function McpPage() {
                     className="field min-h-24"
                     value={form.args}
                     onChange={(event) =>
-                      setForm({ ...form, args: event.target.value })
+                      setForm((current) => ({
+                        ...current,
+                        args: event.target.value,
+                      }))
                     }
                   />
                 </Field>
@@ -332,8 +322,12 @@ export function McpPage() {
                   value={form.env}
                   keep={form.keepEnv}
                   editing={form.id !== null}
-                  onKeep={(keep) => setForm({ ...form, keepEnv: keep })}
-                  onChange={(env) => setForm({ ...form, env })}
+                  onKeep={(keep) =>
+                    setForm((current) => ({ ...current, keepEnv: keep }))
+                  }
+                  onChange={(env) =>
+                    setForm((current) => ({ ...current, env }))
+                  }
                 />
               </>
             ) : (
@@ -344,7 +338,10 @@ export function McpPage() {
                     type="url"
                     value={form.url}
                     onChange={(event) =>
-                      setForm({ ...form, url: event.target.value })
+                      setForm((current) => ({
+                        ...current,
+                        url: event.target.value,
+                      }))
                     }
                     required
                   />
@@ -354,8 +351,12 @@ export function McpPage() {
                   value={form.headers}
                   keep={form.keepHeaders}
                   editing={form.id !== null}
-                  onKeep={(keep) => setForm({ ...form, keepHeaders: keep })}
-                  onChange={(headers) => setForm({ ...form, headers })}
+                  onKeep={(keep) =>
+                    setForm((current) => ({ ...current, keepHeaders: keep }))
+                  }
+                  onChange={(headers) =>
+                    setForm((current) => ({ ...current, headers }))
+                  }
                 />
               </>
             )}
@@ -369,7 +370,10 @@ export function McpPage() {
                     type="checkbox"
                     checked={form.keepExtra}
                     onChange={(event) =>
-                      setForm({ ...form, keepExtra: event.target.checked })
+                      setForm((current) => ({
+                        ...current,
+                        keepExtra: event.target.checked,
+                      }))
                     }
                   />
                   保持数据库中的扩展字段（不会回填敏感原值）
@@ -381,7 +385,10 @@ export function McpPage() {
                 value={form.extra}
                 disabled={form.id !== null && form.keepExtra}
                 onChange={(event) =>
-                  setForm({ ...form, extra: event.target.value })
+                  setForm((current) => ({
+                    ...current,
+                    extra: event.target.value,
+                  }))
                 }
               />
             </div>
@@ -390,7 +397,10 @@ export function McpPage() {
                 type="checkbox"
                 checked={form.enabled}
                 onChange={(event) =>
-                  setForm({ ...form, enabled: event.target.checked })
+                  setForm((current) => ({
+                    ...current,
+                    enabled: event.target.checked,
+                  }))
                 }
               />
               启用（停用后下一份预览会安全移除已应用条目）
@@ -497,6 +507,7 @@ export function McpPage() {
                           ? "default"
                           : "outline"
                       }
+                      disabled={globalAssignmentMutation.isPending}
                       onClick={() =>
                         globalAssignmentMutation.mutate({ server, tool })
                       }
@@ -541,14 +552,19 @@ export function McpPage() {
               <code className="mt-2 block text-xs break-all">
                 {status.targetPath ?? "目标位置未经 capability probe 证明"}
               </code>
-              <p className="mt-2">
-                {status.status}
-                {status.diagnosticCode ? ` · ${status.diagnosticCode}` : ""}
-              </p>
+              <div className="mt-2">
+                <SyncStatusBadge status={status.status} />
+              </div>
+              {status.diagnosticCode ? (
+                <code className="mt-2 block text-xs">
+                  {status.diagnosticCode}
+                </code>
+              ) : null}
               <Button
                 className="mt-3"
                 size="sm"
                 disabled={
+                  previewMutation.isPending ||
                   status.status === "failed" ||
                   status.status === "policy_blocked" ||
                   status.status === "untrusted"
@@ -652,13 +668,22 @@ export function McpPage() {
               <Button
                 size="sm"
                 variant={option.state === "selected" ? "default" : "outline"}
-                disabled={!option.selectable || !selectedProject}
+                disabled={
+                  !option.selectable ||
+                  !selectedProject ||
+                  projectAssignmentMutation.isPending
+                }
                 onClick={() =>
-                  projectAssignmentMutation.mutate({
-                    mcpId: option.mcpId,
-                    rowVersion: option.rowVersion,
-                    assigned: option.state !== "selected",
-                  })
+                  selectedProject
+                    ? projectAssignmentMutation.mutate({
+                        projectId: selectedProject.id,
+                        tool: projectTool,
+                        mcpId: option.mcpId,
+                        assigned: option.state !== "selected",
+                        mcpRowVersion: option.rowVersion,
+                        projectRowVersion: selectedProject.rowVersion,
+                      })
+                    : undefined
                 }
               >
                 {option.state === "inherited"
@@ -674,6 +699,7 @@ export function McpPage() {
           className="mt-4"
           disabled={
             !projectId ||
+            previewMutation.isPending ||
             (projectTool === "codex" &&
               selectedProject?.codexTrustStatus !== "trusted")
           }

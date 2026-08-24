@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -6,12 +6,15 @@ import {
   commands,
   type ApplySkillPreviewInput,
   type PreviewPlan,
+  type SetProjectSkillAssignmentInput,
   type SkillContentPreviewDto,
   type SkillDto,
   type Tool,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import {
   globalSkillStatusesQueryOptions,
@@ -40,8 +43,9 @@ export function SkillsPage() {
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenSkillPreview | null>(null);
-  const contentCloseButtonRef = useRef<HTMLButtonElement>(null);
-  const contentPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const closeContentPreview = () => setContentPreview(null);
+  const { dialogRef: contentDialogRef, onKeyDown: onContentDialogKeyDown } =
+    useDialogFocus(contentPreview !== null, closeContentPreview);
   const projectOptionsQuery = useQuery(
     skillProjectOptionsQueryOptions(projectId, projectTool),
   );
@@ -53,19 +57,6 @@ export function SkillsPage() {
     projectId.length > 0 &&
     projectTool === "codex" &&
     selectedProject?.codexTrustStatus !== "trusted";
-
-  useEffect(() => {
-    if (!contentPreview) {
-      return undefined;
-    }
-
-    contentPreviousFocusRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    contentCloseButtonRef.current?.focus();
-    return () => contentPreviousFocusRef.current?.focus();
-  }, [contentPreview]);
 
   const invalidateSkills = async () => {
     await queryClient.invalidateQueries({ queryKey: skillKeys.all });
@@ -117,29 +108,8 @@ export function SkillsPage() {
   });
 
   const projectAssignmentMutation = useMutation({
-    mutationFn: async ({
-      skillId,
-      rowVersion,
-      assigned,
-    }: {
-      skillId: string;
-      rowVersion: number;
-      assigned: boolean;
-    }) => {
-      if (!selectedProject) {
-        throw new Error("请先选择已登记项目。");
-      }
-      return unwrapResult(
-        await commands.setProjectSkillAssignment({
-          projectId: selectedProject.id,
-          tool: projectTool,
-          skillId,
-          assigned,
-          skillRowVersion: rowVersion,
-          projectRowVersion: selectedProject.rowVersion,
-        }),
-      );
-    },
+    mutationFn: async (input: SetProjectSkillAssignmentInput) =>
+      unwrapResult(await commands.setProjectSkillAssignment(input)),
     onSuccess: invalidateSkills,
   });
 
@@ -344,10 +314,7 @@ export function SkillsPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={
-                        contentMutation.isPending &&
-                        contentMutation.variables === skill.id
-                      }
+                      disabled={contentMutation.isPending}
                       onClick={() => contentMutation.mutate(skill.id)}
                     >
                       {contentMutation.isPending &&
@@ -395,8 +362,9 @@ export function SkillsPage() {
                         skill.globalTools.includes(tool) ? "default" : "outline"
                       }
                       disabled={
-                        skill.status !== "ready" &&
-                        !skill.globalTools.includes(tool)
+                        globalAssignmentMutation.isPending ||
+                        (skill.status !== "ready" &&
+                          !skill.globalTools.includes(tool))
                       }
                       onClick={() =>
                         globalAssignmentMutation.mutate({ skill, tool })
@@ -443,7 +411,7 @@ export function SkillsPage() {
             >
               <div className="flex items-center justify-between gap-2">
                 <strong>{status.tool === "claude" ? "Claude" : "Codex"}</strong>
-                <span>{status.status}</span>
+                <SyncStatusBadge status={status.status} />
               </div>
               <code className="mt-2 block text-xs break-all">
                 {status.targetPath ?? "目标不可用"}
@@ -457,6 +425,7 @@ export function SkillsPage() {
                 className="mt-3"
                 size="sm"
                 variant="outline"
+                disabled={previewMutation.isPending}
                 onClick={() =>
                   previewMutation.mutate({
                     tool: status.tool,
@@ -572,11 +541,16 @@ export function SkillsPage() {
                   !option.selectable || projectAssignmentMutation.isPending
                 }
                 onChange={(event) =>
-                  projectAssignmentMutation.mutate({
-                    skillId: option.skillId,
-                    rowVersion: option.rowVersion,
-                    assigned: event.target.checked,
-                  })
+                  selectedProject
+                    ? projectAssignmentMutation.mutate({
+                        projectId: selectedProject.id,
+                        tool: projectTool,
+                        skillId: option.skillId,
+                        assigned: event.target.checked,
+                        skillRowVersion: option.rowVersion,
+                        projectRowVersion: selectedProject.rowVersion,
+                      })
+                    : undefined
                 }
               />
             </label>
@@ -585,7 +559,9 @@ export function SkillsPage() {
         <Button
           className="mt-4"
           variant="outline"
-          disabled={!projectId || projectTrustBlocked}
+          disabled={
+            !projectId || projectTrustBlocked || previewMutation.isPending
+          }
           onClick={() =>
             previewMutation.mutate({
               tool: projectTool,
@@ -598,18 +574,16 @@ export function SkillsPage() {
       </section>
 
       {contentPreview ? (
-        <section
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="skill-content-title"
-          className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setContentPreview(null);
-            }
-          }}
-        >
-          <div className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
+          <section
+            ref={contentDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="skill-content-title"
+            tabIndex={-1}
+            onKeyDown={onContentDialogKeyDown}
+            className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-6 shadow-xl"
+          >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-muted-foreground text-sm">
@@ -622,12 +596,7 @@ export function SkillsPage() {
                   {contentPreview.name}
                 </h2>
               </div>
-              <Button
-                ref={contentCloseButtonRef}
-                variant="outline"
-                size="sm"
-                onClick={() => setContentPreview(null)}
-              >
+              <Button variant="outline" size="sm" onClick={closeContentPreview}>
                 关闭
               </Button>
             </div>
@@ -645,8 +614,8 @@ export function SkillsPage() {
                 目录文件列表为空。
               </p>
             ) : null}
-          </div>
-        </section>
+          </section>
+        </div>
       ) : null}
 
       <ChangePreviewDialog

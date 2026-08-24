@@ -8,6 +8,94 @@ export const commands = {
 async getAppInfo() : Promise<AppInfoDto> {
     return await TAURI_INVOKE("get_app_info");
 },
+async getDashboardSummary() : Promise<Result<DashboardSummaryDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_dashboard_summary") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async completeOnboarding() : Promise<Result<CompleteOnboardingResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_onboarding") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listSnapshots() : Promise<Result<SnapshotSummary[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_snapshots") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getInterruptedRun() : Promise<Result<InterruptedRunPlan | null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_interrupted_run") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewSnapshotRestore(input: SnapshotRestoreInput) : Promise<Result<RestorePreview, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_snapshot_restore", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async restoreSnapshot(input: ApplySnapshotRestoreInput) : Promise<Result<ApplyResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restore_snapshot", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listProjects() : Promise<Result<ProjectDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProject(id: string) : Promise<Result<ProjectDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_project", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async registerProject(input: RegisterProjectInput) : Promise<Result<ProjectDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("register_project", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rescanProject(input: VersionedProjectInput) : Promise<Result<ProjectDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rescan_project", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeProject(input: VersionedProjectInput) : Promise<Result<RemoveProjectResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_project", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listProviderProfiles(tool: Tool) : Promise<Result<ProviderProfileDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_provider_profiles", { tool }) };
@@ -381,6 +469,7 @@ export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: s
 export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
 export type ApplySkillPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
+export type ApplySnapshotRestoreInput = { previewId: string; snapshotId: string }
 /**
  * 受管资源种类。
  */
@@ -391,8 +480,11 @@ export type CapabilityState = "supported" | "unsupported" | "tool_not_installed"
  */
 export type ChangeKind = "add" | "update" | "delete" | "unchanged" | "warning" | "conflict"
 export type ClaudeCredentialEnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN"
+export type CompleteOnboardingResultDto = { completed: boolean }
 export type ConfirmImportInput = { previewId: string; name: string }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
+export type DashboardSummaryDto = { tools: DashboardToolSummaryDto[]; projectCount: number; conflictCount: number; snapshotCount: number; recentSyncRuns: RecentSyncRunDto[]; interruptedRun: InterruptedRunPlan | null; needsOnboarding: boolean }
+export type DashboardToolSummaryDto = { tool: Tool; activeProviderName: string | null; activePromptName: string | null; globalMcpCount: number; globalSkillCount: number }
 export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "project" | "managed_target" | "managed_item"
 export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: string; rowVersion: number }
 export type DeleteMcpResultDto = { id: string; deleted: boolean }
@@ -403,6 +495,7 @@ export type DeleteSkillResultDto = { id: string; deleted: boolean }
  */
 export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED"
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
+export type GitRepositoryStatus = "repository" | "not_repository" | "unavailable"
 export type ImportSkillInput = { sourcePath: string }
 export type InterruptedRunPlan = { runId: string; status: string; journalAvailable: boolean; targets: InterruptedTargetPlan[] }
 export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }
@@ -421,6 +514,9 @@ export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; exclud
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
 export type PreviewSkillSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
+export type ProjectDto = { id: string; displayName: string; rootPath: string; pathStatus: ProjectPathStatus; gitStatus: GitRepositoryStatus; codexTrustStatus: TrustStatus; claudePolicyStatus: PolicyState; targets: ProjectTargetStatusDto[]; lastScannedAt: string | null; rowVersion: number }
+export type ProjectPathStatus = "valid" | "missing" | "permission_denied" | "invalid"
+export type ProjectTargetStatusDto = { tool: Tool; artifactKind: ArtifactKind; targetPath: string | null; capability: CapabilityState; policy: PolicyState; trust: TargetTrustState; status: SyncStatus; diagnosticCode: string | null }
 export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; body: string }
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
 export type PromptProfileDto = { id: string; tool: Tool; name: string; body: string; isActive: boolean; importedFromPath: string | null; rowVersion: number }
@@ -430,7 +526,10 @@ export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | nu
 export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null }
 export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
 export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
+export type RecentSyncRunDto = { id: string; kind: SyncRunKind; status: SyncRunStatus; scope: Scope; projectId: string | null; startedAt: string; finishedAt: string | null; errorCode: ErrorCode | null }
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
+export type RegisterProjectInput = { displayName: string; rootPath: string }
+export type RemoveProjectResultDto = { id: string; removed: boolean; nativeConfigurationLeftUnmanaged: boolean }
 export type RestorePreview = { previewId: string; snapshotId: string; targetPath: string; currentType: TargetType; snapshotType: TargetType }
 /**
  * 资源应用范围。
@@ -451,6 +550,7 @@ export type SkillProjectOptionsInput = { projectId: string; tool: Tool }
 export type SkillProjectSelectionState = "inherited" | "selected" | "available"
 export type SkillStatus = "ready" | "invalid" | "missing"
 export type SkillTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
+export type SnapshotRestoreInput = { snapshotId: string }
 export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; createdAt: string }
 export type SymlinkPolicy = "reject" | "managed_children_only"
 export type SyncRunKind = "preview" | "apply" | "restore"
@@ -478,6 +578,7 @@ export type UpdatePromptProfileInput = { id: string; name: string; body: string;
 export type UpdateProviderProfileInput = { id: string; name: string; apiBaseUrl: string; apiKey: SecretUpdate; defaultModel: string; options: ProviderOptionsInput; rowVersion: number }
 export type VersionedMcpInput = { id: string; rowVersion: number }
 export type VersionedProfileInput = { id: string; rowVersion: number }
+export type VersionedProjectInput = { id: string; rowVersion: number }
 export type VersionedSkillInput = { id: string; rowVersion: number }
 
 /** tauri-specta globals **/

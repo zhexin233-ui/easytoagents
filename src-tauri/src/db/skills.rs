@@ -421,7 +421,9 @@ pub fn list_projects(database: &Database) -> Result<Vec<SkillProjectRecord>, App
         .connection()
         .prepare(
             "SELECT id, display_name, root_path, codex_trust_status, row_version
-             FROM projects ORDER BY display_name COLLATE NOCASE, root_path",
+             FROM projects
+             WHERE removed_at IS NULL
+             ORDER BY display_name COLLATE NOCASE, root_path",
         )
         .map_err(|_| AppError::database(&path, "prepare_list_skill_projects"))?;
     let projects = statement
@@ -439,7 +441,7 @@ pub fn get_project(database: &Database, id: &str) -> Result<SkillProjectRecord, 
         .connection()
         .query_row(
             "SELECT id, display_name, root_path, codex_trust_status, row_version
-             FROM projects WHERE id = ?1",
+             FROM projects WHERE id = ?1 AND removed_at IS NULL",
             [id],
             project_from_row,
         )

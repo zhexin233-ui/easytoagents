@@ -542,3 +542,100 @@ fs::remove_dir_all(database_central_path)?;
 let prepared = prepare_skill_import(paths, source)?;
 let inspection = inspect_central_skill(paths, id, central_path, expected_hash, status, false)?;
 ```
+
+## Scenario: Project registry, live status, dashboard, and onboarding
+
+### 1. Scope / Trigger
+
+- Trigger: project registration/rescan/removal, project status DTOs, dashboard
+  aggregation, first-run takeover, or snapshot restore entry-point changes.
+
+### 2. Signatures
+
+- Project mutations use `RegisterProjectInput` or `VersionedProjectInput`; removal
+  returns `RemoveProjectResultDto` and never mutates a native project target.
+- Project reads return `ProjectDto` after a fresh native scan. Dashboard reads return
+  `DashboardSummaryDto`; explicit all-skip completion uses an idempotent
+  `complete_onboarding` central-state command.
+- Snapshot UI first calls `preview_snapshot_restore`, then consumes its exact preview
+  through `restore_snapshot`.
+
+### 3. Contracts
+
+- Canonical project-root identity is unique with `NOCASE` semantics. Re-registering a
+  soft-removed root reactivates the existing project identity; an active root is a
+  conflict.
+- Rescan and ordinary project reads inspect current Git, Codex trust, Claude policy,
+  native target type/content, managed-item hashes, and external same-name collisions.
+  They never substitute persisted `last_status` for native evidence.
+- Project removal is CAS-protected, is blocked by any `applying`, `restoring`, or
+  `rollback_failed` run, removes only central assignment intent, and leaves native
+  files/links untouched.
+- Project assignment updates bump the project row version. Every frontend consumer of
+  project, MCP, and Skill project DTOs must refresh together after either assignment.
+- Dashboard run kind/status/error values use generated enums, not open strings. Unknown
+  database values fail closed. Counts and recovery entries expose only central
+  metadata, status, paths, hashes, and stable codes.
+- First-run detection is read-only. Import confirmation changes only central intent;
+  every native write still needs a persisted preview and exact Apply. An interrupted
+  wizard can regenerate previews from active central profiles. Explicit all-skip is
+  persisted so the app does not loop forever while both tools remain unmanaged.
+- A global snapshot restore derives its allowed root from the exact tool/artifact
+  matrix (`HOME`, `CLAUDE_CONFIG_DIR`, or `CODEX_HOME`). A removed-project snapshot is
+  not restorable until the project identity is active again.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Missing, non-directory, permission-denied, symlink-escaped, or case-only duplicate root | Stable path/conflict error; no row or native write |
+| Re-register a soft-removed canonical root | Reactivate the same identity and rescan current native state |
+| Stale project `row_version` | `CONFLICT`; preserve project, assignments, and native targets |
+| Any active Apply/Restore/rollback-recovery run during removal | `WRITE_IN_PROGRESS`; remove nothing |
+| Native external same-name entry or managed-item drift | Distinct conflict/drift target status; never reuse cached success |
+| Unknown recent-run kind/status/error value | Fail closed while building the typed dashboard DTO |
+| All tools explicitly skipped in onboarding | Persist completion; create no profile, preview, or native write |
+| Global snapshot under overridden roots or snapshot of removed project | Derive exact matrix root; removed project remains blocked |
+
+### 5. Good/Base/Bad Cases
+
+- Good: register a canonical isolated project, scan current Git/policy/trust and native
+  targets, select only project additions, review a persisted preview, and restore a
+  snapshot through the exact tool/artifact root.
+- Base: list/rescan/dashboard/onboarding detection reads current evidence and central
+  metadata only; project CRUD and import confirmation do not write native targets.
+- Bad: a case alias, stale project version, active writer, external same-name item,
+  removed-project snapshot, unknown run enum, or skipped tool is never reported as
+  synchronized and never triggers an implicit Apply.
+
+### 6. Tests Required
+
+- Use explicit canonical `tempfile` home, Claude root, Codex root, project root, and
+  application-data root. Never read process tool environment or a developer config.
+- Cover symlink aliases, `NOCASE` duplicates, soft reactivation, stale removal CAS,
+  active-writer removal blocking, native preservation, live managed drift, and
+  external same-name conflict before the first preview.
+- Cover explicit all-skip persistence, typed recent-run DTOs, custom config-root
+  restore routing, removed-project restore blocking, and zero secret values in all
+  dashboard/project/recovery serialization.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let project = repository.find_by_root(input.root_path)?;
+let status = project.last_status;
+restore_snapshot(snapshot_id, environment.home())?;
+```
+
+#### Correct
+
+```rust
+let project = register_project(database, environment, &input)?;
+let project = rescan_project(database, environment, &VersionedProjectInput {
+    id: project.id,
+    row_version: project.row_version,
+})?;
+let context = snapshot_restore_context(database, environment, snapshot_id)?;
+```

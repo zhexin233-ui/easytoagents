@@ -17,6 +17,7 @@ use crate::{
 
 pub mod mcp;
 pub mod profiles;
+pub mod projects;
 pub mod skills;
 
 const MIGRATIONS: &[Migration] = &[
@@ -34,6 +35,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 3,
         name: "profile_import_previews",
         sql: include_str!("migrations/0003_profile_import_previews.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "project_registration",
+        sql: include_str!("migrations/0004_project_registration.sql"),
     },
 ];
 
@@ -359,7 +365,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 3);
+        assert_eq!(database.schema_version().unwrap(), 4);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -390,6 +396,7 @@ mod tests {
             "sync_items",
             "snapshots",
             "profile_import_previews",
+            "onboarding_state",
         ] {
             assert!(tables.contains(table), "缺少表：{table}");
         }

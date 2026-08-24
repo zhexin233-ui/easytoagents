@@ -296,7 +296,10 @@ describe("SkillsPage", () => {
     const dialog = await screen.findByRole("dialog", {
       name: skill.name,
     });
-    expect(screen.getByRole("button", { name: "关闭" })).toHaveFocus();
+    const closeButton = screen.getByRole("button", { name: "关闭" });
+    expect(closeButton).toHaveFocus();
+    expect(fireEvent.keyDown(dialog, { key: "Tab" })).toBe(false);
+    expect(closeButton).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Escape" });
 
     await waitFor(() => expect(dialog).not.toBeInTheDocument());

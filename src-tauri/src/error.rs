@@ -67,6 +67,28 @@ impl ErrorCode {
         }
     }
 
+    pub fn from_stable_str(value: &str) -> Option<Self> {
+        match value {
+            "NOT_FOUND" => Some(Self::NotFound),
+            "INVALID_INPUT" => Some(Self::InvalidInput),
+            "PARSE_ERROR" => Some(Self::ParseError),
+            "PERMISSION_DENIED" => Some(Self::PermissionDenied),
+            "POLICY_BLOCKED" => Some(Self::PolicyBlocked),
+            "UNTRUSTED_PROJECT" => Some(Self::UntrustedProject),
+            "CONFLICT" => Some(Self::Conflict),
+            "STALE_PREVIEW" => Some(Self::StalePreview),
+            "PREVIEW_ALREADY_CONSUMED" => Some(Self::PreviewAlreadyConsumed),
+            "WRITE_IN_PROGRESS" => Some(Self::WriteInProgress),
+            "ATOMIC_WRITE_FAILED" => Some(Self::AtomicWriteFailed),
+            "ROLLBACK_FAILED" => Some(Self::RollbackFailed),
+            "SECRET_REDACTED" => Some(Self::SecretRedacted),
+            "DATABASE_ERROR" => Some(Self::DatabaseError),
+            "MIGRATION_FAILED" => Some(Self::MigrationFailed),
+            "PERMISSION_AUDIT_FAILED" => Some(Self::PermissionAuditFailed),
+            _ => None,
+        }
+    }
+
     fn detail_allowlist(self) -> &'static [&'static str] {
         match self {
             Self::NotFound => &["resource", "id", "path"],
@@ -373,7 +395,9 @@ mod tests {
                 serde_json::to_value(code).unwrap(),
                 Value::String(code.as_str().to_owned())
             );
+            assert_eq!(ErrorCode::from_stable_str(code.as_str()), Some(code));
         }
+        assert_eq!(ErrorCode::from_stable_str("UNKNOWN"), None);
         assert_eq!(
             serde_json::to_value([
                 RecoveryAction::Rescan,

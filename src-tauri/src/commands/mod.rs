@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 pub mod mcp;
+pub mod overview;
 pub mod profiles;
+pub mod projects;
 pub mod skills;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]

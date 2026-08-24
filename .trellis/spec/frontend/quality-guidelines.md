@@ -284,3 +284,104 @@ await invoke("apply_skill_preview", preview);
 const plan = unwrapResult(await commands.previewSkillSync(input));
 await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId });
 ```
+
+## Scenario: Project detail, dashboard, onboarding, and recovery dialogs
+
+### 1. Scope / Trigger
+
+- Trigger: project list/detail, project MCP/Skill assignment, dashboard cards/history,
+  first-run takeover, status badges, blocking states, or snapshot restore UI changes.
+
+### 2. Signatures
+
+- Project CRUD uses generated `RegisterProjectInput`, `VersionedProjectInput`,
+  `ProjectDto`, and `RemoveProjectResultDto`; assignment calls send the complete
+  generated MCP/Skill input including project/tool/item IDs and both row versions.
+- Onboarding consumes generated discovery/import/profile/preview/apply commands.
+  Snapshot recovery uses `SnapshotRestoreInput`, `RestorePreview`, and
+  `ApplySnapshotRestoreInput` without reconstructing a restore payload locally.
+- Dashboard and shared components render generated `DashboardSummaryDto`,
+  `RecentSyncRunDto`, `SyncStatus`, `ChangeKind`, and stable error enums.
+
+### 3. Contracts
+
+- Project pages consume generated `ProjectDto` and option DTOs. Global inheritance is
+  checked and read-only; there is no project-level global-disable mutation.
+- Either MCP or Skill project assignment invalidates project, MCP, and Skill query-key
+  families together because the backend increments the shared project row version.
+- Project targets keep capability, policy, trust, missing, parse, permission, managed
+  drift, and external same-name conflict states distinct. Unknown is never styled or
+  described as synchronized.
+- Onboarding follows detect → explicit per-tool choice → persisted preview → exact
+  Apply. Detection renders only redacted native evidence. Closing preserves choices;
+  reopening re-detects native state and can preview an already imported active central
+  profile without confirming the import twice. All-skip calls the typed completion
+  command and performs no native Apply.
+- `ChangePreviewDialog`, `SyncStatusBadge`, `BlockingState`, and
+  `SnapshotRestoreDialog` own the shared status language. Dialogs have labels,
+  descriptions, modal semantics, Escape handling, focus trapping/restoration, and
+  clear stale state when reopened. Color is never the only status signal.
+- Dashboard counts, recent runs, conflicts, interrupted-run recovery, and snapshots
+  come only from generated DTOs; components never parse SQLite/native payloads or show
+  snapshot content.
+
+### 4. Validation & Error Matrix
+
+| UI condition | Required rendering/behavior |
+| --- | --- |
+| Project/register/rescan/remove pending or stale | Disable duplicate action; preserve context; render structured conflict |
+| Inherited MCP/Skill option | Checked/read-only text; no project mutation path |
+| Policy/trust/parse/permission/drift/external-name block | Distinct text/code and `BlockingState`; never imply synchronized |
+| Assignment success | Invalidate project, MCP, and Skill key families together |
+| Tool onboarding choice omitted | Keep preview disabled until choose import/manage or explicit skip |
+| All tools skipped | Call typed completion only; no preview/apply command |
+| Empty or blocked persisted preview | Explain no-write/block; do not expose enabled Apply |
+| Dialog close/Escape/reopen | Trap and restore focus; clear stale preview/mutation state |
+
+### 5. Good/Base/Bad Cases
+
+- Good: register an isolated project, inspect distinct target states, assign an
+  additional item with the displayed versions, review a persisted preview, and use
+  the shared restore dialog whose focus and preview lifecycle are deterministic.
+- Base: dashboard and project lists render generated metadata; onboarding detection
+  and explicit skip remain read-only and resumable.
+- Bad: reuse a stale project version from a selection closure, toggle inherited state,
+  serialize an asserted RPC payload, apply on import success, show unknown as healthy,
+  or reopen a restore dialog with its previous preview.
+
+### 6. Tests Required
+
+- Mock only generated commands with an isolated `QueryClient`.
+- Assert inherited controls cannot mutate, assignment payloads use the displayed row
+  versions, and project/MCP/Skill active queries all refetch after either assignment.
+- Cover explicit all-skip completion, interrupted active-profile preview regeneration,
+  redacted discovery/preview rendering, exact preview ID Apply, and no implicit native
+  write command.
+- Cover dialog label/modal attributes, Tab containment, Escape, focus restoration,
+  blocked Apply, and snapshot-list restoration after closing a preview and reopening.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+await commands.setProjectMcpAssignment({
+  ...option,
+  projectId: selectedProject.id,
+  projectRowVersion: selectedProject.rowVersion,
+});
+```
+
+#### Correct
+
+```tsx
+const input: SetProjectMcpAssignmentInput = {
+  projectId: project.id,
+  tool,
+  mcpId: option.mcpId,
+  assigned: true,
+  mcpRowVersion: option.rowVersion,
+  projectRowVersion: project.rowVersion,
+};
+projectAssignmentMutation.mutate(input);
+```

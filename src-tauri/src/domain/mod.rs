@@ -27,6 +27,13 @@ macro_rules! string_enum {
                     $(Self::$variant => $value),+
                 }
             }
+
+            pub fn from_stable_str(value: &str) -> Option<Self> {
+                match value {
+                    $($value => Some(Self::$variant)),+,
+                    _ => None,
+                }
+            }
         }
 
         impl fmt::Display for $name {

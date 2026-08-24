@@ -1031,25 +1031,8 @@ fn parse_sync_status(value: &str) -> Result<SyncStatus, AppError> {
 }
 
 fn parse_error_code(value: &str) -> Result<ErrorCode, AppError> {
-    match value {
-        "NOT_FOUND" => Ok(ErrorCode::NotFound),
-        "INVALID_INPUT" => Ok(ErrorCode::InvalidInput),
-        "PARSE_ERROR" => Ok(ErrorCode::ParseError),
-        "PERMISSION_DENIED" => Ok(ErrorCode::PermissionDenied),
-        "POLICY_BLOCKED" => Ok(ErrorCode::PolicyBlocked),
-        "UNTRUSTED_PROJECT" => Ok(ErrorCode::UntrustedProject),
-        "CONFLICT" => Ok(ErrorCode::Conflict),
-        "STALE_PREVIEW" => Ok(ErrorCode::StalePreview),
-        "PREVIEW_ALREADY_CONSUMED" => Ok(ErrorCode::PreviewAlreadyConsumed),
-        "WRITE_IN_PROGRESS" => Ok(ErrorCode::WriteInProgress),
-        "ATOMIC_WRITE_FAILED" => Ok(ErrorCode::AtomicWriteFailed),
-        "ROLLBACK_FAILED" => Ok(ErrorCode::RollbackFailed),
-        "SECRET_REDACTED" => Ok(ErrorCode::SecretRedacted),
-        "DATABASE_ERROR" => Ok(ErrorCode::DatabaseError),
-        "MIGRATION_FAILED" => Ok(ErrorCode::MigrationFailed),
-        "PERMISSION_AUDIT_FAILED" => Ok(ErrorCode::PermissionAuditFailed),
-        _ => Err(AppError::invalid_input("errorCode", "数据库包含未知错误码")),
-    }
+    ErrorCode::from_stable_str(value)
+        .ok_or_else(|| AppError::invalid_input("errorCode", "数据库包含未知错误码"))
 }
 
 #[cfg(test)]

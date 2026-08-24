@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(state.paths(), &paths);
         assert_eq!(
             state.database().lock().unwrap().schema_version().unwrap(),
-            3
+            4
         );
         assert_eq!(state.redactor().read().unwrap().redact_text("safe"), "safe");
     }
