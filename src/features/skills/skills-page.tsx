@@ -425,7 +425,12 @@ export function SkillsPage() {
                 className="mt-3"
                 size="sm"
                 variant="outline"
-                disabled={previewMutation.isPending}
+                disabled={
+                  previewMutation.isPending ||
+                  status.status === "failed" ||
+                  status.status === "policy_blocked" ||
+                  status.status === "untrusted"
+                }
                 onClick={() =>
                   previewMutation.mutate({
                     tool: status.tool,

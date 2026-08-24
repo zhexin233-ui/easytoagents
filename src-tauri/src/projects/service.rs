@@ -5,8 +5,7 @@ use rusqlite::OptionalExtension;
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        ClaudeCustomizationPolicyProbe, ConservativeClaudeCustomizationPolicyProbe,
-        ConservativeClaudeUserMcpProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
+        ClaudeCustomizationPolicyProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
         PolicyState, TargetDescriptor, TargetTrustState, ToolAdapter,
     },
     db::{mcp as mcp_repository, projects as repository, skills as skill_repository, Database},
@@ -37,10 +36,16 @@ pub fn list_projects(
     database: &Database,
     environment: &ExplicitEnvironment,
 ) -> Result<Vec<ProjectDto>, AppError> {
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     repository::list_registered_projects(database)?
         .into_iter()
-        .map(|record| project_dto(database, environment, &policy_probe, record))
+        .map(|record| {
+            project_dto(
+                database,
+                environment,
+                environment.claude_customization_policy_probe(),
+                record,
+            )
+        })
         .collect()
 }
 
@@ -49,9 +54,13 @@ pub fn get_project(
     environment: &ExplicitEnvironment,
     id: &str,
 ) -> Result<ProjectDto, AppError> {
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     let record = repository::get_registered_project(database, id)?;
-    project_dto(database, environment, &policy_probe, record)
+    project_dto(
+        database,
+        environment,
+        environment.claude_customization_policy_probe(),
+        record,
+    )
 }
 
 pub fn register_project(
@@ -59,8 +68,12 @@ pub fn register_project(
     environment: &ExplicitEnvironment,
     input: &RegisterProjectInput,
 ) -> Result<ProjectDto, AppError> {
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
-    register_project_with_policy_probe(database, environment, input, &policy_probe)
+    register_project_with_policy_probe(
+        database,
+        environment,
+        input,
+        environment.claude_customization_policy_probe(),
+    )
 }
 
 fn register_project_with_policy_probe(
@@ -103,7 +116,6 @@ pub fn rescan_project(
     environment: &ExplicitEnvironment,
     input: &VersionedProjectInput,
 ) -> Result<ProjectDto, AppError> {
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     let current = repository::get_registered_project(database, &input.id)?;
     if current.row_version != input.row_version {
         return Err(AppError::conflict("rowVersion", "项目已被其他操作更新"));
@@ -143,7 +155,12 @@ pub fn rescan_project(
             );
         }
     };
-    let observation = observe_project(database, environment, &policy_probe, &canonical)?;
+    let observation = observe_project(
+        database,
+        environment,
+        environment.claude_customization_policy_probe(),
+        &canonical,
+    )?;
     let updated = repository::update_project_scan(
         database,
         &input.id,
@@ -281,11 +298,10 @@ fn observe_project(
         Ok(_) => GitRepositoryStatus::NotRepository,
         Err(_) => GitRepositoryStatus::Unavailable,
     };
-    let user_probe = ConservativeClaudeUserMcpProbe;
     let context = DiscoveryContext {
         environment,
         project_root: Some(project_root),
-        claude_user_mcp_probe: &user_probe,
+        claude_user_mcp_probe: environment.claude_user_mcp_probe(),
         claude_customization_policy_probe: policy_probe,
     };
     let claude_targets = ClaudeAdapter.discover(&context)?;

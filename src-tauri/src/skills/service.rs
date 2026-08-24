@@ -25,8 +25,7 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        ClaudeCustomizationPolicyProbe, ConservativeClaudeCustomizationPolicyProbe,
-        ConservativeClaudeUserMcpProbe, DiscoveryContext, ManagedOwnership, TargetDescriptor,
+        ClaudeCustomizationPolicyProbe, DiscoveryContext, ManagedOwnership, TargetDescriptor,
         ToolAdapter,
     },
     app::AppPaths,
@@ -228,14 +227,13 @@ pub fn preview_skill_sync(
     redactor: &SecretRedactor,
     input: &PreviewSkillSyncInput,
 ) -> Result<PreviewPlan, AppError> {
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     preview_skill_sync_with_policy_probe(
         database,
         paths,
         environment,
         redactor,
         input,
-        &policy_probe,
+        environment.claude_customization_policy_probe(),
     )
 }
 
@@ -279,7 +277,6 @@ pub fn apply_skill_preview(
     redactor: &SecretRedactor,
     input: &ApplySkillPreviewInput,
 ) -> Result<ApplyResult, AppError> {
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     apply_skill_preview_with_policy_probe(
         write_operations,
         database,
@@ -287,7 +284,7 @@ pub fn apply_skill_preview(
         environment,
         redactor,
         input,
-        &policy_probe,
+        environment.claude_customization_policy_probe(),
     )
 }
 
@@ -353,8 +350,12 @@ pub fn list_global_skill_target_statuses(
     paths: &AppPaths,
     environment: &crate::adapters::ExplicitEnvironment,
 ) -> Result<Vec<SkillTargetStatusDto>, AppError> {
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
-    list_global_skill_target_statuses_with_policy_probe(database, paths, environment, &policy_probe)
+    list_global_skill_target_statuses_with_policy_probe(
+        database,
+        paths,
+        environment,
+        environment.claude_customization_policy_probe(),
+    )
 }
 
 pub fn list_global_skill_target_statuses_with_policy_probe(
@@ -564,11 +565,10 @@ fn descriptor_for(
     project_root: Option<&ProjectRoot>,
     policy_probe: &dyn ClaudeCustomizationPolicyProbe,
 ) -> Result<TargetDescriptor, AppError> {
-    let user_probe = ConservativeClaudeUserMcpProbe;
     let context = DiscoveryContext {
         environment,
         project_root,
-        claude_user_mcp_probe: &user_probe,
+        claude_user_mcp_probe: environment.claude_user_mcp_probe(),
         claude_customization_policy_probe: policy_probe,
     };
     tool_adapter(tool)
@@ -997,7 +997,14 @@ mod tests {
                 ExplicitEnvironment::new(&home, None, None, ToolAvailability::all_installed())
                     .unwrap()
                     .with_claude_installation_version("fixture-1.0.0")
-                    .unwrap();
+                    .unwrap()
+                    .with_claude_customization_policy_evidence(
+                        VerifiedClaudeCustomizationPolicyEvidence::from_effective_setting(
+                            "fixture-1.0.0",
+                            None,
+                        )
+                        .unwrap(),
+                    );
             let paths = AppPaths::from_data_root(root.join("private/app-data")).unwrap();
             let database = Database::open(&paths).unwrap();
             let project_id = Uuid::new_v4().to_string();
@@ -1065,6 +1072,63 @@ mod tests {
             )
             .unwrap()
         }
+    }
+
+    #[test]
+    fn public_preview_status_and_apply_reuse_environment_policy_evidence() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("release-evidence-skill");
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let statuses = super::list_global_skill_target_statuses(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+        )
+        .unwrap();
+        assert_ne!(statuses[0].status, SyncStatus::PolicyBlocked);
+        let preview = super::preview_skill_sync(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            preview.targets[0].descriptor.policy,
+            crate::adapters::PolicyState::Allowed
+        );
+        super::apply_skill_preview(
+            &std::sync::Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &ApplySkillPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        assert!(fixture
+            .home
+            .join(".claude/skills/release-evidence-skill")
+            .is_symlink());
     }
 
     #[test]

@@ -57,6 +57,26 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
       <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
         {statusQuery.data ? (
           <section className="rounded-lg border bg-white p-4 text-sm">
+            {statusQuery.data.availability === "installed" ? (
+              <p className="font-medium text-emerald-800">
+                已安全检测到 {title}
+                {statusQuery.data.installationVersion
+                  ? ` ${statusQuery.data.installationVersion}`
+                  : ""}
+              </p>
+            ) : null}
+            {statusQuery.data.availability === "unavailable" ? (
+              <p className="font-medium text-red-700">
+                未在发布进程的安全搜索路径中检测到 {title}
+                ；原生目标保持不可应用。
+              </p>
+            ) : null}
+            {statusQuery.data.availability === "unsupported" ? (
+              <p className="font-medium text-amber-800">
+                {title}
+                安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
+              </p>
+            ) : null}
             <p>{statusQuery.data.newSessionNotice}</p>
             {statusQuery.data.bearerTokenWarning ? (
               <p className="mt-2 text-amber-800">

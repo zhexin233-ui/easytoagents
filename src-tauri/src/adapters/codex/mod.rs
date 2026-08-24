@@ -23,11 +23,16 @@ impl ToolAdapter for CodexAdapter {
 
     fn discover(&self, context: &DiscoveryContext<'_>) -> Result<Vec<TargetDescriptor>, AppError> {
         let environment = context.environment;
-        let installed = environment.availability().codex;
-        let capability = if installed {
-            TargetCapability::supported()
-        } else {
-            TargetCapability::tool_not_installed()
+        let availability = environment.availability().codex;
+        let installed = availability.is_installed();
+        let capability = match availability {
+            crate::adapters::ToolAvailabilityState::Installed => TargetCapability::supported(),
+            crate::adapters::ToolAvailabilityState::Unavailable => {
+                TargetCapability::tool_not_installed()
+            }
+            crate::adapters::ToolAvailabilityState::Unsupported => {
+                TargetCapability::unsupported("CODEX_INSTALLATION_PROBE_UNSUPPORTED")
+            }
         };
         let config_path = environment.codex_home().join("config.toml");
         let prompt_override = if installed {

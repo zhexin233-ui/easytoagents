@@ -20,9 +20,8 @@ use super::models::{
 };
 use crate::{
     adapters::{
-        claude::ClaudeAdapter, codex::CodexAdapter, ConservativeClaudeCustomizationPolicyProbe,
-        ConservativeClaudeUserMcpProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
-        PolicyState, TargetDescriptor, ToolAdapter,
+        claude::ClaudeAdapter, codex::CodexAdapter, DiscoveryContext, ExplicitEnvironment,
+        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -288,6 +287,8 @@ pub fn get_tool_profile_status(
     let prompt = descriptor_for(environment, tool, ArtifactKind::Prompt)?;
     Ok(ToolProfileStatusDto {
         tool,
+        availability: environment.tool_availability(tool),
+        installation_version: environment.installation_version(tool).map(str::to_owned),
         provider_target_path: descriptor_path(&provider)?,
         prompt_target_path: descriptor_path(&prompt)?,
         prompt_override: prompt.prompt_override,
@@ -451,6 +452,7 @@ pub fn discover_prompt_import(
         return Ok(None);
     }
     let descriptor = descriptor_for(environment, tool, ArtifactKind::Prompt)?;
+    ensure_tool_is_available(&descriptor)?;
     let scan = scan_target(
         tool_adapter(tool),
         &descriptor,
@@ -511,6 +513,7 @@ pub fn confirm_prompt_import(
         ));
     }
     let descriptor = descriptor_for(environment, preview.tool, ArtifactKind::Prompt)?;
+    ensure_tool_is_available(&descriptor)?;
     if descriptor_path(&descriptor)? != preview.target_path {
         return Err(AppError::stale_preview(&preview.id, &preview.target_path));
     }
@@ -857,6 +860,7 @@ fn discover_native_provider(
 ) -> Result<Option<DiscoveredProvider>, AppError> {
     let mut descriptor = descriptor_for(environment, tool, ArtifactKind::Provider)?;
     refine_claude_provider_policy(&mut descriptor);
+    ensure_tool_is_available(&descriptor)?;
     if descriptor.policy != crate::adapters::PolicyState::Allowed {
         return Err(AppError::policy_blocked(
             "claude",
@@ -894,6 +898,20 @@ fn discover_native_provider(
     match tool {
         Tool::Claude => discover_claude_provider(&descriptor, &observed),
         Tool::Codex => discover_codex_provider(&descriptor, &observed),
+    }
+}
+
+fn ensure_tool_is_available(descriptor: &TargetDescriptor) -> Result<(), AppError> {
+    match descriptor.capability.state {
+        crate::adapters::CapabilityState::Supported => Ok(()),
+        crate::adapters::CapabilityState::ToolNotInstalled => Err(AppError::not_found(
+            "toolInstallation",
+            descriptor.tool.as_str(),
+        )),
+        crate::adapters::CapabilityState::Unsupported => Err(AppError::invalid_input(
+            "toolInstallation",
+            "工具安装探针未能安全确认版本",
+        )),
     }
 }
 
@@ -1193,8 +1211,8 @@ fn descriptor_for(
     let context = DiscoveryContext {
         environment,
         project_root: None,
-        claude_user_mcp_probe: &ConservativeClaudeUserMcpProbe,
-        claude_customization_policy_probe: &ConservativeClaudeCustomizationPolicyProbe,
+        claude_user_mcp_probe: environment.claude_user_mcp_probe(),
+        claude_customization_policy_probe: environment.claude_customization_policy_probe(),
     };
     adapter
         .discover(&context)?
@@ -1377,7 +1395,7 @@ mod tests {
         UpdatePromptProfileInput, UpdateProviderProfileInput,
     };
     use crate::{
-        adapters::{ExplicitEnvironment, PolicyState, ToolAvailability},
+        adapters::{ExplicitEnvironment, PolicyState, ToolAvailability, ToolAvailabilityState},
         app::AppPaths,
         db::Database,
         domain::{ArtifactKind, Tool},
@@ -1913,6 +1931,55 @@ base_url = "https://external.example.com/v1"
         assert!(list_provider_profiles(&fixture.database, Tool::Codex)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn tool_status_serializes_release_availability_and_imports_fail_before_native_reads() {
+        let mut fixture = fixture();
+        fs::write(
+            fixture.home.join(".claude/settings.json"),
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://should-not-import.example","ANTHROPIC_MODEL":"blocked","ANTHROPIC_API_KEY":"fixture-secret"}}"#,
+        )
+        .unwrap();
+        fs::write(fixture.home.join(".codex/AGENTS.md"), "# 不应读取的提示词").unwrap();
+        let environment = ExplicitEnvironment::new(
+            &fixture.home,
+            None,
+            None,
+            ToolAvailability {
+                claude: ToolAvailabilityState::Unavailable,
+                codex: ToolAvailabilityState::Unsupported,
+            },
+        )
+        .unwrap()
+        .with_claude_provider_policy(PolicyState::Allowed);
+
+        let claude = get_tool_profile_status(&environment, Tool::Claude).unwrap();
+        let codex = get_tool_profile_status(&environment, Tool::Codex).unwrap();
+        assert_eq!(claude.availability, ToolAvailabilityState::Unavailable);
+        assert_eq!(codex.availability, ToolAvailabilityState::Unsupported);
+        assert_eq!(claude.installation_version, None);
+        assert_eq!(codex.installation_version, None);
+        assert!(serde_json::to_string(&claude)
+            .unwrap()
+            .contains("\"availability\":\"unavailable\""));
+        assert_eq!(
+            discover_provider_import(
+                &mut fixture.database,
+                &environment,
+                &SecretRedactor::default(),
+                Tool::Claude,
+            )
+            .unwrap_err()
+            .code(),
+            crate::error::ErrorCode::NotFound
+        );
+        assert_eq!(
+            discover_prompt_import(&mut fixture.database, &environment, Tool::Codex)
+                .unwrap_err()
+                .code(),
+            crate::error::ErrorCode::InvalidInput
+        );
     }
 
     #[test]

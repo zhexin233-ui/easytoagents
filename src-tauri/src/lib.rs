@@ -35,6 +35,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<domain::TargetType>()
         .typ::<adapters::TargetFormat>()
         .typ::<adapters::CapabilityState>()
+        .typ::<adapters::ToolAvailabilityState>()
         .typ::<adapters::TargetCapability>()
         .typ::<adapters::PolicyState>()
         .typ::<adapters::TargetTrustState>()
@@ -196,13 +197,15 @@ pub fn run() {
             command_builder.mount_events(app);
             let paths = app::AppPaths::from_data_root(app.path().app_data_dir()?)?;
             let home = app.path().home_dir()?;
-            let environment = adapters::ExplicitEnvironment::new(
-                &home,
+            let probe_input = app::tool_probe::ReleaseToolProbeInput::for_macos_release(
+                home,
                 environment_path("CLAUDE_CONFIG_DIR"),
                 environment_path("CODEX_HOME"),
-                adapters::ToolAvailability::all_installed(),
-            )?
-            .with_claude_provider_policy(claude_provider_policy());
+                std::env::var_os("PATH").unwrap_or_default(),
+            );
+            let environment = app::tool_probe::probe_release_environment(&probe_input)?
+                .environment
+                .with_claude_provider_policy(claude_provider_policy());
             app.manage(app::AppState::initialize_with_environment(
                 paths,
                 environment,

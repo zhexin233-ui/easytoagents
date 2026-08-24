@@ -7,7 +7,7 @@ use serde_json::Value;
 use specta::Type;
 
 use crate::{
-    adapters::{PolicyState, PromptOverrideState},
+    adapters::{PolicyState, PromptOverrideState, ToolAvailabilityState},
     domain::{ArtifactKind, ArtifactName, Tool},
     error::AppError,
     security::contains_detectable_secret,
@@ -185,6 +185,8 @@ pub struct ApplyProfilePreviewInput {
 #[serde(rename_all = "camelCase")]
 pub struct ToolProfileStatusDto {
     pub tool: Tool,
+    pub availability: ToolAvailabilityState,
+    pub installation_version: Option<String>,
     pub provider_target_path: String,
     pub prompt_target_path: String,
     pub prompt_override: PromptOverrideState,

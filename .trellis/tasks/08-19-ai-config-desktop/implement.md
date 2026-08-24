@@ -200,7 +200,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - [x] 运行 destructive-path audit：所有删除目标必须 canonicalize 且证明属于中央库/managed item。
 - [x] 运行格式往返测试：Claude JSON 未知字段、Codex TOML 注释/未知表、Markdown 原文。
 - [x] 构建 macOS `.app` 与 DMG，并验证最低系统版本、架构与 DMG 校验和。
-- [ ] 在 release Tauri command 边界接入真实只读工具 availability、Claude 安装版本和版本绑定的 customization policy probe；不得以 `all_installed` 或测试注入证据代替。
+- [x] 在 release Tauri command/setup 边界接入固定参数、禁交互、超时且最小环境的真实只读 Claude/Codex availability/version probe，并把版本/配置根/来源路径绑定的 Claude customization policy/capability evidence 一次性注入 `ExplicitEnvironment`；公开 MCP/Skills status/preview/apply 重用同一证据，未知继续 fail closed。
 - [ ] 在显式隔离应用数据根的专用用户/VM 中执行首次启动、文件选择、权限失败和恢复人工 smoke test。
 - [x] 核对 Out of Scope：无市场、云同步、代理服务、跨平台、钥匙串、项目全局禁用。
 

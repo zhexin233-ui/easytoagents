@@ -8,6 +8,7 @@ import {
   type PromptImportPreviewDto,
   type ProviderImportPreviewDto,
   type Tool,
+  type ToolAvailabilityState,
 } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
@@ -20,6 +21,8 @@ const storageKey = "easytoagents.onboarding.selections.v1";
 const tools: Tool[] = ["claude", "codex"];
 
 interface ToolDiscovery {
+  availability: ToolAvailabilityState;
+  installationVersion: string | null;
   provider: ProviderImportPreviewDto | null;
   prompt: PromptImportPreviewDto | null;
   providerManaged: boolean;
@@ -72,13 +75,24 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
       const entries = await Promise.all(
         tools.map(async (tool): Promise<[Tool, ToolDiscovery]> => {
           const errors: string[] = [];
-          const [providerResult, promptResult, providersResult, promptsResult] =
-            await Promise.allSettled([
-              commands.discoverProviderImport(tool).then(unwrapResult),
-              commands.discoverPromptImport(tool).then(unwrapResult),
-              commands.listProviderProfiles(tool).then(unwrapResult),
-              commands.listPromptProfiles(tool).then(unwrapResult),
-            ]);
+          const [
+            statusResult,
+            providerResult,
+            promptResult,
+            providersResult,
+            promptsResult,
+          ] = await Promise.allSettled([
+            commands.getToolProfileStatus(tool).then(unwrapResult),
+            commands.discoverProviderImport(tool).then(unwrapResult),
+            commands.discoverPromptImport(tool).then(unwrapResult),
+            commands.listProviderProfiles(tool).then(unwrapResult),
+            commands.listPromptProfiles(tool).then(unwrapResult),
+          ]);
+          const status = settledValue(
+            statusResult,
+            errors,
+            "工具安装状态读取失败",
+          );
           const provider = settledValue(
             providerResult,
             errors,
@@ -97,12 +111,22 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             ) ?? false;
           return [
             tool,
-            { provider, prompt, providerManaged, promptManaged, errors },
+            {
+              availability: status?.availability ?? "unsupported",
+              installationVersion: status?.installationVersion ?? null,
+              provider,
+              prompt,
+              providerManaged,
+              promptManaged,
+              errors,
+            },
           ];
         }),
       );
       const result: Record<Tool, ToolDiscovery> = {
         claude: {
+          availability: "unsupported",
+          installationVersion: null,
           provider: null,
           prompt: null,
           providerManaged: false,
@@ -110,6 +134,8 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
           errors: [],
         },
         codex: {
+          availability: "unsupported",
+          installationVersion: null,
           provider: null,
           prompt: null,
           providerManaged: false,
@@ -237,9 +263,10 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
       const found = discovery[tool];
       return (
         choice.skip ||
-        (choice.provider &&
-          (found.provider !== null || found.providerManaged)) ||
-        (choice.prompt && (found.prompt !== null || found.promptManaged))
+        (found.availability === "installed" &&
+          ((choice.provider &&
+            (found.provider !== null || found.providerManaged)) ||
+            (choice.prompt && (found.prompt !== null || found.promptManaged))))
       );
     });
 
@@ -320,11 +347,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     {toolLabel(tool)}
                   </legend>
                   <p className="text-muted-foreground text-sm">
-                    {found.provider || found.prompt
-                      ? "已发现可接管的原生配置。"
-                      : found.providerManaged || found.promptManaged
-                        ? "已存在中央档案，可继续生成新的持久化同步预览。"
-                        : "未发现可导入配置；可保持非受管。"}
+                    {found.availability === "unavailable"
+                      ? "未检测到工具安装；原生目标不会被读取或应用，请跳过并保持非受管。"
+                      : found.availability === "unsupported"
+                        ? "安装探针未能安全确认版本；原生目标保持阻止，请跳过并检查工具安装。"
+                        : found.provider || found.prompt
+                          ? `已安全检测到${found.installationVersion ? `版本 ${found.installationVersion}，` : ""}可接管的原生配置。`
+                          : found.providerManaged || found.promptManaged
+                            ? "已存在中央档案，可继续生成新的持久化同步预览。"
+                            : "未发现可导入配置；可保持非受管。"}
                   </p>
                   {found.provider ? (
                     <div className="bg-muted mt-3 rounded p-3 text-xs">
@@ -364,6 +395,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                       checked={choice.provider}
                       disabled={
                         (!found.provider && !found.providerManaged) ||
+                        found.availability !== "installed" ||
                         choice.skip
                       }
                       onChange={(event) =>
@@ -382,7 +414,9 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                       type="checkbox"
                       checked={choice.prompt}
                       disabled={
-                        (!found.prompt && !found.promptManaged) || choice.skip
+                        (!found.prompt && !found.promptManaged) ||
+                        choice.skip ||
+                        found.availability !== "installed"
                       }
                       onChange={(event) =>
                         updateChoice(

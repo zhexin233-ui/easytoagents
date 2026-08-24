@@ -146,6 +146,8 @@ beforeEach(() => {
     status: "ok",
     data: {
       tool: "claude",
+      availability: "installed",
+      installationVersion: "2.1.217",
       providerTargetPath: "/isolated/home/.claude/settings.json",
       promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
       promptOverride: "not_applicable",
@@ -479,6 +481,8 @@ describe("ToolProfilesPage", () => {
       status: "ok",
       data: {
         tool: "claude",
+        availability: "unsupported",
+        installationVersion: null,
         providerTargetPath: "/isolated/home/.claude/settings.json",
         promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
         promptOverride: "not_applicable",
@@ -496,6 +500,7 @@ describe("ToolProfilesPage", () => {
     expect(
       await screen.findByText(/无法确认 Claude Provider 是否由宿主管理/),
     ).toBeVisible();
+    expect(await screen.findByText(/安装探针未能安全确认版本/)).toBeVisible();
     expect(await screen.findByText(/尚无提示词档案/)).toBeVisible();
   });
 });

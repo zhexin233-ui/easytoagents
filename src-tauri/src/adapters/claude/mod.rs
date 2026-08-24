@@ -22,11 +22,16 @@ impl ToolAdapter for ClaudeAdapter {
 
     fn discover(&self, context: &DiscoveryContext<'_>) -> Result<Vec<TargetDescriptor>, AppError> {
         let environment = context.environment;
-        let installed = environment.availability().claude;
-        let tool_capability = if installed {
-            TargetCapability::supported()
-        } else {
-            TargetCapability::tool_not_installed()
+        let availability = environment.availability().claude;
+        let installed = availability.is_installed();
+        let tool_capability = match availability {
+            crate::adapters::ToolAvailabilityState::Installed => TargetCapability::supported(),
+            crate::adapters::ToolAvailabilityState::Unavailable => {
+                TargetCapability::tool_not_installed()
+            }
+            crate::adapters::ToolAvailabilityState::Unsupported => {
+                TargetCapability::unsupported("CLAUDE_INSTALLATION_PROBE_UNSUPPORTED")
+            }
         };
         let settings_path = environment.claude_config_dir().join("settings.json");
         let customization_policy =
@@ -34,6 +39,8 @@ impl ToolAdapter for ClaudeAdapter {
                 .claude_customization_policy_probe
                 .probe(&ClaudeCustomizationPolicyProbeInput {
                     installation_version: environment.claude_installation_version(),
+                    claude_config_dir: environment.claude_config_dir(),
+                    source_path: environment.claude_customization_policy_source_path(),
                     tool_installed: installed,
                 });
 
@@ -41,9 +48,7 @@ impl ToolAdapter for ClaudeAdapter {
             ClaudeUserMcpProbeResult::ToolNotInstalled
         } else if environment.uses_default_claude_config_dir() {
             ClaudeUserMcpProbeResult::Supported(environment.home().join(".claude.json"))
-        } else if environment.claude_installation_version().is_none() {
-            ClaudeUserMcpProbeResult::Unsupported("CLAUDE_INSTALLATION_VERSION_UNKNOWN")
-        } else {
+        } else if environment.claude_installation_version().is_some() {
             context
                 .claude_user_mcp_probe
                 .probe(&ClaudeUserMcpProbeInput {
@@ -53,6 +58,8 @@ impl ToolAdapter for ClaudeAdapter {
                     installation_version: environment.claude_installation_version(),
                     tool_installed: installed,
                 })
+        } else {
+            ClaudeUserMcpProbeResult::Unsupported("CLAUDE_INSTALLATION_VERSION_UNKNOWN")
         };
         let (user_mcp_path, user_mcp_capability) = match user_mcp_probe {
             ClaudeUserMcpProbeResult::Supported(path) => {

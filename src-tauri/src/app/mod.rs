@@ -1,5 +1,7 @@
 //! 应用初始化、私有路径与共享状态容器。
 
+pub mod tool_probe;
+
 use std::{
     fs,
     path::{Path, PathBuf},

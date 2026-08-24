@@ -651,3 +651,104 @@ let project = rescan_project(database, environment, &VersionedProjectInput {
 })?;
 let context = snapshot_restore_context(database, environment, snapshot_id)?;
 ```
+
+## Scenario: Release-native tool and Claude policy probe
+
+### 1. Scope / Trigger
+
+- Trigger: release setup, tool availability/version detection, Claude user-MCP
+  capability, Claude customization-policy evidence, or any public MCP/Skill status,
+  preview, and apply entry point.
+
+### 2. Signatures
+
+- `probe_release_environment(&ReleaseToolProbeInput) -> Result<ReleaseToolProbeResult, AppError>`
+  is the only release-native probe entry. Its input contains explicit HOME, Claude/Codex
+  roots, PATH, timeout, and official Claude managed-settings paths.
+- `ExplicitEnvironment` owns the resulting availability states, exact Claude/Codex
+  versions, optional `VerifiedClaudeUserMcpEvidence`, and optional
+  `VerifiedClaudeCustomizationPolicyEvidence` for the lifetime of `AppState`.
+- Public MCP/Skill/Project/Profile services consume
+  `environment.claude_user_mcp_probe()` and
+  `environment.claude_customization_policy_probe()`; injectable `*_with_probes`
+  functions remain fixture boundaries only.
+
+### 3. Contracts
+
+- Resolve `claude` and `codex` only from an explicit absolute PATH. Run the canonical
+  executable with fixed `--version`, null stdin, non-blocking bounded stdout/stderr,
+  a hard deadline, a killed process group even after the wrapper parent exits, fixed
+  current directory, cleared inherited environment, and an explicit minimal environment.
+  Never invoke a shell or an interactive/status command.
+- Strictly accept only documented single-line version forms. Missing executable means
+  `unavailable`; unsafe PATH, spawn/non-zero/timeout/oversized/non-UTF-8/malformed output
+  means `unsupported`; only validated output means `installed` with an exact version.
+- The default Claude user MCP path remains the official `$HOME/.claude.json` and cannot
+  be redirected by evidence. A non-default Claude root stays unsupported unless evidence
+  binds the exact installation version, normalized config root, and verified target path.
+- Customization policy evidence reads only the exact official macOS managed-settings file.
+  Its root-to-leaf walk uses descriptor-relative `openat` with no-follow and type checks
+  for every ancestor and leaf before bounded JSON parsing. It is accepted only for an explicit valid
+  `strictPluginOnlyCustomization` value and is bound to the exact Claude version,
+  normalized config root, and source path. Missing/invalid/symlinked/ambiguous directory
+  sources and `policyHelper` remain unknown. Provider host policy remains independent.
+- Setup probes once and stores the immutable evidence in `AppState`; commands never reread
+  process environment, rerun binaries, or substitute cached success for mismatched evidence.
+- Tool profile status serializes the three-state availability and exact validated version.
+  UI discovery must distinguish installed, unavailable, and unsupported; unknown or unsafe
+  probe results never become an installed state and never trigger native import reads.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Executable absent from explicit PATH | `unavailable`; target reports tool not installed |
+| Unsafe PATH, non-executable, timeout, non-zero exit, or malformed output | `unsupported`; zero native writes |
+| Valid Claude/Codex version output | `installed`; exact parsed version stored once |
+| Claude version/config root differs from evidence | evidence stale; MCP/Skill policy/capability fail closed |
+| Default Claude config root | user MCP remains exact `$HOME/.claude.json` |
+| Non-default Claude root without verified target evidence | unsupported; never guess a user MCP path |
+| Explicit valid policy `false`/array/`true` | allowed/per-surface blocked according to the validated value |
+| Missing, malformed, dynamic, symlinked, or multi-file policy source | unknown; MCP/Skills block |
+
+### 5. Good/Base/Bad Cases
+
+- Good: release setup validates both exact versions, binds an explicit official policy
+  value, stores one environment in `AppState`, and public status/preview/apply reuse it.
+- Base: an absent tool is reported unavailable without touching any native configuration.
+- Bad: a hanging wrapper, forged multiline output, changed Claude version, non-default
+  root, or ambiguous policy source never becomes installed/allowed evidence.
+
+### 6. Tests Required
+
+- Use only `tempfile` homes, Claude/Codex roots, application roots, policy paths, and
+  executable directories. Fake `claude`/`codex` files are the only commands tests run.
+- Cover missing tools, unsafe/malformed/oversized/non-UTF-8 output, non-zero exit, bounded
+  timeout including descendants and wrappers that exit before descendants, exact argv and
+  null stdin, exact Claude/Codex parsing, non-default Claude root, and policy
+  allowed/blocked/unknown.
+- Cover wrong official basenames, ancestor symlinks, malformed JSON, ambiguous drop-ins,
+  and evidence source/version/root/target mismatches without reading real host policy.
+- Prove a changed version invalidates policy evidence, and prove public MCP/Skill status,
+  preview, and apply consume environment evidence rather than conservative defaults.
+- Keep the dedicated-user/VM real-install discovery and UI smoke gate manual; tests must
+  never inspect developer tools or configuration.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let environment = ExplicitEnvironment::new(home, claude_root, codex_root,
+    ToolAvailability::all_installed())?;
+let policy = ConservativeClaudeCustomizationPolicyProbe;
+```
+
+#### Correct
+
+```rust
+let probe = probe_release_environment(&ReleaseToolProbeInput::for_macos_release(
+    home, claude_root, codex_root, explicit_path,
+))?;
+app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
+```

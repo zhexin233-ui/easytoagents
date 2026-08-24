@@ -571,7 +571,8 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
  * 正式支持的原生工具。
  */
 export type Tool = "claude" | "codex"
-export type ToolProfileStatusDto = { tool: Tool; providerTargetPath: string; promptTargetPath: string; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
+export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
+export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string; promptTargetPath: string; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
 export type UpdateMcpServerInput = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: SensitiveMapUpdate; env: SensitiveMapUpdate; extra: SensitiveJsonUpdate; enabled: boolean; rowVersion: number }
 export type UpdatePromptProfileInput = { id: string; name: string; body: string; rowVersion: number }

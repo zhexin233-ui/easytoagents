@@ -164,17 +164,38 @@ impl TargetDescriptor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolAvailabilityState {
+    Installed,
+    Unavailable,
+    Unsupported,
+}
+
+impl ToolAvailabilityState {
+    pub const fn is_installed(self) -> bool {
+        matches!(self, Self::Installed)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolAvailability {
-    pub claude: bool,
-    pub codex: bool,
+    pub claude: ToolAvailabilityState,
+    pub codex: ToolAvailabilityState,
 }
 
 impl ToolAvailability {
     pub const fn all_installed() -> Self {
         Self {
-            claude: true,
-            codex: true,
+            claude: ToolAvailabilityState::Installed,
+            codex: ToolAvailabilityState::Installed,
+        }
+    }
+
+    pub const fn all_unavailable() -> Self {
+        Self {
+            claude: ToolAvailabilityState::Unavailable,
+            codex: ToolAvailabilityState::Unavailable,
         }
     }
 }
@@ -187,8 +208,11 @@ pub struct ExplicitEnvironment {
     codex_home: PathBuf,
     uses_default_claude_config_dir: bool,
     claude_installation_version: Option<String>,
+    codex_installation_version: Option<String>,
     claude_provider_policy: PolicyState,
     availability: ToolAvailability,
+    claude_user_mcp_evidence: Option<VerifiedClaudeUserMcpEvidence>,
+    claude_customization_policy_evidence: Option<VerifiedClaudeCustomizationPolicyEvidence>,
 }
 
 impl ExplicitEnvironment {
@@ -212,8 +236,11 @@ impl ExplicitEnvironment {
             codex_home,
             uses_default_claude_config_dir,
             claude_installation_version: None,
+            codex_installation_version: None,
             claude_provider_policy: PolicyState::Unknown,
             availability,
+            claude_user_mcp_evidence: None,
+            claude_customization_policy_evidence: None,
         })
     }
 
@@ -230,6 +257,37 @@ impl ExplicitEnvironment {
         }
         self.claude_installation_version = Some(version);
         Ok(self)
+    }
+
+    pub fn with_codex_installation_version(
+        mut self,
+        version: impl Into<String>,
+    ) -> Result<Self, AppError> {
+        let version = version.into();
+        if version.trim().is_empty() {
+            return Err(AppError::invalid_input(
+                "installationVersion",
+                "Codex 安装版本不能为空",
+            ));
+        }
+        self.codex_installation_version = Some(version);
+        Ok(self)
+    }
+
+    pub fn with_claude_user_mcp_evidence(
+        mut self,
+        evidence: VerifiedClaudeUserMcpEvidence,
+    ) -> Self {
+        self.claude_user_mcp_evidence = Some(evidence);
+        self
+    }
+
+    pub fn with_claude_customization_policy_evidence(
+        mut self,
+        evidence: VerifiedClaudeCustomizationPolicyEvidence,
+    ) -> Self {
+        self.claude_customization_policy_evidence = Some(evidence);
+        self
     }
 
     /// 宿主管理状态必须由运行时边界显式探测；未提供证据时保持 unknown。
@@ -254,8 +312,26 @@ impl ExplicitEnvironment {
         self.availability
     }
 
+    pub const fn tool_availability(&self, tool: Tool) -> ToolAvailabilityState {
+        match tool {
+            Tool::Claude => self.availability.claude,
+            Tool::Codex => self.availability.codex,
+        }
+    }
+
     pub fn claude_installation_version(&self) -> Option<&str> {
         self.claude_installation_version.as_deref()
+    }
+
+    pub fn codex_installation_version(&self) -> Option<&str> {
+        self.codex_installation_version.as_deref()
+    }
+
+    pub fn installation_version(&self, tool: Tool) -> Option<&str> {
+        match tool {
+            Tool::Claude => self.claude_installation_version(),
+            Tool::Codex => self.codex_installation_version(),
+        }
     }
 
     pub fn claude_provider_policy(&self) -> PolicyState {
@@ -264,6 +340,26 @@ impl ExplicitEnvironment {
 
     pub fn uses_default_claude_config_dir(&self) -> bool {
         self.uses_default_claude_config_dir
+    }
+
+    pub fn claude_user_mcp_probe(&self) -> &dyn ClaudeUserMcpCapabilityProbe {
+        match self.claude_user_mcp_evidence.as_ref() {
+            Some(evidence) => evidence,
+            None => &ConservativeClaudeUserMcpProbe,
+        }
+    }
+
+    pub fn claude_customization_policy_probe(&self) -> &dyn ClaudeCustomizationPolicyProbe {
+        match self.claude_customization_policy_evidence.as_ref() {
+            Some(evidence) => evidence,
+            None => &ConservativeClaudeCustomizationPolicyProbe,
+        }
+    }
+
+    pub fn claude_customization_policy_source_path(&self) -> Option<&Path> {
+        self.claude_customization_policy_evidence
+            .as_ref()
+            .and_then(VerifiedClaudeCustomizationPolicyEvidence::source_path)
     }
 }
 
@@ -423,6 +519,8 @@ pub trait ClaudeUserMcpCapabilityProbe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClaudeCustomizationPolicyProbeInput<'a> {
     pub installation_version: Option<&'a str>,
+    pub claude_config_dir: &'a Path,
+    pub source_path: Option<&'a Path>,
     pub tool_installed: bool,
 }
 
@@ -444,9 +542,11 @@ impl ClaudeCustomizationPolicyProbe for ConservativeClaudeCustomizationPolicyPro
 
 /// 由外部 capability probe 解析出的有效 Claude 管理策略证据。
 /// 证据绑定安装版本；升级或缺少版本时自动失效为 unknown。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedClaudeCustomizationPolicyEvidence {
     installation_version: String,
+    claude_config_dir: Option<PathBuf>,
+    source_path: Option<PathBuf>,
     policy: ClaudeCustomizationPolicy,
 }
 
@@ -500,8 +600,37 @@ impl VerifiedClaudeCustomizationPolicyEvidence {
         };
         Ok(Self {
             installation_version,
+            claude_config_dir: None,
+            source_path: None,
             policy,
         })
+    }
+
+    pub fn from_official_source(
+        installation_version: impl Into<String>,
+        claude_config_dir: impl Into<PathBuf>,
+        source_path: impl Into<PathBuf>,
+        setting: &Value,
+    ) -> Result<Self, AppError> {
+        let mut evidence = Self::from_effective_setting(installation_version, Some(setting))?;
+        evidence.claude_config_dir = Some(normalize_config_root(
+            &claude_config_dir.into(),
+            "claudeConfigDir",
+        )?);
+        let source_path = source_path.into();
+        let normalized_source = normalize_target_path(&source_path, "policySourcePath")?;
+        if normalized_source != source_path {
+            return Err(AppError::invalid_input(
+                "policySourcePath",
+                "策略来源必须是无链接重定向的规范绝对路径",
+            ));
+        }
+        evidence.source_path = Some(normalized_source);
+        Ok(evidence)
+    }
+
+    pub fn source_path(&self) -> Option<&Path> {
+        self.source_path.as_deref()
     }
 }
 
@@ -509,6 +638,11 @@ impl ClaudeCustomizationPolicyProbe for VerifiedClaudeCustomizationPolicyEvidenc
     fn probe(&self, input: &ClaudeCustomizationPolicyProbeInput<'_>) -> ClaudeCustomizationPolicy {
         if input.tool_installed
             && input.installation_version == Some(self.installation_version.as_str())
+            && self
+                .claude_config_dir
+                .as_deref()
+                .map_or(true, |root| root == input.claude_config_dir)
+            && self.source_path.as_deref() == input.source_path
         {
             self.policy
         } else {
@@ -535,7 +669,7 @@ impl ClaudeUserMcpCapabilityProbe for ConservativeClaudeUserMcpProbe {
 }
 
 /// 当前安装版本的外部探针可把已核验结果封装为证据；根或版本不匹配时失效。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedClaudeUserMcpEvidence {
     installation_version: String,
     claude_config_dir: PathBuf,
@@ -1081,8 +1215,8 @@ mod tests {
         canonicalize_project_root, CapabilityState, ConservativeClaudeCustomizationPolicyProbe,
         ConservativeClaudeUserMcpProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
         ObservedRaw, PolicyState, PromptOverrideState, RenderedTarget, TargetTrustState,
-        ToolAdapter, ToolAvailability, VerifiedClaudeCustomizationPolicyEvidence,
-        VerifiedClaudeUserMcpEvidence,
+        ToolAdapter, ToolAvailability, ToolAvailabilityState,
+        VerifiedClaudeCustomizationPolicyEvidence, VerifiedClaudeUserMcpEvidence,
     };
     use crate::{
         adapters::{claude::ClaudeAdapter, codex::CodexAdapter},
@@ -1297,8 +1431,8 @@ mod tests {
             None,
             None,
             ToolAvailability {
-                claude: false,
-                codex: false,
+                claude: ToolAvailabilityState::Unavailable,
+                codex: ToolAvailabilityState::Unavailable,
             },
         )
         .unwrap();

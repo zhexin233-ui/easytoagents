@@ -20,9 +20,8 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        ClaudeCustomizationPolicyProbe, ClaudeUserMcpCapabilityProbe,
-        ConservativeClaudeCustomizationPolicyProbe, ConservativeClaudeUserMcpProbe,
-        DiscoveryContext, ManagedOwnership, TargetDescriptor, ToolAdapter,
+        ClaudeCustomizationPolicyProbe, ClaudeUserMcpCapabilityProbe, DiscoveryContext,
+        ManagedOwnership, TargetDescriptor, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -191,15 +190,13 @@ pub fn preview_mcp_sync(
     redactor: &mut SecretRedactor,
     input: &PreviewMcpSyncInput,
 ) -> Result<PreviewPlan, AppError> {
-    let user_probe = ConservativeClaudeUserMcpProbe;
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     preview_mcp_sync_with_probes(
         database,
         environment,
         redactor,
         input,
-        &user_probe,
-        &policy_probe,
+        environment.claude_user_mcp_probe(),
+        environment.claude_customization_policy_probe(),
     )
 }
 
@@ -250,8 +247,6 @@ pub fn apply_mcp_preview(
     redactor: &mut SecretRedactor,
     input: &ApplyMcpPreviewInput,
 ) -> Result<ApplyResult, AppError> {
-    let user_probe = ConservativeClaudeUserMcpProbe;
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     apply_mcp_preview_with_probes(
         write_operations,
         database,
@@ -259,8 +254,8 @@ pub fn apply_mcp_preview(
         environment,
         redactor,
         input,
-        &user_probe,
-        &policy_probe,
+        environment.claude_user_mcp_probe(),
+        environment.claude_customization_policy_probe(),
     )
 }
 
@@ -333,12 +328,16 @@ pub fn list_global_mcp_target_statuses(
     database: &Database,
     environment: &crate::adapters::ExplicitEnvironment,
 ) -> Result<Vec<McpTargetStatusDto>, AppError> {
-    let user_probe = ConservativeClaudeUserMcpProbe;
-    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
     [Tool::Claude, Tool::Codex]
         .into_iter()
         .map(|tool| {
-            let descriptor = descriptor_for(environment, tool, None, &user_probe, &policy_probe)?;
+            let descriptor = descriptor_for(
+                environment,
+                tool,
+                None,
+                environment.claude_user_mcp_probe(),
+                environment.claude_customization_policy_probe(),
+            )?;
             let target_path = descriptor.path.clone();
             let persisted = target_path
                 .as_deref()
@@ -1107,7 +1106,14 @@ mod tests {
                 ExplicitEnvironment::new(&home, None, None, ToolAvailability::all_installed())
                     .unwrap()
                     .with_claude_installation_version("fixture-1.0.0")
-                    .unwrap();
+                    .unwrap()
+                    .with_claude_customization_policy_evidence(
+                        VerifiedClaudeCustomizationPolicyEvidence::from_effective_setting(
+                            "fixture-1.0.0",
+                            None,
+                        )
+                        .unwrap(),
+                    );
             let paths = AppPaths::from_data_root(root.join("private/app/data")).unwrap();
             let database = Database::open(&paths).unwrap();
             let project_id = Uuid::new_v4().to_string();
@@ -1166,6 +1172,62 @@ mod tests {
             extra: json!({"request_timeout_sec": 30}),
             enabled: true,
         }
+    }
+
+    #[test]
+    fn public_preview_status_and_apply_reuse_environment_policy_evidence() {
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        let created = create_mcp_server(
+            &mut fixture.database,
+            &mut redactor,
+            &stdio_input("release-evidence"),
+        )
+        .unwrap();
+        set_global_mcp_assignment(
+            &mut fixture.database,
+            &redactor,
+            &SetGlobalMcpAssignmentInput {
+                tool: Tool::Claude,
+                mcp_id: created.id,
+                assigned: true,
+                row_version: created.row_version,
+            },
+        )
+        .unwrap();
+        let statuses =
+            super::list_global_mcp_target_statuses(&fixture.database, &fixture.environment)
+                .unwrap();
+        assert_ne!(statuses[0].status, crate::domain::SyncStatus::PolicyBlocked);
+        let preview = super::preview_mcp_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            preview.targets[0].descriptor.policy,
+            crate::adapters::PolicyState::Allowed
+        );
+        super::apply_mcp_preview(
+            &std::sync::Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &ApplyMcpPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        assert!(fixture.home.join(".claude.json").is_file());
     }
 
     #[test]

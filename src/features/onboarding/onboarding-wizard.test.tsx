@@ -19,6 +19,7 @@ import { OnboardingWizard } from "@/features/onboarding/onboarding-wizard";
 
 vi.mock("@/bindings/commands", () => ({
   commands: {
+    getToolProfileStatus: vi.fn(),
     discoverProviderImport: vi.fn(),
     discoverPromptImport: vi.fn(),
     listProviderProfiles: vi.fn(),
@@ -124,6 +125,28 @@ describe("OnboardingWizard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    vi.mocked(commands.getToolProfileStatus).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          tool,
+          availability: "installed",
+          installationVersion: tool === "claude" ? "2.1.217" : "0.114.0",
+          providerTargetPath:
+            tool === "claude"
+              ? "/isolated/home/.claude/settings.json"
+              : "/isolated/home/.codex/config.toml",
+          promptTargetPath:
+            tool === "claude"
+              ? "/isolated/home/.claude/CLAUDE.md"
+              : "/isolated/home/.codex/AGENTS.md",
+          promptOverride: "not_applicable",
+          providerPolicy: "allowed",
+          newSessionNotice: "新会话生效",
+          bearerTokenWarning: tool === "codex" ? "明文令牌警告" : null,
+        },
+      }),
+    );
     vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
       Promise.resolve({
         status: "ok",
@@ -185,7 +208,7 @@ describe("OnboardingWizard", () => {
   it("按检测、选择、预览、应用推进，跳过 Codex 时保持其非受管", async () => {
     renderWizard();
     expect(
-      await screen.findByText("已发现可接管的原生配置。"),
+      await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/),
     ).toBeInTheDocument();
     const providerChoices = screen.getAllByLabelText("导入并接管 Provider");
     const claudeProviderChoice = providerChoices[0];
@@ -215,14 +238,14 @@ describe("OnboardingWizard", () => {
 
   it("暂停按钮保留选择并调用关闭回调", async () => {
     const { onClose } = renderWizard();
-    await screen.findByText("已发现可接管的原生配置。");
+    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
     fireEvent.click(screen.getByRole("button", { name: "暂停向导" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("要求每个工具明确选择，并持久化全跳过完成状态", async () => {
     renderWizard();
-    await screen.findByText("已发现可接管的原生配置。");
+    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
     const prepare = screen.getByRole("button", {
       name: "确认选择并生成预览",
     });
@@ -238,6 +261,57 @@ describe("OnboardingWizard", () => {
     expect(commands.confirmProviderImport).not.toHaveBeenCalled();
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
     expect(await screen.findByText("向导已完成")).toBeInTheDocument();
+  });
+
+  it("将未安装工具显示为独立受阻状态且只允许显式跳过", async () => {
+    vi.mocked(commands.getToolProfileStatus).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          tool,
+          availability: tool === "claude" ? "unavailable" : "installed",
+          installationVersion: tool === "claude" ? null : "0.114.0",
+          providerTargetPath:
+            tool === "claude"
+              ? "/isolated/home/.claude/settings.json"
+              : "/isolated/home/.codex/config.toml",
+          promptTargetPath:
+            tool === "claude"
+              ? "/isolated/home/.claude/CLAUDE.md"
+              : "/isolated/home/.codex/AGENTS.md",
+          promptOverride: "not_applicable",
+          providerPolicy: "allowed",
+          newSessionNotice: "新会话生效",
+          bearerTokenWarning: null,
+        },
+      }),
+    );
+    vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
+      tool === "claude"
+        ? Promise.resolve({
+            status: "error",
+            error: {
+              code: "NOT_FOUND",
+              message: "未找到目标资源",
+              details: { resource: "toolInstallation", path: "claude" },
+              recoverable: true,
+              action: "rescan",
+            },
+          })
+        : Promise.resolve({ status: "ok", data: null }),
+    );
+
+    renderWizard();
+
+    expect(
+      await screen.findByText(/未检测到工具安装；原生目标不会被读取或应用/),
+    ).toBeVisible();
+    expect(screen.getAllByLabelText("导入并接管 Provider")[0]).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("跳过 Claude，保持非受管"));
+    fireEvent.click(screen.getByLabelText("跳过 Codex，保持非受管"));
+    expect(
+      screen.getByRole("button", { name: "确认选择并生成预览" }),
+    ).toBeEnabled();
   });
 
   it("中断后从中央 active 档案重新生成持久化预览而不重复导入", async () => {
@@ -343,7 +417,7 @@ describe("OnboardingWizard", () => {
       });
 
     renderWizard();
-    await screen.findByText("已发现可接管的原生配置。");
+    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
     const providerChoice = screen.getAllByLabelText("导入并接管 Provider")[0];
     const promptChoice =
       screen.getAllByLabelText("无损导入并接管全局提示词")[0];
