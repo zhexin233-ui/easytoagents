@@ -194,13 +194,14 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## Phase 8：端到端质量门与 macOS 打包
 
-- [ ] 使用隔离 HOME/CODEX_HOME/CLAUDE_CONFIG_DIR fixture 运行完整链路，不触碰开发者真实配置。
-- [ ] 覆盖中央变更 → 预览 → 应用 → 原生验证 → 外部漂移 → 恢复。
-- [ ] 运行 secret audit：日志、RPC error、preview JSON、测试快照索引不得泄露 fixture secret。
-- [ ] 运行 destructive-path audit：所有删除目标必须 canonicalize 且证明属于中央库/managed item。
-- [ ] 运行格式往返测试：Claude JSON 未知字段、Codex TOML 注释/未知表、Markdown 原文。
-- [ ] 构建 macOS `.app` 与 DMG，执行首次启动、文件选择、权限失败和恢复人工 smoke test。
-- [ ] 核对 Out of Scope：无市场、云同步、代理服务、跨平台、钥匙串、项目全局禁用。
+- [x] 使用隔离 HOME/CODEX_HOME/CLAUDE_CONFIG_DIR fixture 运行完整链路，不触碰开发者真实配置。
+- [x] 覆盖中央变更 → 预览 → 应用 → 原生验证 → 外部漂移 → 恢复。
+- [x] 运行 secret audit：日志、RPC error、preview JSON、测试快照索引不得泄露 fixture secret。
+- [x] 运行 destructive-path audit：所有删除目标必须 canonicalize 且证明属于中央库/managed item。
+- [x] 运行格式往返测试：Claude JSON 未知字段、Codex TOML 注释/未知表、Markdown 原文。
+- [x] 构建 macOS `.app` 与 DMG，并验证最低系统版本、架构与 DMG 校验和。
+- [ ] 在显式隔离应用数据根的专用用户/VM 中执行首次启动、文件选择、权限失败和恢复人工 smoke test。
+- [x] 核对 Out of Scope：无市场、云同步、代理服务、跨平台、钥匙串、项目全局禁用。
 
 验收映射：AC14；并汇总 AC1–AC13 的自动测试与 macOS smoke 证据。
 
@@ -221,7 +222,7 @@ pnpm tauri build
 - [ ] AC1–AC14 全部映射到自动测试或记录明确的 macOS smoke 证据。
 - [ ] 使用真实 Claude/Codex 安装版本做只读 discovery 与用户确认后的隔离样本写入测试。
 - [ ] `git status` 中没有测试污染、真实密钥、构建产物或用户配置。
-- [ ] 从最新快照恢复后，原始 fixture 与恢复目标 hash 一致。
+- [x] 从最新快照恢复后，原始 fixture 与恢复目标 hash 一致。
 
 ## 高风险点与停止条件
 

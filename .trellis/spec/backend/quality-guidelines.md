@@ -51,6 +51,9 @@ run against hostile paths and configuration contents.
 - Cover missing, empty, malformed, permission-denied, symlink, target-type-change, and
   scalar-at-managed-path cases for every supported format.
 - Audit serialized preview/RPC/error/journal output against fixture secrets.
+- End-to-end secret audits must serialize the real RPC DTOs and read actual SQLite,
+  journal, and snapshot-index carriers. Assert each expected carrier is non-empty before
+  asserting that fixture secrets have zero matches, so an empty audit cannot pass.
 - Verify Git inspection neither executes repository hooks nor modifies `.gitignore`,
   `.git/info/exclude`, the index, or worktree files.
 
@@ -228,6 +231,10 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
   continue blocking.
 - Audit preview, error, journal, and RPC serialization for fixture secrets. Keep all
   native Claude/Codex fixtures under explicit temporary roots.
+- In end-to-end restore tests, derive `allowed_root` through the production
+  `snapshot_restore_context` tool/artifact/scope routing and assert it remains inside the
+  explicit temporary HOME, tool root, or canonical project root. Tests must not pass a
+  hand-written allowed root directly to Restore.
 
 ### 7. Wrong vs Correct
 
