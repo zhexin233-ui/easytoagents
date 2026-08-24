@@ -3,6 +3,7 @@ import { createHashRouter, RouterProvider } from "react-router-dom";
 import { AppShell } from "@/app/app-shell";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
 import { McpPage } from "@/features/mcp/mcp-page";
+import { SkillsPage } from "@/features/skills/skills-page";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 
 const router = createHashRouter([
@@ -25,6 +26,10 @@ const router = createHashRouter([
       {
         path: "mcp",
         element: <McpPage />,
+      },
+      {
+        path: "skills",
+        element: <SkillsPage />,
       },
     ],
   },

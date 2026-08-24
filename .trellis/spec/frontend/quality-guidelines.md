@@ -202,3 +202,85 @@ const update: UpdateMcpServerInput = {
   rowVersion: server.rowVersion,
 };
 ```
+
+## Scenario: Typed Skills central library and assignment page
+
+### 1. Scope / Trigger
+
+- Trigger: Skills import/list/content/delete/status UI, global/project assignment,
+  query keys, or Skills preview/apply behavior changes.
+
+### 2. Signatures
+
+- Feature code imports generated `SkillDto`, `SkillContentPreviewDto`, `PreviewPlan`,
+  `ApplySkillPreviewInput`, and `commands` only.
+- Directory import calls `commands.importSkill({ sourcePath })` after an explicit native
+  directory selection. Preview/apply calls `commands.previewSkillSync(...)` and then
+  consumes the returned ID with `commands.applySkillPreview(...)`.
+
+### 3. Contracts
+
+- Import, content preview, deletion, assignments, status, and sync have separate
+  accessible pending/error/empty/conflict feedback. Central CRUD and assignment success
+  invalidate the entire Skills key family because versions, inheritance, and statuses
+  can change together; none applies native writes implicitly.
+- The ordinary list renders only the safe description and status diagnostics, never an
+  arbitrary frontmatter object or Skill body. Full `SKILL.md` appears only after the
+  explicit content-preview command in a closable, Escape-aware dialog.
+- Global assignments remain visually distinct. A global inherited project option is
+  checked, read-only, and cannot invoke project assignment. A currently selected invalid
+  project item can still be unselected so users can recover.
+- Codex untrusted projects visibly disable project preview; backend trust remains
+  authoritative. A zero-target inheritance preview shows a no-write explanation and
+  never opens Apply. Non-empty plans use `ChangePreviewDialog`, which blocks conflicts
+  and applies the exact persisted preview/tool/project identity.
+
+### 4. Validation & Error Matrix
+
+| UI condition | Required rendering/behavior |
+| --- | --- |
+| Directory chooser/import/content/delete failure | Operation-specific `role="alert"`; preserve unrelated state |
+| Skills/status/projects/options pending or empty | Independent status or explicit next-action message |
+| Invalid/missing central Skill | Diagnostic visible; new assignment disabled, existing assignment removable |
+| Global inherited project option | Read-only inherited label; no project mutation |
+| Codex project untrusted | Trust alert and disabled project preview |
+| Empty persisted preview | No-write message; no Apply dialog |
+| Conflict target | Exact diagnostic/redacted plan; Apply disabled |
+
+### 5. Good/Base/Bad Cases
+
+- Good: explicitly choose an isolated source directory, import it, inspect safe list
+  metadata, open and close the explicit content preview with focus restoration, assign
+  it, then apply the exact non-empty persisted preview.
+- Base: list, import, content, deletion, assignment, status, and project-option actions
+  keep independent accessible feedback and invalidate the Skills query family without
+  writing a native target implicitly.
+- Bad: render arbitrary frontmatter/body in the ordinary list, allow a project to toggle
+  inherited state, apply an empty/blocked preview, lose dialog focus, or bypass generated
+  bindings with raw `invoke` or an asserted payload.
+
+### 6. Tests Required
+
+- Mock only generated commands and use an isolated `QueryClient`.
+- Cover directory selection, operation-specific loading/errors, list/status/project/
+  option empty states, central diagnostics, safe descriptions, content dialog,
+  content-dialog focus restoration, deletion conflicts, inherited controls, Codex
+  trust, zero-target preview, and exact persisted preview ID/tool/project consumption.
+- Assert that fixture Skill bodies and private frontmatter markers are absent from the
+  ordinary rendered page and appear only in the explicit content preview when requested.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+<pre>{JSON.stringify(skill.frontmatter)}</pre>
+await invoke("apply_skill_preview", preview);
+```
+
+#### Correct
+
+```tsx
+const plan = unwrapResult(await commands.previewSkillSync(input));
+await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId });
+```

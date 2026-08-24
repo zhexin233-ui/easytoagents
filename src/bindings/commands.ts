@@ -263,6 +263,102 @@ async applyMcpPreview(input: ApplyMcpPreviewInput) : Promise<Result<ApplyResult,
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async listSkills() : Promise<Result<SkillDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_skills") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getSkill(id: string) : Promise<Result<SkillDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_skill", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async importSkill(input: ImportSkillInput) : Promise<Result<SkillDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_skill", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewSkillContent(id: string) : Promise<Result<SkillContentPreviewDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_skill_content", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteSkill(input: VersionedSkillInput) : Promise<Result<DeleteSkillResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_skill", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setGlobalSkillAssignment(input: SetGlobalSkillAssignmentInput) : Promise<Result<SkillDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_global_skill_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setProjectSkillAssignment(input: SetProjectSkillAssignmentInput) : Promise<Result<SkillDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_project_skill_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listSkillProjects() : Promise<Result<SkillProjectDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_skill_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listSkillProjectOptions(input: SkillProjectOptionsInput) : Promise<Result<SkillProjectOptionDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_skill_project_options", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listGlobalSkillTargetStatuses() : Promise<Result<SkillTargetStatusDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_global_skill_target_statuses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewSkillSync(input: PreviewSkillSyncInput) : Promise<Result<PreviewPlan, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_skill_sync", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applySkillPreview(input: ApplySkillPreviewInput) : Promise<Result<ApplyResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_skill_preview", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -284,6 +380,7 @@ export type AppInfoDto = { name: string; version: string }
 export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
+export type ApplySkillPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 /**
  * 受管资源种类。
  */
@@ -300,11 +397,13 @@ export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_se
 export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: string; rowVersion: number }
 export type DeleteMcpResultDto = { id: string; deleted: boolean }
 export type DeleteProfileResultDto = { id: string; deleted: boolean }
+export type DeleteSkillResultDto = { id: string; deleted: boolean }
 /**
  * RPC、journal 和同步记录共用的稳定错误码。
  */
 export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED"
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
+export type ImportSkillInput = { sourcePath: string }
 export type InterruptedRunPlan = { runId: string; status: string; journalAvailable: boolean; targets: InterruptedTargetPlan[] }
 export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
@@ -320,6 +419,7 @@ export type McpTransport = "stdio" | "streamable_http"
 export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
+export type PreviewSkillSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
 export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; body: string }
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
@@ -340,8 +440,17 @@ export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: 
 export type SensitiveJsonUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: JsonValue }
 export type SensitiveMapUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: Partial<{ [key in string]: string }> }
 export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned: boolean; rowVersion: number }
+export type SetGlobalSkillAssignmentInput = { tool: Tool; skillId: string; assigned: boolean; rowVersion: number }
 export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
+export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
+export type SkillContentPreviewDto = { id: string; name: string; skillMd: string; files: string[]; contentHash: string; rowVersion: number }
+export type SkillDto = { id: string; name: string; sourcePath: string; centralPath: string; contentHash: string; description: string; status: SkillStatus; diagnosticCode: string | null; globalTools: Tool[]; rowVersion: number }
+export type SkillProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
+export type SkillProjectOptionDto = { skillId: string; name: string; status: SkillStatus; state: SkillProjectSelectionState; selectable: boolean; rowVersion: number }
+export type SkillProjectOptionsInput = { projectId: string; tool: Tool }
+export type SkillProjectSelectionState = "inherited" | "selected" | "available"
 export type SkillStatus = "ready" | "invalid" | "missing"
+export type SkillTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; createdAt: string }
 export type SymlinkPolicy = "reject" | "managed_children_only"
 export type SyncRunKind = "preview" | "apply" | "restore"
@@ -369,6 +478,7 @@ export type UpdatePromptProfileInput = { id: string; name: string; body: string;
 export type UpdateProviderProfileInput = { id: string; name: string; apiBaseUrl: string; apiKey: SecretUpdate; defaultModel: string; options: ProviderOptionsInput; rowVersion: number }
 export type VersionedMcpInput = { id: string; rowVersion: number }
 export type VersionedProfileInput = { id: string; rowVersion: number }
+export type VersionedSkillInput = { id: string; rowVersion: number }
 
 /** tauri-specta globals **/
 

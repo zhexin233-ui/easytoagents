@@ -82,6 +82,20 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<mcp::PreviewMcpSyncInput>()
         .typ::<mcp::ApplyMcpPreviewInput>()
         .typ::<mcp::McpTargetStatusDto>()
+        .typ::<skills::ImportSkillInput>()
+        .typ::<skills::VersionedSkillInput>()
+        .typ::<skills::SkillDto>()
+        .typ::<skills::SkillContentPreviewDto>()
+        .typ::<skills::DeleteSkillResultDto>()
+        .typ::<skills::SetGlobalSkillAssignmentInput>()
+        .typ::<skills::SetProjectSkillAssignmentInput>()
+        .typ::<skills::SkillProjectSelectionState>()
+        .typ::<skills::SkillProjectOptionDto>()
+        .typ::<skills::SkillProjectDto>()
+        .typ::<skills::SkillProjectOptionsInput>()
+        .typ::<skills::PreviewSkillSyncInput>()
+        .typ::<skills::ApplySkillPreviewInput>()
+        .typ::<skills::SkillTargetStatusDto>()
         .commands(collect_commands![
             commands::get_app_info,
             commands::profiles::list_provider_profiles,
@@ -116,6 +130,18 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::mcp::list_global_mcp_target_statuses,
             commands::mcp::preview_mcp_sync,
             commands::mcp::apply_mcp_preview,
+            commands::skills::list_skills,
+            commands::skills::get_skill,
+            commands::skills::import_skill,
+            commands::skills::preview_skill_content,
+            commands::skills::delete_skill,
+            commands::skills::set_global_skill_assignment,
+            commands::skills::set_project_skill_assignment,
+            commands::skills::list_skill_projects,
+            commands::skills::list_skill_project_options,
+            commands::skills::list_global_skill_target_statuses,
+            commands::skills::preview_skill_sync,
+            commands::skills::apply_skill_preview,
         ])
 }
 
@@ -130,6 +156,7 @@ pub fn run() {
     let command_builder = create_command_builder::<tauri::Wry>();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(
             |app, _arguments, _cwd| {
                 if let Some(window) = app.get_webview_window("main") {

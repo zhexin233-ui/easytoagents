@@ -17,6 +17,7 @@ use crate::{
 
 pub mod mcp;
 pub mod profiles;
+pub mod skills;
 
 const MIGRATIONS: &[Migration] = &[
     Migration {

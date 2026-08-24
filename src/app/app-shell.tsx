@@ -7,6 +7,7 @@ const links = [
   { to: "/claude", label: "Claude", end: false },
   { to: "/codex", label: "Codex", end: false },
   { to: "/mcp", label: "MCP", end: false },
+  { to: "/skills", label: "Skills", end: false },
 ] as const;
 
 export function AppShell() {

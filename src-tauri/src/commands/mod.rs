@@ -3,6 +3,7 @@ use specta::Type;
 
 pub mod mcp;
 pub mod profiles;
+pub mod skills;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]

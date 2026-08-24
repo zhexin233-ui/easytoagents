@@ -2,9 +2,16 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::{CString, OsStr},
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt},
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::{
+            ffi::OsStrExt,
+            fs::{symlink, MetadataExt, OpenOptionsExt, PermissionsExt},
+        },
+    },
     path::{Component, Path, PathBuf},
     sync::Mutex,
 };
@@ -200,7 +207,10 @@ enum PathState {
     Symlink {
         link_target: PathBuf,
     },
-    Directory,
+    Directory {
+        device: u64,
+        inode: u64,
+    },
 }
 
 impl PathState {
@@ -209,7 +219,7 @@ impl PathState {
             Self::Missing => TargetType::Missing,
             Self::File { .. } => TargetType::File,
             Self::Symlink { .. } => TargetType::Symlink,
-            Self::Directory => TargetType::Directory,
+            Self::Directory { .. } => TargetType::Directory,
         }
     }
 
@@ -244,7 +254,9 @@ impl PathState {
                 "type": "symlink",
                 "linkTarget": link_target.to_string_lossy(),
             }),
-            Self::Directory => json!({ "type": "directory" }),
+            Self::Directory { device, inode } => {
+                json!({ "type": "directory", "device": device, "inode": inode })
+            }
         };
         hash_json(&value)
     }
@@ -252,6 +264,7 @@ impl PathState {
 
 #[derive(Debug, Clone)]
 enum Mutation {
+    CreateDirectory,
     WriteFile {
         bytes: Vec<u8>,
         mode: u32,
@@ -608,7 +621,13 @@ fn mutation_may_have_changed_target(target: &JournalTarget) -> bool {
     target.after_fingerprint.is_some()
         || matches!(
             target.phase.as_str(),
-            "renamed" | "removed" | "written" | "crashed_after_rename" | "crashed_after_target"
+            "directory_create_pending"
+                | "directory_created"
+                | "renamed"
+                | "removed"
+                | "written"
+                | "crashed_after_rename"
+                | "crashed_after_target"
         )
 }
 
@@ -1227,7 +1246,17 @@ fn build_symlink_mutations(
         .as_object()
         .ok_or_else(|| AppError::invalid_input("desiredProjection", "Skills 投影必须是对象"))?;
     let directory = Path::new(&item.target_path);
-    let mut mutations = Vec::new();
+    let mut mutations = if desired.is_empty() {
+        Vec::new()
+    } else {
+        build_missing_skill_directories(
+            directory,
+            &input.allowed_root,
+            central_root,
+            &item.target_id,
+            target_index,
+        )?
+    };
     for name in names {
         validate_child_name(name)?;
         let child = directory.join(name);
@@ -1284,6 +1313,54 @@ fn build_symlink_mutations(
     Ok(mutations)
 }
 
+fn build_missing_skill_directories(
+    directory: &Path,
+    allowed_root: &Path,
+    central_root: &Path,
+    target_id: &str,
+    target_index: usize,
+) -> Result<Vec<PendingMutation>, AppError> {
+    let relative = directory
+        .strip_prefix(allowed_root)
+        .map_err(|_| AppError::invalid_input("targetPath", "Skills 目录位于允许根之外"))?;
+    if relative.as_os_str().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut current = allowed_root.to_path_buf();
+    let mut mutations = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(segment) = component else {
+            return Err(AppError::invalid_input(
+                "targetPath",
+                "Skills 目录包含相对路径片段",
+            ));
+        };
+        current.push(segment);
+        match capture_path_state(&current)? {
+            PathState::Directory { .. } => {}
+            PathState::Missing => mutations.push(PendingMutation {
+                target_id: target_id.to_owned(),
+                target_index,
+                path: current.clone(),
+                allowed_root: allowed_root.to_path_buf(),
+                central_root: Some(central_root.to_path_buf()),
+                expected_before_fingerprint: PathState::Missing.fingerprint(),
+                // 新目录的设备/inode 只有 mkdir 后才能确定；apply_mutation 会
+                // 把实际身份写入 durable journal，并以该身份约束回滚。
+                expected_after_fingerprint: String::new(),
+                mutation: Mutation::CreateDirectory,
+            }),
+            PathState::File { .. } | PathState::Symlink { .. } => {
+                return Err(AppError::conflict(
+                    "skillTarget",
+                    "Skills 目录祖先被普通文件或未知链接占用",
+                ));
+            }
+        }
+    }
+    Ok(mutations)
+}
+
 fn validate_child_name(name: &str) -> Result<(), AppError> {
     let path = Path::new(name);
     if name.is_empty()
@@ -1296,6 +1373,150 @@ fn validate_child_name(name: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+struct CreatedDirectory {
+    parent: File,
+    name: CString,
+}
+
+fn create_private_directory_nofollow(
+    path: &Path,
+    allowed_root: &Path,
+) -> Result<CreatedDirectory, AppError> {
+    validate_allowed_path(path, allowed_root, false)?;
+    let relative = path
+        .strip_prefix(allowed_root)
+        .map_err(|_| AppError::invalid_input("targetPath", "Skills 目录位于允许根之外"))?;
+    let name = relative
+        .file_name()
+        .ok_or_else(|| AppError::invalid_input("targetPath", "Skills 目录缺少名称"))?;
+    let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
+    let mut parent = open_directory_nofollow(allowed_root, "open_skill_allowed_root")?;
+    let mut display = allowed_root.to_path_buf();
+    for component in parent_relative.components() {
+        let Component::Normal(segment) = component else {
+            return Err(AppError::invalid_input(
+                "targetPath",
+                "Skills 目录父路径包含相对片段",
+            ));
+        };
+        display.push(segment);
+        parent = open_directory_at_nofollow(&parent, segment, &display)?;
+    }
+    let name_c = c_path_segment(name, "targetPath")?;
+    // SAFETY: parent fd 在调用期间有效，name_c 是单个 NUL 结尾路径段。
+    let created = unsafe { libc::mkdirat(parent.as_raw_fd(), name_c.as_ptr(), 0o700) };
+    if created != 0 {
+        let error = io::Error::last_os_error();
+        return Err(match error.kind() {
+            io::ErrorKind::PermissionDenied => {
+                AppError::permission(&path.to_string_lossy(), "mkdirat_skill_target")
+            }
+            io::ErrorKind::AlreadyExists => {
+                AppError::stale_preview("persisted", &path.to_string_lossy())
+            }
+            _ => AppError::atomic_write(&path.to_string_lossy(), "create_skill_target_directory"),
+        });
+    }
+    Ok(CreatedDirectory {
+        parent,
+        name: name_c,
+    })
+}
+
+fn finalize_created_directory(created: CreatedDirectory, path: &Path) -> Result<(), AppError> {
+    // SAFETY: parent fd 在调用期间有效，name 是刚由 mkdirat 创建的单一路径段。
+    let descriptor = unsafe {
+        libc::openat(
+            created.parent.as_raw_fd(),
+            created.name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        return Err(AppError::atomic_write(
+            &path.to_string_lossy(),
+            "open_created_skill_directory",
+        ));
+    }
+    // SAFETY: descriptor 是本函数刚取得且尚未被其他所有者接管的有效 fd。
+    let directory = unsafe { File::from_raw_fd(descriptor) };
+    // SAFETY: directory fd 是本函数持有的有效目录描述符；权限只会收紧到 0700。
+    if unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) } != 0 {
+        return Err(AppError::permission(
+            &path.to_string_lossy(),
+            "chmod_skill_target_directory",
+        ));
+    }
+    directory
+        .sync_all()
+        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "sync_skill_directory"))?;
+    created.parent.sync_all().map_err(|_| {
+        AppError::atomic_write(
+            &path
+                .parent()
+                .expect("Skills 目录必须有父目录")
+                .to_string_lossy(),
+            "sync_skill_directory_parent",
+        )
+    })
+}
+
+fn c_path_segment(segment: &OsStr, field: &'static str) -> Result<CString, AppError> {
+    if segment.as_bytes().contains(&b'/') {
+        return Err(AppError::invalid_input(field, "路径段不能包含分隔符"));
+    }
+    CString::new(segment.as_bytes())
+        .map_err(|_| AppError::invalid_input(field, "路径段不能包含 NUL"))
+}
+
+fn open_directory_nofollow(path: &Path, operation: &'static str) -> Result<File, AppError> {
+    let path_c = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| AppError::invalid_input("allowedRoot", "路径不能包含 NUL"))?;
+    // SAFETY: path_c 是合法 C 路径；成功返回的 fd 立即交给 File 管理。
+    let descriptor = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        return Err(match io::Error::last_os_error().kind() {
+            io::ErrorKind::PermissionDenied => {
+                AppError::permission(&path.to_string_lossy(), operation)
+            }
+            _ => AppError::conflict("targetPath", "Skills 目录祖先无法安全打开"),
+        });
+    }
+    // SAFETY: descriptor 是本函数刚取得且尚未被其他所有者接管的有效 fd。
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+fn open_directory_at_nofollow(
+    parent: &File,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<File, AppError> {
+    let name_c = c_path_segment(name, "targetPath")?;
+    // SAFETY: parent fd 在调用期间有效，O_NOFOLLOW 阻止路径段链接逃逸。
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name_c.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        return Err(match io::Error::last_os_error().kind() {
+            io::ErrorKind::PermissionDenied => {
+                AppError::permission(&display_path.to_string_lossy(), "openat_skill_parent")
+            }
+            _ => AppError::conflict("targetPath", "Skills 目录祖先已变化、缺失或变为链接"),
+        });
+    }
+    // SAFETY: descriptor 是本函数刚取得且尚未被其他所有者接管的有效 fd。
+    Ok(unsafe { File::from_raw_fd(descriptor) })
 }
 
 fn validate_existing_managed_link(
@@ -1313,7 +1534,7 @@ fn validate_existing_managed_link(
             "persisted",
             &path.to_string_lossy(),
         )),
-        PathState::Directory | PathState::File { .. } => Err(AppError::conflict(
+        PathState::Directory { .. } | PathState::File { .. } => Err(AppError::conflict(
             "skillTarget",
             "普通目录或文件占用 Skill 目标，拒绝覆盖或删除",
         )),
@@ -1396,15 +1617,24 @@ fn validate_allowed_path(
                 ));
             };
             current.push(segment);
-            let metadata = fs::symlink_metadata(&current).map_err(|error| match error.kind() {
-                io::ErrorKind::NotFound => {
-                    AppError::not_found("targetParent", &current.to_string_lossy())
+            let metadata = match fs::symlink_metadata(&current) {
+                Ok(metadata) => metadata,
+                // 缺失祖先本身不是越界证据。Skills Apply 会把每层 mkdir
+                // 作为独立快照 mutation，并在真正创建前重新验证已有祖先。
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                    return Err(AppError::permission(
+                        &current.to_string_lossy(),
+                        "lstat_target_parent",
+                    ));
                 }
-                io::ErrorKind::PermissionDenied => {
-                    AppError::permission(&current.to_string_lossy(), "lstat_target_parent")
+                Err(_) => {
+                    return Err(AppError::invalid_input(
+                        "targetPath",
+                        "目标父目录无法安全读取",
+                    ));
                 }
-                _ => AppError::invalid_input("targetPath", "目标父目录无法安全读取"),
-            })?;
+            };
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 return Err(AppError::conflict(
                     "targetPath",
@@ -1471,7 +1701,10 @@ fn capture_path_state(path: &Path) -> Result<PathState, AppError> {
         });
     }
     if metadata.is_dir() {
-        return Ok(PathState::Directory);
+        return Ok(PathState::Directory {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        });
     }
     Err(AppError::conflict("targetPath", "目标是未知特殊文件类型"))
 }
@@ -1603,6 +1836,28 @@ fn apply_mutation(
     journal.targets[journal_index].phase = "writing".to_owned();
     persist_journal(paths, journal)?;
     match &mutation.mutation {
+        Mutation::CreateDirectory => {
+            if !matches!(
+                verify_expected_path_state(&mutation.path, expected)?,
+                PathState::Missing
+            ) {
+                return Err(AppError::stale_preview(&expected_run_id, &expected_target_id).into());
+            }
+            journal.targets[journal_index].phase = "directory_create_pending".to_owned();
+            persist_journal(paths, journal)?;
+            let created =
+                match create_private_directory_nofollow(&mutation.path, &mutation.allowed_root) {
+                    Ok(created) => created,
+                    Err(error) => {
+                        journal.targets[journal_index].phase = "directory_create_failed".to_owned();
+                        persist_journal(paths, journal)?;
+                        return Err(error.into());
+                    }
+                };
+            journal.targets[journal_index].phase = "directory_created".to_owned();
+            persist_journal(paths, journal)?;
+            finalize_created_directory(created, &mutation.path)?;
+        }
         Mutation::WriteFile { bytes, mode } => atomic_replace_file(
             &mutation.path,
             bytes,
@@ -1634,8 +1889,18 @@ fn apply_mutation(
                     sync_directory(mutation.path.parent().expect("目标必须有父目录"))?;
                 }
                 PathState::Missing => {}
-                PathState::Directory => {
-                    return Err(AppError::conflict("targetPath", "拒绝删除普通目录").into());
+                PathState::Directory { .. } => {
+                    if mutation.central_root.is_none() {
+                        return Err(AppError::conflict("targetPath", "拒绝删除普通目录").into());
+                    }
+                    fs::remove_dir(&mutation.path).map_err(|_| {
+                        AppError::conflict(
+                            "targetPath",
+                            "只允许删除由 Skills Apply 创建且仍为空的目录",
+                        )
+                    })?;
+                    journal.targets[journal_index].phase = "removed".to_owned();
+                    sync_directory(mutation.path.parent().expect("目标必须有父目录"))?;
                 }
             }
         }
@@ -1656,7 +1921,20 @@ fn apply_mutation(
         )?,
     }
     let state = capture_path_state(&mutation.path)?;
-    if state.fingerprint() != mutation.expected_after_fingerprint {
+    let expected_after_fingerprint = if matches!(&mutation.mutation, Mutation::CreateDirectory) {
+        if !matches!(state, PathState::Directory { .. }) {
+            journal.targets[journal_index].phase = "external_change_after_write".to_owned();
+            persist_journal(paths, journal)?;
+            return Err(MutationFailure::Error(AppError::stale_preview(
+                &expected_run_id,
+                &expected_target_id,
+            )));
+        }
+        state.fingerprint()
+    } else {
+        mutation.expected_after_fingerprint.clone()
+    };
+    if state.fingerprint() != expected_after_fingerprint {
         journal.targets[journal_index].phase = "external_change_after_write".to_owned();
         journal.targets[journal_index].temporary_path = None;
         journal.targets[journal_index].temporary_fingerprint = None;
@@ -1667,8 +1945,7 @@ fn apply_mutation(
         )));
     }
     journal.targets[journal_index].phase = "written".to_owned();
-    journal.targets[journal_index].after_fingerprint =
-        Some(mutation.expected_after_fingerprint.clone());
+    journal.targets[journal_index].after_fingerprint = Some(expected_after_fingerprint);
     journal.targets[journal_index].temporary_path = None;
     journal.targets[journal_index].temporary_fingerprint = None;
     persist_journal(paths, journal)?;
@@ -1715,7 +1992,7 @@ fn atomic_replace_file(
     };
     match current {
         PathState::Missing | PathState::File { .. } => {}
-        PathState::Directory | PathState::Symlink { .. } => {
+        PathState::Directory { .. } | PathState::Symlink { .. } => {
             return Err(AppError::conflict("targetPath", "文件原子写拒绝覆盖目录或链接").into());
         }
     }
@@ -1855,7 +2132,7 @@ fn atomic_replace_symlink(
         } => {
             validate_central_link_target(path, &current, central_root)?;
         }
-        PathState::File { .. } | PathState::Directory => {
+        PathState::File { .. } | PathState::Directory { .. } => {
             return Err(
                 AppError::conflict("skillTarget", "Skill 链接拒绝覆盖普通文件或目录").into(),
             );
@@ -2377,8 +2654,25 @@ fn restore_snapshot_record(
                 })?;
                 sync_directory(snapshot.target_path.parent().expect("目标必须有父目录"))
             }
-            PathState::Directory => {
-                Err(AppError::conflict("rollbackTarget", "回滚绝不删除普通目录"))
+            PathState::Directory { .. } => {
+                if central_root.is_none() {
+                    return Err(AppError::conflict(
+                        "rollbackTarget",
+                        "回滚拒绝删除未知普通目录",
+                    ));
+                }
+                verify_expected_path_state(
+                    &snapshot.target_path,
+                    ExpectedPathFingerprint {
+                        run_id: &snapshot.run_id,
+                        target_id: snapshot.target_id.as_deref().unwrap_or("snapshot"),
+                        fingerprint: &current_fingerprint,
+                    },
+                )?;
+                fs::remove_dir(&snapshot.target_path).map_err(|_| {
+                    AppError::conflict("rollbackTarget", "Skills 回滚只删除本次创建且仍为空的目录")
+                })?;
+                sync_directory(snapshot.target_path.parent().expect("目标必须有父目录"))
             }
         },
         PathState::File { bytes, mode, .. } => {
@@ -2417,7 +2711,7 @@ fn restore_snapshot_record(
                 },
             )
         }
-        PathState::Directory => Err(AppError::conflict(
+        PathState::Directory { .. } => Err(AppError::conflict(
             "rollbackTarget",
             "目录快照只记录占位信息，不能递归恢复",
         )),
@@ -2438,7 +2732,7 @@ fn replace_symlink_without_journal(
         PathState::Symlink { link_target } => {
             validate_central_link_target(path, &link_target, central_root)?;
         }
-        PathState::File { .. } | PathState::Directory => {
+        PathState::File { .. } | PathState::Directory { .. } => {
             return Err(AppError::conflict(
                 "skillTarget",
                 "拒绝用链接覆盖普通文件或目录",
@@ -3154,7 +3448,7 @@ fn cleanup_interrupted_temporaries(
                 })?;
                 sync_directory(temporary.parent().expect("临时路径必须有父目录"))?;
             }
-            PathState::Directory => {
+            PathState::Directory { .. } => {
                 return Err(AppError::conflict(
                     "temporaryPath",
                     "拒绝删除占用临时路径的目录",
@@ -3345,7 +3639,7 @@ fn mutation_from_snapshot(
                 })?
                 .to_path_buf(),
         },
-        PathState::Directory => {
+        PathState::Directory { .. } => {
             return Err(AppError::conflict("snapshot", "普通目录快照不能递归恢复"));
         }
     };
@@ -3509,7 +3803,12 @@ fn load_snapshot_record(
             }
             PathState::Symlink { link_target }
         }
-        "directory" => PathState::Directory,
+        // 目录快照不包含目录树，恢复路径会保守拒绝这种记录；零身份不能
+        // 与任何真实目录 fingerprint 匹配。
+        "directory" => PathState::Directory {
+            device: 0,
+            inode: 0,
+        },
         _ => return Err(AppError::invalid_input("snapshot", "未知快照目标类型")),
     };
     Ok(SnapshotRecord {
@@ -3724,6 +4023,7 @@ mod tests {
         BeforeTarget,
         BeforeRename,
         AfterRename,
+        AfterTarget,
         BeforeDatabaseFinalize,
         AfterDatabaseFinalize,
     }
@@ -3740,7 +4040,8 @@ mod tests {
             let matches = match (self.phase, event) {
                 (InjectPhase::BeforeTarget, ApplyFaultEvent::BeforeTarget { index, .. })
                 | (InjectPhase::BeforeRename, ApplyFaultEvent::BeforeRename { index, .. })
-                | (InjectPhase::AfterRename, ApplyFaultEvent::AfterRename { index, .. }) => {
+                | (InjectPhase::AfterRename, ApplyFaultEvent::AfterRename { index, .. })
+                | (InjectPhase::AfterTarget, ApplyFaultEvent::AfterTarget { index, .. }) => {
                     *index == self.target_index
                 }
                 (InjectPhase::BeforeDatabaseFinalize, ApplyFaultEvent::BeforeDatabaseFinalize)
@@ -3753,7 +4054,11 @@ mod tests {
                 return ApplyFaultDecision::Continue;
             }
             if let Some(path) = &self.sabotage {
-                let _ = fs::remove_file(path);
+                if path.is_dir() {
+                    let _ = fs::remove_dir(path);
+                } else {
+                    let _ = fs::remove_file(path);
+                }
                 let _ = fs::create_dir(path);
             }
             self.decision
@@ -4425,6 +4730,7 @@ mod tests {
                 }
                 InjectPhase::AfterRename => assert_eq!(fs::read_to_string(&target).unwrap(), "new"),
                 InjectPhase::BeforeTarget
+                | InjectPhase::AfterTarget
                 | InjectPhase::BeforeDatabaseFinalize
                 | InjectPhase::AfterDatabaseFinalize => unreachable!(),
             }
@@ -5064,8 +5370,14 @@ mod tests {
             &descriptor,
             &ownership,
         );
-        let TargetScan::Observed(observed) = &scan else {
-            panic!("Skills 目录 fixture 必须存在");
+        let (full_hash, managed_hash, projection) = match &scan {
+            TargetScan::Observed(observed) => (
+                Some(observed.full_hash.clone()),
+                Some(observed.managed_hash.clone()),
+                observed.managed_projection.clone(),
+            ),
+            TargetScan::Missing => (None, None, Value::Null),
+            _ => panic!("Skills 目录 fixture 必须存在或缺失"),
         };
         database
             .connection()
@@ -5077,9 +5389,9 @@ mod tests {
                 params![
                     target_id,
                     descriptor.path.as_deref().unwrap(),
-                    observed.full_hash,
-                    observed.managed_hash,
-                    serde_json::to_string(&observed.managed_projection).unwrap(),
+                    full_hash,
+                    managed_hash,
+                    serde_json::to_string(&projection).unwrap(),
                 ],
             )
             .unwrap();
@@ -5089,8 +5401,8 @@ mod tests {
             baseline: ManagedTargetBaseline {
                 target_id: target_id.to_owned(),
                 target_row_version: 1,
-                full_hash: Some(observed.full_hash.clone()),
-                managed_hash: Some(observed.managed_hash.clone()),
+                full_hash,
+                managed_hash,
             },
             scan,
             desired_projection: desired,
@@ -5098,6 +5410,66 @@ mod tests {
             git: None,
             exclude_from_git: false,
         }
+    }
+
+    #[test]
+    fn rollback_preserves_a_concurrently_replaced_created_skill_directory() {
+        let mut fixture = Fixture::new();
+        let skills = fixture.targets.join("nested/skills");
+        let created_parent = fixture.targets.join("nested");
+        let central = fixture.root.join("central-skills");
+        let central_skill = central.join("owned-skill");
+        fs::create_dir_all(&central_skill).unwrap();
+        let descriptor = skill_descriptor(&skills);
+        let ownership = ManagedOwnership::SymlinkNames(vec!["owned-skill".to_owned()]);
+        let desired = json!({
+            "owned-skill": {
+                "targetType": "symlink",
+                "linkTarget": central_skill.to_string_lossy(),
+            }
+        });
+        let request = skill_request(
+            &fixture.database,
+            "13000000-0000-4000-8000-000000000099",
+            descriptor.clone(),
+            ownership.clone(),
+            desired.clone(),
+        );
+        let preview_id =
+            persist_requests(&mut fixture.database, Scope::Global, None, vec![request]);
+
+        let error = apply_persisted_preview(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &preview_id,
+            &[ApplyTargetInput {
+                descriptor,
+                ownership,
+                desired_projection: desired,
+                allowed_root: fixture.targets.clone(),
+                central_skills_root: Some(central),
+                delete_target: false,
+                managed_items: Vec::new(),
+                remove_managed_item_ids: Vec::new(),
+            }],
+            &InjectFault {
+                target_index: 0,
+                phase: InjectPhase::AfterTarget,
+                decision: ApplyFaultDecision::Fail,
+                sabotage: Some(created_parent.clone()),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), ErrorCode::RollbackFailed);
+        assert!(created_parent.is_dir());
+        assert!(fs::read_dir(&created_parent).unwrap().next().is_none());
+        assert!(fixture
+            .paths
+            .journals()
+            .join(format!("{preview_id}.json"))
+            .is_file());
     }
 
     #[test]

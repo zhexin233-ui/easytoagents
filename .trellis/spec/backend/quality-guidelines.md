@@ -436,3 +436,109 @@ validate_managed_item_hash(observed_item, managed_item.last_applied_item_hash)?;
 let preview = preview_mcp_sync(database, context, input)?;
 let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.project_id)?;
 ```
+
+## Scenario: Skills central library and symlink projections
+
+### 1. Scope / Trigger
+
+- Trigger: Skill directory import, central-library inspection/deletion, assignment,
+  target discovery, symlink preview/apply, or Skill RPC DTO changes.
+
+### 2. Signatures
+
+- `prepare_skill_import(&AppPaths, source) -> Result<PreparedSkillImport, AppError>`
+  copies into a private staging directory and computes the stable tree hash.
+- `inspect_central_skill(&AppPaths, id, central_path, expected_hash, status,
+  include_content) -> Result<CentralSkillInspection, AppError>` proves central state.
+- Native synchronization remains two-step:
+  `preview_skill_sync(PreviewSkillSyncInput) -> PreviewPlan`, then
+  `apply_skill_preview(ApplySkillPreviewInput) -> ApplyResult`.
+
+### 3. Contracts
+
+- Import opens every directory/file relative to an already-open parent descriptor with
+  no-follow semantics. The root identity remains stable across copy and verification;
+  symlink roots, escaping/broken/directory/cyclic links, hard links, special files,
+  unsafe names, excessive depth/count/file size/total size, and concurrent changes fail
+  closed. Import errors contain no source content and never modify the source tree.
+- `SKILL.md` is bounded UTF-8 with an object YAML frontmatter, validated lowercase
+  hyphenated name, non-empty bounded description, non-empty workflow body, and no
+  reserved `synced` name. Ordinary DTOs expose the description only; full content is
+  returned solely by the explicit content-preview RPC after rehashing the central copy.
+- Staging and central directories are `0700`; files are `0600` plus a normalized owner
+  executable bit. Executability participates in the deterministic tree hash. Rename is
+  atomic and directory metadata is synced. Copy/hash/rename/DB failures remove only the
+  proven per-operation staging or central child.
+- Skill name uniqueness is `NOCASE`; central path, content hash, frontmatter, status,
+  and row versions remain database-bound. Deletion uses CAS and is blocked by global or
+  project assignments and any Skill managed item. Before recursive deletion, path/id,
+  central-root ownership, record hash, and quarantined hash must all match; unknown or
+  changed entries are preserved.
+- Target paths are Claude user `<CLAUDE_CONFIG_DIR>/skills`, Claude project
+  `<project>/.claude/skills`, Codex user explicit `HOME/.agents/skills`, and Codex
+  project `<project>/.agents/skills`. `CODEX_HOME` never changes the Codex user Skills
+  path. Claude policy and Codex project trust fail closed.
+- A projection owns only named child links. Every desired link target is the canonical
+  direct central Skill directory. Ordinary directories/files, broken/external/escaping
+  links, unknown siblings, and managed-item drift are never overwritten or deleted.
+  Missing parent creation is snapshotted and journaled one directory at a time; rollback
+  deletes only the same still-empty directory identity created by that run.
+- Global assignments are read-only inherited project options and cannot be duplicated
+  by a project assignment. A project with only inherited Skills and no collision or old
+  managed baseline returns an empty preview and creates neither target row nor directory.
+  Apply consumes the exact persisted preview and rechecks all row versions, hashes,
+  descriptor identity, policy/trust, target state, and managed-item baselines.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Unsafe entry/link/hard link/special file/limit breach/source race | Reject import; clean operation staging; source unchanged |
+| Case-only duplicate name or stale row version | `CONFLICT`; central intent unchanged |
+| Central path/type/hash/status drift | Invalid/missing diagnostic; content preview, sync, and delete blocked |
+| Assignment or managed-item blocker at delete | Transactional conflict; central directory restored/preserved |
+| Ordinary directory, unknown/external/broken link, or item drift at native target | Conflict; do not overwrite or delete |
+| Claude policy unknown/blocked or Codex project untrusted | Blocked preview/apply; zero native writes |
+| Pure project inheritance without collision | Empty target list; no target row or directory creation |
+
+### 5. Good/Base/Bad Cases
+
+- Good: import an isolated, descriptor-bound source tree into a private central child,
+  assign it globally, preview the canonical child link, and apply it while unrelated
+  siblings and source files remain unchanged.
+- Base: importing, listing, content preview, assignment, and deletion change only the
+  private library or SQLite central intent; native Skill targets remain unchanged until
+  a non-empty persisted preview is explicitly applied.
+- Bad: a source race, escaping link, hard link, changed central hash, stale row version,
+  inherited duplicate, ordinary target directory, unknown link, or untrusted/policy-
+  blocked target fails closed without deleting or replacing external state.
+
+### 6. Tests Required
+
+- Use only explicit temporary source/home/config/project/data roots; never read or write
+  real Skills or native configuration directories.
+- Cover strict frontmatter/body validation, source root replacement, stable executable
+  hashing/modes, hard links, special files, escaping/broken/cyclic links, permissions,
+  and all import limits and cleanup boundaries.
+- Cover the four target paths, `CODEX_HOME` independence, policy/trust, persisted-preview
+  stale checks, global inheritance, external same-name entries, managed-item drift and
+  deletion blockers, atomic missing-parent rollback, and replaced-directory preservation.
+- Search ordinary DTOs, errors, persisted previews, and journals for fixture body and
+  private frontmatter markers; expected matches are zero. Regenerate/check bindings
+  whenever a Skill command or DTO changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+fs::read_dir(source)?;
+fs::remove_dir_all(database_central_path)?;
+```
+
+#### Correct
+
+```rust
+let prepared = prepare_skill_import(paths, source)?;
+let inspection = inspect_central_skill(paths, id, central_path, expected_hash, status, false)?;
+```

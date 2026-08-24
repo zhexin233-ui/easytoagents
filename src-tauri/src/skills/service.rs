@@ -1,0 +1,1912 @@
+//! Skills 中央库服务与持久化 Preview/Apply 编排。
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+use rusqlite::{params, OptionalExtension};
+use serde_json::{json, Map, Value};
+use uuid::Uuid;
+
+use super::{
+    library::{
+        cleanup_failed_import, delete_quarantined_skill, finalize_skill_import,
+        inspect_central_skill, prepare_skill_import, quarantine_central_skill,
+        restore_quarantined_skill,
+    },
+    ApplySkillPreviewInput, DeleteSkillResultDto, ImportSkillInput, PreparedSkillRecord,
+    PreviewSkillSyncInput, SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput,
+    SkillContentPreviewDto, SkillDto, SkillProjectDto, SkillProjectOptionDto,
+    SkillProjectOptionsInput, SkillProjectSelectionState, SkillTargetStatusDto,
+    VersionedSkillInput,
+};
+use crate::{
+    adapters::{
+        canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
+        ClaudeCustomizationPolicyProbe, ConservativeClaudeCustomizationPolicyProbe,
+        ConservativeClaudeUserMcpProbe, DiscoveryContext, ManagedOwnership, TargetDescriptor,
+        ToolAdapter,
+    },
+    app::AppPaths,
+    db::{
+        skills::{self as repository, ManagedSkillItemRecord, SkillProjectRecord, SkillRecord},
+        Database,
+    },
+    domain::{ArtifactKind, ProjectRoot, Scope, SkillStatus, Tool},
+    error::AppError,
+    git::inspect_path,
+    security::SecretRedactor,
+    sync::{
+        apply_persisted_preview, assess_drift, build_preview_plan, hash_json,
+        load_managed_target_baseline, load_persisted_preview, persist_preview, scan_target,
+        ApplyResult, ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion, ManagedItemApply,
+        ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest, TargetScan,
+    },
+};
+
+pub fn list_skills(database: &Database, paths: &AppPaths) -> Result<Vec<SkillDto>, AppError> {
+    repository::list_skills(database)?
+        .iter()
+        .map(|record| skill_dto(database, paths, record))
+        .collect()
+}
+
+pub fn get_skill(database: &Database, paths: &AppPaths, id: &str) -> Result<SkillDto, AppError> {
+    let record = repository::get_skill(database, id)?;
+    skill_dto(database, paths, &record)
+}
+
+pub fn import_skill(
+    database: &mut Database,
+    paths: &AppPaths,
+    input: &ImportSkillInput,
+) -> Result<SkillDto, AppError> {
+    let mut prepared = prepare_skill_import(paths, Path::new(&input.source_path))?;
+    if let Err(error) = finalize_skill_import(paths, &mut prepared) {
+        cleanup_failed_import(paths, &prepared)?;
+        return Err(error);
+    }
+    let value = PreparedSkillRecord {
+        id: prepared.id.clone(),
+        name: prepared.name.clone(),
+        source_path: prepared.source_path.clone(),
+        central_path: prepared.central_path.clone(),
+        content_hash: prepared.content_hash.clone(),
+        frontmatter: prepared.frontmatter.clone(),
+    };
+    let record = match repository::insert_skill(database, &value) {
+        Ok(record) => record,
+        Err(error) => {
+            cleanup_failed_import(paths, &prepared)?;
+            return Err(error);
+        }
+    };
+    skill_dto(database, paths, &record)
+}
+
+pub fn preview_skill_content(
+    database: &Database,
+    paths: &AppPaths,
+    id: &str,
+) -> Result<SkillContentPreviewDto, AppError> {
+    let record = repository::get_skill(database, id)?;
+    let inspection = inspect_central_skill(
+        paths,
+        &record.id,
+        &record.central_path,
+        &record.content_hash,
+        record.status,
+        true,
+    )?;
+    if inspection.status != SkillStatus::Ready {
+        return Err(AppError::conflict(
+            "centralSkill",
+            "中央 Skill 已缺失或内容变化，不能提供正文预览",
+        ));
+    }
+    Ok(SkillContentPreviewDto {
+        id: record.id,
+        name: record.name,
+        skill_md: inspection.skill_md.unwrap_or_default(),
+        files: inspection.files,
+        content_hash: record.content_hash,
+        row_version: safe_row_version(record.row_version)?,
+    })
+}
+
+pub fn delete_skill(
+    database: &mut Database,
+    paths: &AppPaths,
+    input: &VersionedSkillInput,
+) -> Result<DeleteSkillResultDto, AppError> {
+    let record = repository::ensure_skill_deletable(database, &input.id, input.row_version)?;
+    let quarantine = quarantine_central_skill(
+        paths,
+        &record.id,
+        &record.central_path,
+        &record.content_hash,
+    )?;
+    if let Err(error) = repository::delete_skill_record(database, &input.id, input.row_version) {
+        if let Some(quarantine) = quarantine.as_deref() {
+            restore_quarantined_skill(paths, quarantine, &record.central_path)?;
+        }
+        return Err(error);
+    }
+    if let Some(quarantine) = quarantine.as_deref() {
+        delete_quarantined_skill(paths, quarantine, &record.content_hash)?;
+    }
+    Ok(DeleteSkillResultDto {
+        id: input.id.clone(),
+        deleted: true,
+    })
+}
+
+pub fn set_global_skill_assignment(
+    database: &mut Database,
+    paths: &AppPaths,
+    input: &SetGlobalSkillAssignmentInput,
+) -> Result<SkillDto, AppError> {
+    let record = repository::set_global_assignment(
+        database,
+        input.tool,
+        &input.skill_id,
+        input.assigned,
+        input.row_version,
+    )?;
+    skill_dto(database, paths, &record)
+}
+
+pub fn set_project_skill_assignment(
+    database: &mut Database,
+    paths: &AppPaths,
+    input: &SetProjectSkillAssignmentInput,
+) -> Result<SkillDto, AppError> {
+    let record = repository::set_project_assignment(
+        database,
+        &input.project_id,
+        input.tool,
+        &input.skill_id,
+        input.assigned,
+        input.skill_row_version,
+        input.project_row_version,
+    )?;
+    skill_dto(database, paths, &record)
+}
+
+pub fn list_skill_projects(database: &Database) -> Result<Vec<SkillProjectDto>, AppError> {
+    repository::list_projects(database)?
+        .iter()
+        .map(project_dto)
+        .collect()
+}
+
+pub fn list_skill_project_options(
+    database: &Database,
+    paths: &AppPaths,
+    input: &SkillProjectOptionsInput,
+) -> Result<Vec<SkillProjectOptionDto>, AppError> {
+    repository::get_project(database, &input.project_id)?;
+    let global = repository::list_assigned_skills(database, input.tool, None)?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<BTreeSet<_>>();
+    let selected = repository::list_assigned_skills(database, input.tool, Some(&input.project_id))?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<BTreeSet<_>>();
+    repository::list_skills(database)?
+        .into_iter()
+        .map(|record| {
+            let state = if global.contains(&record.id) {
+                SkillProjectSelectionState::Inherited
+            } else if selected.contains(&record.id) {
+                SkillProjectSelectionState::Selected
+            } else {
+                SkillProjectSelectionState::Available
+            };
+            let inspection = inspect_record(paths, &record, false)?;
+            Ok(SkillProjectOptionDto {
+                skill_id: record.id,
+                name: record.name,
+                status: inspection.status,
+                state,
+                selectable: state == SkillProjectSelectionState::Selected
+                    || (state == SkillProjectSelectionState::Available
+                        && inspection.status == SkillStatus::Ready),
+                row_version: safe_row_version(record.row_version)?,
+            })
+        })
+        .collect()
+}
+
+pub fn preview_skill_sync(
+    database: &mut Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    redactor: &SecretRedactor,
+    input: &PreviewSkillSyncInput,
+) -> Result<PreviewPlan, AppError> {
+    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
+    preview_skill_sync_with_policy_probe(
+        database,
+        paths,
+        environment,
+        redactor,
+        input,
+        &policy_probe,
+    )
+}
+
+pub fn preview_skill_sync_with_policy_probe(
+    database: &mut Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    redactor: &SecretRedactor,
+    input: &PreviewSkillSyncInput,
+    policy_probe: &dyn ClaudeCustomizationPolicyProbe,
+) -> Result<PreviewPlan, AppError> {
+    let prepared = prepare_skill_sync(database, paths, environment, input, policy_probe)?;
+    let scope = prepared.scope;
+    let project_id = prepared.project.as_ref().map(|project| project.id.clone());
+    let requests = prepared
+        .target
+        .map(|target| {
+            vec![PreviewTargetRequest {
+                descriptor: target.descriptor,
+                ownership: target.ownership,
+                baseline: target.baseline,
+                scan: target.scan,
+                desired_projection: target.desired_projection,
+                row_versions: target.row_versions,
+                git: target.git,
+                exclude_from_git: input.exclude_from_git,
+            }]
+        })
+        .unwrap_or_default();
+    let plan = build_preview_plan(scope, project_id, requests, redactor)?;
+    persist_preview(database, &plan)?;
+    Ok(plan)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn apply_skill_preview(
+    write_operations: &Mutex<()>,
+    database: &mut Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    redactor: &SecretRedactor,
+    input: &ApplySkillPreviewInput,
+) -> Result<ApplyResult, AppError> {
+    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
+    apply_skill_preview_with_policy_probe(
+        write_operations,
+        database,
+        paths,
+        environment,
+        redactor,
+        input,
+        &policy_probe,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn apply_skill_preview_with_policy_probe(
+    write_operations: &Mutex<()>,
+    database: &mut Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    _redactor: &SecretRedactor,
+    input: &ApplySkillPreviewInput,
+    policy_probe: &dyn ClaudeCustomizationPolicyProbe,
+) -> Result<ApplyResult, AppError> {
+    let persisted = load_persisted_preview(database, &input.preview_id)?;
+    let preview_input = PreviewSkillSyncInput {
+        tool: input.tool,
+        project_id: input.project_id.clone(),
+        exclude_from_git: persisted
+            .items
+            .first()
+            .is_some_and(|item| item.envelope.exclude_from_git),
+    };
+    let prepared = prepare_skill_sync(database, paths, environment, &preview_input, policy_probe)?;
+    if persisted.scope != prepared.scope
+        || persisted.project_id != input.project_id
+        || persisted.items.iter().any(|item| {
+            item.envelope.descriptor.tool != input.tool
+                || item.envelope.descriptor.artifact_kind != ArtifactKind::Skill
+        })
+    {
+        return Err(AppError::stale_preview(&input.preview_id, "skillTarget"));
+    }
+    let apply_inputs = prepared
+        .target
+        .map(|target| {
+            vec![ApplyTargetInput {
+                descriptor: target.descriptor,
+                ownership: target.ownership,
+                desired_projection: target.desired_projection,
+                allowed_root: target.allowed_root,
+                central_skills_root: Some(paths.central_skills().to_path_buf()),
+                delete_target: false,
+                managed_items: target.managed_items,
+                remove_managed_item_ids: target.remove_managed_item_ids,
+            }]
+        })
+        .unwrap_or_default();
+    if persisted.items.len() != apply_inputs.len() {
+        return Err(AppError::stale_preview(&input.preview_id, "skillTargets"));
+    }
+    apply_persisted_preview(
+        write_operations,
+        database,
+        paths,
+        &input.preview_id,
+        &apply_inputs,
+        &NoApplyFault,
+    )
+}
+
+pub fn list_global_skill_target_statuses(
+    database: &Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+) -> Result<Vec<SkillTargetStatusDto>, AppError> {
+    let policy_probe = ConservativeClaudeCustomizationPolicyProbe;
+    list_global_skill_target_statuses_with_policy_probe(database, paths, environment, &policy_probe)
+}
+
+pub fn list_global_skill_target_statuses_with_policy_probe(
+    database: &Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    policy_probe: &dyn ClaudeCustomizationPolicyProbe,
+) -> Result<Vec<SkillTargetStatusDto>, AppError> {
+    [Tool::Claude, Tool::Codex]
+        .into_iter()
+        .map(|tool| {
+            let descriptor = descriptor_for(environment, tool, None, policy_probe)?;
+            let target_path = descriptor.path.clone();
+            let desired = repository::list_assigned_skills(database, tool, None)?;
+            if let Some(inspection) = desired
+                .iter()
+                .map(|record| inspect_record(paths, record, false))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .find(|inspection| inspection.status != SkillStatus::Ready)
+            {
+                return Ok(SkillTargetStatusDto {
+                    tool,
+                    project_id: None,
+                    target_path,
+                    status: crate::domain::SyncStatus::ExternalOwnedChange,
+                    diagnostic_code: inspection.diagnostic_code.map(str::to_owned),
+                });
+            }
+            let baseline = find_skill_target_baseline(database, &descriptor, None)?.unwrap_or(
+                ManagedTargetBaseline {
+                    target_id: String::new(),
+                    target_row_version: 0,
+                    full_hash: None,
+                    managed_hash: None,
+                },
+            );
+            let existing = if baseline.target_id.is_empty() {
+                Vec::new()
+            } else {
+                repository::list_managed_skill_items(database, &baseline.target_id)?
+            };
+            let ownership = build_skill_ownership(&desired, &[], &existing);
+            let scan = verify_managed_item_baselines(
+                scan_target(tool_adapter(tool), &descriptor, &ownership),
+                &existing,
+            );
+            let assessment = assess_drift(&descriptor, &baseline, &scan);
+            Ok(SkillTargetStatusDto {
+                tool,
+                project_id: None,
+                target_path,
+                status: assessment.status,
+                diagnostic_code: assessment.diagnostic_codes.into_iter().next(),
+            })
+        })
+        .collect()
+}
+
+struct PreparedSkillSync {
+    scope: Scope,
+    project: Option<SkillProjectRecord>,
+    target: Option<PreparedSkillTarget>,
+}
+
+struct PreparedSkillTarget {
+    descriptor: TargetDescriptor,
+    ownership: ManagedOwnership,
+    baseline: ManagedTargetBaseline,
+    scan: TargetScan,
+    desired_projection: Value,
+    row_versions: Vec<DatabaseRowVersion>,
+    git: Option<crate::git::GitPathStatus>,
+    allowed_root: PathBuf,
+    managed_items: Vec<ManagedItemApply>,
+    remove_managed_item_ids: Vec<String>,
+}
+
+fn prepare_skill_sync(
+    database: &mut Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    input: &PreviewSkillSyncInput,
+    policy_probe: &dyn ClaudeCustomizationPolicyProbe,
+) -> Result<PreparedSkillSync, AppError> {
+    let project = input
+        .project_id
+        .as_deref()
+        .map(|id| repository::get_project(database, id))
+        .transpose()?;
+    let scope = if project.is_some() {
+        Scope::Project
+    } else {
+        Scope::Global
+    };
+    let project_root = project
+        .as_ref()
+        .map(|project| canonical_project(&project.root_path))
+        .transpose()?;
+    let descriptor = descriptor_for(environment, input.tool, project_root.as_ref(), policy_probe)?;
+    let desired_records = repository::list_assigned_skills(
+        database,
+        input.tool,
+        project.as_ref().map(|project| project.id.as_str()),
+    )?;
+    let inherited_records = if scope == Scope::Project {
+        repository::list_assigned_skills(database, input.tool, None)?
+    } else {
+        Vec::new()
+    };
+    validate_ready_records(
+        paths,
+        desired_records.iter().chain(inherited_records.iter()),
+    )?;
+    let existing_baseline = find_skill_target_baseline(
+        database,
+        &descriptor,
+        project.as_ref().map(|project| project.id.as_str()),
+    )?;
+    if desired_records.is_empty() && inherited_records.is_empty() && existing_baseline.is_none() {
+        return Ok(PreparedSkillSync {
+            scope,
+            project,
+            target: None,
+        });
+    }
+    if desired_records.is_empty() && existing_baseline.is_none() {
+        let ownership = build_skill_ownership(&[], &inherited_records, &[]);
+        let scan = scan_target(tool_adapter(input.tool), &descriptor, &ownership);
+        if inherited_projection_is_absent(&scan) {
+            return Ok(PreparedSkillSync {
+                scope,
+                project,
+                target: None,
+            });
+        }
+    }
+    let baseline = match existing_baseline {
+        Some(baseline) => baseline,
+        None => ensure_skill_target(database, &descriptor, project.as_ref())?,
+    };
+    let existing_items = repository::list_managed_skill_items(database, &baseline.target_id)?;
+    if desired_records.is_empty() && inherited_records.is_empty() && existing_items.is_empty() {
+        return Ok(PreparedSkillSync {
+            scope,
+            project,
+            target: None,
+        });
+    }
+    let desired_projection = build_desired_projection(&desired_records);
+    let ownership = build_skill_ownership(&desired_records, &inherited_records, &existing_items);
+    let scan = verify_managed_item_baselines(
+        scan_target(tool_adapter(input.tool), &descriptor, &ownership),
+        &existing_items,
+    );
+    if desired_records.is_empty()
+        && existing_items.is_empty()
+        && inherited_projection_is_absent(&scan)
+    {
+        return Ok(PreparedSkillSync {
+            scope,
+            project,
+            target: None,
+        });
+    }
+    let (managed_items, remove_managed_item_ids) =
+        build_managed_item_changes(&desired_records, &existing_items)?;
+    let row_versions = collect_row_versions(
+        database,
+        project.as_ref(),
+        desired_records.iter().chain(inherited_records.iter()),
+        &existing_items,
+    )?;
+    let git = project_root
+        .as_ref()
+        .zip(descriptor.path.as_deref())
+        .map(|(root, path)| inspect_path(root, Path::new(path)))
+        .transpose()?;
+    let allowed_root = project_root.as_ref().map_or_else(
+        || match input.tool {
+            Tool::Claude => environment.claude_config_dir().to_path_buf(),
+            Tool::Codex => environment.home().to_path_buf(),
+        },
+        |root| PathBuf::from(root.as_str()),
+    );
+    Ok(PreparedSkillSync {
+        scope,
+        project,
+        target: Some(PreparedSkillTarget {
+            descriptor,
+            ownership,
+            baseline,
+            scan,
+            desired_projection,
+            row_versions,
+            git,
+            allowed_root,
+            managed_items,
+            remove_managed_item_ids,
+        }),
+    })
+}
+
+fn descriptor_for(
+    environment: &crate::adapters::ExplicitEnvironment,
+    tool: Tool,
+    project_root: Option<&ProjectRoot>,
+    policy_probe: &dyn ClaudeCustomizationPolicyProbe,
+) -> Result<TargetDescriptor, AppError> {
+    let user_probe = ConservativeClaudeUserMcpProbe;
+    let context = DiscoveryContext {
+        environment,
+        project_root,
+        claude_user_mcp_probe: &user_probe,
+        claude_customization_policy_probe: policy_probe,
+    };
+    tool_adapter(tool)
+        .discover(&context)?
+        .into_iter()
+        .find(|descriptor| {
+            descriptor.artifact_kind == ArtifactKind::Skill
+                && descriptor.scope
+                    == if project_root.is_some() {
+                        Scope::Project
+                    } else {
+                        Scope::Global
+                    }
+        })
+        .ok_or_else(|| AppError::not_found("skillTarget", tool.as_str()))
+}
+
+fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
+    static CLAUDE: ClaudeAdapter = ClaudeAdapter;
+    static CODEX: CodexAdapter = CodexAdapter;
+    match tool {
+        Tool::Claude => &CLAUDE,
+        Tool::Codex => &CODEX,
+    }
+}
+
+fn build_desired_projection(records: &[SkillRecord]) -> Value {
+    Value::Object(
+        records
+            .iter()
+            .map(|record| {
+                (
+                    record.name.clone(),
+                    json!({
+                        "targetType": "symlink",
+                        "linkTarget": record.central_path,
+                    }),
+                )
+            })
+            .collect::<Map<_, _>>(),
+    )
+}
+
+fn build_skill_ownership(
+    desired: &[SkillRecord],
+    inherited: &[SkillRecord],
+    existing: &[ManagedSkillItemRecord],
+) -> ManagedOwnership {
+    ManagedOwnership::SymlinkNames(
+        desired
+            .iter()
+            .chain(inherited.iter())
+            .map(|record| record.name.clone())
+            .chain(existing.iter().map(|item| item.external_key.clone()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+    )
+}
+
+fn inherited_projection_is_absent(scan: &TargetScan) -> bool {
+    match scan {
+        TargetScan::Missing => true,
+        TargetScan::Observed(observed) => observed
+            .managed_projection
+            .as_object()
+            .is_some_and(Map::is_empty),
+        TargetScan::ManagedItemBaselineMismatch
+        | TargetScan::ParseError
+        | TargetScan::PermissionDenied
+        | TargetScan::TargetTypeChanged(_)
+        | TargetScan::Unavailable
+        | TargetScan::Failed => false,
+    }
+}
+
+fn verify_managed_item_baselines(
+    scan: TargetScan,
+    existing: &[ManagedSkillItemRecord],
+) -> TargetScan {
+    if existing.is_empty() {
+        return scan;
+    }
+    let matches = match &scan {
+        TargetScan::Observed(observed) => {
+            observed
+                .managed_projection
+                .as_object()
+                .is_some_and(|items| {
+                    existing.iter().all(|item| {
+                        items
+                            .get(&item.external_key)
+                            .is_some_and(|value| hash_json(value) == item.last_applied_item_hash)
+                    })
+                })
+        }
+        TargetScan::Missing => false,
+        _ => return scan,
+    };
+    if matches {
+        scan
+    } else {
+        TargetScan::ManagedItemBaselineMismatch
+    }
+}
+
+fn build_managed_item_changes(
+    desired: &[SkillRecord],
+    existing: &[ManagedSkillItemRecord],
+) -> Result<(Vec<ManagedItemApply>, Vec<String>), AppError> {
+    let mut by_resource = BTreeMap::new();
+    let mut by_external_key = BTreeMap::new();
+    for item in existing {
+        if by_resource
+            .insert(item.resource_id.as_str(), item)
+            .is_some()
+            || by_external_key
+                .insert(item.external_key.as_str(), item)
+                .is_some()
+        {
+            return Err(AppError::conflict(
+                "managedItems",
+                "同一目标存在重复的 Skill managed item 基线",
+            ));
+        }
+    }
+    let mut used = BTreeSet::new();
+    let mut updates = Vec::new();
+    for record in desired {
+        let native = json!({
+            "targetType": "symlink",
+            "linkTarget": record.central_path,
+        });
+        let existing_item = by_resource
+            .get(record.id.as_str())
+            .or_else(|| by_external_key.get(record.name.as_str()))
+            .copied();
+        let id = existing_item
+            .map(|item| item.id.clone())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        used.insert(id.clone());
+        updates.push(ManagedItemApply {
+            id,
+            resource_kind: ArtifactKind::Skill,
+            resource_id: record.id.clone(),
+            external_key: record.name.clone(),
+            last_applied_item_hash: hash_json(&native),
+        });
+    }
+    let removals = existing
+        .iter()
+        .filter(|item| !used.contains(&item.id))
+        .map(|item| item.id.clone())
+        .collect();
+    Ok((updates, removals))
+}
+
+fn collect_row_versions<'a>(
+    database: &Database,
+    project: Option<&SkillProjectRecord>,
+    records: impl Iterator<Item = &'a SkillRecord>,
+    items: &[ManagedSkillItemRecord],
+) -> Result<Vec<DatabaseRowVersion>, AppError> {
+    let mut versions = BTreeMap::<(DatabaseEntityType, String), u32>::new();
+    if let Some(project) = project {
+        versions.insert(
+            (DatabaseEntityType::Project, project.id.clone()),
+            safe_row_version(project.row_version)?,
+        );
+    }
+    for record in records {
+        versions.insert(
+            (DatabaseEntityType::Skill, record.id.clone()),
+            safe_row_version(record.row_version)?,
+        );
+    }
+    for item in items {
+        versions.insert(
+            (DatabaseEntityType::ManagedItem, item.id.clone()),
+            safe_row_version(item.row_version)?,
+        );
+        if let Ok(record) = repository::get_skill(database, &item.resource_id) {
+            versions.insert(
+                (DatabaseEntityType::Skill, record.id),
+                safe_row_version(record.row_version)?,
+            );
+        }
+    }
+    Ok(versions
+        .into_iter()
+        .map(
+            |((entity_type, entity_id), row_version)| DatabaseRowVersion {
+                entity_type,
+                entity_id,
+                row_version,
+            },
+        )
+        .collect())
+}
+
+fn ensure_skill_target(
+    database: &mut Database,
+    descriptor: &TargetDescriptor,
+    project: Option<&SkillProjectRecord>,
+) -> Result<ManagedTargetBaseline, AppError> {
+    let target_path = descriptor
+        .path
+        .as_deref()
+        .ok_or_else(|| AppError::not_found("skillTarget", descriptor.tool.as_str()))?;
+    let project_id = project.map(|project| project.id.as_str());
+    let existing = find_skill_target_baseline(database, descriptor, project_id)?;
+    if let Some(existing) = existing {
+        return Ok(existing);
+    }
+    let database_path = database.path().to_string_lossy().into_owned();
+    let id = Uuid::new_v4().to_string();
+    database
+        .connection_mut()
+        .execute(
+            "INSERT INTO managed_targets(
+                id, tool, artifact_kind, scope, project_id, target_path
+             ) VALUES (?1, ?2, 'skill', ?3, ?4, ?5)",
+            params![
+                id,
+                descriptor.tool.as_str(),
+                descriptor.scope.as_str(),
+                project_id,
+                target_path,
+            ],
+        )
+        .map_err(|_| AppError::database(&database_path, "insert_skill_managed_target"))?;
+    load_managed_target_baseline(database, &id)
+}
+
+fn find_skill_target_baseline(
+    database: &Database,
+    descriptor: &TargetDescriptor,
+    project_id: Option<&str>,
+) -> Result<Option<ManagedTargetBaseline>, AppError> {
+    let Some(target_path) = descriptor.path.as_deref() else {
+        return Ok(None);
+    };
+    let database_path = database.path().to_string_lossy();
+    database
+        .connection()
+        .query_row(
+            "SELECT id, row_version, baseline_full_hash, baseline_managed_hash
+             FROM managed_targets
+             WHERE tool = ?1 AND artifact_kind = 'skill' AND scope = ?2
+               AND ifnull(project_id, '') = ifnull(?3, '') AND target_path = ?4",
+            params![
+                descriptor.tool.as_str(),
+                descriptor.scope.as_str(),
+                project_id,
+                target_path,
+            ],
+            |row| {
+                Ok(ManagedTargetBaseline {
+                    target_id: row.get(0)?,
+                    target_row_version: row.get(1)?,
+                    full_hash: row.get(2)?,
+                    managed_hash: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|_| AppError::database(&database_path, "find_skill_managed_target"))
+}
+
+fn validate_ready_records<'a>(
+    paths: &AppPaths,
+    records: impl Iterator<Item = &'a SkillRecord>,
+) -> Result<(), AppError> {
+    for record in records {
+        let inspection = inspect_record(paths, record, false)?;
+        if inspection.status != SkillStatus::Ready {
+            return Err(AppError::conflict(
+                "centralSkill",
+                "已分配 Skill 的中央副本缺失或内容变化",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn inspect_record(
+    paths: &AppPaths,
+    record: &SkillRecord,
+    include_content: bool,
+) -> Result<super::library::CentralSkillInspection, AppError> {
+    inspect_central_skill(
+        paths,
+        &record.id,
+        &record.central_path,
+        &record.content_hash,
+        record.status,
+        include_content,
+    )
+}
+
+fn skill_dto(
+    database: &Database,
+    paths: &AppPaths,
+    record: &SkillRecord,
+) -> Result<SkillDto, AppError> {
+    let inspection = inspect_record(paths, record, false)?;
+    let frontmatter: Value = serde_json::from_str(&record.frontmatter_json)
+        .map_err(|_| AppError::invalid_input("frontmatter", "数据库中的 Skill frontmatter 无效"))?;
+    let description = frontmatter
+        .get("description")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::invalid_input("frontmatter", "数据库中的 Skill description 无效")
+        })?;
+    Ok(SkillDto {
+        id: record.id.clone(),
+        name: record.name.clone(),
+        source_path: record.source_path.clone(),
+        central_path: record.central_path.clone(),
+        content_hash: record.content_hash.clone(),
+        description: description.to_owned(),
+        status: inspection.status,
+        diagnostic_code: inspection.diagnostic_code.map(str::to_owned),
+        global_tools: repository::global_tools_for_skill(database, &record.id)?,
+        row_version: safe_row_version(record.row_version)?,
+    })
+}
+
+fn project_dto(project: &SkillProjectRecord) -> Result<SkillProjectDto, AppError> {
+    Ok(SkillProjectDto {
+        id: project.id.clone(),
+        display_name: project.display_name.clone(),
+        root_path: project.root_path.clone(),
+        codex_trust_status: project.codex_trust_status,
+        row_version: safe_row_version(project.row_version)?,
+    })
+}
+
+fn canonical_project(path: &str) -> Result<ProjectRoot, AppError> {
+    let canonical = canonicalize_project_root(Path::new(path))?;
+    if canonical.as_str() != path {
+        return Err(AppError::conflict(
+            "projectRoot",
+            "登记项目根与当前 canonical 路径不一致",
+        ));
+    }
+    Ok(canonical)
+}
+
+fn safe_row_version(value: i64) -> Result<u32, AppError> {
+    u32::try_from(value)
+        .map_err(|_| AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 范围"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        os::unix::fs::{symlink, PermissionsExt},
+        path::Path,
+        sync::Mutex,
+    };
+
+    use serde_json::json;
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    use super::{
+        apply_skill_preview_with_policy_probe, delete_skill, import_skill,
+        list_skill_project_options, preview_skill_content, preview_skill_sync_with_policy_probe,
+        set_global_skill_assignment, set_project_skill_assignment,
+    };
+    use crate::{
+        adapters::{
+            ExplicitEnvironment, ToolAvailability, VerifiedClaudeCustomizationPolicyEvidence,
+        },
+        app::AppPaths,
+        db::Database,
+        domain::{SyncStatus, Tool},
+        error::ErrorCode,
+        security::SecretRedactor,
+        skills::{
+            ApplySkillPreviewInput, ImportSkillInput, PreviewSkillSyncInput,
+            SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput,
+            SkillProjectOptionsInput, SkillProjectSelectionState, VersionedSkillInput,
+        },
+        sync::{list_snapshots, preview_restore, restore_snapshot},
+    };
+
+    const CONTENT_MARKER: &str = "phase6-private-content-marker";
+    const FRONTMATTER_MARKER: &str = "phase6-private-frontmatter-marker";
+
+    struct Fixture {
+        _temporary: TempDir,
+        paths: AppPaths,
+        database: Database,
+        environment: ExplicitEnvironment,
+        home: std::path::PathBuf,
+        project: std::path::PathBuf,
+        project_id: String,
+        source_index: usize,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let temporary = tempfile::tempdir().unwrap();
+            let root = fs::canonicalize(temporary.path()).unwrap();
+            let home = root.join("isolated-home");
+            let project = root.join("project");
+            fs::create_dir(&home).unwrap();
+            fs::create_dir(&project).unwrap();
+            fs::create_dir(home.join(".claude")).unwrap();
+            fs::create_dir(home.join(".codex")).unwrap();
+            let home = fs::canonicalize(home).unwrap();
+            let project = fs::canonicalize(project).unwrap();
+            fs::write(
+                home.join(".codex/config.toml"),
+                format!(
+                    "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                    project.to_string_lossy()
+                ),
+            )
+            .unwrap();
+            let environment =
+                ExplicitEnvironment::new(&home, None, None, ToolAvailability::all_installed())
+                    .unwrap()
+                    .with_claude_installation_version("fixture-1.0.0")
+                    .unwrap();
+            let paths = AppPaths::from_data_root(root.join("private/app-data")).unwrap();
+            let database = Database::open(&paths).unwrap();
+            let project_id = Uuid::new_v4().to_string();
+            database
+                .connection()
+                .execute(
+                    "INSERT INTO projects(
+                        id, display_name, root_path, is_git_repo, codex_trust_status
+                     ) VALUES (?1, '隔离项目', ?2, 0, 'trusted')",
+                    rusqlite::params![project_id, project.to_string_lossy()],
+                )
+                .unwrap();
+            Self {
+                _temporary: temporary,
+                paths,
+                database,
+                environment,
+                home,
+                project,
+                project_id,
+                source_index: 0,
+            }
+        }
+
+        fn source(&mut self, name: &str) -> std::path::PathBuf {
+            self.source_index += 1;
+            let source = self
+                .home
+                .parent()
+                .unwrap()
+                .join(format!("source-{}", self.source_index));
+            fs::create_dir(&source).unwrap();
+            fs::write(
+                source.join("SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: 隔离测试 Skill\nmetadata:\n  token: {FRONTMATTER_MARKER}\n---\n\n# Skill\n\n{CONTENT_MARKER}\n"
+                ),
+            )
+            .unwrap();
+            fs::write(source.join("asset.txt"), "fixture asset").unwrap();
+            source
+        }
+
+        fn allowed_policy(&self) -> VerifiedClaudeCustomizationPolicyEvidence {
+            VerifiedClaudeCustomizationPolicyEvidence::from_effective_setting("fixture-1.0.0", None)
+                .unwrap()
+        }
+
+        fn blocked_policy(&self) -> VerifiedClaudeCustomizationPolicyEvidence {
+            VerifiedClaudeCustomizationPolicyEvidence::from_effective_setting(
+                "fixture-1.0.0",
+                Some(&json!(true)),
+            )
+            .unwrap()
+        }
+
+        fn import(&mut self, name: &str) -> crate::skills::SkillDto {
+            let source = self.source(name);
+            import_skill(
+                &mut self.database,
+                &self.paths,
+                &ImportSkillInput {
+                    source_path: source.to_string_lossy().into_owned(),
+                },
+            )
+            .unwrap()
+        }
+    }
+
+    #[test]
+    fn import_preview_and_assignment_crud_never_write_native_targets() {
+        let mut fixture = Fixture::new();
+        let source = fixture.source("fixture-skill");
+        let before = fs::read(source.join("SKILL.md")).unwrap();
+        let skill = import_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &ImportSkillInput {
+                source_path: source.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), before);
+        assert!(Path::new(&skill.central_path).join("SKILL.md").is_file());
+        let ordinary_rpc =
+            serde_json::to_string(&super::list_skills(&fixture.database, &fixture.paths).unwrap())
+                .unwrap();
+        assert!(!ordinary_rpc.contains(CONTENT_MARKER));
+        assert!(!ordinary_rpc.contains(FRONTMATTER_MARKER));
+        assert!(!fixture.home.join(".claude/skills").exists());
+        assert!(!fixture.home.join(".agents/skills").exists());
+
+        let preview = preview_skill_content(&fixture.database, &fixture.paths, &skill.id).unwrap();
+        assert!(preview.skill_md.contains(CONTENT_MARKER));
+        assert_eq!(preview.files, vec!["SKILL.md", "asset.txt"]);
+
+        let assigned = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        assert!(!fixture.home.join(".claude/skills").exists());
+        let delete_error = delete_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: assigned.id,
+                row_version: assigned.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(delete_error.code(), ErrorCode::Conflict);
+        assert!(!serde_json::to_string(&delete_error)
+            .unwrap()
+            .contains(CONTENT_MARKER));
+    }
+
+    #[test]
+    fn database_failures_clean_staging_and_restore_quarantined_central_directory() {
+        let mut fixture = Fixture::new();
+        fixture
+            .database
+            .connection()
+            .execute_batch(
+                "CREATE TRIGGER fixture_fail_skill_insert
+                 BEFORE INSERT ON skills BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+            )
+            .unwrap();
+        let source = fixture.source("failed-skill");
+        assert!(import_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &ImportSkillInput {
+                source_path: source.to_string_lossy().into_owned(),
+            },
+        )
+        .is_err());
+        assert!(fs::read_dir(fixture.paths.staging())
+            .unwrap()
+            .next()
+            .is_none());
+        assert!(fs::read_dir(fixture.paths.central_skills())
+            .unwrap()
+            .next()
+            .is_none());
+        fixture
+            .database
+            .connection()
+            .execute_batch("DROP TRIGGER fixture_fail_skill_insert;")
+            .unwrap();
+
+        let skill = fixture.import("deletable-skill");
+        fixture
+            .database
+            .connection()
+            .execute_batch(
+                "CREATE TRIGGER fixture_fail_skill_delete
+                 BEFORE DELETE ON skills BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+            )
+            .unwrap();
+        assert!(delete_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: skill.id.clone(),
+                row_version: skill.row_version,
+            },
+        )
+        .is_err());
+        assert!(Path::new(&skill.central_path).join("SKILL.md").is_file());
+        assert!(fs::read_dir(fixture.paths.staging())
+            .unwrap()
+            .next()
+            .is_none());
+    }
+
+    #[test]
+    fn names_are_nocase_unique_and_central_content_drift_is_reported() {
+        let mut fixture = Fixture::new();
+        let first = fixture.import("fixture-skill");
+        let second_source = fixture.source("fixture-skill");
+        let error = import_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &ImportSkillInput {
+                source_path: second_source.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
+        assert_eq!(
+            fs::read_dir(fixture.paths.central_skills())
+                .unwrap()
+                .count(),
+            1
+        );
+        assert!(fs::read_dir(fixture.paths.staging())
+            .unwrap()
+            .next()
+            .is_none());
+
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: first.id.clone(),
+                assigned: true,
+                row_version: first.row_version,
+            },
+        )
+        .unwrap();
+
+        fs::write(Path::new(&first.central_path).join("asset.txt"), "tampered").unwrap();
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert_eq!(listed[0].status, crate::domain::SkillStatus::Invalid);
+        assert_eq!(
+            listed[0].diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+        let statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &fixture.allowed_policy(),
+        )
+        .unwrap();
+        assert_eq!(statuses[0].status, SyncStatus::ExternalOwnedChange);
+        assert_eq!(
+            statuses[0].diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+    }
+
+    #[test]
+    fn global_inheritance_is_read_only_and_project_assignment_cannot_duplicate_it() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("fixture-skill");
+        let global = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let options = list_skill_project_options(
+            &fixture.database,
+            &fixture.paths,
+            &SkillProjectOptionsInput {
+                project_id: fixture.project_id.clone(),
+                tool: Tool::Claude,
+            },
+        )
+        .unwrap();
+        assert_eq!(options[0].state, SkillProjectSelectionState::Inherited);
+        assert!(!options[0].selectable);
+        let policy = fixture.allowed_policy();
+        let inherited_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: Some(fixture.project_id.clone()),
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        assert!(inherited_preview.targets.is_empty());
+        let project_targets: i64 = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM managed_targets
+                 WHERE artifact_kind = 'skill' AND scope = 'project' AND project_id = ?1",
+                [&fixture.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(project_targets, 0, "纯继承项目不应产生无意义 target");
+        let error = set_project_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetProjectSkillAssignmentInput {
+                project_id: fixture.project_id.clone(),
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: false,
+                skill_row_version: global.row_version,
+                project_row_version: 1,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
+    }
+
+    #[test]
+    fn preview_apply_creates_missing_directories_atomically_and_never_leaks_content() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("fixture-skill");
+        let skill = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let redactor = SecretRedactor::default();
+        let preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains(CONTENT_MARKER));
+        assert_eq!(
+            preview.targets[0].change_kind,
+            crate::domain::ChangeKind::Add
+        );
+        let result = apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: preview.preview_id.clone(),
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(result.applied_targets, 1);
+        assert!(result.snapshot_count >= 2);
+        let link = fixture.home.join(".claude/skills/fixture-skill");
+        assert!(link.is_symlink());
+        assert_eq!(
+            fs::metadata(fixture.home.join(".claude/skills"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700,
+            "Apply 创建的 Skills 目录必须保持私有权限"
+        );
+        assert_eq!(
+            fs::canonicalize(&link).unwrap(),
+            Path::new(&skill.central_path)
+        );
+        let statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(statuses[0].status, SyncStatus::InSync);
+        let journal = fs::read_to_string(
+            fixture
+                .paths
+                .journals()
+                .join(format!("{}.json", preview.preview_id)),
+        )
+        .unwrap();
+        assert!(!journal.contains(CONTENT_MARKER));
+        let persisted_preview: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT redacted_diff_json FROM sync_items WHERE run_id = ?1",
+                [&preview.preview_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!persisted_preview.contains(CONTENT_MARKER));
+    }
+
+    #[test]
+    fn ordinary_directory_unknown_links_stale_preview_and_policy_block_never_overwrite() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("fixture-skill");
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        fs::create_dir(fixture.home.join(".claude/skills")).unwrap();
+        fs::create_dir(fixture.home.join(".claude/skills/fixture-skill")).unwrap();
+        let redactor = SecretRedactor::default();
+        let allowed = fixture.allowed_policy();
+        let conflict = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(
+            conflict.targets[0].change_kind,
+            crate::domain::ChangeKind::Conflict
+        );
+        assert!(fixture.home.join(".claude/skills/fixture-skill").is_dir());
+        let ordinary_status = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(ordinary_status[0].status, SyncStatus::ExternalOwnedChange);
+
+        fs::remove_dir(fixture.home.join(".claude/skills/fixture-skill")).unwrap();
+        let outside = fixture.home.parent().unwrap().join("outside-skill");
+        fs::create_dir(&outside).unwrap();
+        symlink(&outside, fixture.home.join(".claude/skills/fixture-skill")).unwrap();
+        let unknown = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(
+            unknown.targets[0].change_kind,
+            crate::domain::ChangeKind::Conflict
+        );
+        assert_eq!(
+            fs::canonicalize(fixture.home.join(".claude/skills/fixture-skill")).unwrap(),
+            outside
+        );
+
+        fs::remove_file(fixture.home.join(".claude/skills/fixture-skill")).unwrap();
+        let missing = fixture.home.join("missing-skill-target");
+        symlink(&missing, fixture.home.join(".claude/skills/fixture-skill")).unwrap();
+        let broken = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(
+            broken.targets[0].change_kind,
+            crate::domain::ChangeKind::Conflict
+        );
+        assert!(
+            fs::symlink_metadata(fixture.home.join(".claude/skills/fixture-skill"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let broken_status = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(broken_status[0].status, SyncStatus::ExternalOwnedChange);
+
+        let blocked = fixture.blocked_policy();
+        let policy_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &blocked,
+        )
+        .unwrap();
+        assert_eq!(
+            policy_preview.targets[0].status,
+            crate::domain::SyncStatus::PolicyBlocked
+        );
+        assert_eq!(
+            policy_preview.targets[0].change_kind,
+            crate::domain::ChangeKind::Conflict
+        );
+        let policy_status = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &blocked,
+        )
+        .unwrap();
+        assert_eq!(policy_status[0].status, SyncStatus::PolicyBlocked);
+    }
+
+    #[test]
+    fn project_links_use_official_paths_and_codex_user_skills_ignore_codex_home() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("project-skill");
+        let assigned = set_project_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetProjectSkillAssignmentInput {
+                project_id: fixture.project_id.clone(),
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: true,
+                skill_row_version: skill.row_version,
+                project_row_version: 1,
+            },
+        )
+        .unwrap();
+        let redactor = SecretRedactor::default();
+        let policy = fixture.allowed_policy();
+        let project_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: Some(fixture.project_id.clone()),
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(
+            project_preview.targets[0].descriptor.path.as_deref(),
+            Some(fixture.project.join(".claude/skills").to_str().unwrap())
+        );
+        apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: project_preview.preview_id,
+                tool: Tool::Claude,
+                project_id: Some(fixture.project_id.clone()),
+            },
+            &policy,
+        )
+        .unwrap();
+        assert!(fixture
+            .project
+            .join(".claude/skills/project-skill")
+            .is_symlink());
+
+        let unassigned = set_project_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetProjectSkillAssignmentInput {
+                project_id: fixture.project_id.clone(),
+                tool: Tool::Claude,
+                skill_id: assigned.id,
+                assigned: false,
+                skill_row_version: assigned.row_version,
+                project_row_version: 2,
+            },
+        )
+        .unwrap();
+        assert!(unassigned.row_version > assigned.row_version);
+
+        let codex_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Codex,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        assert!(codex_preview.targets.is_empty());
+        let descriptor =
+            super::descriptor_for(&fixture.environment, Tool::Codex, None, &policy).unwrap();
+        assert_eq!(
+            descriptor.path.as_deref(),
+            Some(fixture.home.join(".agents/skills").to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn external_change_after_preview_is_stale_and_unknown_entries_are_preserved() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("stale-skill");
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let target = fixture.home.join(".claude/skills");
+        fs::create_dir(&target).unwrap();
+        let policy = fixture.allowed_policy();
+        let redactor = SecretRedactor::default();
+        let preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        fs::create_dir(target.join("external-untouched")).unwrap();
+        let error = apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &policy,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::StalePreview);
+        assert!(target.join("external-untouched").is_dir());
+        assert!(!target.join("stale-skill").exists());
+    }
+
+    #[test]
+    fn managed_link_snapshot_restore_is_safe_and_detects_drift() {
+        let mut fixture = Fixture::new();
+        let source = fixture.source("restorable-skill");
+        let source_skill_md = fs::read(source.join("SKILL.md")).unwrap();
+        let skill = import_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &ImportSkillInput {
+                source_path: source.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap();
+        let _assigned = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let redactor = SecretRedactor::default();
+        let preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &policy,
+        )
+        .unwrap();
+        let link = fixture.home.join(".claude/skills/restorable-skill");
+        let link_snapshot = list_snapshots(&fixture.database)
+            .unwrap()
+            .into_iter()
+            .find(|snapshot| snapshot.target_path == link.to_string_lossy())
+            .unwrap();
+        let allowed_root = fixture.home.join(".claude");
+        let restore_preview = preview_restore(
+            &mut fixture.database,
+            &fixture.paths,
+            &link_snapshot.snapshot_id,
+            &allowed_root,
+        )
+        .unwrap();
+        restore_snapshot(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &restore_preview.preview_id,
+            &allowed_root,
+            Some(fixture.paths.central_skills()),
+        )
+        .unwrap();
+        assert!(!link.exists());
+
+        // 快照恢复不会擅自篡改 assignment/managed baseline；缺失的受管链接必须按漂移阻断。
+        let drift = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(
+            drift.targets[0].change_kind,
+            crate::domain::ChangeKind::Conflict
+        );
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), source_skill_md);
+        assert!(Path::new(&skill.central_path).is_dir());
+    }
+
+    #[test]
+    fn managed_link_removal_and_central_delete_are_safe() {
+        let mut fixture = Fixture::new();
+        let source = fixture.source("removable-skill");
+        let source_skill_md = fs::read(source.join("SKILL.md")).unwrap();
+        let skill = import_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &ImportSkillInput {
+                source_path: source.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap();
+        let assigned = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let redactor = SecretRedactor::default();
+        let preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &policy,
+        )
+        .unwrap();
+        let link = fixture.home.join(".claude/skills/removable-skill");
+        assert!(link.is_symlink());
+        let unassigned = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: assigned.id,
+                assigned: false,
+                row_version: assigned.row_version,
+            },
+        )
+        .unwrap();
+        let blocked_delete = delete_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: unassigned.id.clone(),
+                row_version: unassigned.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(blocked_delete.code(), ErrorCode::Conflict);
+        assert!(
+            Path::new(&skill.central_path).is_dir(),
+            "已应用 managed item 未清理前不得删除中央副本"
+        );
+        fs::create_dir(fixture.home.join(".claude/skills/external-directory")).unwrap();
+        let removal = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: removal.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &policy,
+        )
+        .unwrap();
+        assert!(!link.exists());
+        assert!(fixture
+            .home
+            .join(".claude/skills/external-directory")
+            .is_dir());
+        delete_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: unassigned.id,
+                row_version: unassigned.row_version,
+            },
+        )
+        .unwrap();
+        assert!(!Path::new(&skill.central_path).exists());
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), source_skill_md);
+    }
+}

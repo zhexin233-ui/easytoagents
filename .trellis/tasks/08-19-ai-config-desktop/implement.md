@@ -151,13 +151,13 @@ pnpm test --run
 
 ## Phase 6：Skills 中央库与全局/项目链接
 
-- [ ] 实现本地目录选择、`SKILL.md`/frontmatter 校验、staging copy、hash、原子入库。
-- [ ] 防止循环/逃逸 symlink、特殊文件和来源目录被修改。
-- [ ] 实现中央 Skill CRUD；存在 assignment 时禁止直接删除。
-- [ ] 实现 Claude `$CLAUDE_CONFIG_DIR/skills`、Codex `$HOME/.agents/skills` 及两者项目目标的 symlink plan/apply/verify。
-- [ ] 实现普通目录占位、未知链接、断链、外部同名及 policy blocked 状态。
-- [ ] 实现全局继承显示、项目不可禁用/重复选择。
-- [ ] 完成 Skills 列表、内容预览、本地导入、目标状态与项目选择器。
+- [x] 实现本地目录选择、`SKILL.md`/frontmatter 校验、staging copy、hash、原子入库。
+- [x] 防止循环/逃逸 symlink、特殊文件和来源目录被修改。
+- [x] 实现中央 Skill CRUD；存在 assignment 时禁止直接删除。
+- [x] 实现 Claude `$CLAUDE_CONFIG_DIR/skills`、Codex `$HOME/.agents/skills` 及两者项目目标的 symlink plan/apply/verify。
+- [x] 实现普通目录占位、未知链接、断链、外部同名及 policy blocked 状态。
+- [x] 实现全局继承显示、项目不可禁用/重复选择。
+- [x] 完成 Skills 列表、内容预览、本地导入、目标状态与项目选择器。
 
 验收映射：AC5、AC6、AC7、AC8。
 
