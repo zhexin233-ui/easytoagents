@@ -67,6 +67,8 @@ the shared change dialog.
 
 - CRUD success only invalidates central-intent queries and shows a no-native-write
   notice. Activation may request a persisted preview but never applies implicitly.
+  Because activation commits before preview generation, its query must also be
+  invalidated when preview generation fails; the UI must not retain the old active row.
 - API-key inputs are passwords and list DTOs expose only `apiKeyConfigured`.
 - The shared dialog renders target path, change/status, plan/target warnings,
   conflicts, and only `redactedDiff`; blocked targets disable Apply.
@@ -316,7 +318,9 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
   Apply. Detection renders only redacted native evidence. Closing preserves choices;
   reopening re-detects native state and can preview an already imported active central
   profile without confirming the import twice. All-skip calls the typed completion
-  command and performs no native Apply.
+  command and performs no native Apply. When multiple previews are applied sequentially,
+  a partial success removes only consumed previews from the retry set and disables
+  returning to the import-selection step; retry must never resubmit a consumed preview.
 - `ChangePreviewDialog`, `SyncStatusBadge`, `BlockingState`, and
   `SnapshotRestoreDialog` own the shared status language. Dialogs have labels,
   descriptions, modal semantics, Escape handling, focus trapping/restoration, and
@@ -355,8 +359,8 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 - Assert inherited controls cannot mutate, assignment payloads use the displayed row
   versions, and project/MCP/Skill active queries all refetch after either assignment.
 - Cover explicit all-skip completion, interrupted active-profile preview regeneration,
-  redacted discovery/preview rendering, exact preview ID Apply, and no implicit native
-  write command.
+  redacted discovery/preview rendering, exact preview ID Apply, partial-success retry
+  that submits only remaining preview IDs, and no implicit native write command.
 - Cover dialog label/modal attributes, Tab containment, Escape, focus restoration,
   blocked Apply, and snapshot-list restoration after closing a preview and reopening.
 

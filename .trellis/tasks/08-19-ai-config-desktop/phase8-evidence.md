@@ -9,6 +9,7 @@
 - 新增 `src-tauri/tests/phase8_e2e.rs`，所有原生目标、Skill 来源、项目、应用数据目录均位于单一 `tempfile` 隔离根。
 - 测试通过 `ExplicitEnvironment` 显式传入 `HOME`、非默认 `CLAUDE_CONFIG_DIR`、非默认 `CODEX_HOME`，通过 `AppPaths::from_data_root` 显式传入应用数据根。
 - 非默认 Claude 配置根的用户 MCP 使用与配置根、安装版本和目标路径绑定的 `VerifiedClaudeUserMcpEvidence`，没有读取或猜测开发者真实配置。
+- Claude MCP/Skills 使用与 fixture 安装版本绑定的 `VerifiedClaudeCustomizationPolicyEvidence`；该证据由测试显式注入，不来自开发者机器。
 - 测试与构建均未启动真实 Claude/Codex，也未读取、扫描或写入开发者 HOME 下的 Claude/Codex 配置。
 - 恢复阶段通过生产 `snapshot_restore_context` 按受管目标身份推导允许根，并逐项断言结果仍是上述 tempfile `HOME`、工具根或项目根；测试不自行复制恢复路由算法。
 
@@ -32,7 +33,17 @@
 | MCP | `$HOME/.claude.json` | `$CODEX_HOME/config.toml` | `<project>/.mcp.json` | `<project>/.codex/config.toml` |
 | Skill | `$CLAUDE_CONFIG_DIR/skills/<name>` | `$HOME/.agents/skills/<name>` | `<project>/.claude/skills/<name>` | `<project>/.agents/skills/<name>` |
 
-Markdown 另覆盖 `$CLAUDE_CONFIG_DIR/CLAUDE.md`。上述每个目标均调用真实生产 Service、Adapter、持久化 Preview、Apply、原生解析/链接验证、恢复 Preview 与 Restore；没有测试专用写入捷径。
+Markdown 另覆盖 `$CLAUDE_CONFIG_DIR/CLAUDE.md`。上述每个目标均调用生产 Service/Adapter 的可注入 probe 入口、持久化 Preview、Apply、原生解析/链接验证、恢复 Preview 与 Restore；没有测试专用写入引擎或恢复捷径。这里证明的是生产算法在显式证据下的链路，不等同于证明 release Tauri command 已接入真实工具/策略探针。
+
+## 自动证据边界与发布命令阻塞
+
+本轮复核确认，Phase 8 E2E 为了保持完全隔离，显式传入了 `ToolAvailability::all_installed()`、fixture Claude 版本，以及版本绑定的用户 MCP/Customization policy 证据。相对地，当前 release `run()` 边界仍把两个工具固定为 installed，未提供 Claude 安装版本；公开 MCP/Skills command 路径固定使用 `ConservativeClaudeCustomizationPolicyProbe`，因此 Claude MCP/Skills 会安全地保持 policy unknown/blocked，非默认 `CLAUDE_CONFIG_DIR` 的用户 MCP 也无法取得版本绑定 capability。
+
+这不是越权写入风险：所有未知证据都 fail closed。但它意味着现有 E2E 不能证明以下发布行为，且在真实只读 discovery/命令边界接线完成前不得标成通过：
+
+- AC1 的真实安装版本 capability/policy discovery；
+- AC13 的工具未安装状态（release 当前固定报告两个工具 installed）；
+- AC14 经由实际 Tauri command 边界完成 Claude MCP/Skills 链路。
 
 ## Secret audit
 
@@ -78,7 +89,7 @@ git diff --check
 结果：
 
 - Phase 8 E2E：1 passed。
-- Vitest：8 个测试文件、31 passed。
+- Vitest：8 个测试文件、33 passed。
 - Rust：130 个 lib 单元测试 + bindings、command smoke、Phase 8 E2E 共 133 passed；0 failed/ignored。
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、Prettier、ESLint、TypeScript typecheck 全部通过。
 - `git diff --check` 通过；`dist/` 与 `src-tauri/target/` 均由 `.gitignore` 排除，构建产物未进入版本控制状态。
@@ -87,12 +98,13 @@ git diff --check
 
 `pnpm tauri build` 成功：
 
-- `.app`：`src-tauri/target/release/bundle/macos/EasyToAgents.app`，14,648 KiB。
-- DMG：`src-tauri/target/release/bundle/dmg/EasyToAgents_0.1.0_aarch64.dmg`，5,228,155 bytes。
-- 主程序：arm64 Mach-O，14,992,928 bytes。
+- `.app`：`src-tauri/target/release/bundle/macos/EasyToAgents.app`，14,664 KiB。
+- DMG：`src-tauri/target/release/bundle/dmg/EasyToAgents_0.1.0_aarch64.dmg`，5,239,758 bytes。
+- 主程序：arm64 Mach-O，15,008,448 bytes。
 - Bundle ID：`com.easytoagents.desktop`；版本 `0.1.0`；`LSMinimumSystemVersion=13.0`。
+- Release WebView 启用 CSP，仅允许本地资源、Tauri IPC、内联样式与内嵌图片；主窗口 capability 仅含 `core:default` 和文件夹选择所需的 `dialog:allow-open`，未授予 shell/HTTP/文件系统插件权限。
 - `hdiutil verify`：VALID。
-- DMG SHA-256：`bb95281071abf28cf868369fdbd043b0c4da207305b62cb2fb8d62c473eacbeb`。
+- DMG SHA-256：`e4557b5ee34bc1d8846ffdb39fc9de42363cd72fe4e6bfa91ee56d30e927dd63`。
 
 产物核验命令：
 
@@ -127,16 +139,16 @@ codesign --verify --deep --strict --verbose=4 src-tauri/target/release/bundle/ma
 
 | AC | 自动证据 | 人工剩余 |
 | --- | --- | --- |
-| AC1 | adapter 路径矩阵、非默认根 capability fail-closed、bundle 最低 macOS 13.0 | 安装/首次启动、真实版本只读 discovery |
+| AC1 | adapter 路径矩阵、非默认根 capability fail-closed、bundle 最低 macOS 13.0 | release 命令边界接入真实版本与 policy probe；安装/首次启动、真实版本只读 discovery |
 | AC2–AC3 | Provider/Prompt service 回归、secret audit、Markdown 无损导入/精确恢复 | 新会话生效提示 smoke |
 | AC4–AC8 | MCP/Skills service 回归 + Phase 8 全局/项目 E2E | 文件选择器 smoke |
 | AC9–AC11 | Preview/Apply/漂移/故障注入/rollback/restore 回归 + Phase 8 最终 hash | 恢复对话框人工确认 |
-| AC12–AC13 | Git exclude、tracked warning、trust/policy/permission 状态回归和前端测试 | 权限与受阻状态视觉 smoke |
-| AC14 | Phase 8 中央变更 → 持久化预览 → Apply → 原生验证 → 漂移 → 快照恢复完整自动链路 | 无 |
+| AC12–AC13 | Git exclude、tracked warning、trust/policy/permission 状态回归和前端测试 | 工具 availability 的 release 探针；权限与受阻状态视觉 smoke |
+| AC14 | Phase 8 中央变更 → 持久化预览 → Apply → 原生验证 → 漂移 → 快照恢复完整自动链路（显式 fixture probe） | Claude MCP/Skills 的真实 release command probe 接线 |
 
 Out of Scope 关键字搜索覆盖产品源码与依赖清单。命中项逐一分类后仅为：Tauri 生成绑定的 `listen`/`Proxy`、特殊文件拒绝测试使用的 `UnixListener`、禁止“项目禁用全局项”的约束注释，以及脱敏测试中的 `proxy=` 字符串；均不是产品能力。依赖和生产模块中没有市场、云同步、WebDAV、钥匙串、SSH/WSL、代理服务、Copy mode、Preset、项目级全局禁用或 Windows/Linux bundle 实现。
 
 ## Git 污染状态
 
 - `dist/` 与 `src-tauri/target/` 均由 `.gitignore` 排除；测试结束后没有 tempfile、真实用户配置或构建产物进入版本控制状态。
-- 工作树整体并不干净：除本阶段的 `implement.md`、`phase8-evidence.md`、`phase8_e2e.rs` 外，仍有仓库既存的未跟踪 Trellis/平台模板与研究文件。未擅自删除或归类这些文件，因此实施计划中的“`git status` 无污染”最终人工项继续保持未完成；提交时必须显式选择本阶段文件，不能使用宽泛的 `git add .`。
+- 工作树整体并不干净：本轮 reviewer 修复/规范同步共修改 11 个已跟踪文件；此外仍有仓库既存的未跟踪 Trellis/平台模板与研究文件。未擅自删除、改写或归类这些未跟踪文件，因此实施计划中的“`git status` 无污染”最终人工项继续保持未完成；提交时必须逐文件核对 reviewer 修改，不能使用宽泛的 `git add .`。

@@ -324,6 +324,36 @@ describe("ToolProfilesPage", () => {
     );
   });
 
+  it("切换已提交但预览失败时仍刷新渠道查询", async () => {
+    const listProviderProfiles = vi.mocked(commands.listProviderProfiles);
+    listProviderProfiles.mockResolvedValue({
+      status: "ok",
+      data: [provider],
+    });
+    vi.mocked(commands.previewProviderSync).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "POLICY_BLOCKED",
+        message: "宿主策略禁止生成预览",
+        recoverable: true,
+        action: "rescan",
+      },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    const activateButton = await within(section).findByRole("button", {
+      name: "切换并预览",
+    });
+    listProviderProfiles.mockClear();
+
+    fireEvent.click(activateButton);
+
+    expect(await within(section).findByRole("alert")).toHaveTextContent(
+      "POLICY_BLOCKED：宿主策略禁止生成预览",
+    );
+    await waitFor(() => expect(listProviderProfiles).toHaveBeenCalledTimes(1));
+  });
+
   it("分别显示 RPC 错误码与错误状态", async () => {
     vi.mocked(commands.createProviderProfile).mockResolvedValue({
       status: "error",

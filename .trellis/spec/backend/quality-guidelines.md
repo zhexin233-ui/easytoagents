@@ -34,6 +34,11 @@ run against hostile paths and configuration contents.
 - Bind config-root capability evidence to the exact root and tool version, and bind
   managed-policy evidence to the exact installation version; unknown or mismatched
   evidence must fail closed.
+- The release command boundary must derive tool availability and Claude installation
+  version from a real read-only probe, then inject the matching version-bound policy
+  evidence into MCP/Skill status, preview, and apply paths. `all_installed` and a
+  permanently conservative policy probe are fixture/fail-closed defaults, not proof
+  that production discovery wiring is complete.
 - Keep managed-selector ownership in `TargetDescriptor`; validate that adapter scans
   and renders cannot escape those roots.
 - Canonicalize map ordering before hashing. Persist full and managed hashes together so
@@ -386,8 +391,8 @@ let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind
 - A project stores only project-specific assignments. Globally assigned items are
   read-only inherited options and are included in ownership only to detect an external
   same-name project entry. When a project has only inherited items and no collision or
-  previous managed item, preview has no target and must not create an empty project
-  configuration file.
+  previous managed item, preview has no target and must create neither a project
+  `managed_targets` row nor an empty project configuration file.
 - Rename, disable, unassignment, and deletion remove an old native entry only when its
   `managed_items.last_applied_item_hash` still matches the observed item. Apply binds
   every managed-item row version and updates/removes baselines in its success

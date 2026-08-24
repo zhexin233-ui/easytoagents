@@ -64,6 +64,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   > | null>(null);
   const [choices, setChoices] = useState<Choices>(() => readChoices());
   const [previews, setPreviews] = useState<WizardPreview[]>([]);
+  const [hasAppliedPreview, setHasAppliedPreview] = useState(false);
   const { dialogRef, onKeyDown } = useDialogFocus(true, onClose);
 
   const detectMutation = useMutation({
@@ -180,7 +181,10 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   });
   const applyMutation = useMutation({
     mutationFn: async () => {
-      for (const preview of previews) {
+      const remaining = [...previews];
+      while (remaining.length > 0) {
+        const preview = remaining[0];
+        if (!preview) break;
         unwrapResult(
           await commands.applyProfilePreview({
             previewId: preview.plan.previewId,
@@ -188,6 +192,11 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             artifactKind: preview.artifactKind,
           }),
         );
+        // 多份持久化预览按顺序消费。部分成功后只保留未消费项，确保重试
+        // 不会再次提交已经 consumed 的 preview。
+        remaining.shift();
+        setHasAppliedPreview(true);
+        setPreviews([...remaining]);
       }
     },
     onSuccess: async () => {
@@ -470,8 +479,12 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
               </article>
             ))}
             <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setStep("select")}>
-                返回选择
+              <Button
+                variant="outline"
+                disabled={hasAppliedPreview}
+                onClick={() => setStep("select")}
+              >
+                {hasAppliedPreview ? "已有应用，不能返回选择" : "返回选择"}
               </Button>
               <Button
                 disabled={blockedPreview || applyMutation.isPending}

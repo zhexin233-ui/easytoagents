@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   commands,
   type PreviewPlan,
+  type PromptImportPreviewDto,
   type ProviderImportPreviewDto,
 } from "@/bindings/commands";
 import { OnboardingWizard } from "@/features/onboarding/onboarding-wizard";
@@ -40,6 +41,14 @@ const importPreview: ProviderImportPreviewDto = {
   apiKeyConfigured: true,
   defaultModel: "fixture-model",
   redactedProjection: { env: "[REDACTED]" },
+};
+
+const promptImportPreview: PromptImportPreviewDto = {
+  previewId: "00000000-0000-4000-8000-000000000725",
+  tool: "claude",
+  targetPath: "/isolated/home/.claude/CLAUDE.md",
+  suggestedName: "已发现 Claude 提示词",
+  body: "# fixture prompt",
 };
 
 const syncPreview: PreviewPlan = {
@@ -81,6 +90,20 @@ const syncPreview: PreviewPlan = {
       excludeFromGit: false,
     },
   ],
+};
+
+const promptSyncPreview: PreviewPlan = {
+  ...syncPreview,
+  previewId: "00000000-0000-4000-8000-000000000726",
+  targets: syncPreview.targets.map((target) => ({
+    ...target,
+    targetId: "00000000-0000-4000-8000-000000000727",
+    descriptor: {
+      ...target.descriptor,
+      artifactKind: "prompt",
+      path: "/isolated/home/.claude/CLAUDE.md",
+    },
+  })),
 };
 
 function renderWizard(onClose = vi.fn()) {
@@ -265,5 +288,99 @@ describe("OnboardingWizard", () => {
     expect(await screen.findByText("Claude · Provider")).toBeInTheDocument();
     expect(commands.confirmProviderImport).not.toHaveBeenCalled();
     expect(commands.previewProviderSync).toHaveBeenCalledWith("claude");
+  });
+
+  it("多份预览部分成功后重试时只消费剩余预览", async () => {
+    vi.mocked(commands.discoverPromptImport).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data: tool === "claude" ? promptImportPreview : null,
+      }),
+    );
+    vi.mocked(commands.confirmPromptImport).mockResolvedValue({
+      status: "ok",
+      data: {
+        id: "00000000-0000-4000-8000-000000000728",
+        tool: "claude",
+        name: promptImportPreview.suggestedName,
+        body: promptImportPreview.body,
+        isActive: true,
+        importedFromPath: promptImportPreview.targetPath,
+        rowVersion: 1,
+      },
+    });
+    vi.mocked(commands.previewPromptSync).mockResolvedValue({
+      status: "ok",
+      data: promptSyncPreview,
+    });
+    vi.mocked(commands.applyProfilePreview)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          runId: "provider-run",
+          status: "succeeded",
+          appliedTargets: 1,
+          snapshotCount: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          code: "ATOMIC_WRITE_FAILED",
+          message: "提示词应用失败",
+          recoverable: true,
+          action: "rescan",
+        },
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          runId: "prompt-run",
+          status: "succeeded",
+          appliedTargets: 1,
+          snapshotCount: 1,
+        },
+      });
+
+    renderWizard();
+    await screen.findByText("已发现可接管的原生配置。");
+    const providerChoice = screen.getAllByLabelText("导入并接管 Provider")[0];
+    const promptChoice =
+      screen.getAllByLabelText("无损导入并接管全局提示词")[0];
+    if (!providerChoice || !promptChoice) throw new Error("缺少 Claude 选项");
+    fireEvent.click(providerChoice);
+    fireEvent.click(promptChoice);
+    fireEvent.click(screen.getByLabelText("跳过 Codex，保持非受管"));
+    fireEvent.click(screen.getByRole("button", { name: "确认选择并生成预览" }));
+    await screen.findByText("Claude · Provider");
+
+    fireEvent.click(screen.getByRole("button", { name: "应用全部预览" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "ATOMIC_WRITE_FAILED：提示词应用失败",
+    );
+    expect(commands.applyProfilePreview).toHaveBeenNthCalledWith(1, {
+      previewId: syncPreview.previewId,
+      tool: "claude",
+      artifactKind: "provider",
+    });
+    expect(commands.applyProfilePreview).toHaveBeenNthCalledWith(2, {
+      previewId: promptSyncPreview.previewId,
+      tool: "claude",
+      artifactKind: "prompt",
+    });
+    expect(
+      screen.getByRole("button", { name: "已有应用，不能返回选择" }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "应用全部预览" }));
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledTimes(3),
+    );
+    expect(commands.applyProfilePreview).toHaveBeenNthCalledWith(3, {
+      previewId: promptSyncPreview.previewId,
+      tool: "claude",
+      artifactKind: "prompt",
+    });
+    expect(await screen.findByText("向导已完成")).toBeInTheDocument();
   });
 });

@@ -110,10 +110,10 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
       );
       return unwrapResult(await commands.previewProviderSync(tool));
     },
-    onSuccess: async (preview) => {
-      await refresh();
-      onPreview(preview);
-    },
+    onSuccess: onPreview,
+    // 生效档案的中央写入发生在预览之前；即使预览因策略或路径状态失败，
+    // 也必须刷新列表，避免 UI 继续把旧档案显示为生效。
+    onSettled: refresh,
   });
   const previewMutation = useMutation({
     mutationFn: async () =>

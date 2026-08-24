@@ -419,7 +419,6 @@ fn prepare_mcp_sync(
         user_probe,
         policy_probe,
     )?;
-    let baseline = ensure_mcp_target(database, &descriptor, project.as_ref())?;
     let desired_records = repository::list_assigned_mcp_servers(
         database,
         input.tool,
@@ -435,6 +434,36 @@ fn prepare_mcp_sync(
             .collect::<Vec<_>>()
     } else {
         Vec::new()
+    };
+    let existing_baseline = find_mcp_target_baseline(
+        database,
+        &descriptor,
+        project.as_ref().map(|project| project.id.as_str()),
+    )?;
+    if desired_records.is_empty() && inherited_records.is_empty() && existing_baseline.is_none() {
+        return Ok(PreparedMcpSync {
+            scope,
+            project,
+            target: None,
+        });
+    }
+    // 项目层只有全局继承项时，先以只读扫描确认是否存在外部同名条目。
+    // 没有碰撞就不创建 managed_targets 行，也不生成空的原生配置文件。
+    if desired_records.is_empty() && existing_baseline.is_none() {
+        let container = native_container(input.tool);
+        let ownership = build_mcp_ownership(container, &[], &inherited_records, &[]);
+        let scan = scan_target(tool_adapter(input.tool), &descriptor, &ownership);
+        if inherited_projection_is_absent(&scan, container) {
+            return Ok(PreparedMcpSync {
+                scope,
+                project,
+                target: None,
+            });
+        }
+    }
+    let baseline = match existing_baseline {
+        Some(baseline) => baseline,
+        None => ensure_mcp_target(database, &descriptor, project.as_ref())?,
     };
     let existing_items = repository::list_managed_mcp_items(database, &baseline.target_id)?;
     if desired_records.is_empty() && inherited_records.is_empty() && existing_items.is_empty() {
@@ -817,7 +846,39 @@ fn ensure_mcp_target(
         .ok_or_else(|| AppError::not_found("mcpTarget", descriptor.tool.as_str()))?;
     let database_path = database.path().to_string_lossy().into_owned();
     let project_id = project.map(|project| project.id.as_str());
-    let existing = database
+    let existing = find_mcp_target_baseline(database, descriptor, project_id)?;
+    if let Some(existing) = existing {
+        return Ok(existing);
+    }
+    let id = Uuid::new_v4().to_string();
+    database
+        .connection_mut()
+        .execute(
+            "INSERT INTO managed_targets(
+                id, tool, artifact_kind, scope, project_id, target_path
+             ) VALUES (?1, ?2, 'mcp', ?3, ?4, ?5)",
+            params![
+                id,
+                descriptor.tool.as_str(),
+                descriptor.scope.as_str(),
+                project_id,
+                target_path,
+            ],
+        )
+        .map_err(|_| AppError::database(&database_path, "insert_mcp_managed_target"))?;
+    load_managed_target_baseline(database, &id)
+}
+
+fn find_mcp_target_baseline(
+    database: &Database,
+    descriptor: &TargetDescriptor,
+    project_id: Option<&str>,
+) -> Result<Option<ManagedTargetBaseline>, AppError> {
+    let Some(target_path) = descriptor.path.as_deref() else {
+        return Ok(None);
+    };
+    let database_path = database.path().to_string_lossy();
+    database
         .connection()
         .query_row(
             "SELECT id, row_version, baseline_full_hash, baseline_managed_hash
@@ -840,27 +901,7 @@ fn ensure_mcp_target(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_mcp_managed_target"))?;
-    if let Some(existing) = existing {
-        return Ok(existing);
-    }
-    let id = Uuid::new_v4().to_string();
-    database
-        .connection_mut()
-        .execute(
-            "INSERT INTO managed_targets(
-                id, tool, artifact_kind, scope, project_id, target_path
-             ) VALUES (?1, ?2, 'mcp', ?3, ?4, ?5)",
-            params![
-                id,
-                descriptor.tool.as_str(),
-                descriptor.scope.as_str(),
-                project_id,
-                target_path,
-            ],
-        )
-        .map_err(|_| AppError::database(&database_path, "insert_mcp_managed_target"))?;
-    load_managed_target_baseline(database, &id)
+        .map_err(|_| AppError::database(&database_path, "find_mcp_managed_target"))
 }
 
 fn mcp_dto(
@@ -1889,6 +1930,17 @@ enabled = true
         )
         .unwrap();
         assert!(!fixture.project.join(".mcp.json").exists());
+        let project_targets: i64 = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM managed_targets
+                 WHERE artifact_kind = 'mcp' AND scope = 'project' AND project_id = ?1",
+                [&fixture.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(project_targets, 0, "纯继承项目不应产生无意义 target");
     }
 
     fn read_tree_text(root: &Path) -> String {

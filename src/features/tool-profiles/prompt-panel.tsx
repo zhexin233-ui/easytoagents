@@ -73,10 +73,9 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
       );
       return unwrapResult(await commands.previewPromptSync(tool));
     },
-    onSuccess: async (preview) => {
-      await refresh();
-      onPreview(preview);
-    },
+    onSuccess: onPreview,
+    // 生效档案的中央写入发生在预览之前；预览失败不应让查询缓存停留在旧状态。
+    onSettled: refresh,
   });
   const previewMutation = useMutation({
     mutationFn: async () =>
