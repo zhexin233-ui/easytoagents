@@ -6,7 +6,9 @@
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+This directory records the conventions used by the Rust/Tauri backend under
+`src-tauri/`. The guides describe the current codebase, including the absence
+of a general-purpose logging pipeline.
 
 ---
 
@@ -14,7 +16,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
+| [Directory Structure](./directory-structure.md) | Module organization and file layout | Current |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | Current |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | Current |
 | [Quality Guidelines](./quality-guidelines.md) | Explicit discovery, preview and integration safety | Current |

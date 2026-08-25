@@ -61,7 +61,7 @@ targets and must not replace relational constraints with unvalidated JSON.
 
 ### 2. Signatures
 
-- `AppPaths::from_data_root(PathBuf) -> Result<AppPaths, AppError>` accepts an
+- `AppPaths::from_data_root(impl Into<PathBuf>) -> Result<AppPaths, AppError>` accepts an
   explicit private root; it never reads process `HOME` or tool configuration.
 - `Database::open(&AppPaths) -> Result<Database, AppError>` tightens private
   permissions, backs up an existing SQLite/WAL/SHM set, verifies PRAGMAs, and
