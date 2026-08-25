@@ -609,23 +609,30 @@ impl VerifiedClaudeCustomizationPolicyEvidence {
     pub fn from_official_source(
         installation_version: impl Into<String>,
         claude_config_dir: impl Into<PathBuf>,
-        source_path: impl Into<PathBuf>,
-        setting: &Value,
+        source_path: Option<&Path>,
+        setting: Option<&Value>,
     ) -> Result<Self, AppError> {
-        let mut evidence = Self::from_effective_setting(installation_version, Some(setting))?;
+        if source_path.is_none() && setting.is_some() {
+            return Err(AppError::invalid_input(
+                "policySourcePath",
+                "显式策略值必须绑定已核验的官方来源",
+            ));
+        }
+        let mut evidence = Self::from_effective_setting(installation_version, setting)?;
         evidence.claude_config_dir = Some(normalize_config_root(
             &claude_config_dir.into(),
             "claudeConfigDir",
         )?);
-        let source_path = source_path.into();
-        let normalized_source = normalize_target_path(&source_path, "policySourcePath")?;
-        if normalized_source != source_path {
-            return Err(AppError::invalid_input(
-                "policySourcePath",
-                "策略来源必须是无链接重定向的规范绝对路径",
-            ));
+        if let Some(source_path) = source_path {
+            let normalized_source = normalize_target_path(source_path, "policySourcePath")?;
+            if normalized_source != source_path {
+                return Err(AppError::invalid_input(
+                    "policySourcePath",
+                    "策略来源必须是无链接重定向的规范绝对路径",
+                ));
+            }
+            evidence.source_path = Some(normalized_source);
         }
-        evidence.source_path = Some(normalized_source);
         Ok(evidence)
     }
 

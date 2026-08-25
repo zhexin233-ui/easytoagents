@@ -337,6 +337,10 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
   `SnapshotRestoreDialog` own the shared status language. Dialogs have labels,
   descriptions, modal semantics, Escape handling, focus trapping/restoration, and
   clear stale state when reopened. Color is never the only status signal.
+- When one backend status carries materially different diagnostics, one shared UI helper
+  owns the diagnostic-aware label, description, badge tone, and action availability.
+  Feature pages consume that presentation instead of parsing diagnostic codes locally;
+  an explicit `SyncStatusBadge` tone override is limited to this shared mapping.
 - Dashboard counts, recent runs, conflicts, interrupted-run recovery, and snapshots
   come only from generated DTOs; components never parse SQLite/native payloads or show
   snapshot content.
@@ -376,6 +380,8 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
   that submits only remaining preview IDs, and no implicit native write command.
 - Cover dialog label/modal attributes, Tab containment, Escape, focus restoration,
   blocked Apply, and snapshot-list restoration after closing a preview and reopening.
+- Cover same-status diagnostic variants with visible text, tone semantics, disabled
+  actions, and an assertion that blocked actions invoke no preview command.
 
 ### 7. Wrong vs Correct
 

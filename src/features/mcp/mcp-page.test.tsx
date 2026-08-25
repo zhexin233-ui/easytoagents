@@ -286,9 +286,19 @@ describe("McpPage", () => {
       ? (await within(statusSection).findByText("Claude")).closest("article")
       : null;
     if (!claudeCard) throw new Error("未找到 Claude 状态卡");
-    fireEvent.click(
-      within(claudeCard).getByRole("button", { name: "生成全局预览" }),
+    expect(within(claudeCard).getByText("○ 待初始化")).toHaveClass(
+      "bg-amber-50",
     );
+    expect(
+      within(claudeCard).getByText(
+        "尚未写入受管目标；生成预览会在确认后初始化。",
+      ),
+    ).toBeVisible();
+    const previewButton = within(claudeCard).getByRole("button", {
+      name: "生成全局预览",
+    });
+    expect(previewButton).toBeEnabled();
+    fireEvent.click(previewButton);
     expect(
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
@@ -302,6 +312,55 @@ describe("McpPage", () => {
       }),
     );
   });
+
+  it.each([
+    [
+      "CLAUDE_POLICY_UNKNOWN",
+      "△ 策略状态待确认",
+      "无法确认 Claude 管理策略是否允许该类自定义目标，当前已安全阻止预览。",
+      "bg-amber-50",
+    ],
+    [
+      "CLAUDE_POLICY_BLOCKED",
+      "⛔ 策略阻止",
+      "Claude 管理策略禁止该类自定义目标。",
+      "bg-red-50",
+    ],
+  ] as const)(
+    "区分全局策略诊断 %s 的提示、色调和阻断操作",
+    async (diagnosticCode, label, description, toneClass) => {
+      vi.mocked(commands.listGlobalMcpTargetStatuses).mockResolvedValue({
+        status: "ok",
+        data: [
+          {
+            tool: "claude",
+            projectId: null,
+            targetPath: "/isolated/home/.claude.json",
+            status: "policy_blocked",
+            diagnosticCode,
+          },
+        ],
+      });
+      renderPage();
+      const statusSection = screen
+        .getByRole("heading", { name: "全局目标状态" })
+        .closest("section");
+      const claudeCard = statusSection
+        ? (await within(statusSection).findByText("Claude")).closest("article")
+        : null;
+      if (!claudeCard) throw new Error("未找到 Claude 状态卡");
+
+      expect(within(claudeCard).getByText(label)).toHaveClass(toneClass);
+      expect(within(claudeCard).getByText(description)).toBeVisible();
+      expect(within(claudeCard).getByText(diagnosticCode)).toBeVisible();
+      const button = within(claudeCard).getByRole("button", {
+        name: "生成全局预览",
+      });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+      expect(commands.previewMcpSync).not.toHaveBeenCalled();
+    },
+  );
 
   it("空目标预览只提示无需写入，不展示可 Apply 的对话框", async () => {
     vi.mocked(commands.previewMcpSync).mockResolvedValue({

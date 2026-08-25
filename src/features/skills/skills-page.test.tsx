@@ -388,7 +388,15 @@ describe("SkillsPage", () => {
       ? (await within(section).findByText("Claude")).closest("article")
       : null;
     if (!card) throw new Error("未找到 Claude Skills 状态卡");
-    fireEvent.click(within(card).getByRole("button", { name: "预览全局同步" }));
+    expect(within(card).getByText("○ 待初始化")).toHaveClass("bg-amber-50");
+    expect(
+      within(card).getByText("尚未写入受管目标；生成预览会在确认后初始化。"),
+    ).toBeVisible();
+    const previewButton = within(card).getByRole("button", {
+      name: "预览全局同步",
+    });
+    expect(previewButton).toBeEnabled();
+    fireEvent.click(previewButton);
     expect(
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
@@ -401,4 +409,53 @@ describe("SkillsPage", () => {
       }),
     );
   });
+
+  it.each([
+    [
+      "CLAUDE_POLICY_UNKNOWN",
+      "△ 策略状态待确认",
+      "无法确认 Claude 管理策略是否允许该类自定义目标，当前已安全阻止预览。",
+      "bg-amber-50",
+    ],
+    [
+      "CLAUDE_POLICY_BLOCKED",
+      "⛔ 策略阻止",
+      "Claude 管理策略禁止该类自定义目标。",
+      "bg-red-50",
+    ],
+  ] as const)(
+    "区分全局策略诊断 %s 的提示、色调和阻断操作",
+    async (diagnosticCode, label, description, toneClass) => {
+      vi.mocked(commands.listGlobalSkillTargetStatuses).mockResolvedValue({
+        status: "ok",
+        data: [
+          {
+            tool: "claude",
+            projectId: null,
+            targetPath: "/isolated/home/.claude/skills",
+            status: "policy_blocked",
+            diagnosticCode,
+          },
+        ],
+      });
+      renderPage();
+      const section = screen
+        .getByRole("heading", { name: "全局目标状态" })
+        .closest("section");
+      const card = section
+        ? (await within(section).findByText("Claude")).closest("article")
+        : null;
+      if (!card) throw new Error("未找到 Claude Skills 状态卡");
+
+      expect(within(card).getByText(label)).toHaveClass(toneClass);
+      expect(within(card).getByText(description)).toBeVisible();
+      expect(within(card).getByText(diagnosticCode)).toBeVisible();
+      const button = within(card).getByRole("button", {
+        name: "预览全局同步",
+      });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+      expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    },
+  );
 });

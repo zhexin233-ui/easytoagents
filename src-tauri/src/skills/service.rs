@@ -1061,6 +1061,30 @@ mod tests {
             .unwrap()
         }
 
+        fn environment_with_policy(
+            &self,
+            setting: Option<&serde_json::Value>,
+        ) -> ExplicitEnvironment {
+            ExplicitEnvironment::new(&self.home, None, None, ToolAvailability::all_installed())
+                .unwrap()
+                .with_claude_installation_version("fixture-1.0.0")
+                .unwrap()
+                .with_claude_customization_policy_evidence(
+                    VerifiedClaudeCustomizationPolicyEvidence::from_effective_setting(
+                        "fixture-1.0.0",
+                        setting,
+                    )
+                    .unwrap(),
+                )
+        }
+
+        fn environment_without_policy_evidence(&self) -> ExplicitEnvironment {
+            ExplicitEnvironment::new(&self.home, None, None, ToolAvailability::all_installed())
+                .unwrap()
+                .with_claude_installation_version("fixture-1.0.0")
+                .unwrap()
+        }
+
         fn import(&mut self, name: &str) -> crate::skills::SkillDto {
             let source = self.source(name);
             import_skill(
@@ -1129,6 +1153,46 @@ mod tests {
             .home
             .join(".claude/skills/release-evidence-skill")
             .is_symlink());
+    }
+
+    #[test]
+    fn global_status_distinguishes_initial_missing_unknown_and_blocked_policy() {
+        let fixture = Fixture::new();
+        let missing = super::list_global_skill_target_statuses(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+        )
+        .unwrap();
+        assert_eq!(missing[0].tool, Tool::Claude);
+        assert_eq!(missing[0].status, SyncStatus::Missing);
+        assert_eq!(missing[0].diagnostic_code, None);
+
+        let unknown_environment = fixture.environment_without_policy_evidence();
+        let unknown = super::list_global_skill_target_statuses(
+            &fixture.database,
+            &fixture.paths,
+            &unknown_environment,
+        )
+        .unwrap();
+        assert_eq!(unknown[0].status, SyncStatus::PolicyBlocked);
+        assert_eq!(
+            unknown[0].diagnostic_code.as_deref(),
+            Some(crate::sync::ERROR_CLAUDE_POLICY_UNKNOWN)
+        );
+
+        let blocked_environment = fixture.environment_with_policy(Some(&json!(true)));
+        let blocked = super::list_global_skill_target_statuses(
+            &fixture.database,
+            &fixture.paths,
+            &blocked_environment,
+        )
+        .unwrap();
+        assert_eq!(blocked[0].status, SyncStatus::PolicyBlocked);
+        assert_eq!(
+            blocked[0].diagnostic_code.as_deref(),
+            Some("CLAUDE_POLICY_BLOCKED")
+        );
     }
 
     #[test]

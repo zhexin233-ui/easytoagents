@@ -33,28 +33,36 @@ const blockingStatuses = new Set<SyncStatus>([
   "failed",
 ]);
 
+export type SyncStatusBadgeTone = "blocked" | "warning" | "success";
+
 export function SyncStatusBadge({
   status,
   changeKind,
+  label,
   labels,
+  tone,
 }: {
   status: SyncStatus;
   changeKind?: ChangeKind;
+  label?: string | undefined;
   labels?: Partial<Record<SyncStatus, string>>;
+  tone?: SyncStatusBadgeTone | undefined;
 }) {
   const blocked = blockingStatuses.has(status) || changeKind === "conflict";
   const warning =
     status === "external_non_owned_change" ||
     status === "missing" ||
     changeKind === "warning";
-  const statusLabel = labels?.[status] ?? statusLabels[status];
+  const resolvedTone =
+    tone ?? (blocked ? "blocked" : warning ? "warning" : "success");
+  const statusLabel = label ?? labels?.[status] ?? statusLabels[status];
   return (
     <span
       className={cn(
         "inline-flex rounded-full border px-2 py-1 text-xs font-medium",
-        blocked
+        resolvedTone === "blocked"
           ? "border-red-200 bg-red-50 text-red-800"
-          : warning
+          : resolvedTone === "warning"
             ? "border-amber-200 bg-amber-50 text-amber-800"
             : "border-emerald-200 bg-emerald-50 text-emerald-800",
       )}

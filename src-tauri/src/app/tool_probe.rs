@@ -440,19 +440,31 @@ fn probe_claude_policy(
     if managed_settings_directory_has_entries(source_directory)? {
         return None;
     }
-    let document = read_managed_settings(source_path)?;
-    let object = document.as_object()?;
-    if object.contains_key("policyHelper") {
-        return None;
+    match read_managed_settings(source_path) {
+        ManagedSettingsRead::Missing => {
+            VerifiedClaudeCustomizationPolicyEvidence::from_official_source(
+                installation_version,
+                claude_config_dir,
+                None,
+                None,
+            )
+            .ok()
+        }
+        ManagedSettingsRead::Unsafe => None,
+        ManagedSettingsRead::Document(document) => {
+            let object = document.as_object()?;
+            if object.contains_key("policyHelper") {
+                return None;
+            }
+            VerifiedClaudeCustomizationPolicyEvidence::from_official_source(
+                installation_version,
+                claude_config_dir,
+                Some(source_path),
+                object.get("strictPluginOnlyCustomization"),
+            )
+            .ok()
+        }
     }
-    let setting = object.get("strictPluginOnlyCustomization")?;
-    VerifiedClaudeCustomizationPolicyEvidence::from_official_source(
-        installation_version,
-        claude_config_dir,
-        source_path,
-        setting,
-    )
-    .ok()
 }
 
 fn validate_official_policy_path_pair(source_path: &Path, source_directory: &Path) -> Option<()> {
@@ -602,24 +614,41 @@ fn current_errno() -> libc::c_int {
     unsafe { *errno_pointer() }
 }
 
-fn read_managed_settings(path: &Path) -> Option<Value> {
+enum ManagedSettingsRead {
+    Document(Value),
+    Missing,
+    Unsafe,
+}
+
+fn read_managed_settings(path: &Path) -> ManagedSettingsRead {
     let mut file = match open_absolute_nofollow(path, false) {
         SecureOpen::Open(file) => file,
-        SecureOpen::Missing | SecureOpen::Unsafe => return None,
+        SecureOpen::Missing => return ManagedSettingsRead::Missing,
+        SecureOpen::Unsafe => return ManagedSettingsRead::Unsafe,
     };
-    let metadata = file.metadata().ok()?;
+    let metadata = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => return ManagedSettingsRead::Unsafe,
+    };
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_POLICY_BYTES {
-        return None;
+        return ManagedSettingsRead::Unsafe;
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.by_ref()
+    if file
+        .by_ref()
         .take(MAX_POLICY_BYTES + 1)
         .read_to_end(&mut bytes)
-        .ok()?;
-    if bytes.len() as u64 > MAX_POLICY_BYTES || bytes.len() as u64 != metadata.len() {
-        return None;
+        .is_err()
+    {
+        return ManagedSettingsRead::Unsafe;
     }
-    serde_json::from_slice(&bytes).ok()
+    if bytes.len() as u64 > MAX_POLICY_BYTES || bytes.len() as u64 != metadata.len() {
+        return ManagedSettingsRead::Unsafe;
+    }
+    match serde_json::from_slice(&bytes) {
+        Ok(document) => ManagedSettingsRead::Document(document),
+        Err(_) => ManagedSettingsRead::Unsafe,
+    }
 }
 
 #[cfg(test)]
@@ -647,7 +676,7 @@ mod tests {
         domain::{ArtifactKind, Scope},
     };
 
-    use super::{probe_release_environment, ReleaseToolProbeInput};
+    use super::{probe_release_environment, ReleaseToolProbeInput, ReleaseToolProbeResult};
 
     // 这些用例会 fork 带独立进程组、后台后代和 pipe 的 shell fixture；并行运行会让
     // EOF/超时断言彼此干扰。release setup 本身只串行执行一次探针，因此测试也显式
@@ -748,6 +777,26 @@ mod tests {
     fn write_executable(path: &Path, body: &str) {
         fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    fn current_customization_policy(result: &ReleaseToolProbeResult) -> ClaudeCustomizationPolicy {
+        result
+            .environment
+            .claude_customization_policy_probe()
+            .probe(&ClaudeCustomizationPolicyProbeInput {
+                installation_version: result.environment.claude_installation_version(),
+                claude_config_dir: result.environment.claude_config_dir(),
+                source_path: result.environment.claude_customization_policy_source_path(),
+                tool_installed: result.claude.state == ToolAvailabilityState::Installed,
+            })
+    }
+
+    fn assert_release_policy_unknown(input: &ReleaseToolProbeInput) {
+        let result = probe_release_environment(input).unwrap();
+        assert_eq!(
+            current_customization_policy(&result),
+            ClaudeCustomizationPolicy::unknown()
+        );
     }
 
     #[test]
@@ -853,6 +902,141 @@ mod tests {
                 }),
             ClaudeCustomizationPolicy::unknown()
         );
+    }
+
+    #[test]
+    fn missing_or_unconfigured_policy_sources_are_allowed_and_evidence_stays_bound() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        fixture.write_tool("claude", "printf '2.1.217 (Claude Code)'");
+        fixture.write_tool("codex", "printf 'codex-cli 0.114.0'");
+
+        let empty_directory = probe_release_environment(&fixture.input()).unwrap();
+        assert_eq!(
+            current_customization_policy(&empty_directory),
+            ClaudeCustomizationPolicy {
+                mcp: PolicyState::Allowed,
+                skill: PolicyState::Allowed,
+            }
+        );
+        assert!(empty_directory
+            .environment
+            .claude_customization_policy_source_path()
+            .is_none());
+
+        fs::remove_dir(&fixture.policy_directory).unwrap();
+        let missing_directory = probe_release_environment(&fixture.input()).unwrap();
+        assert_eq!(
+            current_customization_policy(&missing_directory),
+            ClaudeCustomizationPolicy {
+                mcp: PolicyState::Allowed,
+                skill: PolicyState::Allowed,
+            }
+        );
+        assert_eq!(
+            missing_directory
+                .environment
+                .claude_customization_policy_probe()
+                .probe(&ClaudeCustomizationPolicyProbeInput {
+                    installation_version: Some("2.1.218"),
+                    claude_config_dir: missing_directory.environment.claude_config_dir(),
+                    source_path: None,
+                    tool_installed: true,
+                }),
+            ClaudeCustomizationPolicy::unknown()
+        );
+        assert_eq!(
+            missing_directory
+                .environment
+                .claude_customization_policy_probe()
+                .probe(&ClaudeCustomizationPolicyProbeInput {
+                    installation_version: Some("2.1.217"),
+                    claude_config_dir: &fixture.codex_root,
+                    source_path: None,
+                    tool_installed: true,
+                }),
+            ClaudeCustomizationPolicy::unknown()
+        );
+        assert_eq!(
+            missing_directory
+                .environment
+                .claude_customization_policy_probe()
+                .probe(&ClaudeCustomizationPolicyProbeInput {
+                    installation_version: Some("2.1.217"),
+                    claude_config_dir: missing_directory.environment.claude_config_dir(),
+                    source_path: Some(&fixture.policy),
+                    tool_installed: true,
+                }),
+            ClaudeCustomizationPolicy::unknown()
+        );
+
+        fs::create_dir(&fixture.policy_directory).unwrap();
+        fs::write(&fixture.policy, "{}").unwrap();
+        let undeclared_setting = probe_release_environment(&fixture.input()).unwrap();
+        assert_eq!(
+            current_customization_policy(&undeclared_setting),
+            ClaudeCustomizationPolicy {
+                mcp: PolicyState::Allowed,
+                skill: PolicyState::Allowed,
+            }
+        );
+        assert_eq!(
+            undeclared_setting
+                .environment
+                .claude_customization_policy_source_path(),
+            Some(fixture.policy.as_path())
+        );
+    }
+
+    #[test]
+    fn explicit_policy_values_keep_surface_rules_while_dynamic_or_invalid_values_are_unknown() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        fixture.write_tool("claude", "printf '2.1.217 (Claude Code)'");
+        fixture.write_tool("codex", "printf 'codex-cli 0.114.0'");
+
+        for (document, expected) in [
+            (
+                r#"{"strictPluginOnlyCustomization":false}"#,
+                ClaudeCustomizationPolicy {
+                    mcp: PolicyState::Allowed,
+                    skill: PolicyState::Allowed,
+                },
+            ),
+            (
+                r#"{"strictPluginOnlyCustomization":true}"#,
+                ClaudeCustomizationPolicy {
+                    mcp: PolicyState::Blocked,
+                    skill: PolicyState::Blocked,
+                },
+            ),
+            (
+                r#"{"strictPluginOnlyCustomization":["mcp"]}"#,
+                ClaudeCustomizationPolicy {
+                    mcp: PolicyState::Blocked,
+                    skill: PolicyState::Allowed,
+                },
+            ),
+            (
+                r#"{"strictPluginOnlyCustomization":["skills"]}"#,
+                ClaudeCustomizationPolicy {
+                    mcp: PolicyState::Allowed,
+                    skill: PolicyState::Blocked,
+                },
+            ),
+        ] {
+            fs::write(&fixture.policy, document).unwrap();
+            let result = probe_release_environment(&fixture.input()).unwrap();
+            assert_eq!(current_customization_policy(&result), expected);
+        }
+
+        for document in [
+            r#"{"strictPluginOnlyCustomization":"mcp"}"#,
+            r#"{"policyHelper":"/usr/local/bin/effective-policy"}"#,
+        ] {
+            fs::write(&fixture.policy, document).unwrap();
+            assert_release_policy_unknown(&fixture.input());
+        }
     }
 
     #[test]
@@ -1021,26 +1205,17 @@ esac"#,
         let mut malformed = fixture.input();
         malformed.claude_managed_settings_path = fixture.policy.with_file_name("other.json");
         fs::write(&malformed.claude_managed_settings_path, valid_policy).unwrap();
-        assert!(probe_release_environment(&malformed)
-            .unwrap()
-            .environment
-            .claude_customization_policy_source_path()
-            .is_none());
+        assert_release_policy_unknown(&malformed);
 
         fs::write(&fixture.policy, b"{invalid").unwrap();
-        assert!(probe_release_environment(&fixture.input())
-            .unwrap()
-            .environment
-            .claude_customization_policy_source_path()
-            .is_none());
+        assert_release_policy_unknown(&fixture.input());
+
+        fs::write(&fixture.policy, b"").unwrap();
+        assert_release_policy_unknown(&fixture.input());
 
         fs::remove_file(&fixture.policy).unwrap();
         fs::create_dir(&fixture.policy).unwrap();
-        assert!(probe_release_environment(&fixture.input())
-            .unwrap()
-            .environment
-            .claude_customization_policy_source_path()
-            .is_none());
+        assert_release_policy_unknown(&fixture.input());
         fs::remove_dir(&fixture.policy).unwrap();
 
         fs::write(
@@ -1048,28 +1223,16 @@ esac"#,
             vec![b'x'; super::MAX_POLICY_BYTES as usize + 1],
         )
         .unwrap();
-        assert!(probe_release_environment(&fixture.input())
-            .unwrap()
-            .environment
-            .claude_customization_policy_source_path()
-            .is_none());
+        assert_release_policy_unknown(&fixture.input());
 
         fs::write(&fixture.policy, valid_policy).unwrap();
         fs::set_permissions(&fixture.policy, fs::Permissions::from_mode(0o000)).unwrap();
-        assert!(probe_release_environment(&fixture.input())
-            .unwrap()
-            .environment
-            .claude_customization_policy_source_path()
-            .is_none());
+        assert_release_policy_unknown(&fixture.input());
         fs::set_permissions(&fixture.policy, fs::Permissions::from_mode(0o600)).unwrap();
 
         fs::write(&fixture.policy, valid_policy).unwrap();
         fs::write(fixture.policy_directory.join("10-policy.json"), "{}").unwrap();
-        assert!(probe_release_environment(&fixture.input())
-            .unwrap()
-            .environment
-            .claude_customization_policy_source_path()
-            .is_none());
+        assert_release_policy_unknown(&fixture.input());
 
         fs::remove_file(fixture.policy_directory.join("10-policy.json")).unwrap();
         let real_parent = fixture.home.parent().unwrap().join("real-policy-parent");
@@ -1081,15 +1244,11 @@ esac"#,
         let mut symlinked = fixture.input();
         symlinked.claude_managed_settings_path = alias_parent.join("managed-settings.json");
         symlinked.claude_managed_settings_directory = alias_parent.join("managed-settings.d");
-        assert!(probe_release_environment(&symlinked)
-            .unwrap()
-            .environment
-            .claude_customization_policy_source_path()
-            .is_none());
+        assert_release_policy_unknown(&symlinked);
     }
 
     #[test]
-    fn custom_root_blocks_user_mcp_and_policy_can_be_blocked_or_unknown() {
+    fn custom_root_blocks_user_mcp_while_policy_can_be_blocked_or_absent() {
         let _process_fixture = isolate_process_fixture();
         let fixture = Fixture::new();
         fixture.write_tool("claude", "printf '2.1.217 (Claude Code)'");
@@ -1127,12 +1286,12 @@ esac"#,
         assert_eq!(skill.policy, PolicyState::Allowed);
 
         fs::remove_file(&fixture.policy).unwrap();
-        let unknown = probe_release_environment(&input).unwrap();
+        let absent = probe_release_environment(&input).unwrap();
         let context = DiscoveryContext {
-            environment: &unknown.environment,
+            environment: &absent.environment,
             project_root: None,
-            claude_user_mcp_probe: unknown.environment.claude_user_mcp_probe(),
-            claude_customization_policy_probe: unknown
+            claude_user_mcp_probe: absent.environment.claude_user_mcp_probe(),
+            claude_customization_policy_probe: absent
                 .environment
                 .claude_customization_policy_probe(),
         };
@@ -1146,6 +1305,6 @@ esac"#,
                     ArtifactKind::Mcp | ArtifactKind::Skill
                 )
             })
-            .all(|target| target.policy == PolicyState::Unknown));
+            .all(|target| target.policy == PolicyState::Allowed));
     }
 }

@@ -24,11 +24,7 @@ import {
   mcpServersQueryOptions,
 } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
-import {
-  globalTargetStatusDescription,
-  globalTargetStatusLabels,
-  isGlobalTargetPreviewBlocked,
-} from "@/lib/global-target-status-ui";
+import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 
 interface McpFormState {
   id: string | null;
@@ -547,7 +543,7 @@ export function McpPage() {
         ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {statusesQuery.data?.map((status) => {
-            const statusDescription = globalTargetStatusDescription(
+            const presentation = globalTargetStatusPresentation(
               status.status,
               status.diagnosticCode,
             );
@@ -564,13 +560,14 @@ export function McpPage() {
                 </code>
                 <div className="mt-2">
                   <SyncStatusBadge
-                    labels={globalTargetStatusLabels}
+                    label={presentation.label}
                     status={status.status}
+                    tone={presentation.tone}
                   />
                 </div>
-                {statusDescription ? (
+                {presentation.description ? (
                   <p className="text-muted-foreground mt-2 text-xs">
-                    {statusDescription}
+                    {presentation.description}
                   </p>
                 ) : null}
                 {status.diagnosticCode ? (
@@ -582,8 +579,7 @@ export function McpPage() {
                   className="mt-3"
                   size="sm"
                   disabled={
-                    previewMutation.isPending ||
-                    isGlobalTargetPreviewBlocked(status.status)
+                    previewMutation.isPending || presentation.previewBlocked
                   }
                   onClick={() =>
                     previewMutation.mutate({

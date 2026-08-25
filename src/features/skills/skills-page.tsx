@@ -16,11 +16,7 @@ import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
-import {
-  globalTargetStatusDescription,
-  globalTargetStatusLabels,
-  isGlobalTargetPreviewBlocked,
-} from "@/lib/global-target-status-ui";
+import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
   globalSkillStatusesQueryOptions,
   skillKeys,
@@ -410,7 +406,7 @@ export function SkillsPage() {
         ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {statusesQuery.data?.map((status) => {
-            const statusDescription = globalTargetStatusDescription(
+            const presentation = globalTargetStatusPresentation(
               status.status,
               status.diagnosticCode,
             );
@@ -424,16 +420,17 @@ export function SkillsPage() {
                     {status.tool === "claude" ? "Claude" : "Codex"}
                   </strong>
                   <SyncStatusBadge
-                    labels={globalTargetStatusLabels}
+                    label={presentation.label}
                     status={status.status}
+                    tone={presentation.tone}
                   />
                 </div>
                 <code className="mt-2 block text-xs break-all">
                   {status.targetPath ?? "目标不可用"}
                 </code>
-                {statusDescription ? (
+                {presentation.description ? (
                   <p className="text-muted-foreground mt-2 text-xs">
-                    {statusDescription}
+                    {presentation.description}
                   </p>
                 ) : null}
                 {status.diagnosticCode ? (
@@ -446,8 +443,7 @@ export function SkillsPage() {
                   size="sm"
                   variant="outline"
                   disabled={
-                    previewMutation.isPending ||
-                    isGlobalTargetPreviewBlocked(status.status)
+                    previewMutation.isPending || presentation.previewBlocked
                   }
                   onClick={() =>
                     previewMutation.mutate({

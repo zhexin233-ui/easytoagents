@@ -1,0 +1,8 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "定位 Rust/Tauri 后端规范入口与预开发清单"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "发布探针、Claude 策略证据与 fail-closed 合同"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "定位 React 前端规范入口与预开发清单"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "共享状态组件、可访问性与阻断提示约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "MCP/Skills 页面状态和测试合同"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "校验探针到 DTO 再到页面的跨层语义"}
+{"file": ".trellis/tasks/08-25-fix-global-target-initial-status/research/initial-status-investigation.md", "reason": "完整根因、主机证据、批准的判定矩阵与测试缺口"}

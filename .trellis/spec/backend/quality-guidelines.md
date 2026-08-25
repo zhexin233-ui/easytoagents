@@ -702,10 +702,12 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
   binds the exact installation version, normalized config root, and verified target path.
 - Customization policy evidence reads only the exact official macOS managed-settings file.
   Its root-to-leaf walk uses descriptor-relative `openat` with no-follow and type checks
-  for every ancestor and leaf before bounded JSON parsing. It is accepted only for an explicit valid
-  `strictPluginOnlyCustomization` value and is bound to the exact Claude version,
-  normalized config root, and source path. Missing/invalid/symlinked/ambiguous directory
-  sources and `policyHelper` remain unknown. Provider host policy remains independent.
+  for every ancestor and leaf before bounded JSON parsing. A trustworthily absent main
+  file with an absent or empty drop-in directory, or a valid object that omits
+  `strictPluginOnlyCustomization`, is explicit Allowed evidence with no source path.
+  An explicit valid setting is accepted from the verified source path. Both forms bind
+  the exact Claude version and normalized config root. Invalid, unreadable, symlinked,
+  dynamic, or multi-source policy remains unknown. Provider host policy remains independent.
 - Setup probes once and stores the immutable evidence in `AppState`; commands never reread
   process environment, rerun binaries, or substitute cached success for mismatched evidence.
 - Tool profile status serializes the three-state availability and exact validated version.
@@ -724,16 +726,18 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 | Claude version/config root differs from evidence | evidence stale; MCP/Skill policy/capability fail closed |
 | Default Claude config root | user MCP remains exact `$HOME/.claude.json` |
 | Non-default Claude root without verified target evidence | unsupported; never guess a user MCP path |
+| Main policy absent and drop-in absent/empty, or valid object omits the setting | allowed evidence bound to version/root |
 | Explicit valid policy `false`/array/`true` | allowed/per-surface blocked according to the validated value |
-| Missing, malformed, dynamic, symlinked, or multi-file policy source | unknown; MCP/Skills block |
+| Malformed, unreadable, dynamic, symlinked, or multi-file policy source | unknown; MCP/Skills block |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: release setup validates both exact versions, binds an explicit official policy
   value, stores one environment in `AppState`, and public status/preview/apply reuse it.
-- Base: an absent tool is reported unavailable without touching any native configuration.
-- Bad: a hanging wrapper, forged multiline output, changed Claude version, non-default
-  root, or ambiguous policy source never becomes installed/allowed evidence.
+- Base: trustworthily absent official policy sources bind Allowed evidence, so a missing
+  supported MCP/Skill target can produce an initialization preview without a native write.
+- Bad: a hanging wrapper, forged multiline output, changed Claude version, mismatched
+  config root, or ambiguous policy source never becomes installed/allowed evidence.
 
 ### 6. Tests Required
 
@@ -744,8 +748,10 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
   descendants and wrappers that exit before descendants, exact argv and
   null stdin, exact Claude/Codex parsing, non-default Claude root, and policy
   allowed/blocked/unknown.
-- Cover wrong official basenames, ancestor symlinks, malformed JSON, ambiguous drop-ins,
-  and evidence source/version/root/target mismatches without reading real host policy.
+- Cover absent main files, absent and empty drop-in directories, valid objects with an
+  omitted setting, explicit boolean/surface values, wrong official basenames, ancestor
+  symlinks, malformed JSON, unreadable files, dynamic helpers, ambiguous drop-ins, and
+  evidence source/version/root/target mismatches without reading real host policy.
 - Prove a changed version invalidates policy evidence, and prove public MCP/Skill status,
   preview, and apply consume environment evidence rather than conservative defaults.
 - Keep the dedicated-user/VM real-install discovery and UI smoke gate manual; tests must
