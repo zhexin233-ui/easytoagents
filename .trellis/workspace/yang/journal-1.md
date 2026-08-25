@@ -59,3 +59,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 修复 MCP 与 Skills 初始化状态
+
+**Date**: 2026-08-25
+**Task**: 修复 MCP 与 Skills 初始化状态
+**Branch**: `main`
+
+### Summary
+
+修复 Claude 企业策略源缺失被误判为 Unknown；统一 MCP 与 Skills 的待初始化、策略待确认和策略阻止展示，补齐前后端回归测试与规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `452dc08` | (see git log) |
+
+### Status
+
+[OK] **Completed**
