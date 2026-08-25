@@ -2,7 +2,8 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     sync::Mutex,
 };
 
@@ -11,12 +12,13 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use super::models::{
-    validate_prompt_fields, validate_provider_fields, ClaudeCredentialEnvKey, ConfirmImportInput,
-    CopyProviderProfileInput, DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto,
-    PromptProfileInput, ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto,
-    ProviderProfileInput, SecretUpdate, StoredProviderConfig, ToolProfileStatusDto,
-    UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
-    CODEX_BEARER_TOKEN_WARNING, NEW_SESSION_NOTICE,
+    validate_prompt_fields, validate_provider_fields, validate_provider_fields_with_optional_key,
+    ClaudeCredentialEnvKey, ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto,
+    PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, ProviderImportPreviewDto,
+    ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput, SecretUpdate,
+    StoredProviderConfig, ToolProfileStatusDto, UpdatePromptProfileInput,
+    UpdateProviderProfileInput, VersionedProfileInput, CODEX_BEARER_TOKEN_WARNING,
+    NEW_SESSION_NOTICE,
 };
 use crate::{
     adapters::{
@@ -45,7 +47,15 @@ use crate::{
 
 const CLAUDE_BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
 const CLAUDE_MODEL_KEY: &str = "ANTHROPIC_MODEL";
+const CLAUDE_DEFAULT_MODEL_KEYS: &[&str] = &[
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+];
 const CLAUDE_PROVIDER_MANAGED_BY_HOST_KEY: &str = "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST";
+const CODEX_OPENAI_PROVIDER_ID: &str = "openai";
+const CODEX_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const CODEX_RESERVED_PROVIDER_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
 
 pub fn list_provider_profiles(
@@ -105,6 +115,8 @@ pub fn update_provider_profile(
             AppError::invalid_input("providerOptions", "Codex Provider 缺少稳定 provider id")
         })?,
     };
+    let allow_missing_api_key =
+        codex_provider_allows_missing_api_key(current.tool, current_config.provider_id.as_deref());
     let config = StoredProviderConfig::from_input(
         current.tool,
         &provider_id,
@@ -112,24 +124,34 @@ pub fn update_provider_profile(
         current_config.extra_provider_fields,
     )?;
     let api_key = match input.api_key {
-        SecretUpdate::Keep => current.api_key.clone().unwrap_or_default(),
-        SecretUpdate::Clear => String::new(),
-        SecretUpdate::Replace(value) => value,
+        SecretUpdate::Keep => current.api_key.clone(),
+        SecretUpdate::Clear => None,
+        SecretUpdate::Replace(value) if value.is_empty() => None,
+        SecretUpdate::Replace(value) => Some(value),
     };
-    validate_provider_fields(
+    if allow_missing_api_key && api_key.is_some() {
+        return Err(AppError::invalid_input(
+            "apiKey",
+            "Codex OAuth Provider 使用官方登录凭据，不能保存本地 API Key",
+        ));
+    }
+    validate_provider_fields_with_optional_key(
         &input.name,
         &input.api_base_url,
-        &api_key,
+        api_key.as_deref(),
         &input.default_model,
+        allow_missing_api_key,
     )?;
-    redactor.register_secret(api_key.clone());
+    if let Some(api_key) = &api_key {
+        redactor.register_secret(api_key.clone());
+    }
     let row_version = i64::from(input.row_version);
     let record = repository::update_provider_profile(
         database,
         &input.id,
         &input.name,
         Some(&input.api_base_url),
-        Some(&api_key),
+        api_key.as_deref(),
         Some(&input.default_model),
         &serde_json::to_string(&config)
             .map_err(|_| AppError::invalid_input("providerOptions", "Provider 选项无法序列化"))?,
@@ -317,11 +339,12 @@ pub fn discover_provider_import(
         .filter(|name| ArtifactName::parse((*name).clone()).is_ok())
         .cloned()
         .unwrap_or_else(|| "已导入渠道".to_owned());
-    validate_provider_fields(
+    validate_provider_fields_with_optional_key(
         &suggested_name,
         &discovered.api_base_url,
-        discovered.api_key.as_deref().unwrap_or_default(),
+        discovered.api_key.as_deref(),
         &discovered.default_model,
+        discovered_provider_allows_missing_api_key(tool, &discovered),
     )?;
     validate_discovered_provider_config(tool, &discovered)?;
     let preview_id = Uuid::new_v4().to_string();
@@ -382,18 +405,19 @@ pub fn confirm_provider_import(
     {
         return Err(AppError::stale_preview(&preview.id, &preview.target_path));
     }
-    validate_provider_fields(
-        &input.name,
-        &discovered.api_base_url,
-        discovered.api_key.as_deref().unwrap_or_default(),
-        &discovered.default_model,
-    )?;
     let id = Uuid::new_v4().to_string();
     let provider_id = discovered
         .provider_id
         .clone()
         .unwrap_or_else(|| generated_codex_provider_id(&id));
     validate_codex_provider_id(preview.tool, &provider_id)?;
+    validate_provider_fields_with_optional_key(
+        &input.name,
+        &discovered.api_base_url,
+        discovered.api_key.as_deref(),
+        &discovered.default_model,
+        codex_provider_allows_missing_api_key(preview.tool, Some(&provider_id)),
+    )?;
     let options = match preview.tool {
         Tool::Claude => ProviderOptionsInput {
             credential_env_key: Some(discovered.credential_env_key),
@@ -931,12 +955,10 @@ fn discover_claude_provider(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let default_model = env
-        .get(CLAUDE_MODEL_KEY)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    if api_base_url.is_empty() || default_model.is_empty() {
+    let Some(default_model) = discover_claude_default_model(env) else {
+        return Ok(None);
+    };
+    if api_base_url.is_empty() {
         return Ok(None);
     }
     let auth_token = env
@@ -996,18 +1018,48 @@ fn discover_claude_provider(
     }))
 }
 
+fn discover_claude_default_model(env: &Map<String, Value>) -> Option<String> {
+    std::iter::once(CLAUDE_MODEL_KEY)
+        .chain(CLAUDE_DEFAULT_MODEL_KEYS.iter().copied())
+        .find_map(|key| {
+            env.get(key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned)
+        })
+}
+
 fn discover_codex_provider(
     descriptor: &TargetDescriptor,
     observed: &crate::sync::ObservedTarget,
 ) -> Result<Option<DiscoveredProvider>, AppError> {
     let projection = &observed.managed_projection;
-    let Some(provider_id) = projection.get("model_provider").and_then(Value::as_str) else {
+    let default_model = projection
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_default()
+        .to_owned();
+    if default_model.is_empty() {
         return Ok(None);
     };
+    let provider_id = match projection.get("model_provider").and_then(Value::as_str) {
+        Some(value) if value.trim().is_empty() => return Ok(None),
+        Some(value) => value,
+        None => CODEX_OPENAI_PROVIDER_ID,
+    };
+    if provider_id == CODEX_OPENAI_PROVIDER_ID {
+        return discover_codex_openai_provider(
+            descriptor,
+            projection,
+            observed.full_hash.clone(),
+            default_model,
+        );
+    }
     if CODEX_RESERVED_PROVIDER_IDS.contains(&provider_id) {
         return Ok(None);
     }
-    validate_codex_provider_id(Tool::Codex, provider_id)?;
+    validate_codex_custom_provider_id(Tool::Codex, provider_id)?;
     let Some(table) = projection
         .get("model_providers")
         .and_then(Value::as_object)
@@ -1021,19 +1073,17 @@ fn discover_codex_provider(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let default_model = projection
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    if api_base_url.is_empty() || default_model.is_empty() {
+    if api_base_url.is_empty() {
         return Ok(None);
     }
     let api_key = table
         .get("experimental_bearer_token")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    if !api_key.as_deref().is_some_and(|value| !value.is_empty()) {
+    if !api_key
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
         return Err(AppError::invalid_input(
             "experimentalBearerToken",
             "Codex 首次导入仅支持含直接 bearer token 的 Provider",
@@ -1098,6 +1148,60 @@ fn discover_codex_provider(
     }))
 }
 
+fn discover_codex_openai_provider(
+    descriptor: &TargetDescriptor,
+    projection: &Value,
+    full_hash: String,
+    default_model: String,
+) -> Result<Option<DiscoveredProvider>, AppError> {
+    if !codex_auth_json_has_oauth_tokens(&descriptor_path(descriptor)?) {
+        return Ok(None);
+    }
+    let mut managed_projection = Map::new();
+    managed_projection.insert("model".to_owned(), Value::String(default_model.clone()));
+    if let Some(value) = projection.get("model_provider") {
+        managed_projection.insert("model_provider".to_owned(), value.clone());
+    }
+    Ok(Some(DiscoveredProvider {
+        target_path: descriptor_path(descriptor)?,
+        full_hash,
+        projection: Value::Object(managed_projection),
+        api_base_url: CODEX_OPENAI_BASE_URL.to_owned(),
+        api_key: None,
+        default_model,
+        credential_env_key: ClaudeCredentialEnvKey::ApiKey,
+        extra_env: BTreeMap::new(),
+        provider_id: Some(CODEX_OPENAI_PROVIDER_ID.to_owned()),
+        wire_api: None,
+        extra_provider_fields: BTreeMap::new(),
+        suggested_name: Some("Codex OAuth 登录".to_owned()),
+    }))
+}
+
+fn codex_auth_json_has_oauth_tokens(config_path: &str) -> bool {
+    let Some(codex_home) = Path::new(config_path).parent() else {
+        return false;
+    };
+    let Ok(content) = fs::read_to_string(codex_home.join("auth.json")) else {
+        return false;
+    };
+    let Ok(root) = serde_json::from_str::<Value>(&content) else {
+        return false;
+    };
+    root.get("tokens")
+        .and_then(Value::as_object)
+        .is_some_and(|tokens| {
+            ["access_token", "refresh_token", "id_token"]
+                .iter()
+                .any(|key| {
+                    tokens
+                        .get(*key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+        })
+}
+
 fn provider_projection(profile: &ProviderProfileRecord) -> Result<Value, AppError> {
     let config = parse_stored_provider_config(profile)?;
     match profile.tool {
@@ -1125,6 +1229,17 @@ fn provider_projection(profile: &ProviderProfileRecord) -> Result<Value, AppErro
                 AppError::invalid_input("providerOptions", "Codex Provider 缺少稳定 provider id")
             })?;
             validate_codex_provider_id(Tool::Codex, &provider_id)?;
+            if provider_id == CODEX_OPENAI_PROVIDER_ID {
+                let mut root = Map::new();
+                if let Some(model) = &profile.default_model {
+                    root.insert("model".to_owned(), Value::String(model.clone()));
+                }
+                root.insert(
+                    "model_provider".to_owned(),
+                    Value::String(CODEX_OPENAI_PROVIDER_ID.to_owned()),
+                );
+                return Ok(Value::Object(root));
+            }
             let mut provider = config
                 .extra_provider_fields
                 .into_iter()
@@ -1359,7 +1474,25 @@ fn generated_codex_provider_id(id: &str) -> String {
     format!("easytoagents_{}", id.replace('-', ""))
 }
 
+fn discovered_provider_allows_missing_api_key(tool: Tool, discovered: &DiscoveredProvider) -> bool {
+    codex_provider_allows_missing_api_key(tool, discovered.provider_id.as_deref())
+}
+
+fn codex_provider_allows_missing_api_key(tool: Tool, provider_id: Option<&str>) -> bool {
+    tool == Tool::Codex && provider_id == Some(CODEX_OPENAI_PROVIDER_ID)
+}
+
 fn validate_codex_provider_id(tool: Tool, provider_id: &str) -> Result<(), AppError> {
+    if tool != Tool::Codex {
+        return Ok(());
+    }
+    if provider_id == CODEX_OPENAI_PROVIDER_ID {
+        return Ok(());
+    }
+    validate_codex_custom_provider_id(tool, provider_id)
+}
+
+fn validate_codex_custom_provider_id(tool: Tool, provider_id: &str) -> Result<(), AppError> {
     if tool != Tool::Codex {
         return Ok(());
     }
@@ -1372,7 +1505,7 @@ fn validate_codex_provider_id(tool: Tool, provider_id: &str) -> Result<(), AppEr
     {
         return Err(AppError::invalid_input(
             "providerId",
-            "Codex provider id 非法或属于内置保留项",
+            "Codex provider id 非法或属于不支持接管的内置项",
         ));
     }
     Ok(())
@@ -1392,7 +1525,7 @@ mod tests {
         list_provider_profiles, preview_prompt_sync, preview_provider_sync,
         set_active_provider_profile, update_prompt_profile, update_provider_profile,
         CopyProviderProfileInput, PromptProfileInput, ProviderOptionsInput, ProviderProfileInput,
-        UpdatePromptProfileInput, UpdateProviderProfileInput,
+        UpdatePromptProfileInput, UpdateProviderProfileInput, CLAUDE_MODEL_KEY,
     };
     use crate::{
         adapters::{ExplicitEnvironment, PolicyState, ToolAvailability, ToolAvailabilityState},
@@ -1757,6 +1890,76 @@ mod tests {
             sync_preview.targets[0].change_kind,
             crate::domain::ChangeKind::Unchanged | crate::domain::ChangeKind::Warning
         ));
+    }
+
+    #[test]
+    fn claude_provider_import_accepts_default_model_family_without_anthropic_model() {
+        let mut fixture = fixture();
+        let settings_path = fixture.home.join(".claude/settings.json");
+        let secret = "fixture-default-model-secret";
+        let original = format!(
+            r#"{{
+  "env": {{
+    "ANTHROPIC_BASE_URL": "https://default-family.example.com/v1",
+    "ANTHROPIC_AUTH_TOKEN": "{secret}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-bg",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-plan",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-main",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "主 Sonnet",
+    "UNRELATED_ENV": "keep"
+  }}
+}}
+"#,
+        );
+        fs::write(&settings_path, &original).unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(preview.api_key_configured);
+        assert_eq!(preview.default_model, "claude-sonnet-main");
+        assert!(!serde_json::to_string(&preview).unwrap().contains(secret));
+        assert!(preview.redacted_projection["env"]
+            .get(CLAUDE_MODEL_KEY)
+            .is_none());
+        assert_eq!(
+            preview.redacted_projection["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            crate::security::REDACTED
+        );
+        assert_eq!(
+            preview.redacted_projection["env"]["ANTHROPIC_AUTH_TOKEN"],
+            crate::security::REDACTED
+        );
+
+        let imported = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: preview.preview_id,
+                name: "导入默认模型族".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(imported.default_model, "claude-sonnet-main");
+        assert_eq!(
+            imported.options.credential_env_key,
+            Some(crate::profiles::ClaudeCredentialEnvKey::AuthToken)
+        );
+        assert_eq!(
+            imported.options.extra_env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "claude-sonnet-main"
+        );
+        assert_eq!(
+            imported.options.extra_env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "claude-opus-plan"
+        );
+        assert_eq!(fs::read_to_string(&settings_path).unwrap(), original);
     }
 
     #[test]
@@ -2179,6 +2382,141 @@ tenant = "fixture"
             written["model_providers"][&provider_id]["query_params"]["tenant"],
             "fixture"
         );
+    }
+
+    #[test]
+    fn codex_oauth_import_adopts_openai_login_without_copying_tokens() {
+        let mut fixture = fixture();
+        let config_path = fixture.home.join(".codex/config.toml");
+        let auth_path = fixture.home.join(".codex/auth.json");
+        let access_token = "fixture-codex-oauth-access-token";
+        let refresh_token = "fixture-codex-oauth-refresh-token";
+        fs::write(
+            &config_path,
+            r#"model = "gpt-5.5"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &auth_path,
+            format!(
+                r#"{{
+  "auth_mode": "chatgpt",
+  "tokens": {{
+    "access_token": "{access_token}",
+    "refresh_token": "{refresh_token}"
+  }}
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Codex,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.suggested_name, "Codex OAuth 登录");
+        assert_eq!(preview.default_model, "gpt-5.5");
+        assert!(!preview.api_key_configured);
+        let serialized_preview = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized_preview.contains(access_token));
+        assert!(!serialized_preview.contains(refresh_token));
+        assert_eq!(preview.redacted_projection["model"], "gpt-5.5");
+        assert!(preview.redacted_projection.get("model_provider").is_none());
+
+        let imported = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: preview.preview_id,
+                name: "Codex OAuth 登录".to_owned(),
+            },
+        )
+        .unwrap();
+        assert!(!imported.api_key_configured);
+        assert_eq!(imported.options.provider_id.as_deref(), Some("openai"));
+        let edited = update_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            UpdateProviderProfileInput {
+                id: imported.id.clone(),
+                name: "Codex OAuth 编辑".to_owned(),
+                api_base_url: imported.api_base_url.clone(),
+                api_key: SecretUpdate::Keep,
+                default_model: imported.default_model.clone(),
+                options: ProviderOptionsInput::default(),
+                row_version: imported.row_version,
+            },
+        )
+        .unwrap();
+        assert!(!edited.api_key_configured);
+        let key_update = update_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            UpdateProviderProfileInput {
+                id: edited.id.clone(),
+                name: edited.name.clone(),
+                api_base_url: edited.api_base_url.clone(),
+                api_key: SecretUpdate::Replace("fixture-should-not-store".to_owned()),
+                default_model: edited.default_model.clone(),
+                options: ProviderOptionsInput::default(),
+                row_version: edited.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(key_update.code(), crate::error::ErrorCode::InvalidInput);
+
+        let sync_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Codex,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &sync_preview.preview_id,
+            Tool::Codex,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let written: Value =
+            toml_edit::de::from_str(&fs::read_to_string(config_path).unwrap()).unwrap();
+        assert_eq!(written["model"], "gpt-5.5");
+        assert_eq!(written["model_provider"], "openai");
+        assert!(written.get("model_providers").is_none());
+        let serialized_imported = serde_json::to_string(&imported).unwrap();
+        assert!(!serialized_imported.contains(access_token));
+        assert!(!serialized_imported.contains(refresh_token));
+    }
+
+    #[test]
+    fn codex_oauth_import_does_not_report_without_auth_tokens() {
+        let mut fixture = fixture();
+        fs::write(
+            fixture.home.join(".codex/config.toml"),
+            r#"model = "gpt-5.5"
+"#,
+        )
+        .unwrap();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Codex,
+        )
+        .unwrap();
+        assert!(preview.is_none());
     }
 
     #[test]

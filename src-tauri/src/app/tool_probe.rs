@@ -52,6 +52,7 @@ impl ReleaseToolProbeInput {
         codex_home: Option<PathBuf>,
         search_path: OsString,
     ) -> Self {
+        let search_path = macos_release_search_path(&home, search_path);
         Self {
             home,
             claude_config_dir,
@@ -236,9 +237,25 @@ fn resolve_executable(search_path: &OsStr, name: &str) -> ExecutableResolution {
         if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
             return ExecutableResolution::Unsupported;
         }
-        return ExecutableResolution::Found(canonical);
+        return ExecutableResolution::Found(candidate);
     }
     ExecutableResolution::Unavailable
+}
+
+fn macos_release_search_path(home: &Path, search_path: OsString) -> OsString {
+    let mut entries = if search_path.as_os_str().as_bytes().is_empty() {
+        Vec::new()
+    } else {
+        std::env::split_paths(&search_path).collect::<Vec<_>>()
+    };
+    append_search_path_once(&mut entries, home.join(".volta").join("bin"));
+    std::env::join_paths(entries).unwrap_or(search_path)
+}
+
+fn append_search_path_once(entries: &mut Vec<PathBuf>, path: PathBuf) {
+    if is_safe_absolute_path(&path) && !entries.iter().any(|entry| entry == &path) {
+        entries.push(path);
+    }
 }
 
 fn is_safe_absolute_path(path: &Path) -> bool {
@@ -614,7 +631,7 @@ mod tests {
             ffi::OsStrExt,
             fs::{symlink, PermissionsExt},
         },
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{Mutex, MutexGuard},
         time::Duration,
     };
@@ -704,9 +721,7 @@ mod tests {
         }
 
         fn write_tool(&self, name: &str, body: &str) {
-            let path = self.bin.join(name);
-            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            write_executable(&self.bin.join(name), body);
         }
 
         fn input(&self) -> ReleaseToolProbeInput {
@@ -728,6 +743,11 @@ mod tests {
                 "if [ \"$1\" = child ]; then read ignored < '{fifo}'; fi\n\"$0\" child &\n{parent_action}"
             )
         }
+    }
+
+    fn write_executable(path: &Path, body: &str) {
+        fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     #[test]
@@ -861,6 +881,59 @@ mod tests {
             .unwrap()
             .iter()
             .all(|target| target.capability.state == CapabilityState::ToolNotInstalled));
+    }
+
+    #[test]
+    fn macos_release_path_finds_volta_shims_without_shell_path_setup() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        let volta_bin = fixture.home.join(".volta/bin");
+        fs::create_dir_all(&volta_bin).unwrap();
+        let shim = fixture.home.join("volta-shim");
+        write_executable(
+            &shim,
+            r#"case "${0##*/}" in
+claude) printf '2.1.217 (Claude Code)' ;;
+codex) printf 'codex-cli 0.114.0' ;;
+*) printf 'direct shim execution is unsupported' >&2; exit 9 ;;
+esac"#,
+        );
+        symlink(&shim, volta_bin.join("claude")).unwrap();
+        symlink(&shim, volta_bin.join("codex")).unwrap();
+
+        let input = ReleaseToolProbeInput::for_macos_release(
+            fixture.home.clone(),
+            Some(fixture.claude_root.clone()),
+            Some(fixture.codex_root.clone()),
+            OsString::new(),
+        );
+        assert_eq!(
+            std::env::split_paths(&input.search_path).collect::<Vec<_>>(),
+            vec![volta_bin]
+        );
+
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.claude.version.as_deref(), Some("2.1.217"));
+        assert_eq!(result.codex.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.codex.version.as_deref(), Some("0.114.0"));
+    }
+
+    #[test]
+    fn macos_release_path_keeps_existing_precedence_and_deduplicates_volta() {
+        let fixture = Fixture::new();
+        let volta_bin = fixture.home.join(".volta/bin");
+        let input = ReleaseToolProbeInput::for_macos_release(
+            fixture.home.clone(),
+            Some(fixture.claude_root.clone()),
+            Some(fixture.codex_root.clone()),
+            std::env::join_paths([fixture.bin.clone(), volta_bin.clone()]).unwrap(),
+        );
+
+        assert_eq!(
+            std::env::split_paths(&input.search_path).collect::<Vec<_>>(),
+            vec![fixture.bin, volta_bin]
+        );
     }
 
     #[test]

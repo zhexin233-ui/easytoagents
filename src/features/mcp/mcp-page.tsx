@@ -24,6 +24,11 @@ import {
   mcpServersQueryOptions,
 } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import {
+  globalTargetStatusDescription,
+  globalTargetStatusLabels,
+  isGlobalTargetPreviewBlocked,
+} from "@/lib/global-target-status-ui";
 
 interface McpFormState {
   id: string | null;
@@ -541,42 +546,57 @@ export function McpPage() {
           </p>
         ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {statusesQuery.data?.map((status) => (
-            <article
-              key={status.tool}
-              className="rounded-lg border p-4 text-sm"
-            >
-              <p className="font-medium">
-                {status.tool === "claude" ? "Claude" : "Codex"}
-              </p>
-              <code className="mt-2 block text-xs break-all">
-                {status.targetPath ?? "目标位置未经 capability probe 证明"}
-              </code>
-              <div className="mt-2">
-                <SyncStatusBadge status={status.status} />
-              </div>
-              {status.diagnosticCode ? (
-                <code className="mt-2 block text-xs">
-                  {status.diagnosticCode}
-                </code>
-              ) : null}
-              <Button
-                className="mt-3"
-                size="sm"
-                disabled={
-                  previewMutation.isPending ||
-                  status.status === "failed" ||
-                  status.status === "policy_blocked" ||
-                  status.status === "untrusted"
-                }
-                onClick={() =>
-                  previewMutation.mutate({ tool: status.tool, projectId: null })
-                }
+          {statusesQuery.data?.map((status) => {
+            const statusDescription = globalTargetStatusDescription(
+              status.status,
+              status.diagnosticCode,
+            );
+            return (
+              <article
+                key={status.tool}
+                className="rounded-lg border p-4 text-sm"
               >
-                生成全局预览
-              </Button>
-            </article>
-          ))}
+                <p className="font-medium">
+                  {status.tool === "claude" ? "Claude" : "Codex"}
+                </p>
+                <code className="mt-2 block text-xs break-all">
+                  {status.targetPath ?? "目标位置未经 capability probe 证明"}
+                </code>
+                <div className="mt-2">
+                  <SyncStatusBadge
+                    labels={globalTargetStatusLabels}
+                    status={status.status}
+                  />
+                </div>
+                {statusDescription ? (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    {statusDescription}
+                  </p>
+                ) : null}
+                {status.diagnosticCode ? (
+                  <p className="mt-2 text-xs text-amber-800">
+                    诊断码：<code>{status.diagnosticCode}</code>
+                  </p>
+                ) : null}
+                <Button
+                  className="mt-3"
+                  size="sm"
+                  disabled={
+                    previewMutation.isPending ||
+                    isGlobalTargetPreviewBlocked(status.status)
+                  }
+                  onClick={() =>
+                    previewMutation.mutate({
+                      tool: status.tool,
+                      projectId: null,
+                    })
+                  }
+                >
+                  生成全局预览
+                </Button>
+              </article>
+            );
+          })}
         </div>
       </section>
 

@@ -341,6 +341,11 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             {tools.map((tool) => {
               const found = discovery[tool];
               const choice = choices[tool];
+              const providerDisabledReason =
+                providerChoiceDisabledReason(found);
+              const promptDisabledReason = promptChoiceDisabledReason(found);
+              const providerReasonId = `${tool}-provider-choice-reason`;
+              const promptReasonId = `${tool}-prompt-choice-reason`;
               return (
                 <fieldset key={tool} className="rounded-lg border p-4">
                   <legend className="px-1 font-semibold">
@@ -363,6 +368,10 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                       <code className="mt-1 block break-all">
                         {found.provider.targetPath}
                       </code>
+                      <p className="text-muted-foreground mt-1">
+                        {found.provider.defaultModel} ·{" "}
+                        {providerImportCredentialText(tool, found.provider)}
+                      </p>
                       <pre className="mt-2 overflow-auto">
                         {JSON.stringify(
                           found.provider.redactedProjection,
@@ -393,10 +402,9 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     <input
                       type="checkbox"
                       checked={choice.provider}
-                      disabled={
-                        (!found.provider && !found.providerManaged) ||
-                        found.availability !== "installed" ||
-                        choice.skip
+                      disabled={providerDisabledReason !== null}
+                      aria-describedby={
+                        providerDisabledReason ? providerReasonId : undefined
                       }
                       onChange={(event) =>
                         updateChoice(
@@ -409,14 +417,21 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     />
                     导入并接管 Provider
                   </label>
+                  {providerDisabledReason ? (
+                    <p
+                      id={providerReasonId}
+                      className="text-muted-foreground mt-1 pl-6 text-xs"
+                    >
+                      {providerDisabledReason}
+                    </p>
+                  ) : null}
                   <label className="mt-3 flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
                       checked={choice.prompt}
-                      disabled={
-                        (!found.prompt && !found.promptManaged) ||
-                        choice.skip ||
-                        found.availability !== "installed"
+                      disabled={promptDisabledReason !== null}
+                      aria-describedby={
+                        promptDisabledReason ? promptReasonId : undefined
                       }
                       onChange={(event) =>
                         updateChoice(
@@ -429,6 +444,14 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     />
                     无损导入并接管全局提示词
                   </label>
+                  {promptDisabledReason ? (
+                    <p
+                      id={promptReasonId}
+                      className="text-muted-foreground mt-1 pl-6 text-xs"
+                    >
+                      {promptDisabledReason}
+                    </p>
+                  ) : null}
                   <label className="mt-3 flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
@@ -588,6 +611,41 @@ function updateChoice(
   }));
 }
 
+function providerChoiceDisabledReason(found: ToolDiscovery): string | null {
+  const availabilityReason = availabilityDisabledReason(found.availability);
+  if (availabilityReason) {
+    return availabilityReason;
+  }
+  if (!found.provider && !found.providerManaged) {
+    return "未发现可导入 Provider，也没有生效的中央 Provider 档案。";
+  }
+  return null;
+}
+
+function promptChoiceDisabledReason(found: ToolDiscovery): string | null {
+  const availabilityReason = availabilityDisabledReason(found.availability);
+  if (availabilityReason) {
+    return availabilityReason;
+  }
+  if (!found.prompt && !found.promptManaged) {
+    return "未发现可导入全局提示词，也没有生效的中央提示词档案。";
+  }
+  return null;
+}
+
+function availabilityDisabledReason(
+  availability: ToolAvailabilityState,
+): string | null {
+  switch (availability) {
+    case "installed":
+      return null;
+    case "unavailable":
+      return "未检测到工具安装，无法读取或应用原生目标。";
+    case "unsupported":
+      return "安装探针未能安全确认版本，无法读取或应用原生目标。";
+  }
+}
+
 function settledValue<T>(
   result: PromiseSettledResult<T>,
   errors: string[],
@@ -602,6 +660,16 @@ function settledValue<T>(
 
 function toolLabel(tool: Tool) {
   return tool === "claude" ? "Claude" : "Codex";
+}
+
+function providerImportCredentialText(
+  tool: Tool,
+  preview: ProviderImportPreviewDto,
+): string {
+  if (tool === "codex" && !preview.apiKeyConfigured) {
+    return "使用 Codex OAuth 登录";
+  }
+  return preview.apiKeyConfigured ? "密钥已遮罩保存" : "密钥未配置";
 }
 
 function artifactLabel(kind: ArtifactKind) {

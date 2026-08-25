@@ -21,7 +21,7 @@ use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
         ClaudeCustomizationPolicyProbe, ClaudeUserMcpCapabilityProbe, DiscoveryContext,
-        ManagedOwnership, TargetDescriptor, ToolAdapter,
+        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -350,11 +350,13 @@ pub fn list_global_mcp_target_statuses(
                         SyncStatus::Failed,
                         descriptor.capability.diagnostic_code.clone(),
                     )
-                } else if descriptor.policy != crate::adapters::PolicyState::Allowed {
-                    (
-                        SyncStatus::PolicyBlocked,
-                        Some("CLAUDE_POLICY_BLOCKED_OR_UNKNOWN".to_owned()),
-                    )
+                } else if descriptor.policy != PolicyState::Allowed {
+                    let diagnostic_code = match descriptor.policy {
+                        PolicyState::Blocked => "CLAUDE_POLICY_BLOCKED",
+                        PolicyState::Unknown => crate::sync::ERROR_CLAUDE_POLICY_UNKNOWN,
+                        PolicyState::Allowed => unreachable!("allowed policy was handled above"),
+                    };
+                    (SyncStatus::PolicyBlocked, Some(diagnostic_code.to_owned()))
                 } else {
                     (persisted.unwrap_or(SyncStatus::Missing), None)
                 };

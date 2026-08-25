@@ -26,12 +26,26 @@ export function unwrapResult<T>(result: Result<T, AppError>): T {
 
 export function profileErrorText(error: unknown): string | null {
   if (error instanceof ProfileRpcError) {
+    const resource = errorDetailString(error, "resource");
+    if (error.appError.code === "NOT_FOUND") {
+      if (resource === "activeProviderProfile") {
+        return "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。";
+      }
+      if (resource === "activePromptProfile") {
+        return "尚无生效提示词档案，也没有可清理的受管基线；请先检测已有配置或创建并激活提示词。";
+      }
+    }
     return `${error.appError.code}：${error.appError.message}`;
   }
   if (error instanceof Error) {
     return error.message;
   }
   return error ? "操作失败，请重新扫描后再试。" : null;
+}
+
+function errorDetailString(error: ProfileRpcError, key: string): string | null {
+  const value = error.appError.details?.[key];
+  return typeof value === "string" ? value : null;
 }
 
 export const profileKeys = {

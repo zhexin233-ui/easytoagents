@@ -255,8 +255,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
                   {profile.isActive ? <span>· 当前生效</span> : null}
                 </p>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  {profile.defaultModel} · 密钥
-                  {profile.apiKeyConfigured ? "已遮罩保存" : "未配置"}
+                  {profile.defaultModel} · {providerCredentialText(profile)}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -278,6 +277,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
                 <Button
                   variant="outline"
                   size="sm"
+                  disabled={isCodexOAuthProfile(profile)}
                   onClick={() => copyMutation.mutate(profile)}
                 >
                   复制到{tool === "claude" ? " Codex" : " Claude"}
@@ -307,6 +307,10 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
         <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
           <p className="font-medium">发现已有渠道，仅生成了导入预览</p>
           <p className="mt-1 text-sm break-all">{importPreview.targetPath}</p>
+          <p className="text-muted-foreground mt-1 text-xs">
+            {importPreview.defaultModel} ·{" "}
+            {importCredentialText(tool, importPreview)}
+          </p>
           <pre className="mt-3 overflow-auto rounded bg-white p-3 text-xs">
             {JSON.stringify(importPreview.redactedProjection, null, 2)}
           </pre>
@@ -357,9 +361,8 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
             type="password"
             autoComplete="off"
             className="field"
-            placeholder={
-              editing?.apiKeyConfigured ? "留空以保留现有密钥" : "输入密钥"
-            }
+            disabled={editing ? isCodexOAuthProfile(editing) : false}
+            placeholder={apiKeyPlaceholder(tool, editing)}
             value={form.apiKey}
             onChange={(event) =>
               setForm({ ...form, apiKey: event.currentTarget.value })
@@ -449,6 +452,37 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
       </form>
     </section>
   );
+}
+
+function isCodexOAuthProfile(profile: ProviderProfileDto): boolean {
+  return profile.tool === "codex" && profile.options.providerId === "openai";
+}
+
+function providerCredentialText(profile: ProviderProfileDto): string {
+  if (isCodexOAuthProfile(profile)) {
+    return "使用 Codex OAuth 登录";
+  }
+  return profile.apiKeyConfigured ? "密钥已遮罩保存" : "密钥未配置";
+}
+
+function importCredentialText(
+  tool: Tool,
+  preview: ProviderImportPreviewDto,
+): string {
+  if (tool === "codex" && !preview.apiKeyConfigured) {
+    return "使用 Codex OAuth 登录";
+  }
+  return preview.apiKeyConfigured ? "密钥已遮罩保存" : "密钥未配置";
+}
+
+function apiKeyPlaceholder(
+  tool: Tool,
+  editing: ProviderProfileDto | null,
+): string {
+  if (editing && isCodexOAuthProfile(editing)) {
+    return "留空以继续使用 Codex OAuth 登录";
+  }
+  return editing?.apiKeyConfigured ? "留空以保留现有密钥" : "输入密钥";
 }
 
 function editProfile(

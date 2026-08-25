@@ -303,9 +303,31 @@ pub(crate) fn validate_provider_fields(
     api_key: &str,
     default_model: &str,
 ) -> Result<(), AppError> {
+    validate_provider_fields_with_optional_key(
+        name,
+        api_base_url,
+        Some(api_key),
+        default_model,
+        false,
+    )
+}
+
+pub(crate) fn validate_provider_fields_with_optional_key(
+    name: &str,
+    api_base_url: &str,
+    api_key: Option<&str>,
+    default_model: &str,
+    allow_missing_api_key: bool,
+) -> Result<(), AppError> {
     ArtifactName::parse(name.to_owned())?;
     validate_api_base_url(api_base_url, "API 地址必须是无凭据的绝对 HTTP(S) URL")?;
-    validate_non_empty_text(api_key, "apiKey", "API Key 不能为空")?;
+    match api_key {
+        Some(value) if !value.is_empty() => {
+            validate_non_empty_text(value, "apiKey", "API Key 不能为空")?
+        }
+        _ if !allow_missing_api_key => validate_non_empty_text("", "apiKey", "API Key 不能为空")?,
+        _ => {}
+    }
     validate_non_empty_text(default_model, "defaultModel", "默认模型不能为空")
 }
 

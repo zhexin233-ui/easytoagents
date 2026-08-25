@@ -36,15 +36,18 @@ const blockingStatuses = new Set<SyncStatus>([
 export function SyncStatusBadge({
   status,
   changeKind,
+  labels,
 }: {
   status: SyncStatus;
   changeKind?: ChangeKind;
+  labels?: Partial<Record<SyncStatus, string>>;
 }) {
   const blocked = blockingStatuses.has(status) || changeKind === "conflict";
   const warning =
     status === "external_non_owned_change" ||
     status === "missing" ||
     changeKind === "warning";
+  const statusLabel = labels?.[status] ?? statusLabels[status];
   return (
     <span
       className={cn(
@@ -57,7 +60,7 @@ export function SyncStatusBadge({
       )}
     >
       {changeKind ? `${changeLabels[changeKind]} · ` : ""}
-      {statusLabels[status]}
+      {statusLabel}
       <span className="sr-only">{status}</span>
     </span>
   );

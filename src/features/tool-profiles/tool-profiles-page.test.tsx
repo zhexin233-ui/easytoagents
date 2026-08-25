@@ -59,6 +59,23 @@ const provider: ProviderProfileDto = {
   rowVersion: 2,
 };
 
+const codexOAuthProvider: ProviderProfileDto = {
+  id: "00000000-0000-4000-8000-000000000501",
+  tool: "codex",
+  name: "Codex OAuth 登录",
+  apiBaseUrl: "https://api.openai.com/v1",
+  apiKeyConfigured: false,
+  defaultModel: "gpt-5.5",
+  options: {
+    credentialEnvKey: null,
+    extraEnv: {},
+    providerId: "openai",
+    wireApi: null,
+  },
+  isActive: true,
+  rowVersion: 4,
+};
+
 const promptProfile: PromptProfileDto = {
   id: "00000000-0000-4000-8000-000000000402",
   tool: "claude",
@@ -113,13 +130,13 @@ const preview: PreviewPlan = {
   ],
 };
 
-function renderPage() {
+function renderPage(tool: ProviderProfileDto["tool"] = "claude") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <ToolProfilesPage tool="claude" />
+      <ToolProfilesPage tool={tool} />
     </QueryClientProvider>,
   );
 }
@@ -290,6 +307,77 @@ describe("ToolProfilesPage", () => {
     });
   });
 
+  it("Codex OAuth 渠道显示登录来源并允许无密钥编辑", async () => {
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [codexOAuthProvider],
+    });
+    vi.mocked(commands.updateProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: { ...codexOAuthProvider, name: "Codex 官方登录" },
+    });
+
+    renderPage("codex");
+
+    const section = sectionByHeading("渠道");
+    expect(
+      await within(section).findByText("gpt-5.5 · 使用 Codex OAuth 登录"),
+    ).toBeVisible();
+    expect(
+      within(section).getByRole("button", { name: "复制到 Claude" }),
+    ).toBeDisabled();
+
+    fireEvent.click(within(section).getByRole("button", { name: "编辑" }));
+    const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
+    expect(keyInput).toBeDisabled();
+    expect(keyInput).toHaveAttribute(
+      "placeholder",
+      "留空以继续使用 Codex OAuth 登录",
+    );
+    fireEvent.change(within(section).getByLabelText("名称"), {
+      target: { value: "Codex 官方登录" },
+    });
+    fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
+
+    await waitFor(() =>
+      expect(commands.updateProviderProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: codexOAuthProvider.id,
+          name: "Codex 官方登录",
+          apiKey: { action: "keep" },
+          rowVersion: codexOAuthProvider.rowVersion,
+        }),
+      ),
+    );
+  });
+
+  it("Codex OAuth 导入预览显示登录凭据来源", async () => {
+    vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+      status: "ok",
+      data: {
+        previewId: "00000000-0000-4000-8000-000000000502",
+        tool: "codex",
+        targetPath: "/isolated/home/.codex/config.toml",
+        suggestedName: "Codex OAuth 登录",
+        apiBaseUrl: "https://api.openai.com/v1",
+        apiKeyConfigured: false,
+        defaultModel: "gpt-5.5",
+        redactedProjection: { model: "gpt-5.5" },
+      },
+    });
+
+    renderPage("codex");
+
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "检测已有配置" }),
+    );
+
+    expect(
+      await within(section).findByText("gpt-5.5 · 使用 Codex OAuth 登录"),
+    ).toBeVisible();
+  });
+
   it("切换档案后打开统一预览并消费持久化 preview", async () => {
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
@@ -383,6 +471,29 @@ describe("ToolProfilesPage", () => {
     fireEvent.click(within(section).getByRole("button", { name: "创建渠道" }));
     expect(await within(section).findByRole("alert")).toHaveTextContent(
       "INVALID_INPUT：输入内容无效",
+    );
+  });
+
+  it("无生效渠道且无受管基线时把预览 NOT_FOUND 显示为可操作空状态", async () => {
+    vi.mocked(commands.previewProviderSync).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "NOT_FOUND",
+        message: "未找到目标资源",
+        details: { resource: "activeProviderProfile", path: "claude" },
+        recoverable: true,
+        action: "rescan",
+      },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "预览渠道同步" }),
+    );
+
+    expect(await within(section).findByRole("alert")).toHaveTextContent(
+      "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。",
     );
   });
 

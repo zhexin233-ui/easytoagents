@@ -44,6 +44,17 @@ const importPreview: ProviderImportPreviewDto = {
   redactedProjection: { env: "[REDACTED]" },
 };
 
+const codexOAuthImportPreview: ProviderImportPreviewDto = {
+  previewId: "00000000-0000-4000-8000-000000000726",
+  tool: "codex",
+  targetPath: "/isolated/home/.codex/config.toml",
+  suggestedName: "Codex OAuth 登录",
+  apiBaseUrl: "https://api.openai.com/v1",
+  apiKeyConfigured: false,
+  defaultModel: "gpt-5.5",
+  redactedProjection: { model: "gpt-5.5" },
+};
+
 const promptImportPreview: PromptImportPreviewDto = {
   previewId: "00000000-0000-4000-8000-000000000725",
   tool: "claude",
@@ -236,11 +247,52 @@ describe("OnboardingWizard", () => {
     expect(await screen.findByText("向导已完成")).toBeInTheDocument();
   });
 
+  it("Codex OAuth Provider 预览显示登录凭据来源", async () => {
+    vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data: tool === "codex" ? codexOAuthImportPreview : null,
+      }),
+    );
+
+    renderWizard();
+
+    expect(
+      await screen.findByText("gpt-5.5 · 使用 Codex OAuth 登录"),
+    ).toBeInTheDocument();
+    const providerChoices = screen.getAllByLabelText("导入并接管 Provider");
+    const codexProviderChoice = providerChoices[1];
+    if (!codexProviderChoice) throw new Error("缺少 Codex Provider 选项");
+    expect(codexProviderChoice).toBeEnabled();
+  });
+
   it("暂停按钮保留选择并调用关闭回调", async () => {
     const { onClose } = renderWizard();
     await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
     fireEvent.click(screen.getByRole("button", { name: "暂停向导" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("已持久化跳过时仍可直接选择可导入 Provider 并自动取消跳过", async () => {
+    localStorage.setItem(
+      "easytoagents.onboarding.selections.v1",
+      JSON.stringify({
+        claude: { provider: false, prompt: false, skip: true },
+        codex: { provider: false, prompt: false, skip: true },
+      }),
+    );
+    renderWizard();
+
+    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
+    const providerChoice = screen.getAllByLabelText("导入并接管 Provider")[0];
+    if (!providerChoice) throw new Error("缺少 Claude Provider 选项");
+    expect(providerChoice).toBeEnabled();
+    expect(screen.getByLabelText("跳过 Claude，保持非受管")).toBeChecked();
+
+    fireEvent.click(providerChoice);
+
+    expect(providerChoice).toBeChecked();
+    expect(screen.getByLabelText("跳过 Claude，保持非受管")).not.toBeChecked();
   });
 
   it("要求每个工具明确选择，并持久化全跳过完成状态", async () => {
@@ -307,6 +359,9 @@ describe("OnboardingWizard", () => {
       await screen.findByText(/未检测到工具安装；原生目标不会被读取或应用/),
     ).toBeVisible();
     expect(screen.getAllByLabelText("导入并接管 Provider")[0]).toBeDisabled();
+    expect(
+      screen.getAllByText("未检测到工具安装，无法读取或应用原生目标。")[0],
+    ).toBeVisible();
     fireEvent.click(screen.getByLabelText("跳过 Claude，保持非受管"));
     fireEvent.click(screen.getByLabelText("跳过 Codex，保持非受管"));
     expect(
@@ -362,6 +417,24 @@ describe("OnboardingWizard", () => {
     expect(await screen.findByText("Claude · Provider")).toBeInTheDocument();
     expect(commands.confirmProviderImport).not.toHaveBeenCalled();
     expect(commands.previewProviderSync).toHaveBeenCalledWith("claude");
+  });
+
+  it("无可导入 Provider 且无 active 档案时显示复选框禁用原因", async () => {
+    vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+
+    renderWizard();
+
+    expect(
+      (
+        await screen.findAllByText(
+          "未发现可导入 Provider，也没有生效的中央 Provider 档案。",
+        )
+      )[0],
+    ).toBeVisible();
+    expect(screen.getAllByLabelText("导入并接管 Provider")[0]).toBeDisabled();
   });
 
   it("多份预览部分成功后重试时只消费剩余预览", async () => {

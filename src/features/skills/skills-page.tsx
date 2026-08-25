@@ -17,6 +17,11 @@ import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import {
+  globalTargetStatusDescription,
+  globalTargetStatusLabels,
+  isGlobalTargetPreviewBlocked,
+} from "@/lib/global-target-status-ui";
+import {
   globalSkillStatusesQueryOptions,
   skillKeys,
   skillProjectOptionsQueryOptions,
@@ -404,44 +409,58 @@ export function SkillsPage() {
           </p>
         ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {statusesQuery.data?.map((status) => (
-            <article
-              key={status.tool}
-              className="rounded-lg border p-4 text-sm"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <strong>{status.tool === "claude" ? "Claude" : "Codex"}</strong>
-                <SyncStatusBadge status={status.status} />
-              </div>
-              <code className="mt-2 block text-xs break-all">
-                {status.targetPath ?? "目标不可用"}
-              </code>
-              {status.diagnosticCode ? (
-                <p className="mt-2 text-xs text-amber-800">
-                  {status.diagnosticCode}
-                </p>
-              ) : null}
-              <Button
-                className="mt-3"
-                size="sm"
-                variant="outline"
-                disabled={
-                  previewMutation.isPending ||
-                  status.status === "failed" ||
-                  status.status === "policy_blocked" ||
-                  status.status === "untrusted"
-                }
-                onClick={() =>
-                  previewMutation.mutate({
-                    tool: status.tool,
-                    targetProjectId: null,
-                  })
-                }
+          {statusesQuery.data?.map((status) => {
+            const statusDescription = globalTargetStatusDescription(
+              status.status,
+              status.diagnosticCode,
+            );
+            return (
+              <article
+                key={status.tool}
+                className="rounded-lg border p-4 text-sm"
               >
-                预览全局同步
-              </Button>
-            </article>
-          ))}
+                <div className="flex items-center justify-between gap-2">
+                  <strong>
+                    {status.tool === "claude" ? "Claude" : "Codex"}
+                  </strong>
+                  <SyncStatusBadge
+                    labels={globalTargetStatusLabels}
+                    status={status.status}
+                  />
+                </div>
+                <code className="mt-2 block text-xs break-all">
+                  {status.targetPath ?? "目标不可用"}
+                </code>
+                {statusDescription ? (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    {statusDescription}
+                  </p>
+                ) : null}
+                {status.diagnosticCode ? (
+                  <p className="mt-2 text-xs text-amber-800">
+                    诊断码：<code>{status.diagnosticCode}</code>
+                  </p>
+                ) : null}
+                <Button
+                  className="mt-3"
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    previewMutation.isPending ||
+                    isGlobalTargetPreviewBlocked(status.status)
+                  }
+                  onClick={() =>
+                    previewMutation.mutate({
+                      tool: status.tool,
+                      targetProjectId: null,
+                    })
+                  }
+                >
+                  预览全局同步
+                </Button>
+              </article>
+            );
+          })}
         </div>
       </section>
 
