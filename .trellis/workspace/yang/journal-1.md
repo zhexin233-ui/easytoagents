@@ -35,3 +35,27 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 完成 Trellis 规范与配置接管改进
+
+**Date**: 2026-08-25
+**Task**: 完成 Trellis 规范与配置接管改进
+**Branch**: `main`
+
+### Summary
+
+补全并归档 Trellis 开发规范任务；提交 Trellis 多平台代理配置，以及 macOS Volta 探针、Codex OAuth 导入、全局目标状态和 onboarding 交互改进。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1e938ba` | (see git log) |
+| `539b89f` | (see git log) |
+| `46de613` | (see git log) |
+| `d675bd9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
