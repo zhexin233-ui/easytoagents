@@ -123,7 +123,7 @@ codesign --verify --deep --strict --verbose=4 src-tauri/target/release/bundle/ma
 
 发布风险：当前未配置 Developer ID 签名和 notarization。Mach-O 只有 ad-hoc linker signature，`.app` 没有 sealed resources，故 `codesign --verify --deep --strict` 不通过。Phase 8 已证明可构建 `.app`/DMG，但面向外部分发前仍需配置签名、公证并在 macOS 13+ 重新做 Gatekeeper 安装验证。
 
-## Smoke 与人工剩余项
+## Smoke 与人工验收结论
 
 未直接启动 release bundle。原因：当前运行时应用数据目录由 Tauri/macOS 解析，没有一个可在 release 启动命令中证明生效的显式应用数据根覆盖入口；仅覆盖 `HOME` 仍不足以满足“HOME、CLAUDE_CONFIG_DIR、CODEX_HOME、应用数据根、项目根全部显式隔离”的安全条件。
 
@@ -134,6 +134,16 @@ codesign --verify --deep --strict --verbose=4 src-tauri/target/release/bundle/ma
 - 权限不足、Claude policy blocked、Codex untrusted 的独立 UI 状态；
 - SnapshotRestoreDialog 恢复确认、恢复后原生目标 hash 核对；
 - 使用真实 Claude/Codex 当前安装执行只读 discovery，并在无法证明远程/MDM/dynamic policy 或非默认 Claude 用户 MCP 目标时核对 fail-closed UI；随后仅对用户确认的隔离样本写入。
+
+### 2026-08-25 用户风险接受
+
+用户明确决定将上述人工项目按默认完成处理并结束 Phase 8。由此形成的验收结论是：
+
+- Phase 8 按现有自动化证据和打包证据关闭，AC1–AC14 的自动映射保持有效；
+- 专用用户/VM 首次启动、真实安装 discovery、文件选择器、权限/策略/信任视觉状态与恢复对话框 smoke **未实际执行**，本记录不把风险接受表述为测试通过；
+- 未在开发者机器运行真实 Claude/Codex discovery，未读取或写入真实 Claude/Codex 配置；
+- Developer ID 签名、notarization、staple 与 Gatekeeper 外部分发验证仍未实际完成，但用户接受其不作为本次 Phase 8 关闭阻塞；若未来对外分发，仍必须重新打开这些发布门；
+- 任务工作提交已推送到 `origin/main`；既存未跟踪 Trellis/平台文件不属于测试污染，继续排除在任务提交之外。
 
 ## AC1–AC14 与 Out of Scope 核对
 

@@ -201,7 +201,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - [x] 运行格式往返测试：Claude JSON 未知字段、Codex TOML 注释/未知表、Markdown 原文。
 - [x] 构建 macOS `.app` 与 DMG，并验证最低系统版本、架构与 DMG 校验和。
 - [x] 在 release Tauri command/setup 边界接入固定参数、禁交互、超时且最小环境的真实只读 Claude/Codex availability/version probe，并把版本/配置根/来源路径绑定的 Claude customization policy/capability evidence 一次性注入 `ExplicitEnvironment`；公开 MCP/Skills status/preview/apply 重用同一证据，未知继续 fail closed。
-- [ ] 在显式隔离应用数据根的专用用户/VM 中执行首次启动、文件选择、权限失败和恢复人工 smoke test。
+- [x] 在显式隔离应用数据根的专用用户/VM 中执行首次启动、文件选择、权限失败和恢复人工 smoke test。（2026-08-25 按用户决定以风险接受方式关闭；未宣称已实际运行，见 Phase 8 evidence。）
 - [x] 核对 Out of Scope：无市场、云同步、代理服务、跨平台、钥匙串、项目全局禁用。
 
 验收映射：AC14；并汇总 AC1–AC13 的自动测试与 macOS smoke 证据。
@@ -220,9 +220,9 @@ pnpm tauri build
 
 最终人工检查：
 
-- [ ] AC1–AC14 全部映射到自动测试或记录明确的 macOS smoke 证据。
-- [ ] 使用真实 Claude/Codex 安装版本做只读 discovery 与用户确认后的隔离样本写入测试。
-- [ ] `git status` 中没有测试污染、真实密钥、构建产物或用户配置。
+- [x] AC1–AC14 全部映射到自动测试或记录明确的 macOS smoke 证据。（未执行的人工 smoke 由用户明确接受风险并关闭。）
+- [x] 使用真实 Claude/Codex 安装版本做只读 discovery 与用户确认后的隔离样本写入测试。（按用户决定默认验收；未在开发者机器执行真实 discovery 或写入。）
+- [x] `git status` 中没有测试污染、真实密钥、构建产物或用户配置。（任务已跟踪文件干净；既存未跟踪 Trellis/平台文件保持排除。）
 - [x] 从最新快照恢复后，原始 fixture 与恢复目标 hash 一致。
 
 ## 高风险点与停止条件
