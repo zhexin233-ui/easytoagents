@@ -70,10 +70,18 @@ the shared change dialog.
   Because activation commits before preview generation, its query must also be
   invalidated when preview generation fails; the UI must not retain the old active row.
 - API-key inputs are passwords and list DTOs expose only `apiKeyConfigured`.
+- A Codex profile with `options.providerId === "openai"` and no local API key is an
+  OAuth-login profile. Render it as using Codex OAuth credentials, keep edits on
+  `SecretUpdate::Keep`, and do not present the missing local key as an error state.
 - The shared dialog renders target path, change/status, plan/target warnings,
   conflicts, and only `redactedDiff`; blocked targets disable Apply.
 - Claude host-policy and Codex override/unknown states remain distinct, and all
   successful prompt/provider switches state that new sessions normally apply them.
+- Provider/Prompt preview can legitimately fail before native reads when there is no
+  active central profile and no managed baseline to clean. When the backend returns
+  `NOT_FOUND` with `details.resource` equal to `activeProviderProfile` or
+  `activePromptProfile`, render an actionable empty state instead of the generic error
+  code text.
 
 ### 4. Validation & Error Matrix
 
@@ -82,9 +90,10 @@ the shared change dialog.
 | Query pending | `role="status"` with feature-specific text |
 | Query/mutation error | `role="alert"` with structured RPC message |
 | Empty list | One explicit create-or-discover next action |
+| Preview lacks active profile and cleanup baseline | Empty-state text; no raw `NOT_FOUND` dead end |
 | Stale row version | Preserve the form/list and show conflict; do not retry blindly |
 | Preview warning/conflict | Show exact codes; disable Apply for blocked target |
-| Import preview | Display only redacted projection or intended Prompt body; confirm separately |
+| Import preview | Display credential source plus only redacted projection or intended Prompt body; confirm separately |
 
 ### 5. Good/Base/Bad Cases
 
@@ -100,8 +109,8 @@ the shared change dialog.
 - Assert exact create/update/copy/activate/delete/import/preview/apply payloads,
   including `SecretUpdate`, row versions, tool, artifact kind, and preview ID.
 - Cover password masking, multi-env edit preservation, target-tool cache refresh,
-  loading/error/empty/policy/override states, redacted diff, blocked Apply, Escape,
-  close, and focus restoration.
+  Codex OAuth credential-source rendering, loading/error/empty/policy/override states,
+  redacted diff, blocked Apply, Escape, close, and focus restoration.
 
 ### 7. Wrong vs Correct
 
@@ -321,6 +330,9 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
   command and performs no native Apply. When multiple previews are applied sequentially,
   a partial success removes only consumed previews from the retry set and disables
   returning to the import-selection step; retry must never resubmit a consumed preview.
+  A persisted skip choice must not disable an otherwise available Provider/Prompt
+  checkbox; selecting Provider/Prompt clears skip so users can recover without first
+  toggling skip off.
 - `ChangePreviewDialog`, `SyncStatusBadge`, `BlockingState`, and
   `SnapshotRestoreDialog` own the shared status language. Dialogs have labels,
   descriptions, modal semantics, Escape handling, focus trapping/restoration, and
@@ -338,6 +350,7 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 | Policy/trust/parse/permission/drift/external-name block | Distinct text/code and `BlockingState`; never imply synchronized |
 | Assignment success | Invalidate project, MCP, and Skill key families together |
 | Tool onboarding choice omitted | Keep preview disabled until choose import/manage or explicit skip |
+| Persisted onboarding skip plus newly available import | Provider/Prompt checkbox remains enabled; selecting it clears skip |
 | All tools skipped | Call typed completion only; no preview/apply command |
 | Empty or blocked persisted preview | Explain no-write/block; do not expose enabled Apply |
 | Dialog close/Escape/reopen | Trap and restore focus; clear stale preview/mutation state |

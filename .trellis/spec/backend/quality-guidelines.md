@@ -299,9 +299,16 @@ apply_persisted_preview(
 - Claude Provider ownership is the union of previous and desired profile-declared
   env keys. Unknown or host-managed policy blocks. Unrelated env and settings remain
   unowned.
+- Claude Provider import derives the central `default_model` from `ANTHROPIC_MODEL`
+  first, then from the official `ANTHROPIC_DEFAULT_*_MODEL` family, while preserving
+  imported default-model family variables as profile-declared env keys.
 - Codex Provider ownership is `model`, `model_provider`, and only the previous/current
   managed provider IDs. Built-in IDs (`openai`, `ollama`, `lmstudio`) and unrelated
   tables remain unowned; an imported custom table preserves supported extension fields.
+- Codex OAuth import may adopt the built-in `openai` provider when `auth.json` proves
+  an OAuth token shape exists. It must not persist, diff, or write `auth.json` contents,
+  and the resulting sync projection writes only provider selection/model fields without
+  `experimental_bearer_token`.
 - API keys never appear in list/status DTOs. Recognizable secret-bearing extension
   env values are rejected from ordinary DTO fields; imported Codex extensions remain
   private and the whole managed provider table is sensitive in previews.
@@ -336,7 +343,8 @@ apply_persisted_preview(
 
 - Use only temporary explicit homes/config roots and explicit policy/availability.
 - Cover case-insensitive uniqueness, activation/deletion CAS, independent copy,
-  stable Codex IDs, Claude old-key cleanup, Codex unknown-table/comment preservation,
+  stable Codex IDs, Claude default-model family import, Claude old-key cleanup,
+  Codex OAuth import without token persistence, Codex unknown-table/comment preservation,
   lossless Prompt import, stale import/apply, and active-profile deletion cleanup.
 - Search serialized import previews, sync previews, RPC DTOs, `sync_items`, and journals
   for every fixture key/token/header; expected matches are zero.
@@ -675,11 +683,17 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 
 ### 3. Contracts
 
-- Resolve `claude` and `codex` only from an explicit absolute PATH. Run the canonical
-  executable with fixed `--version`, null stdin, non-blocking bounded stdout/stderr,
-  a hard deadline, a killed process group even after the wrapper parent exits, fixed
-  current directory, cleared inherited environment, and an explicit minimal environment.
-  Never invoke a shell or an interactive/status command.
+- Resolve `claude` and `codex` only from an explicit absolute PATH. The macOS release
+  input may append the default `HOME/.volta/bin` shim directory after the inherited
+  PATH because GUI launches often miss shell PATH setup; preserve inherited precedence,
+  deduplicate the appended entry, and keep rejecting any unsafe inherited PATH segment.
+  Validate a discovered PATH candidate by checking its symlink metadata and executable
+  canonical target, but execute the original candidate path so symlink shims such as
+  Volta keep the `claude` / `codex` argv0 they require. Run only fixed `--version`,
+  null stdin, non-blocking bounded stdout/stderr, a hard deadline, a killed process
+  group even after the wrapper parent exits, fixed current directory, cleared inherited
+  environment, and an explicit minimal environment. Never invoke a shell or an
+  interactive/status command.
 - Strictly accept only documented single-line version forms. Missing executable means
   `unavailable`; unsafe PATH, spawn/non-zero/timeout/oversized/non-UTF-8/malformed output
   means `unsupported`; only validated output means `installed` with an exact version.
@@ -703,6 +717,8 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 | Condition | Required result |
 | --- | --- |
 | Executable absent from explicit PATH | `unavailable`; target reports tool not installed |
+| Tool exists only under default Volta shim path | Append `HOME/.volta/bin`; validate target; installed only on exact version output |
+| Volta-style symlink shim resolves to shared `volta-shim` | Execute the PATH candidate, not the canonical target, so argv0 remains the requested tool |
 | Unsafe PATH, non-executable, timeout, non-zero exit, or malformed output | `unsupported`; zero native writes |
 | Valid Claude/Codex version output | `installed`; exact parsed version stored once |
 | Claude version/config root differs from evidence | evidence stale; MCP/Skill policy/capability fail closed |
@@ -723,8 +739,9 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 
 - Use only `tempfile` homes, Claude/Codex roots, application roots, policy paths, and
   executable directories. Fake `claude`/`codex` files are the only commands tests run.
-- Cover missing tools, unsafe/malformed/oversized/non-UTF-8 output, non-zero exit, bounded
-  timeout including descendants and wrappers that exit before descendants, exact argv and
+- Cover missing tools, default Volta shim path discovery, symlink shim argv0 preservation,
+  unsafe/malformed/oversized/non-UTF-8 output, non-zero exit, bounded timeout including
+  descendants and wrappers that exit before descendants, exact argv and
   null stdin, exact Claude/Codex parsing, non-default Claude root, and policy
   allowed/blocked/unknown.
 - Cover wrong official basenames, ancestor symlinks, malformed JSON, ambiguous drop-ins,
