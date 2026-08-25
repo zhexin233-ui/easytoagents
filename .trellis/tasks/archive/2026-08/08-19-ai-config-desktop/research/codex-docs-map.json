@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "base_url": "https://developers.openai.com/codex",
+  "results": [
+    "https://developers.openai.com/codex/agent-configuration/agents-md",
+    "https://developers.openai.com/codex/agent-configuration/rules",
+    "https://developers.openai.com/codex/agent-configuration/subagents",
+    "https://developers.openai.com/codex/build-skills",
+    "https://developers.openai.com/codex/config-file/config-advanced",
+    "https://developers.openai.com/codex/config-file/config-basic",
+    "https://developers.openai.com/codex/config-file/config-reference",
+    "https://developers.openai.com/codex/configuration",
+    "https://developers.openai.com/codex/enterprise/managed-configuration",
+    "https://developers.openai.com/codex/enterprise/skills",
+    "https://developers.openai.com/codex/extend/mcp",
+    "https://developers.openai.com/codex/mcp-server",
+    "https://developers.openai.com/codex/projects",
+    "https://developers.openai.com/codex/skills-and-plugins"
+  ],
+  "response_time": 8.64,
+  "url": "https://developers.openai.com/codex",
+  "elapsed_ms": 9743.98
+}

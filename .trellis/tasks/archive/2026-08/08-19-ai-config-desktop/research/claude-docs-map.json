@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "base_url": "https://code.claude.com/docs/en",
+  "results": [
+    "https://code.claude.com/docs/en/claude-directory",
+    "https://code.claude.com/docs/en/mcp",
+    "https://code.claude.com/docs/en/mcp-quickstart",
+    "https://code.claude.com/docs/en/settings",
+    "https://code.claude.com/docs/en/skills"
+  ],
+  "response_time": 3.03,
+  "url": "https://code.claude.com/docs/en",
+  "elapsed_ms": 3877.06
+}

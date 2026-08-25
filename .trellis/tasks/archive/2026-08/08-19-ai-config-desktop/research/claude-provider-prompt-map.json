@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "base_url": "https://code.claude.com/docs/en",
+  "results": [
+    "https://code.claude.com/docs/en",
+    "https://code.claude.com/docs/en/admin-setup",
+    "https://code.claude.com/docs/en/agent-sdk/overview",
+    "https://code.claude.com/docs/en/agents",
+    "https://code.claude.com/docs/en/claude-directory",
+    "https://code.claude.com/docs/en/cli-reference",
+    "https://code.claude.com/docs/en/mcp",
+    "https://code.claude.com/docs/en/memory",
+    "https://code.claude.com/docs/en/settings"
+  ],
+  "response_time": 2.5,
+  "url": "https://code.claude.com/docs/en",
+  "elapsed_ms": 3567.03
+}
