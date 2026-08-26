@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范入口"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "共享组件、对话框和可访问状态"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "复用焦点 hook 与完整清理"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "表单生命周期与查询失效"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "页面测试、敏感字段和无隐式 Apply"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "生成 DTO 与严格类型约束"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "三个表单共用弹窗交互外壳"}

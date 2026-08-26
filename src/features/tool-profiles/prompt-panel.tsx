@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -8,6 +8,7 @@ import {
   type PromptProfileDto,
   type Tool,
 } from "@/bindings/commands";
+import { FormDialog } from "@/components/form-dialog";
 import { Button } from "@/components/ui/button";
 import {
   profileErrorText,
@@ -27,6 +28,8 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
   const [editing, setEditing] = useState<PromptProfileDto | null>(null);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const saveInFlight = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [importPreview, setImportPreview] =
     useState<PromptImportPreviewDto | null>(null);
@@ -56,13 +59,36 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
             }),
           ),
     onSuccess: async () => {
+      await refresh();
       setEditing(null);
       setName("");
       setBody("");
+      setFormOpen(false);
       setNotice("中央提示词档案已保存，原生文件尚未修改。");
-      await refresh();
+    },
+    onSettled: () => {
+      saveInFlight.current = false;
     },
   });
+
+  const openForm = (profile: PromptProfileDto | null) => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveMutation.reset();
+    setEditing(profile);
+    setName(profile?.name ?? "");
+    setBody(profile?.body ?? "");
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    setFormOpen(false);
+    setEditing(null);
+    setName("");
+    setBody("");
+    saveMutation.reset();
+  };
+
   const activateMutation = useMutation({
     mutationFn: async (profile: PromptProfileDto) => {
       unwrapResult(
@@ -119,7 +145,6 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
     },
   });
   const mutationError = [
-    saveMutation.error,
     activateMutation.error,
     previewMutation.error,
     deleteMutation.error,
@@ -131,6 +156,8 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveInFlight.current = true;
     saveMutation.mutate();
   };
 
@@ -148,7 +175,10 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
             Markdown 正文原样写入工具的全局指令文件。
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => openForm(null)}>
+            新增提示词
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -183,7 +213,7 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
       ) : null}
       {profilesQuery.data?.length === 0 ? (
         <p className="text-muted-foreground mt-5 rounded-lg border border-dashed p-4 text-sm">
-          尚无提示词档案。请在下方创建第一份档案，或先检测已有提示词。
+          尚无提示词档案。点击“新增提示词”创建第一份档案，或先检测已有提示词。
         </p>
       ) : null}
 
@@ -212,11 +242,7 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setEditing(profile);
-                    setName(profile.name);
-                    setBody(profile.body);
-                  }}
+                  onClick={() => openForm(profile)}
                 >
                   编辑
                 </Button>
@@ -263,8 +289,16 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
         </div>
       ) : null}
 
-      <form onSubmit={submit} className="mt-6 space-y-4 border-t pt-5">
-        <h3 className="font-medium">{editing ? "编辑提示词" : "新建提示词"}</h3>
+      <FormDialog
+        open={formOpen}
+        title={`${editing ? "编辑" : "新增"} ${tool === "claude" ? "Claude" : "Codex"} 提示词`}
+        description="保存只更新中央提示词档案，不会修改原生文件；原生写入仍需预览后确认 Apply。"
+        submitLabel={editing ? "保存编辑" : "创建提示词"}
+        pending={saveMutation.isPending}
+        error={profileErrorText(saveMutation.error)}
+        onClose={closeForm}
+        onSubmit={submit}
+      >
         <div>
           <label
             htmlFor={`${tool}-prompt-name`}
@@ -295,25 +329,7 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
             onChange={(event) => setBody(event.currentTarget.value)}
           />
         </div>
-        <div className="flex gap-2">
-          <Button type="submit" disabled={saveMutation.isPending}>
-            {editing ? "保存编辑" : "创建提示词"}
-          </Button>
-          {editing ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setEditing(null);
-                setName("");
-                setBody("");
-              }}
-            >
-              取消编辑
-            </Button>
-          ) : null}
-        </div>
-      </form>
+      </FormDialog>
     </section>
   );
 }

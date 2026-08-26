@@ -245,16 +245,216 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("McpPage", () => {
+  it("默认隐藏表单，新增与编辑可取消、关闭和 Escape 清理草稿并恢复焦点", async () => {
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [server],
+    });
+    renderPage();
+    const edit = await screen.findByRole("button", { name: "编辑" });
+    const trigger = screen.getByRole("button", { name: "新增 MCP" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("名称")).not.toBeInTheDocument();
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    let dialog = screen.getByRole("dialog", { name: "新增 MCP" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toHaveAccessibleDescription(/保存只更新中央 MCP/);
+    const close = within(dialog).getByRole("button", { name: "关闭" });
+    const submit = within(dialog).getByRole("button", { name: "保存中央意图" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(submit).toHaveFocus();
+    fireEvent.keyDown(submit, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "未保存草稿" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Env JSON"), {
+      target: { value: '{"TOKEN":"draft-secret"}' },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    edit.focus();
+    fireEvent.click(edit);
+    dialog = screen.getByRole("dialog", { name: "编辑 MCP" });
+    expect(within(dialog).getByLabelText("名称")).toHaveValue(server.name);
+    expect(within(dialog).getByLabelText("Env JSON")).toBeDisabled();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(edit).toHaveFocus();
+
+    trigger.focus();
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "新增 MCP" });
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Env JSON")).toHaveValue("{}");
+    expect(within(dialog).getByLabelText("Env JSON")).toBeEnabled();
+    expect(
+      within(dialog).queryByText(/保持数据库中的/),
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(commands.createMcpServer).not.toHaveBeenCalled();
+    expect(commands.updateMcpServer).not.toHaveBeenCalled();
+  });
+
+  it("校验与保存错误留在弹窗内，保留输入并在关闭后清理", async () => {
+    vi.mocked(commands.createMcpServer).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "CONFLICT",
+        message: "MCP 名称已存在",
+        recoverable: true,
+        action: "rescan",
+      },
+    });
+    renderPage();
+    const trigger = screen.getByRole("button", { name: "新增 MCP" });
+    fireEvent.click(trigger);
+    let dialog = screen.getByRole("dialog", { name: "新增 MCP" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "冲突草稿" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Command"), {
+      target: { value: "npx" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Env JSON"), {
+      target: { value: "invalid-json" },
+    });
+    fireEvent.submit(within(dialog).getByRole("form"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Env 不是合法 JSON。",
+    );
+    expect(commands.createMcpServer).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "新增 MCP" });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Env JSON")).toHaveValue("{}");
+
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "冲突草稿" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Command"), {
+      target: { value: "npx" },
+    });
+    fireEvent.submit(within(dialog).getByRole("form"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "CONFLICT：MCP 名称已存在",
+    );
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("冲突草稿");
+    expect(within(dialog).getByLabelText("Command")).toHaveValue("npx");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "新增 MCP" });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
+  it("保存及刷新期间阻止重复提交和关闭，完成后可安全打开新草稿", async () => {
+    const pending =
+      deferred<Awaited<ReturnType<typeof commands.createMcpServer>>>();
+    const refresh =
+      deferred<Awaited<ReturnType<typeof commands.listMcpServers>>>();
+    vi.mocked(commands.createMcpServer).mockReturnValueOnce(pending.promise);
+    renderPage();
+    await screen.findByText(/中央库尚无 MCP/);
+    vi.mocked(commands.listMcpServers).mockReturnValueOnce(refresh.promise);
+    const trigger = screen.getByRole("button", { name: "新增 MCP" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "新增 MCP" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: server.name },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Command"), {
+      target: { value: "npx" },
+    });
+    const form = within(dialog).getByRole("form");
+    within(dialog).getByRole("button", { name: "保存中央意图" }).focus();
+    act(() => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      fireEvent.click(trigger);
+      fireEvent.keyDown(dialog, { key: "Escape" });
+    });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "正在保存",
+    );
+    expect(dialog).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    const firstField = within(dialog).getByLabelText("名称");
+    const lastField = within(dialog).getByRole("checkbox", {
+      name: /启用（停用后/,
+    });
+    expect(firstField).toHaveFocus();
+    fireEvent.keyDown(firstField, { key: "Tab", shiftKey: true });
+    expect(lastField).toHaveFocus();
+    dialog.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(lastField).toHaveFocus();
+    fireEvent.keyDown(lastField, { key: "Tab" });
+    expect(firstField).toHaveFocus();
+    for (const name of ["关闭", "取消", "正在保存…"]) {
+      const button = within(dialog).getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    fireEvent.submit(form);
+    expect(dialog).toBeVisible();
+    expect(commands.createMcpServer).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve({ status: "ok", data: server });
+      await pending.promise;
+    });
+    await waitFor(() =>
+      expect(commands.listMcpServers).toHaveBeenCalledTimes(2),
+    );
+    fireEvent.click(trigger);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(dialog).toBeVisible();
+    expect(within(dialog).getByLabelText("名称")).toHaveValue(server.name);
+    await act(async () => {
+      refresh.resolve({ status: "ok", data: [server] });
+      await refresh.promise;
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    const nextDialog = screen.getByRole("dialog", { name: "新增 MCP" });
+    expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
+    fireEvent.change(within(nextDialog).getByLabelText("名称"), {
+      target: { value: "下一份草稿" },
+    });
+    expect(within(nextDialog).getByLabelText("名称")).toHaveValue("下一份草稿");
+    expect(commands.createMcpServer).toHaveBeenCalledTimes(1);
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
   it("使用遮罩字段创建结构化 stdio MCP，并只调用生成 command", async () => {
     vi.mocked(commands.createMcpServer).mockResolvedValue({
       status: "ok",
       data: server,
     });
     renderPage();
-    const form = screen
-      .getByRole("heading", { name: "新增 MCP" })
-      .closest("section");
-    if (!form) throw new Error("未找到 MCP 表单");
+    await screen.findByText(/中央库尚无 MCP/);
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [server],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "新增 MCP" }));
+    const form = screen.getByRole("dialog", { name: "新增 MCP" });
     const envInput = within(form).getByLabelText("Env JSON");
     expect(envInput).toHaveAttribute("type", "password");
     fireEvent.change(within(form).getByLabelText("名称"), {
@@ -286,6 +486,14 @@ describe("McpPage", () => {
         enabled: true,
       }),
     );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByRole("heading", { name: server.name }),
+    ).toBeVisible();
+    expect(commands.listMcpServers).toHaveBeenCalledTimes(2);
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
   it("编辑时不回填敏感值并默认发送 keep", async () => {
@@ -299,20 +507,25 @@ describe("McpPage", () => {
     });
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    expect(screen.getByRole("dialog", { name: "编辑 MCP" })).toBeVisible();
     const envInput = screen.getByLabelText("Env JSON");
     expect(envInput).toHaveValue("{}");
     expect(envInput).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "保存中央意图" }));
     await waitFor(() =>
-      expect(commands.updateMcpServer).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: server.id,
-          headers: { action: "clear" },
-          env: { action: "keep" },
-          extra: { action: "keep" },
-          rowVersion: server.rowVersion,
-        }),
-      ),
+      expect(commands.updateMcpServer).toHaveBeenCalledWith({
+        id: server.id,
+        name: server.name,
+        transport: "stdio",
+        command: server.command,
+        args: server.args,
+        url: null,
+        headers: { action: "clear" },
+        env: { action: "keep" },
+        extra: { action: "keep" },
+        enabled: server.enabled,
+        rowVersion: server.rowVersion,
+      }),
     );
     expect(screen.queryByText("ui-secret")).not.toBeInTheDocument();
   });

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试需要直接核验 mock。 */
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -149,6 +150,35 @@ function sectionByHeading(name: string): HTMLElement {
   return section;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function fillProfileForm(dialog: HTMLElement, kind: "渠道" | "提示词") {
+  fireEvent.change(within(dialog).getByLabelText("名称"), {
+    target: { value: "新草稿" },
+  });
+  if (kind === "渠道") {
+    fireEvent.change(within(dialog).getByLabelText("API 地址"), {
+      target: { value: "https://draft.example.com/v1" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("API Key（默认遮罩）"), {
+      target: { value: "draft-secret" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("默认模型"), {
+      target: { value: "draft-model" },
+    });
+  } else {
+    fireEvent.change(within(dialog).getByLabelText("Markdown 正文"), {
+      target: { value: "# 草稿规则" },
+    });
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.listProviderProfiles).mockResolvedValue({
@@ -213,6 +243,261 @@ afterEach(() => {
 });
 
 describe("ToolProfilesPage", () => {
+  it.each([
+    ["claude", "渠道"],
+    ["codex", "渠道"],
+    ["claude", "提示词"],
+    ["codex", "提示词"],
+  ] as const)(
+    "%s %s 默认隐藏表单，新增和编辑可关闭清理且焦点不离开弹窗",
+    async (tool, kind) => {
+      vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+        status: "ok",
+        data: [{ ...provider, tool }],
+      });
+      vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+        status: "ok",
+        data: [{ ...promptProfile, tool }],
+      });
+      renderPage(tool);
+      const section = sectionByHeading(kind === "渠道" ? "渠道" : "全局提示词");
+      const toolName = tool === "claude" ? "Claude" : "Codex";
+      const edit = await within(section).findByRole("button", { name: "编辑" });
+      const trigger = within(section).getByRole("button", {
+        name: `新增${kind}`,
+      });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("名称")).not.toBeInTheDocument();
+
+      edit.focus();
+      fireEvent.click(edit);
+      let dialog = screen.getByRole("dialog", {
+        name: `编辑 ${toolName} ${kind}`,
+      });
+      expect(within(dialog).getByLabelText("名称")).toHaveValue(
+        kind === "渠道" ? provider.name : promptProfile.name,
+      );
+      if (kind === "提示词") {
+        expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue(
+          promptProfile.body,
+        );
+      }
+      fireEvent.change(within(dialog).getByLabelText("名称"), {
+        target: { value: "未保存的编辑" },
+      });
+      fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(edit).toHaveFocus();
+
+      trigger.focus();
+      fireEvent.click(trigger);
+      dialog = screen.getByRole("dialog", { name: `新增 ${toolName} ${kind}` });
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      expect(dialog).toHaveAccessibleDescription(/保存只更新中央/);
+      expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+      const close = within(dialog).getByRole("button", { name: "关闭" });
+      const submit = within(dialog).getByRole("button", {
+        name: `创建${kind}`,
+      });
+      expect(close).toHaveFocus();
+      fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+      expect(submit).toHaveFocus();
+      fireEvent.keyDown(submit, { key: "Tab" });
+      expect(close).toHaveFocus();
+      fillProfileForm(dialog, kind);
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+
+      fireEvent.click(trigger);
+      dialog = screen.getByRole("dialog", { name: `新增 ${toolName} ${kind}` });
+      expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+      expect(
+        within(dialog).getByLabelText(
+          kind === "渠道" ? "API Key（默认遮罩）" : "Markdown 正文",
+        ),
+      ).toHaveValue("");
+      fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+      expect(commands.createProviderProfile).not.toHaveBeenCalled();
+      expect(commands.updateProviderProfile).not.toHaveBeenCalled();
+      expect(commands.createPromptProfile).not.toHaveBeenCalled();
+      expect(commands.updatePromptProfile).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["渠道", "提示词"] as const)(
+    "%s 保存失败在弹窗内保留输入，关闭重开不保留错误",
+    async (kind) => {
+      const error = {
+        code: "INVALID_INPUT",
+        message: "档案输入无效",
+        recoverable: true,
+        action: "rescan",
+      } as const;
+      vi.mocked(commands.createProviderProfile).mockResolvedValue({
+        status: "error",
+        error,
+      });
+      vi.mocked(commands.createPromptProfile).mockResolvedValue({
+        status: "error",
+        error,
+      });
+      renderPage();
+      const trigger = screen.getByRole("button", { name: `新增${kind}` });
+      fireEvent.click(trigger);
+      let dialog = screen.getByRole("dialog", { name: `新增 Claude ${kind}` });
+      fillProfileForm(dialog, kind);
+      fireEvent.submit(within(dialog).getByRole("form"));
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        "INVALID_INPUT：档案输入无效",
+      );
+      expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
+      expect(
+        within(dialog).getByLabelText(
+          kind === "渠道" ? "API Key（默认遮罩）" : "Markdown 正文",
+        ),
+      ).toHaveValue(kind === "渠道" ? "draft-secret" : "# 草稿规则");
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      fireEvent.click(trigger);
+      dialog = screen.getByRole("dialog", { name: `新增 Claude ${kind}` });
+      expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+      expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+      expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+    },
+  );
+
+  it("渠道 env 校验错误保留草稿，取消后重新新增会清除校验状态", async () => {
+    renderPage();
+    const trigger = screen.getByRole("button", { name: "新增渠道" });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
+    fillProfileForm(dialog, "渠道");
+    fireEvent.change(
+      within(dialog).getByLabelText("额外 env（每行 KEY=VALUE）"),
+      {
+        target: { value: "缺少等号" },
+      },
+    );
+    fireEvent.submit(within(dialog).getByRole("form"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "额外 env 必须按每行 KEY=VALUE 填写。",
+    );
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
+    expect(commands.createProviderProfile).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    fireEvent.click(trigger);
+    const nextDialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
+    expect(within(nextDialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
+    expect(
+      within(nextDialog).getByLabelText("额外 env（每行 KEY=VALUE）"),
+    ).toHaveValue("");
+  });
+
+  it.each(["渠道", "提示词"] as const)(
+    "%s 保存和刷新期间阻止重复提交与关闭，完成后不影响新草稿",
+    async (kind) => {
+      const pending = deferred<void>();
+      const refresh = deferred<void>();
+      vi.mocked(commands.createProviderProfile).mockImplementation(async () => {
+        await pending.promise;
+        return { status: "ok", data: provider };
+      });
+      vi.mocked(commands.createPromptProfile).mockImplementation(async () => {
+        await pending.promise;
+        return { status: "ok", data: promptProfile };
+      });
+      renderPage();
+      const section = sectionByHeading(kind === "渠道" ? "渠道" : "全局提示词");
+      await within(section).findByText(/尚无.*档案/);
+      if (kind === "渠道") {
+        vi.mocked(commands.listProviderProfiles).mockImplementationOnce(
+          async () => {
+            await refresh.promise;
+            return { status: "ok", data: [provider] };
+          },
+        );
+      } else {
+        vi.mocked(commands.listPromptProfiles).mockImplementationOnce(
+          async () => {
+            await refresh.promise;
+            return { status: "ok", data: [promptProfile] };
+          },
+        );
+      }
+      const trigger = within(section).getByRole("button", {
+        name: `新增${kind}`,
+      });
+      trigger.focus();
+      fireEvent.click(trigger);
+      const dialog = screen.getByRole("dialog", {
+        name: `新增 Claude ${kind}`,
+      });
+      fillProfileForm(dialog, kind);
+      const form = within(dialog).getByRole("form");
+      act(() => {
+        fireEvent.submit(form);
+        fireEvent.submit(form);
+        fireEvent.click(trigger);
+        fireEvent.keyDown(dialog, { key: "Escape" });
+      });
+      expect(await within(dialog).findByRole("status")).toHaveTextContent(
+        "正在保存",
+      );
+      for (const name of ["关闭", "取消", "正在保存…"]) {
+        const button = within(dialog).getByRole("button", { name });
+        expect(button).toBeDisabled();
+        fireEvent.click(button);
+      }
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      fireEvent.submit(form);
+      const createCommand =
+        kind === "渠道"
+          ? commands.createProviderProfile
+          : commands.createPromptProfile;
+      const listCommand =
+        kind === "渠道"
+          ? commands.listProviderProfiles
+          : commands.listPromptProfiles;
+      expect(createCommand).toHaveBeenCalledTimes(1);
+      expect(dialog).toBeVisible();
+
+      await act(async () => {
+        pending.resolve();
+        await pending.promise;
+      });
+      await waitFor(() => expect(listCommand).toHaveBeenCalledTimes(2));
+      fireEvent.click(trigger);
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(dialog).toBeVisible();
+      expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
+      await act(async () => {
+        refresh.resolve();
+        await refresh.promise;
+      });
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      expect(trigger).toHaveFocus();
+      fireEvent.click(trigger);
+      const nextDialog = screen.getByRole("dialog", {
+        name: `新增 Claude ${kind}`,
+      });
+      expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
+      fireEvent.change(within(nextDialog).getByLabelText("名称"), {
+        target: { value: "下一份草稿" },
+      });
+      expect(within(nextDialog).getByLabelText("名称")).toHaveValue(
+        "下一份草稿",
+      );
+      expect(createCommand).toHaveBeenCalledTimes(1);
+      expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+    },
+  );
+
   it("创建渠道时使用遮罩密钥输入并只调用生成 command", async () => {
     vi.mocked(commands.createProviderProfile).mockResolvedValue({
       status: "ok",
@@ -220,6 +505,12 @@ describe("ToolProfilesPage", () => {
     });
     renderPage();
     const section = sectionByHeading("渠道");
+    await within(section).findByText(/尚无渠道档案/);
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [{ ...provider, name: "新渠道", isActive: true }],
+    });
+    fireEvent.click(within(section).getByRole("button", { name: "新增渠道" }));
     const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
     expect(keyInput).toHaveAttribute("type", "password");
 
@@ -255,6 +546,12 @@ describe("ToolProfilesPage", () => {
         "中央渠道档案已保存，原生配置尚未修改。",
       ),
     ).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(within(section).getByRole("listitem")).toHaveTextContent(
+      "新渠道 · 当前生效",
+    );
+    expect(commands.listProviderProfiles).toHaveBeenCalledTimes(2);
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
   it("编辑已存在渠道时默认保留遮罩密钥", async () => {
@@ -281,6 +578,9 @@ describe("ToolProfilesPage", () => {
     fireEvent.click(
       await within(section).findByRole("button", { name: "编辑" }),
     );
+    expect(
+      screen.getByRole("dialog", { name: "编辑 Claude 渠道" }),
+    ).toBeVisible();
     const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
     expect(keyInput).toHaveValue("");
     expect(keyInput).toHaveAttribute("placeholder", "留空以保留现有密钥");
@@ -289,22 +589,23 @@ describe("ToolProfilesPage", () => {
     });
     fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
     await waitFor(() =>
-      expect(commands.updateProviderProfile).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: provider.id,
-          name: "已重命名",
-          apiKey: { action: "keep" },
-          rowVersion: provider.rowVersion,
-        }),
-      ),
+      expect(commands.updateProviderProfile).toHaveBeenCalledWith({
+        id: provider.id,
+        name: "已重命名",
+        apiBaseUrl: provider.apiBaseUrl,
+        apiKey: { action: "keep" },
+        defaultModel: provider.defaultModel,
+        options: {
+          credentialEnvKey: "ANTHROPIC_API_KEY",
+          extraEnv: {
+            ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus",
+            ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet",
+          },
+          wireApi: null,
+        },
+        rowVersion: provider.rowVersion,
+      }),
     );
-    expect(
-      vi.mocked(commands.updateProviderProfile).mock.calls[0]?.[0].options
-        .extraEnv,
-    ).toEqual({
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet",
-    });
   });
 
   it("Codex OAuth 渠道显示登录来源并允许无密钥编辑", async () => {
@@ -328,6 +629,9 @@ describe("ToolProfilesPage", () => {
     ).toBeDisabled();
 
     fireEvent.click(within(section).getByRole("button", { name: "编辑" }));
+    expect(
+      screen.getByRole("dialog", { name: "编辑 Codex 渠道" }),
+    ).toBeVisible();
     const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
     expect(keyInput).toBeDisabled();
     expect(keyInput).toHaveAttribute(
@@ -340,14 +644,15 @@ describe("ToolProfilesPage", () => {
     fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
 
     await waitFor(() =>
-      expect(commands.updateProviderProfile).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: codexOAuthProvider.id,
-          name: "Codex 官方登录",
-          apiKey: { action: "keep" },
-          rowVersion: codexOAuthProvider.rowVersion,
-        }),
-      ),
+      expect(commands.updateProviderProfile).toHaveBeenCalledWith({
+        id: codexOAuthProvider.id,
+        name: "Codex 官方登录",
+        apiBaseUrl: codexOAuthProvider.apiBaseUrl,
+        apiKey: { action: "keep" },
+        defaultModel: codexOAuthProvider.defaultModel,
+        options: { credentialEnvKey: null, extraEnv: {}, wireApi: null },
+        rowVersion: codexOAuthProvider.rowVersion,
+      }),
     );
   });
 
@@ -456,6 +761,7 @@ describe("ToolProfilesPage", () => {
     });
     renderPage();
     const section = sectionByHeading("渠道");
+    fireEvent.click(within(section).getByRole("button", { name: "新增渠道" }));
     fireEvent.change(within(section).getByLabelText("名称"), {
       target: { value: "错误档案" },
     });
@@ -512,6 +818,14 @@ describe("ToolProfilesPage", () => {
     });
     renderPage();
     const section = sectionByHeading("全局提示词");
+    await within(section).findByText(/尚无提示词档案/);
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [{ ...promptProfile, name: "代码审查", isActive: true }],
+    });
+    fireEvent.click(
+      within(section).getByRole("button", { name: "新增提示词" }),
+    );
     fireEvent.change(within(section).getByLabelText("名称"), {
       target: { value: "代码审查" },
     });
@@ -529,6 +843,14 @@ describe("ToolProfilesPage", () => {
         activate: true,
       }),
     );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(within(section).getByRole("listitem")).toHaveTextContent(
+      "代码审查 · 当前生效",
+    );
+    expect(commands.listPromptProfiles).toHaveBeenCalledTimes(2);
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
   it("可编辑并切换提示词，应用时消费提示词 preview", async () => {
@@ -546,6 +868,9 @@ describe("ToolProfilesPage", () => {
     fireEvent.click(
       await within(section).findByRole("button", { name: "编辑" }),
     );
+    expect(
+      screen.getByRole("dialog", { name: "编辑 Claude 提示词" }),
+    ).toBeVisible();
     fireEvent.change(within(section).getByLabelText("名称"), {
       target: { value: "更新后的提示词" },
     });

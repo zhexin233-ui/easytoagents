@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -14,6 +14,7 @@ import {
   type UpdateMcpServerInput,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { FormDialog } from "@/components/form-dialog";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,6 +74,8 @@ export function McpPage() {
   const projectsQuery = useQuery(mcpProjectsQueryOptions());
   const statusesQuery = useQuery(globalMcpStatusesQueryOptions());
   const [form, setForm] = useState<McpFormState>(emptyForm);
+  const [formOpen, setFormOpen] = useState(false);
+  const saveInFlight = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [projectId, setProjectId] = useState("");
@@ -102,11 +105,32 @@ export function McpPage() {
       return unwrapResult(await commands.createMcpServer(createInput(state)));
     },
     onSuccess: async () => {
+      await invalidateMcp();
       setMessage("中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。");
       setForm(emptyForm);
-      await invalidateMcp();
+      setFormError(null);
+      setFormOpen(false);
+    },
+    onSettled: () => {
+      saveInFlight.current = false;
     },
   });
+
+  const openForm = (state: McpFormState) => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveMutation.reset();
+    setFormError(null);
+    setForm(state);
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    setFormOpen(false);
+    setForm(emptyForm);
+    setFormError(null);
+    saveMutation.reset();
+  };
 
   const enabledMutation = useMutation({
     mutationFn: async (server: McpServerDto) =>
@@ -203,7 +227,6 @@ export function McpPage() {
   });
 
   const operationError = [
-    saveMutation.error,
     enabledMutation.error,
     deleteMutation.error,
     globalAssignmentMutation.error,
@@ -232,209 +255,29 @@ export function McpPage() {
             {message}
           </p>
         ) : null}
-        {formError || operationError ? (
+        {operationError ? (
           <p
             role="alert"
             className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm"
           >
-            {formError ?? operationError}
+            {operationError}
           </p>
         ) : null}
       </div>
 
-      <div className="mx-auto mt-6 grid max-w-6xl gap-6 xl:grid-cols-[1fr_1.15fr]">
-        <section
-          className="rounded-xl border bg-white p-5"
-          aria-labelledby="mcp-form-title"
-        >
-          <h2 id="mcp-form-title" className="text-lg font-semibold">
-            {form.id ? "编辑 MCP" : "新增 MCP"}
-          </h2>
-          <form
-            className="mt-4 space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setFormError(null);
-              try {
-                validateForm(form);
-                saveMutation.mutate(form);
-              } catch (error) {
-                setFormError(
-                  error instanceof Error ? error.message : "表单内容无效。",
-                );
-              }
-            }}
-          >
-            <Field label="名称">
-              <input
-                className="field"
-                value={form.name}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    name: event.target.value,
-                  }))
-                }
-                required
-              />
-            </Field>
-            <Field label="传输方式">
-              <select
-                className="field"
-                value={form.transport}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    transport:
-                      event.target.value === "streamable_http"
-                        ? "streamable_http"
-                        : "stdio",
-                  }))
-                }
-              >
-                <option value="stdio">stdio</option>
-                <option value="streamable_http">streamable_http</option>
-              </select>
-            </Field>
-            {form.transport === "stdio" ? (
-              <>
-                <Field label="Command">
-                  <input
-                    className="field"
-                    value={form.command}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        command: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </Field>
-                <Field label="Args（每行一项）">
-                  <textarea
-                    className="field min-h-24"
-                    value={form.args}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        args: event.target.value,
-                      }))
-                    }
-                  />
-                </Field>
-                <SensitiveField
-                  label="Env JSON"
-                  value={form.env}
-                  keep={form.keepEnv}
-                  editing={form.id !== null}
-                  onKeep={(keep) =>
-                    setForm((current) => ({ ...current, keepEnv: keep }))
-                  }
-                  onChange={(env) =>
-                    setForm((current) => ({ ...current, env }))
-                  }
-                />
-              </>
-            ) : (
-              <>
-                <Field label="URL">
-                  <input
-                    className="field"
-                    type="url"
-                    value={form.url}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        url: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </Field>
-                <SensitiveField
-                  label="Headers JSON"
-                  value={form.headers}
-                  keep={form.keepHeaders}
-                  editing={form.id !== null}
-                  onKeep={(keep) =>
-                    setForm((current) => ({ ...current, keepHeaders: keep }))
-                  }
-                  onChange={(headers) =>
-                    setForm((current) => ({ ...current, headers }))
-                  }
-                />
-              </>
-            )}
-            <div className="space-y-2 text-sm">
-              <label htmlFor="mcp-extra-json" className="block font-medium">
-                扩展字段 JSON
-              </label>
-              {form.id ? (
-                <label className="mb-2 flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={form.keepExtra}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        keepExtra: event.target.checked,
-                      }))
-                    }
-                  />
-                  保持数据库中的扩展字段（不会回填敏感原值）
-                </label>
-              ) : null}
-              <textarea
-                id="mcp-extra-json"
-                className="field min-h-24 font-mono text-xs"
-                value={form.extra}
-                disabled={form.id !== null && form.keepExtra}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    extra: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.enabled}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    enabled: event.target.checked,
-                  }))
-                }
-              />
-              启用（停用后下一份预览会安全移除已应用条目）
-            </label>
-            <div className="flex gap-3">
-              <Button type="submit" disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? "正在保存…" : "保存中央意图"}
-              </Button>
-              {form.id ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setForm(emptyForm)}
-                >
-                  取消编辑
-                </Button>
-              ) : null}
-            </div>
-          </form>
-        </section>
-
+      <div className="mx-auto mt-6 max-w-6xl">
         <section
           className="rounded-xl border bg-white p-5"
           aria-labelledby="mcp-list-title"
         >
-          <h2 id="mcp-list-title" className="text-lg font-semibold">
-            中央列表
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 id="mcp-list-title" className="text-lg font-semibold">
+              中央列表
+            </h2>
+            <Button size="sm" onClick={() => openForm(emptyForm)}>
+              新增 MCP
+            </Button>
+          </div>
           {serversQuery.isPending ? (
             <p role="status" className="mt-4 text-sm">
               正在读取 MCP…
@@ -447,8 +290,8 @@ export function McpPage() {
           ) : null}
           {serversQuery.data?.length === 0 ? (
             <p className="text-muted-foreground mt-4 text-sm">
-              中央库尚无 MCP。已有工具配置可通过下方“检测并导入已有
-              MCP”纳入管理，也可使用左侧表单创建。
+              中央库尚无 MCP。点击“新增
+              MCP”创建，或通过全局目标中的“检测并导入已有 MCP”纳入已有工具配置。
             </p>
           ) : null}
           <div className="mt-4 space-y-3">
@@ -466,7 +309,7 @@ export function McpPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setForm(editForm(server))}
+                      onClick={() => openForm(editForm(server))}
                     >
                       编辑
                     </Button>
@@ -751,6 +594,176 @@ export function McpPage() {
           生成项目预览
         </Button>
       </section>
+
+      <FormDialog
+        open={formOpen}
+        title={form.id ? "编辑 MCP" : "新增 MCP"}
+        description="保存只更新中央 MCP，不会修改原生配置；原生写入仍需预览后确认 Apply。"
+        submitLabel="保存中央意图"
+        pending={saveMutation.isPending}
+        error={formError ?? profileErrorText(saveMutation.error)}
+        onClose={closeForm}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (saveInFlight.current || saveMutation.isPending) return;
+          setFormError(null);
+          saveMutation.reset();
+          try {
+            validateForm(form);
+            saveInFlight.current = true;
+            saveMutation.mutate(form);
+          } catch (error) {
+            setFormError(
+              error instanceof Error ? error.message : "表单内容无效。",
+            );
+          }
+        }}
+      >
+        <Field label="名称">
+          <input
+            className="field"
+            value={form.name}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                name: event.target.value,
+              }))
+            }
+            required
+          />
+        </Field>
+        <Field label="传输方式">
+          <select
+            className="field"
+            value={form.transport}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                transport:
+                  event.target.value === "streamable_http"
+                    ? "streamable_http"
+                    : "stdio",
+              }))
+            }
+          >
+            <option value="stdio">stdio</option>
+            <option value="streamable_http">streamable_http</option>
+          </select>
+        </Field>
+        {form.transport === "stdio" ? (
+          <>
+            <Field label="Command">
+              <input
+                className="field"
+                value={form.command}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    command: event.target.value,
+                  }))
+                }
+                required
+              />
+            </Field>
+            <Field label="Args（每行一项）">
+              <textarea
+                className="field min-h-24"
+                value={form.args}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    args: event.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <SensitiveField
+              label="Env JSON"
+              value={form.env}
+              keep={form.keepEnv}
+              editing={form.id !== null}
+              onKeep={(keep) =>
+                setForm((current) => ({ ...current, keepEnv: keep }))
+              }
+              onChange={(env) => setForm((current) => ({ ...current, env }))}
+            />
+          </>
+        ) : (
+          <>
+            <Field label="URL">
+              <input
+                className="field"
+                type="url"
+                value={form.url}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    url: event.target.value,
+                  }))
+                }
+                required
+              />
+            </Field>
+            <SensitiveField
+              label="Headers JSON"
+              value={form.headers}
+              keep={form.keepHeaders}
+              editing={form.id !== null}
+              onKeep={(keep) =>
+                setForm((current) => ({ ...current, keepHeaders: keep }))
+              }
+              onChange={(headers) =>
+                setForm((current) => ({ ...current, headers }))
+              }
+            />
+          </>
+        )}
+        <div className="space-y-2 text-sm">
+          <label htmlFor="mcp-extra-json" className="block font-medium">
+            扩展字段 JSON
+          </label>
+          {form.id ? (
+            <label className="mb-2 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={form.keepExtra}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    keepExtra: event.target.checked,
+                  }))
+                }
+              />
+              保持数据库中的扩展字段（不会回填敏感原值）
+            </label>
+          ) : null}
+          <textarea
+            id="mcp-extra-json"
+            className="field min-h-24 font-mono text-xs"
+            value={form.extra}
+            disabled={form.id !== null && form.keepExtra}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                extra: event.target.value,
+              }))
+            }
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.enabled}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                enabled: event.target.checked,
+              }))
+            }
+          />
+          启用（停用后下一份预览会安全移除已应用条目）
+        </label>
+      </FormDialog>
 
       {openImport ? (
         <McpImportDialog

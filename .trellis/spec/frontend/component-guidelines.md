@@ -92,3 +92,22 @@ export function ChangePreviewDialog(props: ChangePreviewDialogProps) {
   inside a feature.
 - Hiding loading, empty, policy, conflict, and RPC failure behind one generic
   message.
+
+## 新增与编辑弹窗
+
+- MCP、Provider、Prompt 的新增/编辑使用 `FormDialog`，页面默认只展示列表和操作入口，不平铺表单。新增按钮从空草稿打开，编辑按钮携带安全字段与当前行版本。
+- `FormDialog` 接收 `open`、`title`、`description`、`submitLabel`、`pending`、`error`、`onClose`、`onSubmit` 和 `children`；只负责弹窗交互，业务状态和 mutation 留在页面。
+- 关闭、取消和 Escape 都清理草稿、编辑模式及旧保存/校验错误；失败保留输入并在弹窗内展示 `role="alert"`，成功等待查询刷新后关闭。CRUD 不触发隐式 Apply。
+- 保存期间禁用关闭/取消/提交；页面另用 `saveInFlight` ref 同步阻止重复提交及关闭，不能只依赖下一次渲染才更新的 `isPending`。
+- 弹窗限制最大高度，表单内容内部滚动，标题与底部操作保持可见；窄屏不得使表单横向溢出。
+- 提交按钮变为 disabled 时，浏览器可能把焦点移到 `body`。提交前必须聚焦弹窗容器；`useDialogFocus` 在容器持焦时将 Tab 导向首个可用控件、Shift+Tab 导向末个可用控件，避免键盘焦点逃逸。
+
+```tsx
+// 禁用提交按钮前先保留弹窗焦点。
+if (!pending) {
+  dialogRef.current?.focus();
+  onSubmit(event);
+}
+```
+
+验证优先扩展现有 MCP 和工具档案页面测试：默认无表单、按钮打开、取消重开清理、精确 payload、失败保留、保存与刷新期间的锁、Tab/Shift+Tab/Escape 和焦点恢复。键盘提交后的原生焦点迁移须用隔离浏览器确认，不能只依赖 jsdom 的 `fireEvent.submit`。

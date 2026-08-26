@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "弹窗语义、焦点、长表单布局"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "行为回归及精确业务 payload"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "草稿/错误重置、异步保存与查询刷新"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "无新类型断言与生成绑定修改"}

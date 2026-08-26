@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -9,6 +9,7 @@ import {
   type ProviderProfileDto,
   type Tool,
 } from "@/bindings/commands";
+import { FormDialog } from "@/components/form-dialog";
 import { Button } from "@/components/ui/button";
 import {
   profileErrorText,
@@ -47,6 +48,8 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
   const profilesQuery = useQuery(providerProfilesQueryOptions(tool));
   const [editing, setEditing] = useState<ProviderProfileDto | null>(null);
   const [form, setForm] = useState<ProviderFormState>(emptyForm);
+  const [formOpen, setFormOpen] = useState(false);
+  const saveInFlight = useRef(false);
   const [importPreview, setImportPreview] =
     useState<ProviderImportPreviewDto | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -93,12 +96,36 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
       );
     },
     onSuccess: async () => {
+      await refresh();
       setEditing(null);
       setForm(emptyForm);
+      setFormOpen(false);
       setNotice("中央渠道档案已保存，原生配置尚未修改。");
-      await refresh();
+    },
+    onSettled: () => {
+      saveInFlight.current = false;
     },
   });
+
+  const openForm = (profile: ProviderProfileDto | null) => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveMutation.reset();
+    if (profile) {
+      editProfile(profile, setEditing, setForm);
+    } else {
+      setEditing(null);
+      setForm(emptyForm);
+    }
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    setFormOpen(false);
+    setEditing(null);
+    setForm(emptyForm);
+    saveMutation.reset();
+  };
 
   const activateMutation = useMutation({
     mutationFn: async (profile: ProviderProfileDto) => {
@@ -176,7 +203,6 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
   });
 
   const mutationError = [
-    saveMutation.error,
     activateMutation.error,
     previewMutation.error,
     copyMutation.error,
@@ -189,6 +215,8 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveInFlight.current = true;
     saveMutation.mutate();
   };
 
@@ -206,7 +234,10 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
             每个工具最多一个中央档案处于生效状态。
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => openForm(null)}>
+            新增渠道
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -241,7 +272,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
       ) : null}
       {profilesQuery.data?.length === 0 ? (
         <p className="text-muted-foreground mt-5 rounded-lg border border-dashed p-4 text-sm">
-          尚无渠道档案。请在下方创建第一份档案，或先检测已有配置。
+          尚无渠道档案。点击“新增渠道”创建第一份档案，或先检测已有配置。
         </p>
       ) : null}
 
@@ -270,7 +301,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => editProfile(profile, setEditing, setForm)}
+                  onClick={() => openForm(profile)}
                 >
                   编辑
                 </Button>
@@ -329,8 +360,16 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
         </div>
       ) : null}
 
-      <form onSubmit={submit} className="mt-6 space-y-4 border-t pt-5">
-        <h3 className="font-medium">{editing ? "编辑渠道" : "新建渠道"}</h3>
+      <FormDialog
+        open={formOpen}
+        title={`${editing ? "编辑" : "新增"} ${tool === "claude" ? "Claude" : "Codex"} 渠道`}
+        description="保存只更新中央渠道档案，不会修改原生配置；原生写入仍需预览后确认 Apply。"
+        submitLabel={editing ? "保存编辑" : "创建渠道"}
+        pending={saveMutation.isPending}
+        error={profileErrorText(saveMutation.error)}
+        onClose={closeForm}
+        onSubmit={submit}
+      >
         <Field label="名称" id={`${tool}-provider-name`}>
           <input
             id={`${tool}-provider-name`}
@@ -432,24 +471,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
             </select>
           </Field>
         )}
-        <div className="flex gap-2">
-          <Button type="submit" disabled={saveMutation.isPending}>
-            {editing ? "保存编辑" : "创建渠道"}
-          </Button>
-          {editing ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setEditing(null);
-                setForm(emptyForm);
-              }}
-            >
-              取消编辑
-            </Button>
-          ) : null}
-        </div>
-      </form>
+      </FormDialog>
     </section>
   );
 }
