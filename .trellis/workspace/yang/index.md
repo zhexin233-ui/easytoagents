@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-08-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~150 | Active |
+| `journal-1.md` | ~185 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-08-26 | 修复 Codex MCP 导入兼容性与凭据误判 | `bf94c45` | `main` |
 | 5 | 2026-08-26 | 新增与编辑表单弹窗化 | `cb8e022` | `main` |
 | 4 | 2026-08-26 | 修复 MCP 全局预览并补齐原生导入 | `27729fc` | `main` |
 | 3 | 2026-08-25 | 修复 MCP 与 Skills 初始化状态 | `452dc08` | `main` |

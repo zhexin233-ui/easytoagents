@@ -148,3 +148,38 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Next Steps
 
 - 按用户授权推送 main 到 origin，完成后核对远程与本地一致。
+
+
+## Session 6: 修复 Codex MCP 导入兼容性与凭据误判
+
+**Date**: 2026-08-26
+**Task**: 修复 Codex MCP 导入兼容性与凭据误判
+**Branch**: `main`
+
+### Summary
+
+支持等价显式 MCP 类型，区分展示隐藏与凭据判定，统一环境变量登记并细化安全诊断；完整质量门通过，原生配置未写入。
+
+### Main Changes
+
+- 保留 Codex stdio/http/streamable_http 显式类型并支持规范化复用。
+- 普通运行路径、开关与超时不再因文本重叠误判；真实凭据与未知环境值继续保守保护。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bf94c45` | (see git log) |
+
+### Testing
+
+- [OK] pnpm check：62 前端测试、168 Rust 单元测试及 3 项绑定/IPC/集成测试通过。
+- [OK] 先复现三项旧逻辑失败，再验证修复；两轮独立只读核验无可行动发现。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 已获用户推送授权；真实桌面应用尚未重新打包，未对真实原生配置执行确认导入或 Apply。
