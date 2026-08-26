@@ -189,6 +189,62 @@ pub struct McpTargetStatusDto {
     pub diagnostic_code: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum McpImportCandidateStatus {
+    Importable,
+    AlreadyManaged,
+    NameConflict,
+    Disabled,
+    Unsupported,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum McpImportAction {
+    Create,
+    Reuse,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportCandidateDto {
+    pub candidate_id: String,
+    pub name: String,
+    pub transport: Option<McpTransport>,
+    pub status: McpImportCandidateStatus,
+    pub action: Option<McpImportAction>,
+    pub reason: Option<String>,
+    pub redacted_projection: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportPreviewDto {
+    pub preview_id: Option<String>,
+    pub tool: Tool,
+    pub target_path: String,
+    pub candidates: Vec<McpImportCandidateDto>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmMcpImportInput {
+    pub preview_id: String,
+    pub candidate_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportResultDto {
+    pub tool: Tool,
+    pub created_count: u32,
+    pub reused_count: u32,
+    pub assigned_count: u32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ValidatedMcpConfiguration {
     pub name: String,

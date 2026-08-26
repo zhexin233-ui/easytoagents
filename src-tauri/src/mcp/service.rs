@@ -558,7 +558,7 @@ fn inherited_projection_is_absent(scan: &TargetScan, container: &str) -> bool {
     }
 }
 
-fn descriptor_for(
+pub(super) fn descriptor_for(
     environment: &crate::adapters::ExplicitEnvironment,
     tool: Tool,
     project_root: Option<&ProjectRoot>,
@@ -586,7 +586,7 @@ fn descriptor_for(
         .ok_or_else(|| AppError::not_found("mcpTarget", tool.as_str()))
 }
 
-fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
+pub(super) fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
     match tool {
@@ -595,7 +595,7 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     }
 }
 
-fn native_container(tool: Tool) -> &'static str {
+pub(super) fn native_container(tool: Tool) -> &'static str {
     match tool {
         Tool::Claude => "mcpServers",
         Tool::Codex => "mcp_servers",
@@ -870,7 +870,7 @@ fn ensure_mcp_target(
     load_managed_target_baseline(database, &id)
 }
 
-fn find_mcp_target_baseline(
+pub(super) fn find_mcp_target_baseline(
     database: &Database,
     descriptor: &TargetDescriptor,
     project_id: Option<&str>,
@@ -937,7 +937,7 @@ fn project_dto(project: &McpProjectRecord) -> Result<McpProjectDto, AppError> {
     })
 }
 
-fn configuration_from_record(
+pub(super) fn configuration_from_record(
     record: &McpServerRecord,
 ) -> Result<ValidatedMcpConfiguration, AppError> {
     let input = McpServerInput {
@@ -958,7 +958,7 @@ fn configuration_from_record(
     ValidatedMcpConfiguration::from_create(&input)
 }
 
-fn register_configuration_secrets(
+pub(super) fn register_configuration_secrets(
     redactor: &mut SecretRedactor,
     value: &ValidatedMcpConfiguration,
 ) {
@@ -968,7 +968,7 @@ fn register_configuration_secrets(
     register_detectable_extra_secrets(redactor, None, &value.extra);
 }
 
-fn register_detectable_extra_secrets(
+pub(super) fn register_detectable_extra_secrets(
     redactor: &mut SecretRedactor,
     key: Option<&str>,
     value: &Value,
@@ -2057,6 +2057,760 @@ enabled = true
             )
             .unwrap();
         assert_eq!(project_targets, 0, "纯继承项目不应产生无意义 target");
+    }
+
+    fn write_import_source(fixture: &Fixture, tool: Tool, items: Value) -> std::path::PathBuf {
+        let path = match tool {
+            Tool::Claude => fixture.home.join(".claude.json"),
+            Tool::Codex => fixture.home.join(".codex/config.toml"),
+        };
+        let document =
+            json!({super::native_container(tool): items, "unrelated": {"keep": "outside"}});
+        let text = match tool {
+            Tool::Claude => serde_json::to_string_pretty(&document).unwrap(),
+            Tool::Codex => toml_edit::ser::to_string(&document).unwrap(),
+        };
+        fs::write(&path, text).unwrap();
+        path
+    }
+
+    fn import_item(tool: Tool, input: &McpServerInput) -> Value {
+        let configuration = super::ValidatedMcpConfiguration::from_create(input).unwrap();
+        let mut item = super::native_mcp_item(tool, &configuration).unwrap();
+        // 原生配置通常省略缺省值，首次同步应显示规范化而不是外部同名冲突。
+        item.as_object_mut().unwrap().remove("type");
+        item.as_object_mut().unwrap().remove("enabled");
+        item
+    }
+
+    fn import_selection(
+        preview: &crate::mcp::McpImportPreviewDto,
+        names: &[&str],
+    ) -> crate::mcp::ConfirmMcpImportInput {
+        crate::mcp::ConfirmMcpImportInput {
+            preview_id: preview.preview_id.clone().unwrap(),
+            candidate_ids: preview
+                .candidates
+                .iter()
+                .filter(|candidate| names.contains(&candidate.name.as_str()))
+                .map(|candidate| candidate.candidate_id.clone())
+                .collect(),
+        }
+    }
+
+    fn import_counts(database: &Database) -> (i64, i64, i64, i64) {
+        database.connection().query_row(
+            "SELECT (SELECT COUNT(*) FROM mcp_servers), (SELECT COUNT(*) FROM mcp_global_assignments),
+             (SELECT COUNT(*) FROM managed_targets WHERE artifact_kind = 'mcp'),
+             (SELECT COUNT(*) FROM managed_items WHERE resource_kind = 'mcp')", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap()
+    }
+
+    #[test]
+    fn mcp_import_selects_extends_and_syncs_without_touching_unselected_entries() {
+        use crate::mcp::{confirm_mcp_import, discover_mcp_import, McpImportCandidateStatus};
+        for tool in [Tool::Claude, Tool::Codex] {
+            let mut fixture = Fixture::new();
+            let mut redactor = SecretRedactor::default();
+            let disabled = json!({"command": "external", "enabled": false});
+            let path = write_import_source(
+                &fixture,
+                tool,
+                json!({
+                    "stdio": import_item(tool, &stdio_input("stdio")),
+                    "http": import_item(tool, &http_input("http")),
+                    "disabled": disabled,
+                }),
+            );
+            let before = fs::read(&path).unwrap();
+            let first =
+                discover_mcp_import(&mut fixture.database, &fixture.environment, &redactor, tool)
+                    .unwrap();
+            assert_eq!(first.candidates.len(), 3);
+            assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
+            assert_eq!(
+                first
+                    .candidates
+                    .iter()
+                    .find(|item| item.name == "disabled")
+                    .unwrap()
+                    .status,
+                McpImportCandidateStatus::Disabled
+            );
+            let selection = import_selection(&first, &["stdio"]);
+            let result = confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &selection,
+            )
+            .unwrap();
+            assert_eq!(result.created_count, 1);
+            assert_eq!(import_counts(&fixture.database), (1, 1, 1, 1));
+            assert_eq!(fs::read(&path).unwrap(), before);
+            let repeat = confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &selection,
+            )
+            .unwrap_err();
+            assert_eq!(repeat.code(), ErrorCode::PreviewAlreadyConsumed);
+            let second =
+                discover_mcp_import(&mut fixture.database, &fixture.environment, &redactor, tool)
+                    .unwrap();
+            assert_eq!(
+                second
+                    .candidates
+                    .iter()
+                    .find(|item| item.name == "stdio")
+                    .unwrap()
+                    .status,
+                McpImportCandidateStatus::AlreadyManaged
+            );
+            let selection = import_selection(&second, &["http"]);
+            confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &selection,
+            )
+            .unwrap();
+            assert_eq!(import_counts(&fixture.database), (2, 2, 1, 2));
+            assert_eq!(fs::read(&path).unwrap(), before);
+            let preview = super::preview_mcp_sync(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &PreviewMcpSyncInput {
+                    tool,
+                    project_id: None,
+                    exclude_from_git: false,
+                },
+            )
+            .unwrap();
+            assert_eq!(preview.targets.len(), 1);
+            assert!(
+                preview.targets[0].error_code.is_none(),
+                "{:?}",
+                preview.targets[0].status
+            );
+            assert_eq!(fs::read(&path).unwrap(), before);
+            let applied = super::apply_mcp_preview(
+                &std::sync::Mutex::new(()),
+                &mut fixture.database,
+                &fixture.paths,
+                &fixture.environment,
+                &mut redactor,
+                &ApplyMcpPreviewInput {
+                    preview_id: preview.preview_id.clone(),
+                    tool,
+                    project_id: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(applied.applied_targets, 1);
+            let contents = fs::read_to_string(&path).unwrap();
+            let after: Value = match tool {
+                Tool::Claude => serde_json::from_str(&contents).unwrap(),
+                Tool::Codex => toml_edit::de::from_str(&contents).unwrap(),
+            };
+            assert_eq!(after[super::native_container(tool)]["disabled"], disabled);
+            assert_eq!(after["unrelated"]["keep"], "outside");
+            let records = crate::db::mcp::list_mcp_servers(&fixture.database).unwrap();
+            assert!(records
+                .iter()
+                .any(|record| record.env_json.contains(ENV_SECRET)));
+            assert!(records
+                .iter()
+                .any(|record| record.headers_json.contains(HEADER_SECRET)));
+            let central = super::list_mcp_servers(&fixture.database, &redactor).unwrap();
+            assert!(central.iter().all(|item| item.global_tools == vec![tool]));
+            let mut carriers = vec![
+                serde_json::to_string(&first).unwrap(),
+                serde_json::to_string(&second).unwrap(),
+                serde_json::to_string(&preview).unwrap(),
+                serde_json::to_string(&central).unwrap(),
+                serde_json::to_string(&result).unwrap(),
+                serde_json::to_string(&repeat).unwrap(),
+            ];
+            for sql in [
+                "SELECT context_json || redacted_preview_json FROM mcp_import_previews",
+                "SELECT redacted_diff_json FROM sync_items",
+            ] {
+                let values = fixture
+                    .database
+                    .connection()
+                    .prepare(sql)
+                    .unwrap()
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                assert!(!values.is_empty());
+                carriers.extend(values);
+            }
+            let journal = read_tree_text(fixture.paths.journals());
+            assert!(!journal.is_empty());
+            carriers.push(journal);
+            for carrier in carriers {
+                assert!(!carrier.is_empty());
+                for secret in [ENV_SECRET, HEADER_SECRET, EXTRA_SECRET] {
+                    assert!(!carrier.contains(secret));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mcp_import_reuses_identical_cross_tool_records_and_blocks_conflicting_names() {
+        use crate::mcp::{
+            confirm_mcp_import, discover_mcp_import, McpImportAction, McpImportCandidateStatus,
+        };
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        for tool in [Tool::Claude, Tool::Codex] {
+            write_import_source(
+                &fixture,
+                tool,
+                json!({"shared": import_item(tool, &stdio_input("shared"))}),
+            );
+            let preview =
+                discover_mcp_import(&mut fixture.database, &fixture.environment, &redactor, tool)
+                    .unwrap();
+            assert_eq!(
+                preview.candidates[0].action,
+                Some(if tool == Tool::Claude {
+                    McpImportAction::Create
+                } else {
+                    McpImportAction::Reuse
+                })
+            );
+            confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &import_selection(&preview, &["shared"]),
+            )
+            .unwrap();
+        }
+        assert_eq!(import_counts(&fixture.database), (1, 2, 2, 2));
+        let central = super::list_mcp_servers(&fixture.database, &redactor).unwrap();
+        assert_eq!(central[0].global_tools, vec![Tool::Claude, Tool::Codex]);
+        let mut conflict_fixture = Fixture::new();
+        super::create_mcp_server(
+            &mut conflict_fixture.database,
+            &mut redactor,
+            &stdio_input("shared"),
+        )
+        .unwrap();
+        write_import_source(
+            &conflict_fixture,
+            Tool::Claude,
+            json!({"shared": {"command": "different"}, "SHARED": {"command": "npx"}}),
+        );
+        let preview = discover_mcp_import(
+            &mut conflict_fixture.database,
+            &conflict_fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        assert!(preview.preview_id.is_none());
+        assert!(preview
+            .candidates
+            .iter()
+            .all(|item| item.status == McpImportCandidateStatus::NameConflict));
+        assert_eq!(import_counts(&conflict_fixture.database), (1, 0, 0, 0));
+    }
+
+    #[test]
+    fn mcp_import_compares_private_values_and_respects_project_assignments() {
+        use crate::mcp::{discover_mcp_import, McpImportCandidateStatus};
+
+        for project_assigned in [false, true] {
+            let mut fixture = Fixture::new();
+            let mut redactor = SecretRedactor::default();
+            let input = stdio_input("shared");
+            let central = create_mcp_server(&mut fixture.database, &mut redactor, &input).unwrap();
+            let mut native = import_item(Tool::Claude, &input);
+            if project_assigned {
+                fixture.database.connection().execute(
+                    "INSERT INTO mcp_project_assignments(project_id, tool, mcp_id) VALUES (?1, 'claude', ?2)",
+                    rusqlite::params![fixture.project_id, central.id],
+                ).unwrap();
+            } else {
+                native["env"]["MCP_TOKEN"] = json!("different-private-value");
+            }
+            let path = write_import_source(&fixture, Tool::Claude, json!({"shared": native}));
+            let before = fs::read(&path).unwrap();
+            let preview = discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &redactor,
+                Tool::Claude,
+            )
+            .unwrap();
+            assert!(preview.preview_id.is_none());
+            assert_eq!(
+                preview.candidates[0].status,
+                McpImportCandidateStatus::NameConflict
+            );
+            if project_assigned {
+                assert!(preview.candidates[0]
+                    .reason
+                    .as_ref()
+                    .unwrap()
+                    .contains("项目分配"));
+            }
+            assert_eq!(import_counts(&fixture.database), (1, 0, 0, 0));
+            assert_eq!(fs::read(path).unwrap(), before);
+            let stored = crate::db::mcp::get_mcp_server(&fixture.database, &central.id).unwrap();
+            assert_eq!(
+                super::configuration_from_record(&stored).unwrap(),
+                super::ValidatedMcpConfiguration::from_create(&input).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_import_rejects_unsupported_and_secret_entries_individually() {
+        use crate::mcp::{discover_mcp_import, McpImportCandidateStatus};
+        let mut fixture = Fixture::new();
+        let secret = "Bearer import-rejected-secret";
+        write_import_source(
+            &fixture,
+            Tool::Claude,
+            json!({
+                "valid": {"command": "npx"}, "disabled": {"command": "npx", "disabled": true},
+                "sse": {"type": "sse", "url": "https://example.test"},
+                "secret": {"command": "npx", "args": ["--token", secret]},
+                "malformed": {"command": "npx", "args": null},
+                "refs": {"url": "https://example.test", "env_http_headers": {"Authorization": "API_TOKEN"}},
+                "scalar": 42,
+            }),
+        );
+        let result = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Claude,
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .candidates
+                .iter()
+                .filter(|item| item.status == McpImportCandidateStatus::Importable)
+                .count(),
+            1
+        );
+        assert_eq!(result.candidates.len(), 7);
+        assert!(!serde_json::to_string(&result).unwrap().contains(secret));
+        let stored: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT context_json || redacted_preview_json FROM mcp_import_previews",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!stored.is_empty());
+        assert!(!stored.contains(secret));
+        assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn mcp_import_rejects_stale_file_database_and_invalid_selections() {
+        use crate::mcp::{confirm_mcp_import, discover_mcp_import};
+        for change_database in [false, true] {
+            let mut fixture = Fixture::new();
+            let mut redactor = SecretRedactor::default();
+            let path = write_import_source(
+                &fixture,
+                Tool::Claude,
+                json!({"sample": {"command": "npx"}}),
+            );
+            let preview = discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &redactor,
+                Tool::Claude,
+            )
+            .unwrap();
+            let selection = import_selection(&preview, &["sample"]);
+            for ids in [
+                vec![],
+                vec![Uuid::new_v4().to_string()],
+                vec![selection.candidate_ids[0].clone(); 2],
+            ] {
+                let input = crate::mcp::ConfirmMcpImportInput {
+                    preview_id: selection.preview_id.clone(),
+                    candidate_ids: ids,
+                };
+                let error = confirm_mcp_import(
+                    &mut fixture.database,
+                    &fixture.environment,
+                    &mut redactor,
+                    &input,
+                )
+                .unwrap_err();
+                assert_eq!(error.code(), ErrorCode::InvalidInput);
+                assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
+            }
+            if change_database {
+                super::create_mcp_server(
+                    &mut fixture.database,
+                    &mut redactor,
+                    &stdio_input("unrelated"),
+                )
+                .unwrap();
+            } else {
+                let text = fs::read_to_string(&path).unwrap();
+                fs::write(&path, format!("{text}\n")).unwrap();
+            }
+            let before = fs::read(&path).unwrap();
+            let error = confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &selection,
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::StalePreview);
+            assert_eq!(
+                import_counts(&fixture.database),
+                (i64::from(change_database), 0, 0, 0)
+            );
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn mcp_import_never_refreshes_drifted_existing_baselines() {
+        use crate::mcp::{confirm_mcp_import, discover_mcp_import};
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        write_import_source(
+            &fixture,
+            Tool::Claude,
+            json!({"first": {"command": "npx"}, "second": {"command": "uvx"}}),
+        );
+        let preview = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        confirm_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &import_selection(&preview, &["first"]),
+        )
+        .unwrap();
+        let old_hash: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT baseline_managed_hash FROM managed_targets",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        write_import_source(
+            &fixture,
+            Tool::Claude,
+            json!({"first": {"command": "changed"}, "second": {"command": "uvx"}}),
+        );
+        let preview = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        let error = confirm_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &import_selection(&preview, &["second"]),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
+        assert_eq!(import_counts(&fixture.database), (1, 1, 1, 1));
+        let unchanged: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT baseline_managed_hash FROM managed_targets",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unchanged, old_hash);
+    }
+
+    #[test]
+    fn mcp_import_rejects_central_target_and_item_row_version_changes() {
+        use crate::mcp::{confirm_mcp_import, discover_mcp_import};
+
+        for sql in [
+            "UPDATE mcp_servers SET updated_at = updated_at",
+            "UPDATE managed_targets SET updated_at = updated_at",
+            "UPDATE managed_items SET updated_at = updated_at",
+        ] {
+            let mut fixture = Fixture::new();
+            let mut redactor = SecretRedactor::default();
+            let path = write_import_source(
+                &fixture,
+                Tool::Claude,
+                json!({
+                    "first": {"command": "npx"}, "second": {"command": "uvx"}
+                }),
+            );
+            let before = fs::read(&path).unwrap();
+            let first = discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &redactor,
+                Tool::Claude,
+            )
+            .unwrap();
+            confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &import_selection(&first, &["first"]),
+            )
+            .unwrap();
+            let second = discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &redactor,
+                Tool::Claude,
+            )
+            .unwrap();
+            fixture.database.connection().execute(sql, []).unwrap();
+            let error = confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &import_selection(&second, &["second"]),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::StalePreview);
+            assert_eq!(import_counts(&fixture.database), (1, 1, 1, 1));
+            assert_eq!(fs::read(path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn mcp_import_rolls_back_the_entire_batch_when_adoption_fails() {
+        use crate::mcp::{confirm_mcp_import, discover_mcp_import};
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        let path = write_import_source(
+            &fixture,
+            Tool::Codex,
+            json!({"first": {"command": "npx"}, "second": {"command": "uvx"}}),
+        );
+        let before = fs::read(&path).unwrap();
+        let preview = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Codex,
+        )
+        .unwrap();
+        fixture.database.connection().execute_batch("CREATE TRIGGER reject_import_item BEFORE INSERT ON managed_items
+            WHEN (SELECT COUNT(*) FROM managed_items) > 0 BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
+        let error = confirm_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &import_selection(&preview, &["first", "second"]),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
+        assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
+        let status: String = fixture
+            .database
+            .connection()
+            .query_row("SELECT status FROM mcp_import_previews", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "previewed");
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn mcp_import_revalidates_source_inside_the_transaction_and_before_commit() {
+        use std::cell::Cell;
+
+        use crate::{db::mcp_imports, error::AppError, mcp::discover_mcp_import, sync::hash_json};
+
+        for fail_at in [1, 2] {
+            let mut fixture = Fixture::new();
+            let input = stdio_input("sample");
+            let raw = import_item(Tool::Claude, &input);
+            let path = write_import_source(&fixture, Tool::Claude, json!({"sample": raw}));
+            let before = fs::read(&path).unwrap();
+            let preview = discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &SecretRedactor::default(),
+                Tool::Claude,
+            )
+            .unwrap();
+            let record =
+                mcp_imports::get_preview(&fixture.database, &preview.preview_id.unwrap()).unwrap();
+            let state = mcp_imports::state_fingerprint(
+                fixture.database.connection(),
+                Tool::Claude,
+                &record.target_path,
+            )
+            .unwrap();
+            let calls = Cell::new(0);
+            let error = mcp_imports::adopt_import(
+                &mut fixture.database,
+                &record,
+                &state,
+                None,
+                &json!({"mcpServers": {"sample": raw}}),
+                &[mcp_imports::ImportedMcpItem {
+                    configuration: super::ValidatedMcpConfiguration::from_create(&input).unwrap(),
+                    reuse_id: None,
+                    item_hash: hash_json(&raw),
+                }],
+                || {
+                    calls.set(calls.get() + 1);
+                    if calls.get() == fail_at {
+                        Err(AppError::stale_preview(&record.id, &record.target_path))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::StalePreview);
+            assert_eq!(calls.get(), fail_at);
+            assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
+            assert_eq!(
+                mcp_imports::get_preview(&fixture.database, &record.id)
+                    .unwrap()
+                    .status,
+                "previewed"
+            );
+            assert_eq!(fs::read(path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn mcp_import_blocks_active_writers_without_consuming_the_token() {
+        use crate::mcp::{confirm_mcp_import, discover_mcp_import};
+
+        for status in ["applying", "restoring", "rollback_failed"] {
+            let mut fixture = Fixture::new();
+            let mut redactor = SecretRedactor::default();
+            let path =
+                write_import_source(&fixture, Tool::Codex, json!({"sample": {"command": "npx"}}));
+            let before = fs::read(&path).unwrap();
+            let preview = discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &redactor,
+                Tool::Codex,
+            )
+            .unwrap();
+            let selection = import_selection(&preview, &["sample"]);
+            let run_id = Uuid::new_v4().to_string();
+            fixture.database.connection().execute(
+                "INSERT INTO sync_runs(id, kind, status, scope, db_version) VALUES (?1, 'apply', ?2, 'global', 0)",
+                rusqlite::params![run_id, status],
+            ).unwrap();
+            let error = confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &selection,
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::WriteInProgress);
+            assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
+            fixture
+                .database
+                .connection()
+                .execute("DELETE FROM sync_runs WHERE id = ?1", [&run_id])
+                .unwrap();
+            confirm_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut redactor,
+                &selection,
+            )
+            .unwrap();
+            assert_eq!(import_counts(&fixture.database), (1, 1, 1, 1));
+            assert_eq!(fs::read(path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn mcp_import_distinguishes_missing_parse_policy_and_unsafe_paths() {
+        use crate::mcp::discover_mcp_import;
+        let mut fixture = Fixture::new();
+        let redactor = SecretRedactor::default();
+        let missing = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        assert!(missing.candidates.is_empty());
+        assert!(missing.preview_id.is_none());
+        assert!(missing.message.unwrap().contains("未发现"));
+        fs::write(fixture.home.join(".claude.json"), "not json").unwrap();
+        assert_eq!(
+            discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &redactor,
+                Tool::Claude
+            )
+            .unwrap_err()
+            .code(),
+            ErrorCode::ParseError
+        );
+        let environment = fixture.environment_without_policy_evidence();
+        assert_eq!(
+            discover_mcp_import(&mut fixture.database, &environment, &redactor, Tool::Claude)
+                .unwrap_err()
+                .code(),
+            ErrorCode::PolicyBlocked
+        );
+        fs::remove_file(fixture.home.join(".claude.json")).unwrap();
+        std::os::unix::fs::symlink(
+            fixture.home.join("missing-target"),
+            fixture.home.join(".claude.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &redactor,
+                Tool::Claude
+            )
+            .unwrap_err()
+            .code(),
+            ErrorCode::Conflict
+        );
+        assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
     }
 
     fn read_tree_text(root: &Path) -> String {

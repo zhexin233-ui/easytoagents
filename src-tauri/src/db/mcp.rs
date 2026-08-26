@@ -84,11 +84,19 @@ pub(crate) fn insert_mcp_server(
     database: &mut Database,
     value: &ValidatedMcpConfiguration,
 ) -> Result<McpServerRecord, AppError> {
-    let id = EntityId::new().to_string();
     let path = database.path().to_string_lossy().into_owned();
+    let id = insert_mcp_configuration(database.connection(), value, &path)?;
+    get_mcp_server(database, &id)
+}
+
+pub(super) fn insert_mcp_configuration(
+    connection: &rusqlite::Connection,
+    value: &ValidatedMcpConfiguration,
+    path: &str,
+) -> Result<String, AppError> {
+    let id = EntityId::new().to_string();
     let json = serialize_configuration_json(value)?;
-    database
-        .connection_mut()
+    connection
         .execute(
             "INSERT INTO mcp_servers(
                 id, name, transport, command, args_json, url, headers_json,
@@ -107,8 +115,8 @@ pub(crate) fn insert_mcp_server(
                 value.enabled,
             ],
         )
-        .map_err(|error| map_mcp_write_error(error, &path, "insert_mcp_server"))?;
-    get_mcp_server(database, &id)
+        .map_err(|error| map_mcp_write_error(error, path, "insert_mcp_server"))?;
+    Ok(id)
 }
 
 pub(crate) fn update_mcp_server(
@@ -601,7 +609,7 @@ fn trust_from_database(value: String) -> rusqlite::Result<TrustStatus> {
     }
 }
 
-fn map_mcp_write_error(
+pub(super) fn map_mcp_write_error(
     error: rusqlite::Error,
     database_path: &str,
     operation: &'static str,

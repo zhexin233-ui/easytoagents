@@ -146,6 +146,28 @@ pub fn apply_mcp_preview(
     )
 }
 
+#[tauri::command]
+#[specta::specta]
+pub fn discover_mcp_import(
+    state: State<'_, AppState>,
+    tool: crate::domain::Tool,
+) -> Result<McpImportPreviewDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    let redactor = state.redactor().read().map_err(|_| state_lock_error())?;
+    mcp::discover_mcp_import(&mut database, state.environment()?, &redactor, tool)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn confirm_mcp_import(
+    state: State<'_, AppState>,
+    input: ConfirmMcpImportInput,
+) -> Result<McpImportResultDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    let mut redactor = state.redactor().write().map_err(|_| state_lock_error())?;
+    mcp::confirm_mcp_import(&mut database, state.environment()?, &mut redactor, &input)
+}
+
 fn state_lock_error() -> AppError {
     AppError::new(ErrorCode::WriteInProgress, "应用状态锁不可用", false)
 }

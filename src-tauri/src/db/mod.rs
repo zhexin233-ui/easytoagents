@@ -16,6 +16,7 @@ use crate::{
 };
 
 pub mod mcp;
+pub(crate) mod mcp_imports;
 pub mod profiles;
 pub mod projects;
 pub mod skills;
@@ -40,6 +41,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 4,
         name: "project_registration",
         sql: include_str!("migrations/0004_project_registration.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "mcp_import_previews",
+        sql: include_str!("migrations/0005_mcp_import_previews.sql"),
     },
 ];
 
@@ -365,7 +371,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 4);
+        assert_eq!(database.schema_version().unwrap(), 5);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -396,6 +402,7 @@ mod tests {
             "sync_items",
             "snapshots",
             "profile_import_previews",
+            "mcp_import_previews",
             "onboarding_state",
         ] {
             assert!(tables.contains(table), "缺少表：{table}");
@@ -858,6 +865,48 @@ mod tests {
 
         assert!(Database::open(&paths).is_err());
         assert!(!missing_outside.exists());
+    }
+
+    #[test]
+    fn mcp_import_migration_upgrades_v4_and_reopens_without_losing_central_rows() {
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("upgrade-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                );",
+                )
+                .unwrap();
+            for migration in &super::MIGRATIONS[..4] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_mcp(&connection, MCP_ID, "Existing MCP");
+        }
+        for _ in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 5);
+            assert!(database.startup_backup().is_some());
+            let (name, previews): (String, i64) = database.connection().query_row(
+                "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
+                [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?)),
+            ).unwrap();
+            assert_eq!(name, "Existing MCP");
+            assert_eq!(previews, 0);
+        }
     }
 
     #[test]

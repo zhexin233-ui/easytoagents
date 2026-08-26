@@ -25,6 +25,7 @@ import {
 } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import { McpImportDialog } from "@/features/mcp/mcp-import-dialog";
 
 interface McpFormState {
   id: string | null;
@@ -77,6 +78,10 @@ export function McpPage() {
   const [projectId, setProjectId] = useState("");
   const [projectTool, setProjectTool] = useState<Tool>("claude");
   const [openPreview, setOpenPreview] = useState<OpenMcpPreview | null>(null);
+  const [openImport, setOpenImport] = useState<{
+    tool: Tool;
+    requestId: string;
+  } | null>(null);
   const projectOptionsQuery = useQuery(
     mcpProjectOptionsQueryOptions(projectId, projectTool),
   );
@@ -176,7 +181,7 @@ export function McpPage() {
         setMessage(
           projectId
             ? "该项目只有全局继承项，无需创建或修改项目配置。"
-            : "当前没有需要写入全局配置的 MCP。",
+            : "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
         );
         setOpenPreview(null);
         return;
@@ -442,7 +447,8 @@ export function McpPage() {
           ) : null}
           {serversQuery.data?.length === 0 ? (
             <p className="text-muted-foreground mt-4 text-sm">
-              尚无 MCP。请使用左侧表单创建第一项。
+              中央库尚无 MCP。已有工具配置可通过下方“检测并导入已有
+              MCP”纳入管理，也可使用左侧表单创建。
             </p>
           ) : null}
           <div className="mt-4 space-y-3">
@@ -575,6 +581,22 @@ export function McpPage() {
                     诊断码：<code>{status.diagnosticCode}</code>
                   </p>
                 ) : null}
+                <Button
+                  className="mt-3 mr-2"
+                  size="sm"
+                  variant="outline"
+                  disabled={presentation.previewBlocked}
+                  onClick={() => {
+                    if (openImport) return;
+                    setMessage(null);
+                    setOpenImport({
+                      tool: status.tool,
+                      requestId: crypto.randomUUID(),
+                    });
+                  }}
+                >
+                  检测并导入已有 MCP
+                </Button>
                 <Button
                   className="mt-3"
                   size="sm"
@@ -729,6 +751,28 @@ export function McpPage() {
           生成项目预览
         </Button>
       </section>
+
+      {openImport ? (
+        <McpImportDialog
+          key={openImport.requestId}
+          tool={openImport.tool}
+          requestId={openImport.requestId}
+          onClose={() => setOpenImport(null)}
+          onRescan={() =>
+            setOpenImport({
+              tool: openImport.tool,
+              requestId: crypto.randomUUID(),
+            })
+          }
+          onImported={async (result) => {
+            setOpenImport(null);
+            setMessage(
+              `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${result.tool === "claude" ? "Claude" : "Codex"} 全局。原生配置未改写，请单独生成全局预览。`,
+            );
+            await invalidateMcp();
+          }}
+        />
+      ) : null}
 
       <ChangePreviewDialog
         preview={openPreview?.plan ?? null}

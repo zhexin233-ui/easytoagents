@@ -352,6 +352,22 @@ async applyMcpPreview(input: ApplyMcpPreviewInput) : Promise<Result<ApplyResult,
     else return { status: "error", error: e  as any };
 }
 },
+async discoverMcpImport(tool: Tool) : Promise<Result<McpImportPreviewDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_mcp_import", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async confirmMcpImport(input: ConfirmMcpImportInput) : Promise<Result<McpImportResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_mcp_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listSkills() : Promise<Result<SkillDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_skills") };
@@ -482,6 +498,7 @@ export type ChangeKind = "add" | "update" | "delete" | "unchanged" | "warning" |
 export type ClaudeCredentialEnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN"
 export type CompleteOnboardingResultDto = { completed: boolean }
 export type ConfirmImportInput = { previewId: string; name: string }
+export type ConfirmMcpImportInput = { previewId: string; candidateIds: string[] }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
 export type DashboardSummaryDto = { tools: DashboardToolSummaryDto[]; projectCount: number; conflictCount: number; snapshotCount: number; recentSyncRuns: RecentSyncRunDto[]; interruptedRun: InterruptedRunPlan | null; needsOnboarding: boolean }
 export type DashboardToolSummaryDto = { tool: Tool; activeProviderName: string | null; activePromptName: string | null; globalMcpCount: number; globalSkillCount: number }
@@ -501,6 +518,11 @@ export type InterruptedRunPlan = { runId: string; status: string; journalAvailab
 export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type ManagedOwnership = { kind: "whole_document" } | { kind: "selectors"; paths: string[][] } | { kind: "symlink_names"; paths: string[] }
+export type McpImportAction = "create" | "reuse"
+export type McpImportCandidateDto = { candidateId: string; name: string; transport: McpTransport | null; status: McpImportCandidateStatus; action: McpImportAction | null; reason: string | null; redactedProjection: JsonValue }
+export type McpImportCandidateStatus = "importable" | "already_managed" | "name_conflict" | "disabled" | "unsupported" | "invalid"
+export type McpImportPreviewDto = { previewId: string | null; tool: Tool; targetPath: string; candidates: McpImportCandidateDto[]; message: string | null }
+export type McpImportResultDto = { tool: Tool; createdCount: number; reusedCount: number; assignedCount: number }
 export type McpProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
 export type McpProjectOptionDto = { mcpId: string; name: string; enabled: boolean; state: McpProjectSelectionState; selectable: boolean; rowVersion: number }
 export type McpProjectOptionsInput = { projectId: string; tool: Tool }

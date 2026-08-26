@@ -12,6 +12,19 @@ export const mcpKeys = {
   globalStatuses: () => [...mcpKeys.all, "global-statuses"] as const,
 };
 
+// 每次显式打开都绑定独立扫描，避免关闭后仍在途的请求被下一次导入复用。
+export function mcpImportQueryOptions(tool: Tool, requestId: string) {
+  return queryOptions({
+    queryKey: ["mcp-import", tool, requestId] as const,
+    queryFn: async () => unwrapResult(await commands.discoverMcpImport(tool)),
+    retry: false,
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
 export function mcpServersQueryOptions() {
   return queryOptions({
     queryKey: mcpKeys.servers(),

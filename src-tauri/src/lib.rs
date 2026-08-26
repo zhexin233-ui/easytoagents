@@ -85,6 +85,12 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<mcp::PreviewMcpSyncInput>()
         .typ::<mcp::ApplyMcpPreviewInput>()
         .typ::<mcp::McpTargetStatusDto>()
+        .typ::<mcp::McpImportCandidateStatus>()
+        .typ::<mcp::McpImportAction>()
+        .typ::<mcp::McpImportCandidateDto>()
+        .typ::<mcp::McpImportPreviewDto>()
+        .typ::<mcp::ConfirmMcpImportInput>()
+        .typ::<mcp::McpImportResultDto>()
         .typ::<skills::ImportSkillInput>()
         .typ::<skills::VersionedSkillInput>()
         .typ::<skills::SkillDto>()
@@ -157,6 +163,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::mcp::list_global_mcp_target_statuses,
             commands::mcp::preview_mcp_sync,
             commands::mcp::apply_mcp_preview,
+            commands::mcp::discover_mcp_import,
+            commands::mcp::confirm_mcp_import,
             commands::skills::list_skills,
             commands::skills::get_skill,
             commands::skills::import_skill,

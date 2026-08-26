@@ -1,0 +1,33 @@
+{
+  "id": "fix-mcp-global-preview",
+  "name": "fix-mcp-global-preview",
+  "title": "修复 MCP 全局预览遗漏已配置服务",
+  "description": "补齐 Claude/Codex 原生全局 MCP 的显式发现、选择导入、来源分配与安全基线接管，修复中央库为空时全局预览无操作路径。",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "mcp",
+  "package": null,
+  "priority": "P2",
+  "creator": "yang",
+  "assignee": "yang",
+  "createdAt": "2026-08-26",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src-tauri/src/mcp/import.rs",
+    "src-tauri/src/db/mcp_imports.rs",
+    "src-tauri/src/db/migrations/0005_mcp_import_previews.sql",
+    "src/features/mcp/mcp-import-dialog.tsx",
+    "src/features/mcp/mcp-page.tsx",
+    ".trellis/spec/backend/mcp-import-guidelines.md"
+  ],
+  "notes": "实现与规范已更新；pnpm check、pnpm build 均通过。仅使用隔离 fixture 做写入测试。用户已批准 verification.md 中的单次工作提交；不推送，归档与 journal 另行收尾。",
+  "meta": {}
+}
