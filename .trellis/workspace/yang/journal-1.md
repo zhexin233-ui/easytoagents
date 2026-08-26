@@ -80,3 +80,34 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: 修复 MCP 全局预览并补齐原生导入
+
+**Date**: 2026-08-26
+**Task**: 修复 MCP 全局预览并补齐原生导入
+**Branch**: `main`
+
+### Summary
+
+补齐 Claude/Codex 原生全局 MCP 的显式扫描、勾选导入与来源分配，保留独立 Preview/Apply；实现、验证、提交、推送和任务归档已完成。
+
+### Main Changes
+
+- 新增严格转换、私有配置等价比较、分批基线接管、过期与事务回滚保护以及逐项安全诊断。
+- 新增导入对话框、生命周期回归和第 5 次前向迁移，记录跨层规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27729fc` | (see git log) |
+
+### Testing
+
+- [OK] pnpm check 通过：50 个前端测试、163 个 Rust 单元测试、3 个集成测试及格式、lint、类型、clippy 检查。
+- [OK] pnpm build 通过；所有原生写入测试仅使用隔离 fixture，未对用户真实配置执行导入确认或 Apply。
+
+### Status
+
+[OK] **Completed**
