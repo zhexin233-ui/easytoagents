@@ -6,6 +6,8 @@ Read this contract when changing native MCP discovery, import confirmation,
 ownership adoption, or the MCP import dialog. It supplements the central intent
 scenario in [quality-guidelines.md](./quality-guidelines.md).
 
+修改 MCP 环境变量登记、展示脱敏或普通字段凭据判定时，也必须遵守本合同。
+
 Global sync previews use enabled central assignments, not every native entry.
 An empty preview does not prove the tool has no MCP configuration. Native entries
 enter the central library only after an explicit selection and confirmation.
@@ -14,6 +16,10 @@ enter the central library only after an explicit selection and confirmation.
 
 - `discover_mcp_import(tool: Tool) -> Result<McpImportPreviewDto, AppError>`.
 - `confirm_mcp_import(input: ConfirmMcpImportInput) -> Result<McpImportResultDto, AppError>`.
+- `SecretRedactor::register_secret(value)` 同时登记展示隐藏值与凭据证据；
+  `register_private_value(value)` 只登记展示隐藏值，不能降级已有同值凭据。
+- `SecretRedactor::contains_secret(text) -> bool` 只检测内容凭据，不比较展示转换结果。
+  MCP 各入口统一复用 `register_environment_value(redactor, key, value)`。
 - Generated TypeScript methods are `commands.discoverMcpImport(tool)` and
   `commands.confirmMcpImport({ previewId, candidateIds })`.
 - Migration `0005_mcp_import_previews.sql` adds `mcp_import_previews`: UUID,
@@ -38,6 +44,9 @@ enter the central library only after an explicit selection and confirmation.
   `ValidatedMcpConfiguration`. Claude `type=http` maps to `streamable_http`;
   Codex `http_headers` maps to central headers. Preserve supported extra fields;
   missing collections become empty, but null or wrong types are invalid.
+- Claude/Codex 均接受结构一致的显式 `type=stdio/http/streamable_http`，省略 type
+  时按 command/url 推断。已知协议与字段不匹配为 invalid，未知协议为 unsupported。
+  显式 type 映射到中央 transport；其规范化差异只在后续同步预览展示。
 - Disabled entries, SSE, `env_http_headers`, mixed transports, and unsafe ordinary
   fields remain unselectable and unmanaged. Do not relax central validation.
   Central `enabled=false` removes an item from the desired set: adopting a native
@@ -75,10 +84,20 @@ enter the central library only after an explicit selection and confirmation.
 
 ### Secrets and UI lifecycle
 
-- Register source header/env values and detectable extra secrets before constructing
-  any display projection, including values in rejected entries. Check ordinary
-  names/command/args/URL against this redactor. Rejected unsafe content must not
-  appear in diagnostics. Evidence stores only safe identity/versions/hashes.
+- 构造展示投影前登记来源 header/env 与可识别 extra（包括拒绝项），并从已读取的
+  中央 MCP 记录恢复凭据，不能依赖本进程是否先执行过 CRUD 或 preview。
+- env/header 展示始终隐藏；普通 name/command/args/URL 用 `contains_secret` 检查。
+  禁止以 `redact_text(value) != value` 判定合法性：运行路径隐藏和 JSON 规范化都可能
+  改变文本，但不是凭据证据。诊断仅含固定字段与规则，不回显命中值。
+- 环境变量只有固定名称且值形状匹配时可仅隐藏展示：`NODE_REPL_NODE_PATH`、
+  `CODEX_HOME`、`HOME`、`TMPDIR`、`NODE_BINARY` 为无控制字符/父级跳转的绝对路径；
+  `PATH`、`NODE_PATH`、`PYTHONPATH` 为这种绝对路径组成的冒号列表；
+  `BROWSER_USE_TINYSKY_ENABLED`、`CI`、`NO_COLOR` 只接受 0/1/true/false；
+  `NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS` 为可表示成 u64 的非空十进制数字。
+  敏感键名/值形态优先，未知名称或不匹配值仍为凭据，不用长度或熵阈值放行。
+- 同值只要在任意条目/来源被登记为凭据，任何后续运行值登记都不能降级；真实跨条目
+  凭据重用仍拒绝。native、create/update、confirm 和 preview 共用登记策略。
+  Evidence stores only safe identity/versions/hashes.
 - Raw secrets may exist only in allowed private central records and baselines;
   RPC, import evidence/display JSON, errors, sync records, and journals are redacted.
 - The UI uses a separate `['mcp-import', tool, requestId]` query for each explicit
@@ -99,6 +118,10 @@ enter the central library only after an explicit selection and confirmation.
 | Malformed JSON/TOML, unreadable file, unsafe path | Stable parse/permission/conflict error; never pretend no MCP exists |
 | Unknown capability or policy | Fail closed; no guessed target or adoption |
 | Disabled, unsupported, or malformed individual entry | Unselectable status/reason; other valid entries remain eligible |
+| Codex 显式 stdio/http/streamable_http 与字段一致 | 与省略 type 的等价配置一样可导入/复用 |
+| type 与 command/url 冲突、args 等字段类型错误 | invalid，reason 指出固定字段和规则，不回显值 |
+| 已证明普通运行值与命令/参数重叠，或安全 JSON 文本仅格式不同 | 不构成凭据命中，仍需中央配置校验 |
+| 短凭据、未知环境值或跨条目真实凭据进入普通字段 | invalid；同值运行变量不得降低保护 |
 | Already managed source key | Read-only `already_managed`; do not refresh baseline |
 | Different private values, case-only collision, project assignment | `name_conflict`; no overwrite |
 | Empty, duplicate, or unknown candidate IDs | `INVALID_INPUT`; no partial rows |
@@ -115,6 +138,8 @@ enter the central library only after an explicit selection and confirmation.
   and Apply preserves all unselected entries.
 - Base: matching configurations from two tools reuse one central row with two
   explicit source assignments; a disabled neighbor stays external.
+- Good: node_repl 命令包含已识别的运行路径时可导入；同路径若同时作为 API key 使用，
+  仍按凭据拒绝。重扫与新 redactor 扫描必须得到相同资格判断。
 - Bad: create central records alone and treat a matching native name as ownership,
   compare redacted configurations for equality, or use new import to refresh drift.
 
@@ -133,6 +158,10 @@ enter the central library only after an explicit selection and confirmation.
   late response isolation, focus, invalidation, and no create/Apply calls.
 - Regenerate/check bindings; run `pnpm check`. A jsdom test is not a real desktop
   verification. Never point import confirmation or Apply tests at the user's home.
+- 成功 fixture 必须保留至少一组显式 Codex type，不能全部由 helper 删除后再测试。
+  覆盖 stdio/http、streamable_http 别名、同名规范化复用和原生字节保护。
+- 覆盖运行路径/开关/超时与普通字段重叠、CRUD/confirm/preview 后重扫、空 redactor
+  从中央记录恢复凭据、同值登记顺序、未知 env、短秘密及嵌套 JSON 凭据反例。
 
 ## 7. Wrong vs Correct
 
@@ -153,3 +182,16 @@ await commands.confirmMcpImport({ previewId, candidateIds });
 
 The backend must use the evidence-bound atomic adoption path above, not a sequence
 of independently committed create/assignment operations.
+
+错误的凭据判定：
+
+```rust
+let unsafe_value = redactor.redact_text(command) != command;
+```
+
+正确的内容判定与独立展示：
+
+```rust
+let unsafe_value = redactor.contains_secret(command);
+let display = redactor.redact_structure(raw);
+```

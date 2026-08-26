@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/mcp-import-guidelines.md","reason":"原生导入、私有值、所有权、确认与预览安全契约"}
+{"file":".trellis/spec/backend/index.md","reason":"定位后端质量规范；实施前按 MCP 范围读取原文，避免大文件注入截断"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"固定错误信息、字段白名单和安全原因"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"生成绑定、导入展示和无隐式 Apply"}
+{"file":".trellis/tasks/08-26-codex-mcp-import-compat/research/root-causes.md","reason":"安全结构证据、调用链与回归位置"}

@@ -39,6 +39,7 @@ impl RedactedJson {
 #[derive(Clone, Default)]
 pub struct SecretRedactor {
     secrets: Vec<String>,
+    credential_values: HashSet<String>,
     selectors: Vec<Vec<String>>,
 }
 
@@ -47,6 +48,7 @@ impl fmt::Debug for SecretRedactor {
         formatter
             .debug_struct("SecretRedactor")
             .field("registered_secret_count", &self.secrets.len())
+            .field("credential_count", &self.credential_values.len())
             .field("selector_count", &self.selectors.len())
             .finish()
     }
@@ -55,12 +57,49 @@ impl fmt::Debug for SecretRedactor {
 impl SecretRedactor {
     pub fn register_secret(&mut self, secret: impl Into<String>) {
         let secret = secret.into();
+        if secret.is_empty() || secret == REDACTED {
+            return;
+        }
+        self.credential_values.insert(secret.clone());
+        self.register_private_value(secret);
+    }
+
+    /// 运行配置仍隐藏展示，但其子串重叠本身不是普通字段携带凭据的证据。
+    pub(crate) fn register_private_value(&mut self, secret: impl Into<String>) {
+        let secret = secret.into();
         if secret.is_empty() || secret == REDACTED || self.secrets.contains(&secret) {
             return;
         }
         self.secrets.push(secret);
         self.secrets
             .sort_by_key(|candidate| std::cmp::Reverse(candidate.len()));
+    }
+
+    /// 内容检测独立于展示转换，避免把 JSON 格式规范化也判成凭据命中。
+    pub(crate) fn contains_secret(&self, text: &str) -> bool {
+        self.credential_values
+            .iter()
+            .any(|secret| text.contains(secret))
+            || contains_detectable_secret("value", text)
+            || serde_json::from_str::<Value>(text)
+                .is_ok_and(|value| self.json_contains_secret(&value, false))
+    }
+
+    fn json_contains_secret(&self, value: &Value, forced: bool) -> bool {
+        match value {
+            Value::Object(object) => object.iter().any(|(key, value)| {
+                self.json_contains_secret(
+                    value,
+                    forced || is_sensitive_key(key) || is_sensitive_container(key),
+                )
+            }),
+            Value::Array(values) => values
+                .iter()
+                .any(|value| self.json_contains_secret(value, forced)),
+            Value::String(text) => forced || self.contains_secret(text),
+            Value::Bool(_) | Value::Number(_) => forced,
+            Value::Null => false,
+        }
     }
 
     pub fn register_selector(&mut self, selector: &str) {
@@ -559,6 +598,52 @@ mod tests {
         let serialized = serde_json::to_string(&redactor.redact_json(&nested)).unwrap();
         assert!(!serialized.contains("42"));
         assert!(!serialized.contains("密钥"));
+    }
+
+    #[test]
+    fn credential_detection_is_independent_of_private_display_values() {
+        for private_first in [false, true] {
+            let mut redactor = SecretRedactor::default();
+            redactor.register_private_value("/opt/fixture/node");
+            redactor.register_private_value("1");
+            assert!(!redactor.contains_secret("/opt/fixture/node-wrapper"));
+            assert!(!redactor.contains_secret("worker-1"));
+            assert_eq!(redactor.redact_text("/opt/fixture/node"), REDACTED);
+            assert_eq!(
+                redactor.redact_json(&json!({"env": {"FLAG": "1"}}))["env"]["FLAG"],
+                REDACTED
+            );
+            if private_first {
+                redactor.register_private_value("42");
+            }
+            redactor.register_secret("42");
+            redactor.register_private_value("42");
+            assert!(redactor.contains_secret("worker-42"));
+            assert!(redactor.clone().contains_secret("42"));
+        }
+    }
+
+    #[test]
+    fn credential_detection_checks_nested_content_without_json_format_false_positives() {
+        let mut redactor = SecretRedactor::default();
+        for safe in [
+            "{ \"mode\": \"safe\" }",
+            "[1, 2]",
+            "1.00",
+            "\"plain\"",
+            "null",
+        ] {
+            assert!(!redactor.contains_secret(safe));
+        }
+        for sensitive in [
+            r#"{"outer":{"token":"opaque"}}"#,
+            r#"["Bearer opaque"]"#,
+            "api_key=opaque",
+        ] {
+            assert!(redactor.contains_secret(sensitive));
+        }
+        redactor.register_secret("密钥");
+        assert!(redactor.contains_secret(r#"{"value":"\u5bc6\u94a5"}"#));
     }
 
     #[test]

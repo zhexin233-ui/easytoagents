@@ -962,10 +962,47 @@ pub(super) fn register_configuration_secrets(
     redactor: &mut SecretRedactor,
     value: &ValidatedMcpConfiguration,
 ) {
-    for secret in value.headers.values().chain(value.env.values()) {
+    for secret in value.headers.values() {
         redactor.register_secret(secret.clone());
     }
+    for (key, value) in &value.env {
+        register_environment_value(redactor, key, value);
+    }
     register_detectable_extra_secrets(redactor, None, &value.extra);
+}
+
+pub(super) fn register_environment_value(redactor: &mut SecretRedactor, key: &str, value: &str) {
+    // 只有明确的运行变量及合法值形状可免于凭据判定；未知用途仍保守保护。
+    if !contains_detectable_secret(key, value) && is_runtime_environment_value(key, value) {
+        redactor.register_private_value(value);
+    } else {
+        redactor.register_secret(value);
+    }
+}
+
+fn is_runtime_environment_value(key: &str, value: &str) -> bool {
+    let absolute_path = |value: &str| {
+        std::path::Path::new(value).is_absolute()
+            && !value.chars().any(char::is_control)
+            && !std::path::Path::new(value)
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+    };
+    match key {
+        "NODE_REPL_NODE_PATH" | "CODEX_HOME" | "HOME" | "TMPDIR" | "NODE_BINARY" => {
+            absolute_path(value)
+        }
+        "PATH" | "NODE_PATH" | "PYTHONPATH" => value.split(':').all(absolute_path),
+        "BROWSER_USE_TINYSKY_ENABLED" | "CI" | "NO_COLOR" => {
+            matches!(value, "0" | "1" | "true" | "false")
+        }
+        "NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS" => {
+            !value.is_empty()
+                && value.bytes().all(|byte| byte.is_ascii_digit())
+                && value.parse::<u64>().is_ok()
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn register_detectable_extra_secrets(
@@ -2114,12 +2151,19 @@ enabled = true
             let mut fixture = Fixture::new();
             let mut redactor = SecretRedactor::default();
             let disabled = json!({"command": "external", "enabled": false});
+            let mut stdio = import_item(tool, &stdio_input("stdio"));
+            let mut http = import_item(tool, &http_input("http"));
+            if tool == Tool::Codex {
+                // 保留真实来源常见的显式 type，不能让 helper 抹掉兼容性边界。
+                stdio["type"] = json!("stdio");
+                http["type"] = json!("http");
+            }
             let path = write_import_source(
                 &fixture,
                 tool,
                 json!({
-                    "stdio": import_item(tool, &stdio_input("stdio")),
-                    "http": import_item(tool, &http_input("http")),
+                    "stdio": stdio,
+                    "http": http,
                     "disabled": disabled,
                 }),
             );
@@ -2128,6 +2172,14 @@ enabled = true
                 discover_mcp_import(&mut fixture.database, &fixture.environment, &redactor, tool)
                     .unwrap();
             assert_eq!(first.candidates.len(), 3);
+            assert_eq!(
+                first
+                    .candidates
+                    .iter()
+                    .filter(|item| item.status == McpImportCandidateStatus::Importable)
+                    .count(),
+                2
+            );
             assert_eq!(import_counts(&fixture.database), (0, 0, 0, 0));
             assert_eq!(
                 first
@@ -2271,11 +2323,11 @@ enabled = true
         let mut fixture = Fixture::new();
         let mut redactor = SecretRedactor::default();
         for tool in [Tool::Claude, Tool::Codex] {
-            write_import_source(
-                &fixture,
-                tool,
-                json!({"shared": import_item(tool, &stdio_input("shared"))}),
-            );
+            let mut native = import_item(tool, &stdio_input("shared"));
+            if tool == Tool::Codex {
+                native["type"] = json!("stdio");
+            }
+            write_import_source(&fixture, tool, json!({"shared": native}));
             let preview =
                 discover_mcp_import(&mut fixture.database, &fixture.environment, &redactor, tool)
                     .unwrap();
@@ -2323,6 +2375,328 @@ enabled = true
             .iter()
             .all(|item| item.status == McpImportCandidateStatus::NameConflict));
         assert_eq!(import_counts(&conflict_fixture.database), (1, 0, 0, 0));
+    }
+
+    #[test]
+    fn mcp_environment_classification_keeps_unknown_and_credential_values_protected() {
+        for (key, value, credential) in [
+            ("NODE_REPL_NODE_PATH", "/opt/fixture/node", false),
+            ("PATH", "/opt/fixture/bin:/usr/bin", false),
+            ("CODEX_HOME", "/opt/fixture/codex", false),
+            ("CI", "true", false),
+            ("NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS", "42", false),
+            ("NODE_REPL_NODE_PATH", "relative-path", true),
+            ("NODE_REPL_NODE_PATH", "/opt/../private", true),
+            ("NODE_REPL_NODE_PATH", "/opt/token=opaque", true),
+            ("PATH", "/usr/bin:relative", true),
+            ("CI", "not-a-flag", true),
+            (
+                "NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS",
+                "not-a-number",
+                true,
+            ),
+            ("CUSTOM_PATH", "/opt/fixture/node", true),
+            ("API_KEY", "/opt/fixture/node", true),
+            ("UNKNOWN", "42", true),
+        ] {
+            let mut redactor = SecretRedactor::default();
+            super::register_environment_value(&mut redactor, key, value);
+            assert_eq!(redactor.contains_secret(value), credential, "{key}");
+            assert_eq!(
+                redactor.redact_json(&json!({"env": {key: value}}))["env"][key],
+                "[REDACTED]"
+            );
+        }
+        for reverse in [false, true] {
+            let mut redactor = SecretRedactor::default();
+            let keys = if reverse {
+                ["API_KEY", "NODE_REPL_NODE_PATH"]
+            } else {
+                ["NODE_REPL_NODE_PATH", "API_KEY"]
+            };
+            for key in keys {
+                super::register_environment_value(&mut redactor, key, "/opt/fixture/node");
+            }
+            assert!(redactor.contains_secret("/opt/fixture/node-wrapper"));
+        }
+    }
+
+    #[test]
+    fn mcp_import_preserves_credential_protection_and_reports_safe_field_reasons() {
+        use crate::mcp::{discover_mcp_import, McpImportCandidateStatus as Status};
+
+        let mut fixture = Fixture::new();
+        let mut input = stdio_input("central-source");
+        input.env =
+            BTreeMap::from([("API_KEY".to_owned(), "opaque-central-credential".to_owned())]);
+        create_mcp_server(
+            &mut fixture.database,
+            &mut SecretRedactor::default(),
+            &input,
+        )
+        .unwrap();
+        write_import_source(
+            &fixture,
+            Tool::Codex,
+            json!({
+                "valid": {"command": "server", "args": ["{ \"mode\": \"safe\" }"]},
+                "source": {"enabled": false, "env": {"TOKEN": "42", "UNKNOWN": "/opt/private/value", "API_KEY": "/opt/private/shared"}},
+                "runtime_source": {"enabled": false, "env": {"NODE_REPL_NODE_PATH": "/opt/private/shared"}},
+                "header_source": {"enabled": false, "http_headers": {"X-Auth": "opaque-header-credential"}},
+                "central_copy": {"command": "server", "args": ["opaque-central-credential"]},
+                "short_copy": {"command": "/opt/worker42"},
+                "unknown_copy": {"command": "/opt/private/value-helper"},
+                "shared_copy": {"command": "/opt/private/shared-helper"},
+                "header_copy": {"url": "https://example.test/opaque-header-credential"},
+                "bad_args": {"command": "server", "args": 17},
+                "bad_type": {"command": "server", "type": false},
+                "mixed": {"type": "stdio", "command": "server", "url": "https://example.test"},
+                "wrong_protocol": {"type": "http", "command": "server"},
+                "unsupported": {"command": "server", "type": "sk-fixture-type-credential"},
+                "refs": {"url": "https://example.test", "env_http_headers": {"Authorization": "TOKEN_VAR"}},
+                "url_query": {"url": "https://example.test?token=opaque-query-credential"},
+                "nested_json": {"command": "server", "args": ["{\"outer\": {\"token\": \"opaque-json-credential\"}}"]},
+            }),
+        );
+        // 使用全新 redactor，验证中央凭据恢复和原生拒绝项的凭据登记。
+        let preview = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Codex,
+        )
+        .unwrap();
+        assert_eq!(
+            preview
+                .candidates
+                .iter()
+                .filter(|item| item.status == Status::Importable)
+                .count(),
+            1
+        );
+        for (name, field, status) in [
+            ("central_copy", "args", Status::Invalid),
+            ("short_copy", "command", Status::Invalid),
+            ("unknown_copy", "command", Status::Invalid),
+            ("shared_copy", "command", Status::Invalid),
+            ("header_copy", "url", Status::Invalid),
+            ("bad_args", "args", Status::Invalid),
+            ("bad_type", "type", Status::Invalid),
+            ("mixed", "command/url", Status::Invalid),
+            ("wrong_protocol", "command/url", Status::Invalid),
+            ("unsupported", "type", Status::Unsupported),
+            ("refs", "env_http_headers", Status::Unsupported),
+            ("url_query", "url", Status::Invalid),
+            ("nested_json", "args", Status::Invalid),
+        ] {
+            let item = preview
+                .candidates
+                .iter()
+                .find(|item| item.name == name)
+                .unwrap();
+            assert_eq!(item.status, status, "{name}");
+            assert!(item.reason.as_ref().unwrap().contains(field), "{name}");
+            assert!(item.redacted_projection.is_null(), "{name}");
+        }
+        let stored: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT context_json || redacted_preview_json FROM mcp_import_previews",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        for carrier in [serde_json::to_string(&preview).unwrap(), stored] {
+            assert!(!carrier.is_empty());
+            for credential in [
+                "opaque-central-credential",
+                "/opt/private/value",
+                "/opt/private/shared",
+                "opaque-header-credential",
+                "sk-fixture-type-credential",
+                "opaque-query-credential",
+                "opaque-json-credential",
+            ] {
+                assert!(!carrier.contains(credential));
+            }
+        }
+    }
+
+    #[test]
+    fn mcp_import_runtime_values_survive_crud_confirmation_preview_and_rescan() {
+        use crate::mcp::{
+            confirm_mcp_import, discover_mcp_import, McpImportCandidateStatus as Status,
+        };
+
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        let mut input = stdio_input("runtime");
+        input.command = Some("/opt/fixture/node-wrapper".to_owned());
+        input.args = vec![
+            "1".to_owned(),
+            "12345".to_owned(),
+            "{ \"mode\": \"safe\" }".to_owned(),
+        ];
+        input.env = BTreeMap::from([
+            (
+                "NODE_REPL_NODE_PATH".to_owned(),
+                "/opt/fixture/node".to_owned(),
+            ),
+            ("BROWSER_USE_TINYSKY_ENABLED".to_owned(), "1".to_owned()),
+            (
+                "NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS".to_owned(),
+                "12345".to_owned(),
+            ),
+        ]);
+        let central = create_mcp_server(&mut fixture.database, &mut redactor, &input).unwrap();
+        update_mcp_server(
+            &mut fixture.database,
+            &mut redactor,
+            &UpdateMcpServerInput {
+                id: central.id,
+                row_version: central.row_version,
+                name: input.name.clone(),
+                transport: input.transport,
+                command: input.command.clone(),
+                args: input.args.clone(),
+                url: None,
+                headers: SensitiveMapUpdate::Keep,
+                env: SensitiveMapUpdate::Keep,
+                extra: SensitiveJsonUpdate::Keep,
+                enabled: true,
+            },
+        )
+        .unwrap();
+        let path = write_import_source(
+            &fixture,
+            Tool::Codex,
+            json!({
+                "runtime": import_item(Tool::Codex, &input),
+                "neighbor": {"command": "/opt/fixture/node-helper", "args": ["1", "12345"]},
+                "http_alias": {"type": "streamable_http", "url": "https://example.test/mcp"},
+                "disabled": {"command": "external", "enabled": false},
+            }),
+        );
+        let before = fs::read(&path).unwrap();
+        let first = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Codex,
+        )
+        .unwrap();
+        assert_eq!(
+            first
+                .candidates
+                .iter()
+                .filter(|item| item.status == Status::Importable)
+                .count(),
+            3
+        );
+        let runtime = first
+            .candidates
+            .iter()
+            .find(|item| item.name == "runtime")
+            .unwrap();
+        assert_eq!(runtime.action, Some(crate::mcp::McpImportAction::Reuse));
+        assert_eq!(
+            runtime.redacted_projection["env"]["NODE_REPL_NODE_PATH"],
+            "[REDACTED]"
+        );
+        confirm_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &import_selection(&first, &["runtime"]),
+        )
+        .unwrap();
+        let sync_input = PreviewMcpSyncInput {
+            tool: Tool::Codex,
+            project_id: None,
+            exclude_from_git: false,
+        };
+        super::preview_mcp_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &sync_input,
+        )
+        .unwrap();
+        // 再次扫描及新进程的空 redactor 都不能把已导入的运行路径升级为凭据。
+        for current in [&redactor, &SecretRedactor::default()] {
+            let next = discover_mcp_import(
+                &mut fixture.database,
+                &fixture.environment,
+                current,
+                Tool::Codex,
+            )
+            .unwrap();
+            for item in next.candidates {
+                let expected = match item.name.as_str() {
+                    "runtime" => Status::AlreadyManaged,
+                    "disabled" => Status::Disabled,
+                    _ => Status::Importable,
+                };
+                assert_eq!(item.status, expected, "{}", item.name);
+            }
+        }
+        let next = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Codex,
+        )
+        .unwrap();
+        confirm_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &import_selection(&next, &["neighbor", "http_alias"]),
+        )
+        .unwrap();
+        let preview = super::preview_mcp_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &sync_input,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let applied = super::apply_mcp_preview(
+            &std::sync::Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &ApplyMcpPreviewInput {
+                preview_id: preview.preview_id.clone(),
+                tool: Tool::Codex,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(applied.applied_targets, 1);
+        let after: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            after["mcp_servers"]["runtime"]["env"],
+            serde_json::to_value(&input.env).unwrap()
+        );
+        assert_eq!(after["mcp_servers"]["runtime"]["args"], json!(input.args));
+        assert_eq!(after["mcp_servers"]["runtime"]["startup_timeout_sec"], 10);
+        assert!(after["mcp_servers"]["http_alias"].get("type").is_none());
+        assert_eq!(after["mcp_servers"]["disabled"]["enabled"], false);
+        assert_eq!(after["unrelated"]["keep"], "outside");
+        let central = super::list_mcp_servers(&fixture.database, &redactor).unwrap();
+        for carrier in [
+            serde_json::to_string(&first).unwrap(),
+            serde_json::to_string(&preview).unwrap(),
+            serde_json::to_string(&central).unwrap(),
+            read_tree_text(fixture.paths.journals()),
+        ] {
+            assert!(!carrier.is_empty());
+            assert!(!carrier.contains(EXTRA_SECRET));
+        }
     }
 
     #[test]

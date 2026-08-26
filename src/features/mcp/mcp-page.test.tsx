@@ -143,6 +143,24 @@ const nativeImport: McpImportPreviewDto = {
       reason: "中央库存在不同配置的同名项。",
       redactedProjection: null,
     },
+    {
+      candidateId: "00000000-0000-4000-8000-000000000606",
+      name: "native-invalid",
+      transport: null,
+      status: "invalid",
+      action: null,
+      reason: "args 必须是字符串数组，不能为 null 或其它类型。",
+      redactedProjection: null,
+    },
+    {
+      candidateId: "00000000-0000-4000-8000-000000000607",
+      name: "native-unsupported",
+      transport: null,
+      status: "unsupported",
+      action: null,
+      reason: "env_http_headers 环境变量引用暂不能保真导入，原配置保持不变。",
+      redactedProjection: null,
+    },
   ],
 };
 
@@ -722,6 +740,21 @@ describe("McpPage", () => {
       expect(
         within(dialog).getByRole("checkbox", { name: "导入 native-conflict" }),
       ).toBeDisabled();
+      for (const name of ["native-invalid", "native-unsupported"]) {
+        expect(
+          within(dialog).getByRole("checkbox", { name: `导入 ${name}` }),
+        ).toBeDisabled();
+      }
+      expect(
+        within(dialog).getByText(
+          "args 必须是字符串数组，不能为 null 或其它类型。",
+        ),
+      ).toBeVisible();
+      expect(
+        within(dialog).getByText(
+          "env_http_headers 环境变量引用暂不能保真导入，原配置保持不变。",
+        ),
+      ).toBeVisible();
       expect(within(dialog).getByText(/复用相同配置的中央记录/)).toBeVisible();
       expect(within(dialog).getByText(/\[REDACTED\]/)).toBeVisible();
       expect(

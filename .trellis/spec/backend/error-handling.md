@@ -47,6 +47,8 @@ Regenerate and check `src/bindings/commands.ts` whenever this contract changes.
 - Do not accept arbitrary detail keys or dynamic error messages.
 - Registered secrets that look like JSON scalars (for example `42` or `null`)
   must be replaced before JSON parsing so they cannot bypass redaction.
+- 不用 `redact_text(value) != value` 作为凭据证据；展示隐藏和 JSON 规范化也会改变文本。
+  MCP 普通字段使用 `contains_secret`，具体拒绝原因仅含固定 field/reason，不能包含原生值。
 - Do not catch an `AppError` and return an ordinary success value. Preserve its
   stable code, recovery metadata, and redacted details through the RPC boundary.
 

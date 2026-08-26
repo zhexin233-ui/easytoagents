@@ -393,9 +393,10 @@ let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind
 - `stdio` requires command and permits only args/env; `streamable_http` requires an
   absolute credential-free HTTP(S) URL and permits only headers. Fragments and
   detectable secrets in ordinary DTO-visible args or URL query pairs are rejected.
-- Header/env values and detectable extension secrets are registered with the central
-  redactor before preview persistence. RPC, errors, sync items, and journals contain
-  no such values.
+- Header/env 展示值与可识别扩展凭据在预览持久化前统一登记。已识别运行值只用于
+  展示隐藏，真实凭据额外参与普通字段检测；未知环境值仍保守作为凭据。
+  env/header 专用字段不返回原值，RPC、错误、同步记录和 journal 不泄漏凭据。
+  具体分类、同值优先级及生命周期要求见 [Native MCP Import](./mcp-import-guidelines.md)。
 - A project stores only project-specific assignments. Globally assigned items are
   read-only inherited options and are included in ownership only to detect an external
   same-name project entry. When a project has only inherited items and no collision or

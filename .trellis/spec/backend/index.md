@@ -20,7 +20,7 @@ of a general-purpose logging pipeline.
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | Current |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | Current |
 | [Quality Guidelines](./quality-guidelines.md) | Explicit discovery, preview and integration safety | Current |
-| [Native MCP Import](./mcp-import-guidelines.md) | Explicit selection, private equality, atomic adoption and preview lifecycle | Current |
+| [Native MCP Import](./mcp-import-guidelines.md) | Explicit selection, format compatibility, credential classification and atomic adoption | Current |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Current |
 
 ---

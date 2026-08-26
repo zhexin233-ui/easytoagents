@@ -59,6 +59,13 @@ pub fn discover_mcp_import(
         .transpose()?
         .unwrap_or_default();
     let mut local_redactor = redactor.clone();
+    // 从私有中央记录恢复证据，不能依赖本进程是否已执行过 CRUD 或同步预览。
+    for record in &records {
+        service::register_configuration_secrets(
+            &mut local_redactor,
+            &service::configuration_from_record(record)?,
+        );
+    }
     register_native_secrets(&mut local_redactor, &native.items);
     let mut evidence = ImportEvidence {
         descriptor: native.descriptor.clone(),
@@ -78,28 +85,31 @@ pub fn discover_mcp_import(
             redacted_projection: Value::Null,
         };
         let configuration = match parse_native_item(tool, name, raw) {
-            Ok(value) if local_redactor.redact_text(name) == *name => value,
+            Ok(value) if !local_redactor.contains_secret(name) => value,
             Ok(_) => {
-                candidate.reason = Some("名称包含敏感内容，不能导入。".to_owned());
+                candidate.reason = Some("name 含已识别的凭据，不能导入。".to_owned());
                 candidates.push(candidate);
                 continue;
             }
             Err((status, reason)) => {
                 candidate.status = status;
-                candidate.reason = Some(reason.to_owned());
+                candidate.reason = Some(reason);
                 candidates.push(candidate);
                 continue;
             }
         };
         candidate.transport = Some(configuration.transport);
-        if configuration
+        let ordinary_fields = configuration
             .command
             .iter()
-            .chain(configuration.url.iter())
-            .chain(configuration.args.iter())
-            .any(|value| local_redactor.redact_text(value) != *value)
+            .map(|value| ("command", value))
+            .chain(configuration.url.iter().map(|value| ("url", value)))
+            .chain(configuration.args.iter().map(|value| ("args", value)));
+        if let Some((field, _)) = ordinary_fields
+            .into_iter()
+            .find(|(_, value)| local_redactor.contains_secret(value))
         {
-            candidate.reason = Some("普通字段含已识别的敏感值，请改用 env 或 headers。".to_owned());
+            candidate.reason = Some(format!("{field} 含已识别的凭据，请改用 env 或 headers。"));
             candidates.push(candidate);
             continue;
         }
@@ -403,64 +413,63 @@ fn read_native(environment: &ExplicitEnvironment, tool: Tool) -> Result<NativeMc
     }
 }
 
-type CandidateError = (Status, &'static str);
+type CandidateError = (Status, String);
 
 fn parse_native_item(
     tool: Tool,
     name: &str,
     raw: &Value,
 ) -> Result<ValidatedMcpConfiguration, CandidateError> {
-    let invalid = || {
+    let mut object = raw.as_object().cloned().ok_or_else(|| {
         (
             Status::Invalid,
-            "条目格式无效，请检查协议、参数、URL、敏感字段及扩展字段。",
+            "MCP 条目必须是字段对象，不能是标量或数组。".to_owned(),
         )
-    };
-    let mut object = raw.as_object().cloned().ok_or_else(invalid)?;
+    })?;
     let enabled: Option<bool> = take_optional(&mut object, "enabled")?;
     let disabled: Option<bool> = take_optional(&mut object, "disabled")?;
     if enabled == Some(false) || disabled == Some(true) {
         return Err((
             Status::Disabled,
-            "原生条目已停用，本次仅展示，不启用或接管。",
+            "原生条目已停用，本次仅展示，不启用或接管。".to_owned(),
         ));
     }
     let native_type: Option<String> = take_optional(&mut object, "type")?;
     if object.contains_key("env_http_headers") {
         return Err((
             Status::Unsupported,
-            "环境变量 header 引用暂不能保真导入，原配置保持不变。",
+            "env_http_headers 环境变量引用暂不能保真导入，原配置保持不变。".to_owned(),
         ));
     }
     let command: Option<String> = take_optional(&mut object, "command")?;
     let url: Option<String> = take_optional(&mut object, "url")?;
     let transport = match (
-        tool,
         native_type.as_deref(),
         command.is_some(),
         url.is_some(),
     ) {
-        (_, None, true, false) | (Tool::Claude, Some("stdio"), true, false) => McpTransport::Stdio,
-        (_, None, false, true) | (Tool::Claude, Some("http" | "streamable_http"), false, true) => {
+        (None | Some("stdio"), true, false) => McpTransport::Stdio,
+        (None | Some("http" | "streamable_http"), false, true) => {
             McpTransport::StreamableHttp
         }
-        (_, Some(_), _, _) => {
+        (Some(kind), _, _) if !matches!(kind, "stdio" | "http" | "streamable_http") => {
             return Err((
                 Status::Unsupported,
-                "本次仅支持可保真转换的 stdio 与 HTTP MCP。",
+                "type 协议暂不支持；仅支持 stdio、http 和 streamable_http。".to_owned(),
             ))
         }
-        _ => return Err(invalid()),
+        _ => return Err((Status::Invalid,
+            "type 与 command/url 不匹配：stdio 仅允许 command，HTTP 仅允许 url，不能同时填写或同时缺失。".to_owned())),
     };
-    if contains_detectable_secret("name", name)
-        || command
-            .as_ref()
-            .is_some_and(|command| contains_detectable_secret("command", command))
+    for (field, value) in
+        std::iter::once(("name", name)).chain(command.as_deref().map(|value| ("command", value)))
     {
-        return Err((
-            Status::Invalid,
-            "名称或 command 含可识别的敏感内容，请使用 env 或 headers。",
-        ));
+        if contains_detectable_secret(field, value) {
+            return Err((
+                Status::Invalid,
+                format!("{field} 含可识别的凭据，请使用 env 或 headers。"),
+            ));
+        }
     }
     let input = McpServerInput {
         name: name.to_owned(),
@@ -481,18 +490,48 @@ fn parse_native_item(
         extra: Value::Object(object),
         enabled: true,
     };
-    ValidatedMcpConfiguration::from_create(&input).map_err(|_| invalid())
+    ValidatedMcpConfiguration::from_create(&input).map_err(|error| {
+        // 中央校验的 INVALID_INPUT 仅含编译期固定 field/reason，不拼接原生值。
+        let details = error.details();
+        let field = details
+            .and_then(|details| details.get("field"))
+            .and_then(Value::as_str);
+        let reason = details
+            .and_then(|details| details.get("reason"))
+            .and_then(Value::as_str);
+        match (error.code(), field, reason) {
+            (ErrorCode::InvalidInput, Some(field), Some(reason))
+                if matches!(
+                    field,
+                    "name" | "command" | "args" | "url" | "headers" | "env" | "extra" | "transport"
+                ) =>
+            {
+                (Status::Invalid, format!("{field}：{reason}。"))
+            }
+            _ => (Status::Invalid, "条目未通过中央 MCP 配置校验。".to_owned()),
+        }
+    })
 }
 
 fn take_optional<T: DeserializeOwned>(
     object: &mut Map<String, Value>,
-    key: &str,
+    key: &'static str,
 ) -> Result<Option<T>, CandidateError> {
     object
         .remove(key)
         .map(|value| {
-            serde_json::from_value(value)
-                .map_err(|_| (Status::Invalid, "原生字段类型无效，不能按缺省值导入。"))
+            serde_json::from_value(value).map_err(|_| {
+                let expected = match key {
+                    "enabled" | "disabled" => "布尔值",
+                    "args" => "字符串数组",
+                    "env" | "headers" | "http_headers" => "字符串映射",
+                    _ => "字符串",
+                };
+                (
+                    Status::Invalid,
+                    format!("{key} 必须是{expected}，不能为 null 或其它类型。"),
+                )
+            })
         })
         .transpose()
 }
@@ -501,8 +540,14 @@ fn register_native_secrets(redactor: &mut SecretRedactor, items: &Map<String, Va
     for raw in items.values() {
         for key in ["headers", "http_headers", "env_http_headers", "env"] {
             if let Some(values) = raw.get(key).and_then(Value::as_object) {
-                for value in values.values().filter_map(Value::as_str) {
-                    redactor.register_secret(value);
+                for (name, value) in values {
+                    if let Some(value) = value.as_str() {
+                        if key == "env" {
+                            service::register_environment_value(redactor, name, value);
+                        } else {
+                            redactor.register_secret(value);
+                        }
+                    }
                 }
             }
         }
