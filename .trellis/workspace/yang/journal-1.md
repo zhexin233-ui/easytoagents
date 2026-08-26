@@ -111,3 +111,40 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 新增与编辑表单弹窗化
+
+**Date**: 2026-08-26
+**Task**: 新增与编辑表单弹窗化
+**Branch**: `main`
+
+### Summary
+
+MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化与隔离浏览器验证。
+
+### Main Changes
+
+- 复用 FormDialog，移除平铺表单并调整 MCP 全宽列表。
+- 保存失败保留输入，关闭清理草稿和错误，保存与刷新期间防重复操作。
+- 修复提交按钮禁用后的焦点逃逸，保留 Tab/Shift+Tab/Escape 与焦点恢复。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cb8e022` | (see git log) |
+
+### Testing
+
+- [OK] pnpm test --run：8 个文件、62 项测试通过。
+- [OK] pnpm lint、pnpm typecheck、pnpm format:check、pnpm build 与 git diff --check 通过。
+- [OK] 隔离浏览器验证三类弹窗、390×700 窄视口、滚动和 pending 键盘行为，控制台无警告或错误。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 按用户授权推送 main 到 origin，完成后核对远程与本地一致。
