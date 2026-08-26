@@ -1,8 +1,8 @@
-{"file": ".trellis/tasks/08-26-fix-mcp-global-preview/research/backend-contracts.md", "reason": "后端规范相关章节原文摘录，避免完整文件注入截断；覆盖扫描、导入、MCP 和发布探针合同"}
+{"file": ".trellis/tasks/archive/2026-08/08-26-fix-mcp-global-preview/research/backend-contracts.md", "reason": "后端规范相关章节原文摘录，避免完整文件注入截断；覆盖扫描、导入、MCP 和发布探针合同"}
 {"file": ".trellis/spec/backend/database-guidelines.md", "reason": "事务原子性、迁移和版本校验"}
 {"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "本次实现落地后的跨层导入、增量基线和 UI 生命周期合同"}
 {"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "全量 MCP UI 和查询/同步回归"}
 {"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "导入对话框交互和焦点行为"}
 {"file": ".trellis/spec/frontend/type-safety.md", "reason": "绑定一致性和禁止手写 payload 断言"}
-{"file": ".trellis/tasks/08-26-fix-mcp-global-preview/research/planning-decisions.md", "reason": "防止照搬初始研究造成停用项误删或分批导入阻断"}
-{"file": ".trellis/tasks/08-26-fix-mcp-global-preview/research/local-state.md", "reason": "原始用户场景与明确验证边界"}
+{"file": ".trellis/tasks/archive/2026-08/08-26-fix-mcp-global-preview/research/planning-decisions.md", "reason": "防止照搬初始研究造成停用项误删或分批导入阻断"}
+{"file": ".trellis/tasks/archive/2026-08/08-26-fix-mcp-global-preview/research/local-state.md", "reason": "原始用户场景与明确验证边界"}

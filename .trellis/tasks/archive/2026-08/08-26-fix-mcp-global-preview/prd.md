@@ -49,4 +49,4 @@
 
 ## Artifact Status
 
-本次为跨前后端任务，已形成 `design.md`、`implement.md`、研究记录及真实上下文清单。以上范围和边界已获用户在最终摘要后的明确批准，可运行 `task.py start` 并按方案实施。
+本次跨前后端任务已实现、通过质量门，并以 `27729fc` 提交和推送。全部验收项已完成，实际证据与验证边界见 `verification.md`。任务已归档为 `completed`。
