@@ -3,7 +3,7 @@
   "name": "codex-mcp-import-compat",
   "title": "修复 Codex MCP 导入兼容性与误判",
   "description": "修复 Codex MCP 显式 type 被拒绝与运行路径被当作凭据的导入误判，保留脱敏和原生配置保护。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": "fullstack",
   "scope": "mcp",
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "yang",
   "assignee": "yang",
   "createdAt": "2026-08-26",
-  "completedAt": null,
+  "completedAt": "2026-08-26",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "bf94c45",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -26,6 +26,6 @@
     "src-tauri/src/security/mod.rs",
     "src/features/mcp/mcp-page.test.tsx"
   ],
-  "notes": "已实现并通过完整 pnpm check；原生配置未写入。用户已明确批准工作提交并要求推送。",
+  "notes": "修复已提交为 bf94c45，完整质量门通过；原生配置未写入。用户已授权推送，本任务已归档。",
   "meta": {}
 }
