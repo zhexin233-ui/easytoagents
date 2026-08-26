@@ -21,6 +21,7 @@ of a general-purpose logging pipeline.
 | [Error Handling](./error-handling.md) | Error types, handling strategies | Current |
 | [Quality Guidelines](./quality-guidelines.md) | Explicit discovery, preview and integration safety | Current |
 | [Native MCP Import](./mcp-import-guidelines.md) | Explicit selection, format compatibility, credential classification and atomic adoption | Current |
+| [全局 Skills 导入](./skill-import-guidelines.md) | 显式来源、入口链接、内置排除、批量复制与首次状态合同 | Current |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Current |
 
 ---

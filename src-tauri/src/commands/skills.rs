@@ -4,6 +4,7 @@ use tauri::State;
 
 use crate::{
     app::AppState,
+    domain::Tool,
     error::{AppError, ErrorCode},
     skills::{self, *},
     sync::{ApplyResult, PreviewPlan},
@@ -136,4 +137,24 @@ pub fn apply_skill_preview(
 
 fn state_lock_error() -> AppError {
     AppError::new(ErrorCode::WriteInProgress, "应用状态锁不可用", false)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn discover_skill_import(
+    state: State<'_, AppState>,
+    tool: Tool,
+) -> Result<SkillImportPreviewDto, AppError> {
+    let database = state.database().lock().map_err(|_| state_lock_error())?;
+    skills::discover_skill_import(&database, state.paths(), state.environment()?, tool)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn confirm_skill_import(
+    state: State<'_, AppState>,
+    input: ConfirmSkillImportInput,
+) -> Result<SkillImportResultDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    skills::confirm_skill_import(&mut database, state.paths(), state.environment()?, &input)
 }

@@ -143,3 +143,75 @@ pub struct SkillTargetStatusDto {
     pub status: SyncStatus,
     pub diagnostic_code: Option<String>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillImportSourceKind {
+    ClaudeGlobal,
+    CodexAgents,
+    CodexCompatibility,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillImportSourceStatus {
+    Ready,
+    Missing,
+    Empty,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillImportSourceDto {
+    pub kind: SkillImportSourceKind,
+    pub path: String,
+    pub status: SkillImportSourceStatus,
+    pub diagnostic_code: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillImportCandidateStatus {
+    Importable,
+    AlreadyImported,
+    NameConflict,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillImportCandidateDto {
+    pub candidate_id: String,
+    pub name: String,
+    pub description: String,
+    pub source_paths: Vec<String>,
+    pub status: SkillImportCandidateStatus,
+    pub reason: Option<String>,
+    pub existing_skill_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillImportPreviewDto {
+    pub preview_id: Option<String>,
+    pub tool: Tool,
+    pub sources: Vec<SkillImportSourceDto>,
+    pub candidates: Vec<SkillImportCandidateDto>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmSkillImportInput {
+    pub preview_id: String,
+    pub candidate_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillImportResultDto {
+    pub tool: Tool,
+    pub created_count: u32,
+}

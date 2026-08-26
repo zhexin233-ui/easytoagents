@@ -1,6 +1,8 @@
 //! Skill 目录的安全复制、稳定 hash 与中央库所有权证明。
 
 use std::{
+    cell::Cell,
+    collections::BTreeSet,
     ffi::{CStr, CString, OsStr, OsString},
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -14,6 +16,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -41,6 +44,7 @@ pub(crate) struct PreparedSkillImport {
     pub frontmatter: Value,
     staging_path: PathBuf,
     finalized: bool,
+    directory_identity: FileIdentity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,15 +59,18 @@ pub(crate) struct CentralSkillInspection {
 struct TreeDigest {
     hash: String,
     files: Vec<String>,
+    skill_md: Option<String>,
 }
 
 #[derive(Default)]
-struct WalkLimits {
+struct WalkLimits<'a> {
     entries: usize,
     total_bytes: u64,
+    skill_md: Option<String>,
+    budget: Option<&'a Cell<u64>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 struct FileIdentity {
     device: u64,
     inode: u64,
@@ -127,8 +134,37 @@ pub(crate) fn prepare_skill_import(
     paths: &AppPaths,
     source: &Path,
 ) -> Result<PreparedSkillImport, AppError> {
+    prepare_skill_import_budgeted(paths, source, None, None)
+}
+
+pub(super) fn prepare_discovered_skill_import(
+    paths: &AppPaths,
+    evidence: &SkillSourceEvidence,
+    budget: &Cell<u64>,
+) -> Result<PreparedSkillImport, AppError> {
+    verify_skill_source(evidence)?;
+    prepare_skill_import_budgeted(
+        paths,
+        &evidence.resolved,
+        Some(budget),
+        Some(evidence.identity),
+    )
+}
+
+fn prepare_skill_import_budgeted(
+    paths: &AppPaths,
+    source: &Path,
+    budget: Option<&Cell<u64>>,
+    expected_source_identity: Option<FileIdentity>,
+) -> Result<PreparedSkillImport, AppError> {
     validate_source_root(paths, source)?;
     let (source, source_identity) = canonical_source_directory(source)?;
+    if expected_source_identity.is_some_and(|expected| expected != source_identity) {
+        return Err(AppError::conflict(
+            "sourcePath",
+            "Skill 来源在复制前已被替换",
+        ));
+    }
     let source_text = path_text(&source, "sourcePath")?;
     let id = Uuid::new_v4().to_string();
     let staging_path = paths.staging().join(format!("skill-import-{id}"));
@@ -141,19 +177,24 @@ pub(crate) fn prepare_skill_import(
     }
 
     create_private_directory(&staging_path)?;
+    let staging_identity = FileIdentity::from_metadata(
+        &fs::symlink_metadata(&staging_path)
+            .map_err(|_| AppError::invalid_input("staging", "无法核验临时目录"))?,
+    );
     let result = (|| {
         let copied =
-            digest_tree_with_root_identity(&source, Some(&staging_path), Some(source_identity))?;
-        let source_after = digest_tree_with_root_identity(&source, None, Some(source_identity))?;
-        let staging_after = digest_tree(&staging_path, None)?;
+            digest_tree_budgeted(&source, Some(&staging_path), Some(source_identity), budget)?;
+        let source_after = digest_tree_budgeted(&source, None, Some(source_identity), budget)?;
+        let staging_after = digest_tree_budgeted(&staging_path, None, None, budget)?;
         if copied.hash != source_after.hash || copied.hash != staging_after.hash {
             return Err(AppError::conflict(
                 "sourcePath",
                 "Skill 来源在导入过程中发生变化",
             ));
         }
-        let skill_md_path = staging_path.join("SKILL.md");
-        let skill_md = read_regular_utf8(&skill_md_path, MAX_SKILL_MD_BYTES, "SKILL.md")?;
+        let skill_md = staging_after
+            .skill_md
+            .ok_or_else(|| AppError::invalid_input("SKILL.md", "Skill 缺少普通 SKILL.md"))?;
         let (name, frontmatter) = parse_skill_frontmatter(&skill_md)?;
         sync_directory(&staging_path)?;
         Ok(PreparedSkillImport {
@@ -165,9 +206,25 @@ pub(crate) fn prepare_skill_import(
             frontmatter,
             staging_path: staging_path.clone(),
             finalized: false,
+            directory_identity: FileIdentity::from_metadata(
+                &fs::symlink_metadata(&staging_path)
+                    .map_err(|_| AppError::invalid_input("staging", "无法核验临时目录"))?,
+            ),
         })
     })();
     if result.is_err() {
+        let (directory, _) = open_directory_chain(&staging_path)?;
+        let actual = FileIdentity::from_metadata(
+            &directory
+                .metadata()
+                .map_err(|_| AppError::invalid_input("staging", "无法核验临时目录"))?,
+        );
+        if actual.device != staging_identity.device
+            || actual.inode != staging_identity.inode
+            || actual.mode != staging_identity.mode
+        {
+            return Err(AppError::conflict("staging", "临时目录身份变化，拒绝删除"));
+        }
         remove_owned_directory(&staging_path, paths.staging())?;
     }
     result
@@ -177,6 +234,14 @@ pub(crate) fn finalize_skill_import(
     paths: &AppPaths,
     prepared: &mut PreparedSkillImport,
 ) -> Result<(), AppError> {
+    finalize_skill_import_budgeted(paths, prepared, None)
+}
+
+pub(super) fn finalize_skill_import_budgeted(
+    paths: &AppPaths,
+    prepared: &mut PreparedSkillImport,
+    budget: Option<&Cell<u64>>,
+) -> Result<(), AppError> {
     if prepared.finalized {
         return Err(AppError::conflict(
             "centralSkill",
@@ -185,14 +250,75 @@ pub(crate) fn finalize_skill_import(
     }
     let central_path = Path::new(&prepared.central_path);
     validate_direct_child(central_path, paths.central_skills(), &prepared.id)?;
-    fs::rename(&prepared.staging_path, central_path).map_err(|_| {
-        AppError::atomic_write(&prepared.central_path, "rename_skill_into_central_library")
-    })?;
+    verify_prepared_import_budgeted(paths, prepared, budget)?;
+    match fs::symlink_metadata(central_path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        _ => {
+            return Err(AppError::conflict(
+                "centralSkill",
+                "中央 Skill 目标已被占用",
+            ))
+        }
+    }
+    rename_import_exclusively(&prepared.staging_path, central_path)?;
     // rename 成功后正式目录已经存在。后续 fsync 即使失败，清理逻辑也必须
     // 针对正式目录，不能误以为 staging 仍存在。
     prepared.finalized = true;
     sync_directory(paths.staging())?;
     sync_directory(paths.central_skills())?;
+    Ok(())
+}
+
+/// 原子拒绝已存在的目标；存在检查与普通 rename 之间不能留下覆盖窗口。
+fn rename_import_exclusively(source: &Path, destination: &Path) -> Result<(), AppError> {
+    let parent = |path: &Path| {
+        path.parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| AppError::invalid_input("centralPath", "导入目录缺少父路径"))
+    };
+    let (source_parent, _) = open_directory_chain(&parent(source)?)?;
+    let (destination_parent, _) = open_directory_chain(&parent(destination)?)?;
+    let source_name = c_name(
+        source
+            .file_name()
+            .ok_or_else(|| AppError::invalid_input("sourcePath", "导入目录缺少名称"))?,
+    )?;
+    let destination_name = c_name(
+        destination
+            .file_name()
+            .ok_or_else(|| AppError::invalid_input("centralPath", "中央目录缺少名称"))?,
+    )?;
+    // SAFETY: 两个父目录 fd 与单段 NUL 结尾名称在调用期间有效；禁止覆盖目标。
+    #[cfg(target_os = "macos")]
+    let result = unsafe {
+        libc::renameatx_np(
+            source_parent.as_raw_fd(),
+            source_name.as_ptr(),
+            destination_parent.as_raw_fd(),
+            destination_name.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    // SAFETY: Linux renameat2 的参数与上面相同，RENAME_NOREPLACE 提供同一合同。
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            source_parent.as_raw_fd(),
+            source_name.as_ptr(),
+            destination_parent.as_raw_fd(),
+            destination_name.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let result = -1;
+    if result != 0 {
+        return Err(AppError::atomic_write(
+            &destination.to_string_lossy(),
+            "rename_skill_into_central_library",
+        ));
+    }
     Ok(())
 }
 
@@ -210,7 +336,53 @@ pub(crate) fn cleanup_failed_import(
     } else {
         paths.staging()
     };
+    verify_prepared_import(paths, prepared)?;
     remove_owned_directory(path, owner)
+}
+
+pub(super) fn verify_prepared_import(
+    paths: &AppPaths,
+    prepared: &PreparedSkillImport,
+) -> Result<(), AppError> {
+    verify_prepared_import_budgeted(paths, prepared, None)
+}
+
+pub(super) fn verify_prepared_import_budgeted(
+    paths: &AppPaths,
+    prepared: &PreparedSkillImport,
+    budget: Option<&Cell<u64>>,
+) -> Result<(), AppError> {
+    let (path, owner, name) = if prepared.finalized {
+        (
+            Path::new(&prepared.central_path),
+            paths.central_skills(),
+            prepared.id.clone(),
+        )
+    } else {
+        (
+            prepared.staging_path.as_path(),
+            paths.staging(),
+            format!("skill-import-{}", prepared.id),
+        )
+    };
+    validate_direct_child(path, owner, &name)?;
+    let (directory, _) = open_directory_chain(path)?;
+    ensure_same_identity(
+        prepared.directory_identity,
+        &directory
+            .metadata()
+            .map_err(|_| AppError::invalid_input("centralSkill", "无法核验本次导入目录"))?,
+        path,
+    )?;
+    if digest_tree_budgeted(path, None, Some(prepared.directory_identity), budget)?.hash
+        != prepared.content_hash
+    {
+        return Err(AppError::conflict(
+            "centralSkill",
+            "导入副本已变化，拒绝处理未知内容",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn inspect_central_skill(
@@ -468,6 +640,15 @@ fn digest_tree_with_root_identity(
     destination: Option<&Path>,
     expected_root_identity: Option<FileIdentity>,
 ) -> Result<TreeDigest, AppError> {
+    digest_tree_budgeted(source, destination, expected_root_identity, None)
+}
+
+fn digest_tree_budgeted(
+    source: &Path,
+    destination: Option<&Path>,
+    expected_root_identity: Option<FileIdentity>,
+    budget: Option<&Cell<u64>>,
+) -> Result<TreeDigest, AppError> {
     let canonical_root = fs::canonicalize(source)
         .map_err(|_| AppError::permission(&source.to_string_lossy(), "canonicalize_skill_tree"))?;
     if canonical_root != source {
@@ -476,7 +657,7 @@ fn digest_tree_with_root_identity(
             "Skill 目录在读取过程中改变了 canonical 身份",
         ));
     }
-    let source_directory = open_directory_nofollow(source, "open_skill_root")?;
+    let (source_directory, _) = open_directory_chain(source)?;
     let opened_root = source_directory
         .metadata()
         .map_err(|error| map_read_error(error, source, "stat_skill_root"))?;
@@ -495,7 +676,10 @@ fn digest_tree_with_root_identity(
     }
     let mut hasher = Sha256::new();
     let mut files = Vec::new();
-    let mut limits = WalkLimits::default();
+    let mut limits = WalkLimits {
+        budget,
+        ..WalkLimits::default()
+    };
     walk_directory(
         &source_directory,
         &source_directory,
@@ -517,6 +701,7 @@ fn digest_tree_with_root_identity(
     Ok(TreeDigest {
         hash: format!("{:x}", hasher.finalize()),
         files,
+        skill_md: limits.skill_md,
     })
 }
 
@@ -614,6 +799,15 @@ fn walk_directory(
                 metadata.mode(),
                 limits,
             )?;
+            if relative_text == "SKILL.md" {
+                if bytes.len() as u64 > MAX_SKILL_MD_BYTES {
+                    return Err(AppError::invalid_input("SKILL.md", "SKILL.md 超出大小限制"));
+                }
+                limits.skill_md =
+                    Some(String::from_utf8(bytes.clone()).map_err(|_| {
+                        AppError::invalid_input("SKILL.md", "Skill 内容必须是 UTF-8")
+                    })?);
+            }
             hash_file_record(hasher, &relative_text, metadata.mode(), &bytes);
             files.push(relative_text);
         } else if metadata.is_symlink() {
@@ -677,11 +871,18 @@ fn copy_regular_file(
             "Skill 总大小超出限制",
         ));
     }
+    if let Some(budget) = limits.budget {
+        let remaining = budget
+            .get()
+            .checked_sub(metadata.len().saturating_add(1))
+            .ok_or_else(|| AppError::invalid_input("budget", "Skills 批量读取超出 128 MiB 限制"))?;
+        budget.set(remaining);
+    }
     let capacity = usize::try_from(metadata.len())
         .map_err(|_| AppError::invalid_input("sourcePath", "Skill 文件大小超出平台限制"))?;
     let mut bytes = Vec::with_capacity(capacity);
     (&input)
-        .take(MAX_FILE_BYTES + 1)
+        .take(metadata.len() + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| map_read_error(error, source, "read_skill_file"))?;
     if bytes.len() as u64 != metadata.len() || bytes.len() as u64 > MAX_FILE_BYTES {
@@ -858,6 +1059,14 @@ fn read_directory_names(directory: &File, display_path: &Path) -> Result<Vec<OsS
         // SAFETY: POSIX dirent.d_name 是本次 readdir 返回的 NUL 结尾名称。
         let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
         if bytes != b"." && bytes != b".." {
+            if names.len() >= MAX_FILES {
+                // SAFETY: stream 仍由本函数独占，超限后立即关闭。
+                unsafe { libc::closedir(stream) };
+                return Err(AppError::invalid_input(
+                    "sourcePath",
+                    "Skill 目录条目数量超出限制",
+                ));
+            }
             names.push(OsString::from_vec(bytes.to_vec()));
         }
     }
@@ -1224,6 +1433,265 @@ fn map_read_error(error: io::Error, path: &Path, operation: &'static str) -> App
     }
 }
 
+/// 只持久化路径与身份；不包含技能正文或任意 frontmatter。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub(super) struct SkillSourceEvidence {
+    pub root: PathBuf,
+    pub entry: PathBuf,
+    pub resolved: PathBuf,
+    directories: Vec<DirectoryIdentity>,
+    links: Vec<SourceLink>,
+    identity: FileIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+struct DirectoryIdentity {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+    mode: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+struct SourceLink {
+    path: PathBuf,
+    target: PathBuf,
+    identity: FileIdentity,
+}
+
+pub(super) struct SourceSkillInspection {
+    pub name: String,
+    pub description: String,
+    pub hash: String,
+}
+
+/// 从 / 逐段 openat；只允许入口自身显式链接，不跟随任意祖先链接。
+fn open_directory_chain(path: &Path) -> Result<(File, Vec<DirectoryIdentity>), AppError> {
+    if !path.is_absolute() {
+        return Err(AppError::invalid_input(
+            "sourcePath",
+            "来源路径必须为绝对路径",
+        ));
+    }
+    let mut directory = open_directory_nofollow(Path::new("/"), "open_skill_ancestor")?;
+    let mut current = PathBuf::from("/");
+    let mut identities = Vec::new();
+    for component in path.components() {
+        let segment = match component {
+            Component::RootDir => continue,
+            Component::Normal(segment) => segment,
+            _ => {
+                return Err(AppError::invalid_input(
+                    "sourcePath",
+                    "来源路径含不安全片段",
+                ))
+            }
+        };
+        current.push(segment);
+        let before = lstat_at(&directory, segment, &current)?;
+        if !before.is_dir() || before.is_symlink() {
+            return Err(AppError::invalid_input(
+                "sourcePath",
+                "来源祖先必须是真实目录",
+            ));
+        }
+        directory = open_directory_at_nofollow(&directory, segment, &current)?;
+        let metadata = directory
+            .metadata()
+            .map_err(|error| map_read_error(error, &current, "stat_skill_ancestor"))?;
+        // 祖先的其它子目录可能被并发创建；这里只绑定祖先身份与权限，
+        // 不把无关兄弟的目录大小或链接计数当作本技能漂移。
+        if before.identity.device != metadata.dev()
+            || before.identity.inode != metadata.ino()
+            || before.identity.mode != metadata.mode()
+        {
+            return Err(AppError::conflict("sourcePath", "来源祖先身份在读取时变化"));
+        }
+        identities.push(DirectoryIdentity {
+            path: current.clone(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+        });
+    }
+    Ok((directory, identities))
+}
+
+pub(super) fn enumerate_skill_entries(root: &Path) -> Result<Vec<PathBuf>, AppError> {
+    let (directory, _) = open_directory_chain(root)?;
+    let mut names = read_directory_names(&directory, root)?;
+    names.sort();
+    let mut result = Vec::new();
+    for name in names {
+        let path = root.join(&name);
+        let metadata = lstat_at(&directory, &name, &path)?;
+        if metadata.is_dir() || metadata.is_symlink() {
+            path_text(&path, "sourcePath")?;
+            result.push(path);
+        }
+    }
+    Ok(result)
+}
+
+pub(super) fn resolve_skill_source(
+    root: &Path,
+    entry: &Path,
+) -> Result<SkillSourceEvidence, AppError> {
+    resolve_skill_source_excluding(root, entry, &[])
+}
+
+pub(super) fn resolve_skill_source_excluding(
+    root: &Path,
+    entry: &Path,
+    excluded: &[PathBuf],
+) -> Result<SkillSourceEvidence, AppError> {
+    if entry.parent() != Some(root) {
+        return Err(AppError::invalid_input(
+            "sourcePath",
+            "只允许显式来源中的直属入口",
+        ));
+    }
+    let (_, mut directories) = open_directory_chain(root)?;
+    let mut current = entry.to_path_buf();
+    let mut links = Vec::new();
+    let mut visited = BTreeSet::new();
+    loop {
+        if excluded.iter().any(|path| current.starts_with(path)) {
+            return Err(AppError::invalid_input(
+                "builtin",
+                "内置技能不在本次导入范围",
+            ));
+        }
+        if !visited.insert(current.clone()) || links.len() > 32 {
+            return Err(AppError::invalid_input(
+                "sourcePath",
+                "来源链接循环或超过 32 跳限制",
+            ));
+        }
+        let parent_path = current
+            .parent()
+            .ok_or_else(|| AppError::invalid_input("sourcePath", "来源链接目标过于宽泛"))?;
+        let name = current
+            .file_name()
+            .ok_or_else(|| AppError::invalid_input("sourcePath", "来源链接缺少目录名"))?;
+        let (parent, ancestors) = open_directory_chain(parent_path)?;
+        directories.extend(ancestors);
+        let before = lstat_at(&parent, name, &current)?;
+        if before.is_symlink() {
+            let target = read_link_at(&parent, name, &current)?;
+            if lstat_at(&parent, name, &current)?.identity != before.identity {
+                return Err(AppError::conflict("sourcePath", "来源链接在读取时变化"));
+            }
+            links.push(SourceLink {
+                path: current.clone(),
+                target: target.clone(),
+                identity: before.identity,
+            });
+            let joined = if target.is_absolute() {
+                target
+            } else {
+                parent_path.join(target)
+            };
+            let mut normalized = PathBuf::from("/");
+            for component in joined.components() {
+                match component {
+                    Component::RootDir | Component::CurDir => {}
+                    Component::Normal(segment) => normalized.push(segment),
+                    Component::ParentDir => {
+                        // 不能把缺失目录或链接祖先前的 .. 静默折叠成另一个来源。
+                        let (_, ancestors) = open_directory_chain(&normalized)?;
+                        directories.extend(ancestors);
+                        if !normalized.pop() {
+                            return Err(AppError::invalid_input(
+                                "sourcePath",
+                                "来源链接越过文件系统根",
+                            ));
+                        }
+                    }
+                    _ => return Err(AppError::invalid_input("sourcePath", "来源链接路径无效")),
+                }
+            }
+            current = normalized;
+            continue;
+        }
+        if !before.is_dir() || current.components().count() < 3 {
+            return Err(AppError::invalid_input(
+                "sourcePath",
+                "来源必须是非宽泛的技能目录",
+            ));
+        }
+        let directory = open_directory_at_nofollow(&parent, name, &current)?;
+        ensure_same_identity(
+            before.identity,
+            &directory
+                .metadata()
+                .map_err(|error| map_read_error(error, &current, "stat_resolved_skill"))?,
+            &current,
+        )?;
+        return Ok(SkillSourceEvidence {
+            root: root.to_path_buf(),
+            entry: entry.to_path_buf(),
+            resolved: current,
+            directories,
+            links,
+            identity: before.identity,
+        });
+    }
+}
+
+pub(super) fn verify_skill_source(evidence: &SkillSourceEvidence) -> Result<(), AppError> {
+    if resolve_skill_source(&evidence.root, &evidence.entry)? != *evidence {
+        return Err(AppError::conflict(
+            "sourcePath",
+            "Skill 来源入口或目录身份已经变化，请重新检测",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn inspect_skill_source(
+    evidence: &SkillSourceEvidence,
+    budget: &Cell<u64>,
+) -> Result<SourceSkillInspection, AppError> {
+    verify_skill_source(evidence)?;
+    let (directory, _) = open_directory_chain(&evidence.resolved)?;
+    let metadata = lstat_at(
+        &directory,
+        OsStr::new("SKILL.md"),
+        &evidence.resolved.join("SKILL.md"),
+    )?;
+    if !metadata.is_file()
+        || metadata.is_symlink()
+        || metadata.nlink() != 1
+        || metadata.identity.size > MAX_SKILL_MD_BYTES
+    {
+        return Err(AppError::invalid_input(
+            "SKILL.md",
+            "Skill 必须包含有界普通 SKILL.md 文件",
+        ));
+    }
+    let digest = digest_tree_budgeted(
+        &evidence.resolved,
+        None,
+        Some(evidence.identity),
+        Some(budget),
+    )?;
+    let text = digest
+        .skill_md
+        .ok_or_else(|| AppError::invalid_input("SKILL.md", "Skill 必须包含普通 SKILL.md 文件"))?;
+    let (name, frontmatter) = parse_skill_frontmatter(&text)?;
+    verify_skill_source(evidence)?;
+    Ok(SourceSkillInspection {
+        name,
+        description: frontmatter
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        hash: digest.hash,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1518,5 +1986,36 @@ mod tests {
         );
         assert!(quarantine.join("unknown.txt").is_file());
         assert!(!std::path::Path::new(&prepared.central_path).exists());
+    }
+    #[test]
+    fn failed_import_cleanup_preserves_replaced_or_changed_operation_directories() {
+        for replace in [false, true] {
+            let fixture = Fixture::new();
+            let source = fixture.source("source");
+            write_valid_skill(&source, "one");
+            let mut prepared = prepare_skill_import(&fixture.paths, &source).unwrap();
+            finalize_skill_import(&fixture.paths, &mut prepared).unwrap();
+            if replace {
+                fs::rename(
+                    &prepared.central_path,
+                    fixture.root.join("preserved-original"),
+                )
+                .unwrap();
+                fs::create_dir(&prepared.central_path).unwrap();
+            }
+            let sentinel = std::path::Path::new(&prepared.central_path).join("unknown.txt");
+            fs::write(&sentinel, "preserve me").unwrap();
+            assert!(super::cleanup_failed_import(&fixture.paths, &prepared).is_err());
+            assert_eq!(fs::read_to_string(&sentinel).unwrap(), "preserve me");
+        }
+    }
+    #[test]
+    fn exclusive_finalize_rename_never_replaces_an_existing_directory() {
+        let fixture = Fixture::new();
+        let source = fixture.source("staged");
+        let destination = fixture.source("existing");
+        assert!(super::rename_import_exclusively(&source, &destination).is_err());
+        assert!(source.is_dir());
+        assert!(destination.is_dir());
     }
 }

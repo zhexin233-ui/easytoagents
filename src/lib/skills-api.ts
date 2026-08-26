@@ -12,6 +12,19 @@ export const skillKeys = {
   globalStatuses: () => [...skillKeys.all, "global-statuses"] as const,
 };
 
+// 每次显式检测使用独立缓存，避免关闭或换工具后复用旧来源证据。
+export function skillImportQueryOptions(tool: Tool, requestId: string) {
+  return queryOptions({
+    queryKey: ["skill-import", tool, requestId] as const,
+    queryFn: async () => unwrapResult(await commands.discoverSkillImport(tool)),
+    retry: false,
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
 export function skillsQueryOptions() {
   return queryOptions({
     queryKey: skillKeys.list(),

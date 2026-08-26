@@ -91,6 +91,9 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<mcp::McpImportPreviewDto>()
         .typ::<mcp::ConfirmMcpImportInput>()
         .typ::<mcp::McpImportResultDto>()
+        .typ::<skills::ConfirmSkillImportInput>()
+        .typ::<skills::SkillImportPreviewDto>()
+        .typ::<skills::SkillImportResultDto>()
         .typ::<skills::ImportSkillInput>()
         .typ::<skills::VersionedSkillInput>()
         .typ::<skills::SkillDto>()
@@ -168,6 +171,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::skills::list_skills,
             commands::skills::get_skill,
             commands::skills::import_skill,
+            commands::skills::discover_skill_import,
+            commands::skills::confirm_skill_import,
             commands::skills::preview_skill_content,
             commands::skills::delete_skill,
             commands::skills::set_global_skill_assignment,

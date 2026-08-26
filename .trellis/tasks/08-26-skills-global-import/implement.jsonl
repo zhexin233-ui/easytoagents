@@ -1,0 +1,14 @@
+{"file":".trellis/spec/backend/index.md","reason":"Rust/Tauri 规范入口"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/backend-guidelines-context.md","reason":"完整注入本任务相关后端规范段落；原质量文件超过单文件注入限制，原规范仍为唯一权威"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"前向迁移、Immediate 事务、唯一约束和私有数据库安全"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"稳定错误码、固定中文消息与安全详情"}
+{"file":".trellis/spec/frontend/index.md","reason":"React/TypeScript 规范入口"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Skills 页面状态、生成 RPC、对话框与回归覆盖"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"共享组件、提交锁、焦点恢复及模态布局"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"查询隔离、中央意图刷新与禁止隐式 Apply"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Specta 类型唯一来源及绑定再生成"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"来源证据到 RPC/数据库/UI 的完整数据流核对"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/import-safety.md","reason":"复制/hash/事务复用锚点和主代理确认的来源保护约束"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/source-layout.md","reason":"实际链接布局、Codex 兼容来源与已确认的内置排除"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/status-and-ui.md","reason":"首次状态信息缺口、共享展示及查询生命周期参考"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "实现后固化的跨层合同，含跨工具内置别名与确认期重验规则"}

@@ -404,12 +404,37 @@ pub fn list_global_skill_target_statuses_with_policy_probe(
                 &existing,
             );
             let assessment = assess_drift(&descriptor, &baseline, &scan);
+            let initial_diagnostic = if assessment.status
+                == crate::domain::SyncStatus::ExternalNonOwnedChange
+                && baseline.full_hash.is_none()
+                && baseline.managed_hash.is_none()
+                && existing.is_empty()
+                && desired.is_empty()
+            {
+                match &scan {
+                    TargetScan::Observed(observation) => match observation.document() {
+                        crate::adapters::ObservedDocument::SymlinkDirectory(entries) => Some(
+                            if entries.is_empty() {
+                                "SKILL_TARGET_INITIAL_EMPTY"
+                            } else {
+                                "SKILL_TARGET_INITIAL_UNMANAGED"
+                            }
+                            .to_owned(),
+                        ),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            } else {
+                None
+            };
             Ok(SkillTargetStatusDto {
                 tool,
                 project_id: None,
                 target_path,
                 status: assessment.status,
-                diagnostic_code: assessment.diagnostic_codes.into_iter().next(),
+                diagnostic_code: initial_diagnostic
+                    .or_else(|| assessment.diagnostic_codes.into_iter().next()),
             })
         })
         .collect()
@@ -559,7 +584,7 @@ fn prepare_skill_sync(
     })
 }
 
-fn descriptor_for(
+pub(super) fn descriptor_for(
     environment: &crate::adapters::ExplicitEnvironment,
     tool: Tool,
     project_root: Option<&ProjectRoot>,
@@ -1153,6 +1178,95 @@ mod tests {
             .home
             .join(".claude/skills/release-evidence-skill")
             .is_symlink());
+    }
+
+    #[test]
+    fn initial_skill_status_requires_empty_baseline_and_no_owned_or_desired_items() {
+        let mut fixture = Fixture::new();
+        let target = fixture.home.join(".claude/skills");
+        fs::create_dir_all(&target).unwrap();
+        let status = |fixture: &Fixture| {
+            super::list_global_skill_target_statuses(
+                &fixture.database,
+                &fixture.paths,
+                &fixture.environment,
+            )
+            .unwrap()
+            .remove(0)
+        };
+        assert_eq!(
+            status(&fixture).diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_EMPTY")
+        );
+        fs::write(target.join(".DS_Store"), "metadata").unwrap();
+        assert_eq!(
+            status(&fixture).diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_UNMANAGED")
+        );
+        let target_id = Uuid::new_v4().to_string();
+        fixture.database.connection().execute(
+            "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'claude', 'skill', 'global', ?2)",
+            rusqlite::params![target_id, target.to_string_lossy()],
+        ).unwrap();
+        assert_eq!(
+            status(&fixture).diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_UNMANAGED")
+        );
+        let skill = fixture.import("unassigned-copy");
+        assert_eq!(
+            status(&fixture).diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_UNMANAGED")
+        );
+        fixture.database.connection().execute("UPDATE managed_targets SET baseline_full_hash = ?1, baseline_managed_hash = ?2 WHERE id = ?3", rusqlite::params!["a".repeat(64), crate::sync::hash_json(&json!({})), target_id]).unwrap();
+        assert_eq!(
+            status(&fixture).diagnostic_code.as_deref(),
+            Some("EXTERNAL_NON_OWNED_CHANGE")
+        );
+        fixture
+            .database
+            .connection()
+            .execute_batch("PRAGMA ignore_check_constraints = ON")
+            .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE managed_targets SET baseline_managed_hash = NULL",
+                [],
+            )
+            .unwrap();
+        assert_ne!(status(&fixture).status, SyncStatus::ExternalNonOwnedChange);
+        fixture
+            .database
+            .connection()
+            .execute("UPDATE managed_targets SET baseline_full_hash = NULL", [])
+            .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute_batch("PRAGMA ignore_check_constraints = OFF")
+            .unwrap();
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        assert!(!status(&fixture)
+            .diagnostic_code
+            .unwrap_or_default()
+            .starts_with("SKILL_TARGET_INITIAL_"));
+        fs::write(Path::new(&skill.central_path).join("asset.txt"), "changed").unwrap();
+        assert_eq!(status(&fixture).status, SyncStatus::ExternalOwnedChange);
+        assert_eq!(
+            status(&fixture).diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
     }
 
     #[test]

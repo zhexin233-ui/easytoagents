@@ -80,15 +80,28 @@ pub(crate) fn insert_skill(
     database: &mut Database,
     value: &PreparedSkillRecord,
 ) -> Result<SkillRecord, AppError> {
-    EntityId::parse(&value.id)?;
     let path = database.path().to_string_lossy().into_owned();
-    let frontmatter = serde_json::to_string(&value.frontmatter)
-        .map_err(|_| AppError::invalid_input("frontmatter", "Skill frontmatter 无法序列化"))?;
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| AppError::database(&path, "begin_insert_skill"))?;
+    let record = insert_skill_in_transaction(&transaction, &path, value)?;
     transaction
+        .commit()
+        .map_err(|_| AppError::database(&path, "commit_insert_skill"))?;
+    Ok(record)
+}
+
+/// 调用方持有同一个写事务；批量导入不能逐项提交。
+pub(crate) fn insert_skill_in_transaction(
+    connection: &rusqlite::Connection,
+    path: &str,
+    value: &PreparedSkillRecord,
+) -> Result<SkillRecord, AppError> {
+    EntityId::parse(&value.id)?;
+    let frontmatter = serde_json::to_string(&value.frontmatter)
+        .map_err(|_| AppError::invalid_input("frontmatter", "Skill frontmatter 无法序列化"))?;
+    connection
         .execute(
             "INSERT INTO skills(
                 id, name, source_path, central_path, content_hash,
@@ -103,8 +116,8 @@ pub(crate) fn insert_skill(
                 frontmatter,
             ],
         )
-        .map_err(|error| map_skill_write_error(error, &path, "insert_skill"))?;
-    let record = transaction
+        .map_err(|error| map_skill_write_error(error, path, "insert_skill"))?;
+    let record = connection
         .query_row(
             "SELECT id, name, source_path, central_path, content_hash,
                     frontmatter_json, status, row_version
@@ -112,10 +125,7 @@ pub(crate) fn insert_skill(
             [&value.id],
             skill_from_row,
         )
-        .map_err(|_| AppError::database(&path, "read_inserted_skill"))?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&path, "commit_insert_skill"))?;
+        .map_err(|_| AppError::database(path, "read_inserted_skill"))?;
     Ok(record)
 }
 

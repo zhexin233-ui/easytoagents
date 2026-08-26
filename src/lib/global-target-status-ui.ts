@@ -19,6 +19,26 @@ export function globalTargetStatusPresentation(
   diagnosticCode: string | null,
 ): GlobalTargetStatusPresentation {
   const previewBlocked = globalPreviewBlockingStatuses.has(status);
+  if (status === "external_non_owned_change") {
+    if (diagnosticCode === "SKILL_TARGET_INITIAL_EMPTY") {
+      return {
+        label: "○ 空目录，待配置",
+        description:
+          "目标目录为空，尚未配置同步；可先导入技能到中央库，再分配并预览同步。",
+        tone: "warning",
+        previewBlocked,
+      };
+    }
+    if (diagnosticCode === "SKILL_TARGET_INITIAL_UNMANAGED") {
+      return {
+        label: "○ 未纳入同步管理",
+        description:
+          "已有目录尚未纳入同步管理；可检测其中的用户技能并复制到中央库。导入不会自动接管原有安装。",
+        tone: "warning",
+        previewBlocked,
+      };
+    }
+  }
   if (status === "missing") {
     return {
       label: "○ 待初始化",

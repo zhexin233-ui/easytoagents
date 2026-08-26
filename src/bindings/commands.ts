@@ -392,6 +392,22 @@ async importSkill(input: ImportSkillInput) : Promise<Result<SkillDto, AppError>>
     else return { status: "error", error: e  as any };
 }
 },
+async discoverSkillImport(tool: Tool) : Promise<Result<SkillImportPreviewDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_skill_import", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async confirmSkillImport(input: ConfirmSkillImportInput) : Promise<Result<SkillImportResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_skill_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewSkillContent(id: string) : Promise<Result<SkillContentPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_skill_content", { id }) };
@@ -499,6 +515,7 @@ export type ClaudeCredentialEnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN
 export type CompleteOnboardingResultDto = { completed: boolean }
 export type ConfirmImportInput = { previewId: string; name: string }
 export type ConfirmMcpImportInput = { previewId: string; candidateIds: string[] }
+export type ConfirmSkillImportInput = { previewId: string; candidateIds: string[] }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
 export type DashboardSummaryDto = { tools: DashboardToolSummaryDto[]; projectCount: number; conflictCount: number; snapshotCount: number; recentSyncRuns: RecentSyncRunDto[]; interruptedRun: InterruptedRunPlan | null; needsOnboarding: boolean }
 export type DashboardToolSummaryDto = { tool: Tool; activeProviderName: string | null; activePromptName: string | null; globalMcpCount: number; globalSkillCount: number }
@@ -566,6 +583,13 @@ export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpI
 export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
 export type SkillContentPreviewDto = { id: string; name: string; skillMd: string; files: string[]; contentHash: string; rowVersion: number }
 export type SkillDto = { id: string; name: string; sourcePath: string; centralPath: string; contentHash: string; description: string; status: SkillStatus; diagnosticCode: string | null; globalTools: Tool[]; rowVersion: number }
+export type SkillImportCandidateDto = { candidateId: string; name: string; description: string; sourcePaths: string[]; status: SkillImportCandidateStatus; reason: string | null; existingSkillId: string | null }
+export type SkillImportCandidateStatus = "importable" | "already_imported" | "name_conflict" | "invalid"
+export type SkillImportPreviewDto = { previewId: string | null; tool: Tool; sources: SkillImportSourceDto[]; candidates: SkillImportCandidateDto[]; message: string | null }
+export type SkillImportResultDto = { tool: Tool; createdCount: number }
+export type SkillImportSourceDto = { kind: SkillImportSourceKind; path: string; status: SkillImportSourceStatus; diagnosticCode: string | null; message: string | null }
+export type SkillImportSourceKind = "claude_global" | "codex_agents" | "codex_compatibility"
+export type SkillImportSourceStatus = "ready" | "missing" | "empty" | "unavailable"
 export type SkillProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
 export type SkillProjectOptionDto = { skillId: string; name: string; status: SkillStatus; state: SkillProjectSelectionState; selectable: boolean; rowVersion: number }
 export type SkillProjectOptionsInput = { projectId: string; tool: Tool }

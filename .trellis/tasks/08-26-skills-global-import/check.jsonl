@@ -1,0 +1,14 @@
+{"file":".trellis/spec/backend/index.md","reason":"检查后端受影响层与现有规范"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/backend-guidelines-context.md","reason":"完整注入后端质量、安全与发布探针合同，避免单文件上限截断；变更后须回读原规范"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"审核迁移升级、单事务批次、令牌并发和版本约束"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"审核错误/证据不泄漏正文或原始异常"}
+{"file":".trellis/spec/frontend/index.md","reason":"检查前端受影响层与现有规范"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"审核 Skills/MCP 回归、无隐式同步与可访问状态"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"审核焦点、Tab/Escape、提交锁与错误恢复"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"审核 requestId 隔离、缓存刷新和晚到响应"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"审核生成 DTO/commands 一致性"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查检测、确认、落库和展示各边界的完整行为"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/import-safety.md","reason":"对照既有安全实现，核验链接入口与不接管的区别"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/source-layout.md","reason":"核验真实来源形态与内置排除范围"}
+{"file":".trellis/tasks/08-26-skills-global-import/research/status-and-ui.md","reason":"核验初始/空/部分导入/真实漂移状态矩阵"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "最终检查导入API、内置排除、批量清理及UI生命周期合同"}

@@ -460,6 +460,8 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 
 ## Scenario: Skills central library and symlink projections
 
+全局检测与批量复制还须遵守 [Skills 导入合同](./skill-import-guidelines.md)，其中显式入口链接与普通本地导入根链接有不同边界，复制不接管原安装。
+
 ### 1. Scope / Trigger
 
 - Trigger: Skill directory import, central-library inspection/deletion, assignment,
@@ -479,7 +481,7 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 
 - Import opens every directory/file relative to an already-open parent descriptor with
   no-follow semantics. The root identity remains stable across copy and verification;
-  symlink roots, escaping/broken/directory/cyclic links, hard links, special files,
+  direct local-import symlink roots, escaping/broken/directory/cyclic links, hard links, special files,
   unsafe names, excessive depth/count/file size/total size, and concurrent changes fail
   closed. Import errors contain no source content and never modify the source tree.
 - `SKILL.md` is bounded UTF-8 with an object YAML frontmatter, validated lowercase
@@ -498,7 +500,8 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 - Target paths are Claude user `<CLAUDE_CONFIG_DIR>/skills`, Claude project
   `<project>/.claude/skills`, Codex user explicit `HOME/.agents/skills`, and Codex
   project `<project>/.agents/skills`. `CODEX_HOME` never changes the Codex user Skills
-  path. Claude policy and Codex project trust fail closed.
+  synchronization path. `CODEX_HOME/skills` is a separate explicit import source.
+  Claude policy and Codex project trust fail closed.
 - A projection owns only named child links. Every desired link target is the canonical
   direct central Skill directory. Ordinary directories/files, broken/external/escaping
   links, unknown siblings, and managed-item drift are never overwritten or deleted.

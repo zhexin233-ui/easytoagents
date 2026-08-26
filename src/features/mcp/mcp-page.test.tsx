@@ -263,6 +263,28 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("McpPage", () => {
+  it("MCP 非受管变更保留共享状态原义，不使用 Skills 首次目录文案", async () => {
+    vi.mocked(commands.listGlobalMcpTargetStatuses).mockResolvedValueOnce({
+      status: "ok",
+      data: [
+        {
+          tool: "claude",
+          projectId: null,
+          targetPath: "/isolated/home/.claude.json",
+          status: "external_non_owned_change",
+          diagnosticCode: "EXTERNAL_NON_OWNED_CHANGE",
+        },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText("△ 非受管变更")).toBeVisible();
+    expect(screen.getByText("EXTERNAL_NON_OWNED_CHANGE")).toBeVisible();
+    expect(screen.queryByText("○ 未纳入同步管理")).not.toBeInTheDocument();
+    expect(screen.queryByText("○ 空目录，待配置")).not.toBeInTheDocument();
+    expect(await globalButton("生成全局预览")).toBeEnabled();
+    expect(commands.previewMcpSync).not.toHaveBeenCalled();
+  });
+
   it("默认隐藏表单，新增与编辑可取消、关闭和 Escape 清理草稿并恢复焦点", async () => {
     vi.mocked(commands.listMcpServers).mockResolvedValue({
       status: "ok",

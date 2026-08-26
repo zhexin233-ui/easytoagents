@@ -15,6 +15,7 @@ import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
@@ -44,6 +45,10 @@ export function SkillsPage() {
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenSkillPreview | null>(null);
+  const [openImport, setOpenImport] = useState<{
+    tool: Tool;
+    requestId: string;
+  } | null>(null);
   const closeContentPreview = () => setContentPreview(null);
   const { dialogRef: contentDialogRef, onKeyDown: onContentDialogKeyDown } =
     useDialogFocus(contentPreview !== null, closeContentPreview);
@@ -283,7 +288,8 @@ export function SkillsPage() {
           ) : null}
           {skillsQuery.data?.length === 0 ? (
             <p className="text-muted-foreground mt-4 text-sm">
-              尚无 Skill。请先选择本地目录。
+              尚无 Skill。请在下方全局目标卡片选择“检测并导入已有
+              Skills”，或选择本地目录导入。
             </p>
           ) : null}
           {contentMutation.isError ? (
@@ -438,22 +444,39 @@ export function SkillsPage() {
                     诊断码：<code>{status.diagnosticCode}</code>
                   </p>
                 ) : null}
-                <Button
-                  className="mt-3"
-                  size="sm"
-                  variant="outline"
-                  disabled={
-                    previewMutation.isPending || presentation.previewBlocked
-                  }
-                  onClick={() =>
-                    previewMutation.mutate({
-                      tool: status.tool,
-                      targetProjectId: null,
-                    })
-                  }
-                >
-                  预览全局同步
-                </Button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={presentation.previewBlocked}
+                    aria-label={`检测并导入 ${status.tool === "claude" ? "Claude" : "Codex"} 全局 Skills`}
+                    onClick={() => {
+                      if (openImport) return;
+                      setMessage(null);
+                      setOpenImport({
+                        tool: status.tool,
+                        requestId: crypto.randomUUID(),
+                      });
+                    }}
+                  >
+                    检测并导入已有 Skills
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      previewMutation.isPending || presentation.previewBlocked
+                    }
+                    onClick={() =>
+                      previewMutation.mutate({
+                        tool: status.tool,
+                        targetProjectId: null,
+                      })
+                    }
+                  >
+                    预览全局同步
+                  </Button>
+                </div>
               </article>
             );
           })}
@@ -636,6 +659,31 @@ export function SkillsPage() {
             ) : null}
           </section>
         </div>
+      ) : null}
+
+      {openImport ? (
+        <SkillImportDialog
+          key={openImport.tool}
+          tool={openImport.tool}
+          requestId={openImport.requestId}
+          onClose={() => setOpenImport(null)}
+          onRescan={() =>
+            setOpenImport({
+              tool: openImport.tool,
+              requestId: crypto.randomUUID(),
+            })
+          }
+          onImported={async (result) => {
+            await queryClient.invalidateQueries(
+              { queryKey: skillKeys.all },
+              { throwOnError: true },
+            );
+            setMessage(
+              `已复制 ${result.createdCount} 项 Skill 到中央库；原有安装未变，尚未自动分配或同步。中央副本不会随原安装自动更新。`,
+            );
+            setOpenImport(null);
+          }}
+        />
       ) : null}
 
       <ChangePreviewDialog
