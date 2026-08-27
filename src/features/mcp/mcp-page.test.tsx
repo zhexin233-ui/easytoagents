@@ -263,6 +263,161 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("McpPage", () => {
+  it("中央列表默认单列并可切换为响应式三列", async () => {
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [server],
+    });
+    renderPage();
+
+    const section = screen
+      .getByRole("heading", { name: "中央列表" })
+      .closest("section");
+    if (!section) throw new Error("未找到 MCP 中央列表");
+    const card = await within(section).findByRole("heading", {
+      name: server.name,
+    });
+    const article = card.closest("article");
+    if (!article) throw new Error("未找到 MCP 中央卡片");
+    const list = article.parentElement;
+    if (!list) throw new Error("未找到 MCP 中央列表容器");
+    const body = article.querySelector<HTMLElement>(
+      '[data-slot="central-list-card-body"]',
+    );
+    const footer = article.querySelector<HTMLElement>(
+      '[data-slot="central-list-card-actions"]',
+    );
+    if (!body || !footer) throw new Error("未找到 MCP 卡片主体或操作栏");
+    const listButton = within(section).getByRole("button", {
+      name: "单列显示",
+    });
+    const gridButton = within(section).getByRole("button", {
+      name: "三列网格显示",
+    });
+
+    expect(listButton).toHaveAttribute("aria-pressed", "true");
+    expect(gridButton).toHaveAttribute("aria-pressed", "false");
+    expect(list).toHaveClass("space-y-3");
+    expect(list).not.toHaveClass("grid");
+    expect(article).toHaveAttribute("data-layout", "list");
+    expect(within(article).getByText("入口")).toBeVisible();
+    expect(within(article).getByText("敏感字段")).toBeVisible();
+    expect(article.querySelector("pre")).toHaveTextContent("[REDACTED]");
+    expect(
+      within(footer).queryByRole("button", { name: "编辑" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(gridButton);
+    expect(listButton).toHaveAttribute("aria-pressed", "false");
+    expect(gridButton).toHaveAttribute("aria-pressed", "true");
+    expect(list).toHaveClass(
+      "grid",
+      "auto-rows-fr",
+      "items-stretch",
+      "md:grid-cols-2",
+      "lg:grid-cols-3",
+    );
+    expect(list).not.toHaveClass("space-y-3");
+    expect(article).toHaveAttribute("data-layout", "grid");
+    expect(article).toHaveClass(
+      "flex",
+      "h-full",
+      "flex-col",
+      "overflow-hidden",
+    );
+    expect(body).toHaveClass("flex", "flex-1", "flex-col", "p-4");
+    expect(footer).toHaveClass("mt-auto", "border-t", "px-4", "py-3");
+    expect(footer).toHaveAccessibleName(`${server.name} 操作`);
+    expect(within(article).queryByText("入口")).not.toBeInTheDocument();
+    expect(within(article).queryByText("敏感字段")).not.toBeInTheDocument();
+    expect(article.querySelector("pre")).not.toBeInTheDocument();
+    expect(within(body).getByText("入口摘要")).toBeVisible();
+    expect(body).toHaveTextContent("扩展信息已脱敏");
+    for (const name of ["编辑", "停用", "删除"]) {
+      expect(within(footer).getByRole("button", { name })).toBeVisible();
+    }
+    expect(
+      within(footer).getByLabelText(`${server.name} 全局平台分配`),
+    ).toHaveClass("ml-auto");
+  });
+
+  it("平台图标暴露分配状态并保留原全局分配 payload", async () => {
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    const updatedServer: McpServerDto = {
+      ...assignedServer,
+      globalTools: ["claude", "codex"],
+      rowVersion: assignedServer.rowVersion + 1,
+    };
+    const assignment =
+      deferred<Awaited<ReturnType<typeof commands.setGlobalMcpAssignment>>>();
+    vi.mocked(commands.listMcpServers)
+      .mockResolvedValueOnce({ status: "ok", data: [assignedServer] })
+      .mockResolvedValue({ status: "ok", data: [updatedServer] });
+    vi.mocked(commands.setGlobalMcpAssignment).mockReturnValue(
+      assignment.promise,
+    );
+    renderPage();
+
+    const claudeButton = await screen.findByRole("button", {
+      name: "Claude 全局已分配",
+    });
+    const codexButton = screen.getByRole("button", {
+      name: "Codex 全局未分配",
+    });
+    expect(claudeButton).toHaveAttribute("aria-pressed", "true");
+    expect(claudeButton).toHaveAttribute("title", "Claude 全局已分配");
+    expect(codexButton).toHaveAttribute("aria-pressed", "false");
+    expect(codexButton).toHaveAttribute("title", "Codex 全局未分配");
+    const claudeIcon = claudeButton.querySelector("img");
+    const codexIcon = codexButton.querySelector("img");
+    expect(claudeIcon?.getAttribute("src")).toMatch(
+      /^(data:image\/svg\+xml|.*claude-icon-square\.svg$)/,
+    );
+    expect(codexIcon?.getAttribute("src")).toMatch(
+      /^(data:image\/png|.*codex-icon-light\.png$)/,
+    );
+    expect(claudeButton.querySelector("svg")).toBeNull();
+    expect(codexButton.querySelector("svg")).toBeNull();
+    expect(claudeButton.firstElementChild).toHaveClass("opacity-100");
+    expect(codexButton.firstElementChild).toHaveClass(
+      "opacity-25",
+      "grayscale",
+    );
+    expect(screen.queryByText("Claude 全局已分配")).not.toBeInTheDocument();
+
+    fireEvent.click(codexButton);
+    await waitFor(() =>
+      expect(commands.setGlobalMcpAssignment).toHaveBeenCalledWith({
+        tool: "codex",
+        mcpId: server.id,
+        assigned: true,
+        rowVersion: server.rowVersion,
+      }),
+    );
+    expect(claudeButton).toBeDisabled();
+    expect(codexButton).toBeDisabled();
+
+    await act(async () => {
+      assignment.resolve({ status: "ok", data: updatedServer });
+      await assignment.promise;
+    });
+
+    const updatedCodexButton = await screen.findByRole("button", {
+      name: "Codex 全局已分配",
+    });
+    expect(updatedCodexButton).toHaveAttribute("aria-pressed", "true");
+    expect(updatedCodexButton.firstElementChild).toHaveClass("opacity-100");
+    await waitFor(() => {
+      expect(commands.listMcpServers).toHaveBeenCalledTimes(2);
+      expect(commands.listGlobalMcpTargetStatuses).toHaveBeenCalledTimes(2);
+    });
+    expect(commands.previewMcpSync).not.toHaveBeenCalled();
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
   it("MCP 非受管变更保留共享状态原义，不使用 Skills 首次目录文案", async () => {
     vi.mocked(commands.listGlobalMcpTargetStatuses).mockResolvedValueOnce({
       status: "ok",

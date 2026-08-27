@@ -12,6 +12,15 @@ import {
   type Tool,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import {
+  CentralList,
+  CentralListCard,
+  CentralListCardBody,
+  CentralListCardFooter,
+  CentralListLayoutToggle,
+  type CentralListLayout,
+} from "@/components/central-list-layout";
+import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
@@ -25,6 +34,7 @@ import {
   skillProjectsQueryOptions,
   skillsQueryOptions,
 } from "@/lib/skills-api";
+import { cn } from "@/lib/utils";
 
 interface OpenSkillPreview {
   plan: PreviewPlan;
@@ -40,6 +50,7 @@ export function SkillsPage() {
   const [sourcePath, setSourcePath] = useState("");
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [listLayout, setListLayout] = useState<CentralListLayout>("list");
   const [projectId, setProjectId] = useState("");
   const [projectTool, setProjectTool] = useState<Tool>("claude");
   const [contentPreview, setContentPreview] =
@@ -204,7 +215,12 @@ export function SkillsPage() {
         ) : null}
       </div>
 
-      <div className="mx-auto mt-6 grid max-w-6xl gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+      <div
+        className={cn(
+          "mx-auto mt-6 grid max-w-6xl gap-6",
+          listLayout === "list" && "xl:grid-cols-[0.8fr_1.2fr]",
+        )}
+      >
         <section
           className="rounded-xl border bg-white p-5"
           aria-labelledby="skill-import-title"
@@ -278,9 +294,15 @@ export function SkillsPage() {
           className="rounded-xl border bg-white p-5"
           aria-labelledby="skill-list-title"
         >
-          <h2 id="skill-list-title" className="text-lg font-semibold">
-            中央列表
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 id="skill-list-title" className="text-lg font-semibold">
+              中央列表
+            </h2>
+            <CentralListLayoutToggle
+              value={listLayout}
+              onChange={setListLayout}
+            />
+          </div>
           {skillsQuery.isPending ? (
             <p role="status" className="mt-4 text-sm">
               正在读取 Skills…
@@ -307,72 +329,54 @@ export function SkillsPage() {
               移出中央库失败：{profileErrorText(deleteMutation.error)}
             </p>
           ) : null}
-          <div className="mt-4 space-y-3">
-            {skillsQuery.data?.map((skill) => (
-              <article key={skill.id} className="rounded-lg border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-medium">{skill.name}</h3>
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      {skill.status} · hash {skill.contentHash.slice(0, 12)}…
-                    </p>
-                    {skill.diagnosticCode ? (
-                      <p className="mt-1 text-xs text-red-700">
-                        {skill.diagnosticCode}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={contentMutation.isPending}
-                      onClick={() => contentMutation.mutate(skill.id)}
-                    >
-                      {contentMutation.isPending &&
-                      contentMutation.variables === skill.id
-                        ? "正在读取…"
-                        : "内容预览"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        deleteMutation.isPending &&
-                        deleteMutation.variables?.id === skill.id
-                      }
-                      onClick={() => deleteMutation.mutate(skill)}
-                    >
-                      {deleteMutation.isPending &&
+          <CentralList layout={listLayout}>
+            {skillsQuery.data?.map((skill) => {
+              const skillActions = (
+                <div className="flex min-w-0 flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={listLayout === "grid" ? "px-2" : undefined}
+                    disabled={contentMutation.isPending}
+                    onClick={() => contentMutation.mutate(skill.id)}
+                  >
+                    {contentMutation.isPending &&
+                    contentMutation.variables === skill.id
+                      ? "正在读取…"
+                      : "内容预览"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={listLayout === "grid" ? "px-2" : undefined}
+                    disabled={
+                      deleteMutation.isPending &&
                       deleteMutation.variables?.id === skill.id
-                        ? "正在移出…"
-                        : "移出中央库"}
-                    </Button>
-                  </div>
+                    }
+                    onClick={() => deleteMutation.mutate(skill)}
+                  >
+                    {deleteMutation.isPending &&
+                    deleteMutation.variables?.id === skill.id
+                      ? "正在移出…"
+                      : "移出中央库"}
+                  </Button>
                 </div>
-                <dl className="mt-3 grid gap-2 text-xs">
-                  <div>
-                    <dt className="text-muted-foreground">
-                      原来源（只读溯源）
-                    </dt>
-                    <dd className="break-all">{skill.sourcePath}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">中央副本</dt>
-                    <dd className="break-all">{skill.centralPath}</dd>
-                  </div>
-                </dl>
-                <p className="bg-muted mt-3 rounded p-2 text-xs">
-                  {skill.description}
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
+              );
+              const platformActions = (
+                <div
+                  className={
+                    listLayout === "grid"
+                      ? "ml-auto flex shrink-0 items-center gap-2"
+                      : "flex items-center gap-2"
+                  }
+                  role="group"
+                  aria-label={`${skill.name} 全局平台分配`}
+                >
                   {(["claude", "codex"] as const).map((tool) => (
-                    <Button
+                    <PlatformAssignmentButton
                       key={tool}
-                      size="sm"
-                      variant={
-                        skill.globalTools.includes(tool) ? "default" : "outline"
-                      }
+                      tool={tool}
+                      assigned={skill.globalTools.includes(tool)}
                       disabled={
                         globalAssignmentMutation.isPending ||
                         (skill.status !== "ready" &&
@@ -381,18 +385,83 @@ export function SkillsPage() {
                       onClick={() =>
                         globalAssignmentMutation.mutate({ skill, tool })
                       }
-                    >
-                      {tool === "claude" ? "Claude" : "Codex"} 全局
-                      {skill.globalTools.includes(tool) ? "已分配" : "未分配"}
-                    </Button>
+                    />
                   ))}
                 </div>
-                <p className="text-muted-foreground mt-2 text-xs leading-5">
-                  全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。
-                </p>
-              </article>
-            ))}
-          </div>
+              );
+
+              return (
+                <CentralListCard key={skill.id} layout={listLayout}>
+                  <CentralListCardBody layout={listLayout}>
+                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3
+                          className={
+                            listLayout === "grid"
+                              ? "truncate font-medium"
+                              : "font-medium"
+                          }
+                          title={skill.name}
+                        >
+                          {skill.name}
+                        </h3>
+                        <p className="text-muted-foreground mt-1 text-xs">
+                          {skill.status} · hash {skill.contentHash.slice(0, 12)}
+                          …
+                        </p>
+                        {skill.diagnosticCode ? (
+                          <p className="mt-1 text-xs break-all text-red-700">
+                            {skill.diagnosticCode}
+                          </p>
+                        ) : null}
+                      </div>
+                      {listLayout === "list" ? skillActions : null}
+                    </div>
+                    {listLayout === "list" ? (
+                      <>
+                        <dl className="mt-3 grid gap-2 text-xs">
+                          <div>
+                            <dt className="text-muted-foreground">
+                              原来源（只读溯源）
+                            </dt>
+                            <dd className="break-all">{skill.sourcePath}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">中央副本</dt>
+                            <dd className="break-all">{skill.centralPath}</dd>
+                          </div>
+                        </dl>
+                        <p className="bg-muted mt-3 rounded p-2 text-xs">
+                          {skill.description}
+                        </p>
+                      </>
+                    ) : (
+                      <p
+                        className="text-muted-foreground mt-4 line-clamp-3 text-sm leading-6"
+                        title={skill.description}
+                      >
+                        {skill.description}
+                      </p>
+                    )}
+                  </CentralListCardBody>
+                  <CentralListCardFooter
+                    layout={listLayout}
+                    label={`${skill.name} 操作`}
+                  >
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      {listLayout === "grid" ? skillActions : null}
+                      {platformActions}
+                    </div>
+                    {listLayout === "list" ? (
+                      <p className="text-muted-foreground mt-2 text-xs leading-5">
+                        全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。
+                      </p>
+                    ) : null}
+                  </CentralListCardFooter>
+                </CentralListCard>
+              );
+            })}
+          </CentralList>
         </section>
       </div>
 

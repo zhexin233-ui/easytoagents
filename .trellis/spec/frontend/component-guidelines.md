@@ -82,6 +82,44 @@ export function ChangePreviewDialog(props: ChangePreviewDialogProps) {
 
 ---
 
+## Shared Central List Controls
+
+MCP and Skills central libraries share `CentralList`,
+`CentralListLayoutToggle`, and `PlatformAssignmentButton` from
+`src/components/`. Keep their list/grid behavior and Claude/Codex assignment
+semantics in these components rather than duplicating Tailwind classes or SVGs
+inside feature pages.
+
+```tsx
+const [layout, setLayout] = useState<CentralListLayout>("list");
+
+<CentralListLayoutToggle value={layout} onChange={setLayout} />;
+<CentralList layout={layout}>{items}</CentralList>;
+<PlatformAssignmentButton
+  tool={tool}
+  assigned={globalTools.includes(tool)}
+  disabled={mutation.isPending}
+  onClick={toggleAssignment}
+/>;
+```
+
+Layout choice is transient page state: list remains the default, while grid
+uses one column by default, two at `md`, and three at `lg` so a normal desktop
+window actually presents three cards per row. Grid cards use equal-height
+bodies plus a separate border-top action footer, and children keep `min-w-0`
+to contain long paths or previews.
+
+Claude and Codex assignment controls must use unchanged, locally bundled
+official brand assets with source and checksum provenance recorded beside the
+assets. Do not redraw brand marks with inline SVG paths or generated artwork.
+The active asset is shown clearly and the inactive asset is dimmed/grayscaled.
+Because dimming is supplementary, every icon-only control must still expose an
+accessible name, `title`, and `aria-pressed` that identify the tool and assigned
+state. Feature pages still own mutation payloads and domain-specific disabled
+rules.
+
+---
+
 ## Common Mistakes
 
 - Calling raw `invoke`, asserting an ad-hoc payload, or exposing secret-bearing

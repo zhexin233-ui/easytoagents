@@ -14,7 +14,16 @@ import {
   type UpdateMcpServerInput,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import {
+  CentralList,
+  CentralListCard,
+  CentralListCardBody,
+  CentralListCardFooter,
+  CentralListLayoutToggle,
+  type CentralListLayout,
+} from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
+import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,6 +87,7 @@ export function McpPage() {
   const saveInFlight = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [listLayout, setListLayout] = useState<CentralListLayout>("list");
   const [projectId, setProjectId] = useState("");
   const [projectTool, setProjectTool] = useState<Tool>("claude");
   const [openPreview, setOpenPreview] = useState<OpenMcpPreview | null>(null);
@@ -274,9 +284,15 @@ export function McpPage() {
             <h2 id="mcp-list-title" className="text-lg font-semibold">
               中央列表
             </h2>
-            <Button size="sm" onClick={() => openForm(emptyForm)}>
-              新增 MCP
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <CentralListLayoutToggle
+                value={listLayout}
+                onChange={setListLayout}
+              />
+              <Button size="sm" onClick={() => openForm(emptyForm)}>
+                新增 MCP
+              </Button>
+            </div>
           </div>
           {serversQuery.isPending ? (
             <p role="status" className="mt-4 text-sm">
@@ -294,82 +310,137 @@ export function McpPage() {
               MCP”创建，或通过全局目标中的“检测并导入已有 MCP”纳入已有工具配置。
             </p>
           ) : null}
-          <div className="mt-4 space-y-3">
-            {serversQuery.data?.map((server) => (
-              <article key={server.id} className="rounded-lg border p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-medium">{server.name}</h3>
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      {server.transport} ·{" "}
-                      {server.enabled ? "已启用" : "已停用"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => openForm(editForm(server))}
-                    >
-                      编辑
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => enabledMutation.mutate(server)}
-                    >
-                      {server.enabled ? "停用" : "启用"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => deleteMutation.mutate(server)}
-                    >
-                      删除
-                    </Button>
-                  </div>
+          <CentralList layout={listLayout}>
+            {serversQuery.data?.map((server) => {
+              const serverActions = (
+                <div className="flex min-w-0 flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={listLayout === "grid" ? "px-2" : undefined}
+                    onClick={() => openForm(editForm(server))}
+                  >
+                    编辑
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={listLayout === "grid" ? "px-2" : undefined}
+                    onClick={() => enabledMutation.mutate(server)}
+                  >
+                    {server.enabled ? "停用" : "启用"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={listLayout === "grid" ? "px-2" : undefined}
+                    onClick={() => deleteMutation.mutate(server)}
+                  >
+                    删除
+                  </Button>
                 </div>
-                <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                  <div>
-                    <dt className="text-muted-foreground">入口</dt>
-                    <dd className="break-all">
-                      {server.command ?? server.url}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">敏感字段</dt>
-                    <dd>
-                      headers: {server.headerNames.join(", ") || "无"}；env:{" "}
-                      {server.envNames.join(", ") || "无"}
-                    </dd>
-                  </div>
-                </dl>
-                <pre className="bg-muted mt-3 overflow-auto rounded p-2 text-xs">
-                  {JSON.stringify(server.redactedExtra, null, 2)}
-                </pre>
-                <div className="mt-3 flex flex-wrap gap-2">
+              );
+              const platformActions = (
+                <div
+                  className={
+                    listLayout === "grid"
+                      ? "ml-auto flex shrink-0 items-center gap-2"
+                      : "flex items-center gap-2"
+                  }
+                  role="group"
+                  aria-label={`${server.name} 全局平台分配`}
+                >
                   {(["claude", "codex"] as const).map((tool) => (
-                    <Button
+                    <PlatformAssignmentButton
                       key={tool}
-                      size="sm"
-                      variant={
-                        server.globalTools.includes(tool)
-                          ? "default"
-                          : "outline"
-                      }
+                      tool={tool}
+                      assigned={server.globalTools.includes(tool)}
                       disabled={globalAssignmentMutation.isPending}
                       onClick={() =>
                         globalAssignmentMutation.mutate({ server, tool })
                       }
-                    >
-                      {tool === "claude" ? "Claude" : "Codex"} 全局
-                      {server.globalTools.includes(tool) ? "已分配" : "未分配"}
-                    </Button>
+                    />
                   ))}
                 </div>
-              </article>
-            ))}
-          </div>
+              );
+
+              return (
+                <CentralListCard key={server.id} layout={listLayout}>
+                  <CentralListCardBody layout={listLayout}>
+                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3
+                          className={
+                            listLayout === "grid"
+                              ? "truncate font-medium"
+                              : "font-medium"
+                          }
+                          title={server.name}
+                        >
+                          {server.name}
+                        </h3>
+                        <p className="text-muted-foreground mt-1 text-xs">
+                          {server.transport} ·{" "}
+                          {server.enabled ? "已启用" : "已停用"}
+                        </p>
+                      </div>
+                      {listLayout === "list" ? serverActions : null}
+                    </div>
+                    {listLayout === "list" ? (
+                      <>
+                        <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                          <div>
+                            <dt className="text-muted-foreground">入口</dt>
+                            <dd className="break-all">
+                              {server.command ?? server.url}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">敏感字段</dt>
+                            <dd>
+                              headers: {server.headerNames.join(", ") || "无"}
+                              ；env: {server.envNames.join(", ") || "无"}
+                            </dd>
+                          </div>
+                        </dl>
+                        <pre className="bg-muted mt-3 overflow-auto rounded p-2 text-xs">
+                          {JSON.stringify(server.redactedExtra, null, 2)}
+                        </pre>
+                      </>
+                    ) : (
+                      <div className="mt-4 min-w-0 space-y-3">
+                        <div>
+                          <p className="text-muted-foreground text-xs">
+                            入口摘要
+                          </p>
+                          <code
+                            className="mt-1 line-clamp-2 block text-xs break-all"
+                            title={server.command ?? server.url ?? undefined}
+                          >
+                            {server.command ?? server.url ?? "未配置"}
+                          </code>
+                        </div>
+                        <p className="text-muted-foreground text-xs leading-5">
+                          敏感字段{" "}
+                          {server.headerNames.length + server.envNames.length}{" "}
+                          项 · 扩展信息已脱敏
+                        </p>
+                      </div>
+                    )}
+                  </CentralListCardBody>
+                  <CentralListCardFooter
+                    layout={listLayout}
+                    label={`${server.name} 操作`}
+                  >
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      {listLayout === "grid" ? serverActions : null}
+                      {platformActions}
+                    </div>
+                  </CentralListCardFooter>
+                </CentralListCard>
+              );
+            })}
+          </CentralList>
         </section>
       </div>
 
