@@ -524,6 +524,101 @@ describe("SkillsPage", () => {
   });
 
   it.each([
+    ["Claude", "claude", false, []],
+    ["Codex", "codex", true, ["claude", "codex"]],
+  ] as const)(
+    "%s 全局分配更新中央配置并刷新列表与目标，不隐式预览或 Apply",
+    async (toolLabel, tool, assigned, updatedTools) => {
+      const updatedSkill = {
+        ...skill,
+        globalTools: [...updatedTools],
+        rowVersion: skill.rowVersion + 1,
+      };
+      vi.mocked(commands.listSkills)
+        .mockResolvedValueOnce({ status: "ok", data: [skill] })
+        .mockResolvedValue({ status: "ok", data: [updatedSkill] });
+      vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
+        status: "ok",
+        data: updatedSkill,
+      });
+      vi.mocked(commands.listGlobalSkillTargetStatuses)
+        .mockResolvedValueOnce({
+          status: "ok",
+          data: [
+            {
+              tool: "claude",
+              projectId: null,
+              targetPath: "/isolated/home/.claude/skills",
+              status: "missing",
+              diagnosticCode: null,
+            },
+            {
+              tool: "codex",
+              projectId: null,
+              targetPath: "/isolated/home/.agents/skills",
+              status: "missing",
+              diagnosticCode: null,
+            },
+          ],
+        })
+        .mockResolvedValue({
+          status: "ok",
+          data: [
+            {
+              tool,
+              projectId: null,
+              targetPath:
+                tool === "claude"
+                  ? "/isolated/home/.claude/skills"
+                  : "/isolated/home/.agents/skills",
+              status: "missing",
+              diagnosticCode: assigned
+                ? "SKILL_TARGET_INITIAL_SYNC_PENDING"
+                : null,
+            },
+          ],
+        });
+
+      renderPage();
+      expect(
+        await screen.findByText(
+          "全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。",
+        ),
+      ).toBeVisible();
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: `${toolLabel} 全局${assigned ? "未分配" : "已分配"}`,
+        }),
+      );
+
+      await waitFor(() =>
+        expect(commands.setGlobalSkillAssignment).toHaveBeenCalledWith({
+          tool,
+          skillId: skill.id,
+          assigned,
+          rowVersion: skill.rowVersion,
+        }),
+      );
+      expect(
+        await screen.findByText(
+          "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
+        ),
+      ).toBeVisible();
+      expect(
+        await screen.findByRole("button", {
+          name: `${toolLabel} 全局${assigned ? "已分配" : "未分配"}`,
+        }),
+      ).toBeVisible();
+      await waitFor(() => {
+        expect(commands.listSkills).toHaveBeenCalledTimes(2);
+        expect(commands.listGlobalSkillTargetStatuses).toHaveBeenCalledTimes(2);
+      });
+      expect(commands.previewSkillSync).not.toHaveBeenCalled();
+      expect(commands.applySkillPreview).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     [
       "CLAUDE_POLICY_UNKNOWN",
       "△ 策略状态待确认",
@@ -1101,6 +1196,60 @@ describe("全局 Skills 检测与复制导入", () => {
 });
 
 describe("Skills 首次目标状态展示", () => {
+  it("缺失与已有目录目标都精确展示已分配待同步，并仍需用户点击预览", async () => {
+    vi.mocked(commands.listGlobalSkillTargetStatuses).mockResolvedValueOnce({
+      status: "ok",
+      data: [
+        {
+          tool: "claude",
+          projectId: null,
+          targetPath: "/isolated/home/.claude/skills",
+          status: "external_non_owned_change",
+          diagnosticCode: "SKILL_TARGET_INITIAL_SYNC_PENDING",
+        },
+        {
+          tool: "codex",
+          projectId: null,
+          targetPath: "/isolated/home/.agents/skills",
+          status: "missing",
+          diagnosticCode: "SKILL_TARGET_INITIAL_SYNC_PENDING",
+        },
+      ],
+    });
+    renderPage();
+
+    expect(await screen.findAllByText("○ 已分配，待同步")).toHaveLength(2);
+    expect(
+      screen.getAllByText(
+        "分配已写入中央配置，但尚未写入工具目录；点击“预览全局同步”并确认应用。现有非受管内容会保留。",
+      ),
+    ).toHaveLength(2);
+    expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+
+    const section = screen
+      .getByRole("heading", { name: "全局目标状态" })
+      .closest("section");
+    const claudeCard = section
+      ? within(section).getByText("Claude").closest("article")
+      : null;
+    if (!claudeCard) throw new Error("未找到 Claude Skills 状态卡");
+    fireEvent.click(
+      within(claudeCard).getByRole("button", { name: "预览全局同步" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewSkillSync).toHaveBeenCalledExactlyOnceWith({
+        tool: "claude",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["external_non_owned_change", "EXTERNAL_NON_OWNED_CHANGE", "△ 非受管变更"],
     [
@@ -1196,6 +1345,28 @@ describe("Skills 首次目标状态展示", () => {
           globalTargetStatusPresentation(status, null),
         );
       }
+    },
+  );
+
+  const pendingMismatchedStatuses: SyncStatus[] = [
+    "in_sync",
+    "external_owned_change",
+    "parse_error",
+    "permission_denied",
+    "policy_blocked",
+    "untrusted",
+    "target_type_changed",
+    "failed",
+  ];
+  it.each(pendingMismatchedStatuses)(
+    "%s 与待同步诊断不匹配时保留既有展示和阻断",
+    (status) => {
+      expect(
+        globalTargetStatusPresentation(
+          status,
+          "SKILL_TARGET_INITIAL_SYNC_PENDING",
+        ),
+      ).toEqual(globalTargetStatusPresentation(status, null));
     },
   );
 

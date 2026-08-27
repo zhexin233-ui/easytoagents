@@ -110,7 +110,12 @@ export function SkillsPage() {
           rowVersion: skill.rowVersion,
         }),
       ),
-    onSuccess: invalidateSkills,
+    onSuccess: async () => {
+      setMessage(
+        "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
+      );
+      await invalidateSkills();
+    },
   });
 
   const projectAssignmentMutation = useMutation({
@@ -382,6 +387,9 @@ export function SkillsPage() {
                     </Button>
                   ))}
                 </div>
+                <p className="text-muted-foreground mt-2 text-xs leading-5">
+                  全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。
+                </p>
               </article>
             ))}
           </div>

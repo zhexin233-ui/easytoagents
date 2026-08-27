@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/skill-import-guidelines.md","reason":"核验首次状态新旧合同、导入和同步分离及内置排除"}
+{"file":".trellis/spec/backend/index.md","reason":"完整质量规范超过注入上限；按索引直接阅读显式扫描、Skills 和 Apply 三节，核验保护与真实验证"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验 status+code 映射、无自动 Apply、查询刷新及 MCP 回归"}
+{"file":".trellis/tasks/08-26-global-skills-sync-state/research/root-cause.md","reason":"复现本机 .DS_Store/缺失目录，区分隔离测试与真实桌面证据"}

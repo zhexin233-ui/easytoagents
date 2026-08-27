@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/skill-import-guidelines.md","reason":"导入不等于分配或同步、正式目标路径、首次诊断与安全边界"}
+{"file":".trellis/spec/backend/index.md","reason":"后端规范索引；完整质量规范超过注入上限，按需亲读其中显式扫描、Skills 和 Apply 三节"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"生成类型、查询刷新、明确反馈与无隐式原生写入"}
+{"file":".trellis/tasks/08-26-global-skills-sync-state/research/root-cause.md","reason":"本机证据、代码根因、已定位测试和验证边界"}

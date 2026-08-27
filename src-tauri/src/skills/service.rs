@@ -404,20 +404,29 @@ pub fn list_global_skill_target_statuses_with_policy_probe(
                 &existing,
             );
             let assessment = assess_drift(&descriptor, &baseline, &scan);
-            let initial_diagnostic = if assessment.status
-                == crate::domain::SyncStatus::ExternalNonOwnedChange
-                && baseline.full_hash.is_none()
+            let initial_diagnostic = if baseline.full_hash.is_none()
                 && baseline.managed_hash.is_none()
                 && existing.is_empty()
-                && desired.is_empty()
+                && assessment.can_merge
             {
-                match &scan {
-                    TargetScan::Observed(observation) => match observation.document() {
+                match (assessment.status, &scan, desired.is_empty()) {
+                    (crate::domain::SyncStatus::Missing, TargetScan::Missing, false) => {
+                        Some("SKILL_TARGET_INITIAL_SYNC_PENDING".to_owned())
+                    }
+                    (
+                        crate::domain::SyncStatus::ExternalNonOwnedChange,
+                        TargetScan::Observed(observation),
+                        desired_is_empty,
+                    ) => match observation.document() {
                         crate::adapters::ObservedDocument::SymlinkDirectory(entries) => Some(
-                            if entries.is_empty() {
-                                "SKILL_TARGET_INITIAL_EMPTY"
+                            if desired_is_empty {
+                                if entries.is_empty() {
+                                    "SKILL_TARGET_INITIAL_EMPTY"
+                                } else {
+                                    "SKILL_TARGET_INITIAL_UNMANAGED"
+                                }
                             } else {
-                                "SKILL_TARGET_INITIAL_UNMANAGED"
+                                "SKILL_TARGET_INITIAL_SYNC_PENDING"
                             }
                             .to_owned(),
                         ),
@@ -1181,7 +1190,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_skill_status_requires_empty_baseline_and_no_owned_or_desired_items() {
+    fn initial_skill_status_requires_empty_baseline_and_no_managed_items() {
         let mut fixture = Fixture::new();
         let target = fixture.home.join(".claude/skills");
         fs::create_dir_all(&target).unwrap();
@@ -1246,7 +1255,7 @@ mod tests {
             .connection()
             .execute_batch("PRAGMA ignore_check_constraints = OFF")
             .unwrap();
-        set_global_skill_assignment(
+        let assigned = set_global_skill_assignment(
             &mut fixture.database,
             &fixture.paths,
             &SetGlobalSkillAssignmentInput {
@@ -1257,15 +1266,235 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(!status(&fixture)
-            .diagnostic_code
-            .unwrap_or_default()
-            .starts_with("SKILL_TARGET_INITIAL_"));
+        assert_eq!(
+            status(&fixture).diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
+        );
+        fixture
+            .database
+            .connection()
+            .execute_batch("PRAGMA ignore_check_constraints = ON")
+            .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE managed_targets SET baseline_full_hash = ?1 WHERE id = ?2",
+                rusqlite::params!["c".repeat(64), target_id],
+            )
+            .unwrap();
+        let incomplete_baseline = status(&fixture);
+        assert_eq!(incomplete_baseline.status, SyncStatus::ExternalOwnedChange);
+        assert_eq!(
+            incomplete_baseline.diagnostic_code.as_deref(),
+            Some(crate::sync::ERROR_INCOMPLETE_BASELINE)
+        );
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE managed_targets SET baseline_full_hash = NULL WHERE id = ?1",
+                [&target_id],
+            )
+            .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute_batch("PRAGMA ignore_check_constraints = OFF")
+            .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO managed_items(
+                id, target_id, resource_kind, resource_id, external_key,
+                last_applied_item_hash
+             ) VALUES (?1, ?2, 'skill', ?3, ?4, ?5)",
+                rusqlite::params![
+                    Uuid::new_v4().to_string(),
+                    target_id,
+                    assigned.id,
+                    assigned.name,
+                    "b".repeat(64),
+                ],
+            )
+            .unwrap();
+        let managed_item_drift = status(&fixture);
+        assert_eq!(managed_item_drift.status, SyncStatus::ExternalOwnedChange);
+        assert_eq!(
+            managed_item_drift.diagnostic_code.as_deref(),
+            Some(crate::sync::ERROR_MANAGED_ITEM_BASELINE_MISMATCH)
+        );
+        fixture
+            .database
+            .connection()
+            .execute(
+                "DELETE FROM managed_items WHERE target_id = ?1",
+                [&target_id],
+            )
+            .unwrap();
         fs::write(Path::new(&skill.central_path).join("asset.txt"), "changed").unwrap();
         assert_eq!(status(&fixture).status, SyncStatus::ExternalOwnedChange);
         assert_eq!(
             status(&fixture).diagnostic_code.as_deref(),
             Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+    }
+
+    #[test]
+    fn first_global_sync_is_pending_then_preserves_existing_entries_for_both_tools() {
+        let mut fixture = Fixture::new();
+        let claude_target = fixture.home.join(".claude/skills");
+        fs::create_dir_all(claude_target.join("external-untouched")).unwrap();
+        fs::write(claude_target.join(".DS_Store"), "metadata").unwrap();
+        let skill = fixture.import("first-sync-skill");
+        let assigned = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Codex,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: assigned.row_version,
+            },
+        )
+        .unwrap();
+
+        let policy = fixture.allowed_policy();
+        let statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &policy,
+        )
+        .unwrap();
+        let claude = statuses
+            .iter()
+            .find(|status| status.tool == Tool::Claude)
+            .unwrap();
+        let codex = statuses
+            .iter()
+            .find(|status| status.tool == Tool::Codex)
+            .unwrap();
+        assert_eq!(claude.status, SyncStatus::ExternalNonOwnedChange);
+        assert_eq!(codex.status, SyncStatus::Missing);
+        assert_eq!(
+            claude.diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
+        );
+        assert_eq!(
+            codex.diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
+        );
+
+        let redactor = SecretRedactor::default();
+        let claude_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        let codex_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Codex,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        let previewed_statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &policy,
+        )
+        .unwrap();
+        assert!(previewed_statuses.iter().all(|status| {
+            status.diagnostic_code.as_deref() == Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
+        }));
+
+        for (tool, preview) in [(Tool::Claude, claude_preview), (Tool::Codex, codex_preview)] {
+            apply_skill_preview_with_policy_probe(
+                &Mutex::new(()),
+                &mut fixture.database,
+                &fixture.paths,
+                &fixture.environment,
+                &redactor,
+                &ApplySkillPreviewInput {
+                    preview_id: preview.preview_id,
+                    tool,
+                    project_id: None,
+                },
+                &policy,
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            fs::read(claude_target.join(".DS_Store")).unwrap(),
+            b"metadata"
+        );
+        assert!(claude_target.join("external-untouched").is_dir());
+        for link in [
+            claude_target.join("first-sync-skill"),
+            fixture.home.join(".agents/skills/first-sync-skill"),
+        ] {
+            assert!(link.is_symlink());
+            assert_eq!(
+                fs::canonicalize(link).unwrap(),
+                Path::new(&skill.central_path)
+            );
+        }
+        let applied_statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &policy,
+        )
+        .unwrap();
+        assert!(applied_statuses
+            .iter()
+            .all(|status| status.status == SyncStatus::InSync));
+
+        fs::create_dir(claude_target.join("post-apply-external")).unwrap();
+        let drifted_statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &policy,
+        )
+        .unwrap();
+        let drifted_claude = drifted_statuses
+            .iter()
+            .find(|status| status.tool == Tool::Claude)
+            .unwrap();
+        assert_eq!(drifted_claude.status, SyncStatus::ExternalNonOwnedChange);
+        assert_eq!(
+            drifted_claude.diagnostic_code.as_deref(),
+            Some(crate::sync::WARNING_EXTERNAL_NON_OWNED_CHANGE)
         );
     }
 
@@ -1688,6 +1917,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ordinary_status[0].status, SyncStatus::ExternalOwnedChange);
+        assert_ne!(
+            ordinary_status[0].diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
+        );
 
         fs::remove_dir(fixture.home.join(".claude/skills/fixture-skill")).unwrap();
         let outside = fixture.home.parent().unwrap().join("outside-skill");
@@ -1713,6 +1946,18 @@ mod tests {
         assert_eq!(
             fs::canonicalize(fixture.home.join(".claude/skills/fixture-skill")).unwrap(),
             outside
+        );
+        let unknown_status = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(unknown_status[0].status, SyncStatus::ExternalOwnedChange);
+        assert_ne!(
+            unknown_status[0].diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
         );
 
         fs::remove_file(fixture.home.join(".claude/skills/fixture-skill")).unwrap();
@@ -1749,6 +1994,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(broken_status[0].status, SyncStatus::ExternalOwnedChange);
+        assert_ne!(
+            broken_status[0].diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
+        );
 
         let blocked = fixture.blocked_policy();
         let policy_preview = preview_skill_sync_with_policy_probe(
@@ -1780,6 +2029,51 @@ mod tests {
         )
         .unwrap();
         assert_eq!(policy_status[0].status, SyncStatus::PolicyBlocked);
+        assert_eq!(
+            policy_status[0].diagnostic_code.as_deref(),
+            Some("CLAUDE_POLICY_BLOCKED")
+        );
+
+        fs::remove_file(fixture.home.join(".claude/skills/fixture-skill")).unwrap();
+        fs::remove_dir(fixture.home.join(".claude/skills")).unwrap();
+        fs::write(fixture.home.join(".claude/skills"), "wrong target type").unwrap();
+        let changed_type = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(changed_type[0].status, SyncStatus::TargetTypeChanged);
+        assert_eq!(
+            changed_type[0].diagnostic_code.as_deref(),
+            Some(crate::sync::ERROR_TARGET_TYPE_CHANGED)
+        );
+
+        fs::remove_file(fixture.home.join(".claude/skills")).unwrap();
+        fs::create_dir(fixture.home.join(".claude/skills")).unwrap();
+        fs::set_permissions(
+            fixture.home.join(".claude/skills"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        let permission_denied = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &allowed,
+        )
+        .unwrap();
+        fs::set_permissions(
+            fixture.home.join(".claude/skills"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        assert_eq!(permission_denied[0].status, SyncStatus::PermissionDenied);
+        assert_eq!(
+            permission_denied[0].diagnostic_code.as_deref(),
+            Some("TARGET_PERMISSION_DENIED")
+        );
     }
 
     #[test]

@@ -82,16 +82,19 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 
 默认不勾选，只有 importable 可选。确认同步上锁，禁关闭/取消/重扫/双提交。失败后必须新扫描；重扫清空旧选择和错误。成功仅失效 `skillKeys.all`，等待列表刷新再关闭并恢复焦点。若确认成功但列表刷新失败，明确显示已复制，不能再次提交旧令牌。不得隐式调用 assignment、同步 preview 或 Apply。
 
-Skills 初始诊断必须同时满足：通用状态 `external_non_owned_change`、两个 baseline hash 都空、existing managed items 和 desired assignments 都空、成功扫描为 `ObservedDocument::SymlinkDirectory`。
+未分配 Skills 的初始诊断必须同时满足：通用状态 `external_non_owned_change`、两个 baseline hash 都空、existing managed items 和 desired assignments 都空、成功扫描为 `ObservedDocument::SymlinkDirectory`。
 
-| 证据                                                  | 专用诊断 / 展示                                   |
-| ----------------------------------------------------- | ------------------------------------------------- |
-| 无目标                                                | 保留 missing / 待初始化                           |
-| 满足初始条件，目录无条目                              | `SKILL_TARGET_INITIAL_EMPTY` / 空目录，待配置     |
-| 满足初始条件，目录有条目                              | `SKILL_TARGET_INITIAL_UNMANAGED` / 未纳入同步管理 |
-| 完整/半基线、受管漂移、desired 已存在、损坏或策略错误 | 不覆盖原状态/诊断/阻断                            |
+首次已分配但尚未写入原生目标时，允许增加 `SKILL_TARGET_INITIAL_SYNC_PENDING`，但必须同时满足：desired assignments 非空且中央副本全部 Ready、两个 baseline hash 都空、existing managed items 为空、assessment `can_merge`，并且 scan/status 精确为 `Missing/missing` 或成功的 `ObservedDocument::SymlinkDirectory/external_non_owned_change`。只生成过预览的空 target 行仍可满足；不得改写通用 drift status 或 Apply 判断。
 
-仅生成过同步预览的 target 行不等于有 baseline。目录条目数不能当作合法技能数量。共享展示 helper 必须同时匹配 status 与专用诊断，不能更改通用漂移算法或 MCP 映射。
+| 证据                                                                    | 专用诊断 / 展示                                                 |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 无 desired、目标缺失                                                    | 保留 missing / 待初始化                                         |
+| 无 desired，满足未分配初始条件，目录无条目                              | `SKILL_TARGET_INITIAL_EMPTY` / 空目录，待配置                   |
+| 无 desired，满足未分配初始条件，目录有条目                              | `SKILL_TARGET_INITIAL_UNMANAGED` / 未纳入同步管理               |
+| 有 desired，满足首次待同步全部条件，目标缺失或有可合并的非受管目录内容 | `SKILL_TARGET_INITIAL_SYNC_PENDING` / 已分配，待预览并确认同步 |
+| 完整/半基线、existing managed items、受管漂移、损坏或策略/权限错误      | 不覆盖原状态/诊断/阻断                                          |
+
+仅生成过同步预览的 target 行不等于有 baseline。目录条目数不能当作合法技能数量，`.DS_Store` 等未知兄弟必须保留但不计为 Skill。共享展示 helper 必须同时匹配 status 与专用诊断；pending 只匹配 `missing` / `external_non_owned_change`，不能更改通用漂移算法、预览/Apply 冲突或 MCP 映射。分配成功反馈必须说明只更新中央意图、仍需显式预览和 Apply，且不得隐式调用二者。
 
 ## 4. 验证与错误矩阵
 
@@ -107,12 +110,16 @@ Skills 初始诊断必须同时满足：通用状态 `external_non_owned_change`
 | 活动 writer                              | `WRITE_IN_PROGRESS`，不消费令牌                                       |
 | 第二项复制、rename、SQL 或已知提交前失败 | 无部分中央记录，清理仅限可证明的本次副本                              |
 | 提交结果不确定                           | 核验整批，不能盲删已提交副本或猜测成功                                |
+| 有 desired、无 baseline/item、目标缺失或仅含不同名外部条目 | `SKILL_TARGET_INITIAL_SYNC_PENDING`，预览仍按真实 assessment 生成 |
+| 半基线、managed item 漂移、同名外部项、中央损坏或策略/权限错误 | 保留真实阻断；不能显示首次待同步                                |
 
 ## 5. Good / Base / Bad 示例
 
 - Good：只有 `.codex/skills` 中一个管理器链接，检测出用户技能；勾选后中央新增一项，原链接/文件/权限及所有分配、管理基线不变。
 - Base：只有 `.system` 或候选均已导入，显示原因，没有可确认令牌，不复制、不分配。
 - Bad：Claude 链接绕到 Codex `.system`、来源在确认中变化或第二项 SQL 失败，不能导入内置或留下可见半批次。
+- Good：中央 Skill 已分配、Claude 目录只有 `.DS_Store`、Codex 目标缺失时，两卡片显示“已分配，待同步”；用户显式 Preview/Apply 后创建两个受管链接并保留 `.DS_Store`。
+- Bad：仅看到 desired assignment 就覆盖半基线、同名外部目录或中央副本损坏的真实诊断，或分配成功后自动 Apply。
 
 ## 6. 必需测试与断言
 
@@ -123,8 +130,9 @@ Skills 初始诊断必须同时满足：通用状态 `external_non_owned_change`
 - 确认回归：选择子集、空/重复/未知 ID、来源/中央 stale、活动 writer、两个独立 DB 连接竞争、第二项故障、提交不确定与回滚；原文件 inode/权限/链接文本及全部 assignment/managed/sync 表不变。
 - library：排他 rename 不覆盖既有目录；清理保留被替换/更改的目录；原单目录根链接仍拒绝。
 - DB：v5→v6 保留已有数据，重复打开幂等，绑定生成检查通过。
-- service + UI：初始/空/仅元文件/无基线 target 行/半基线/desired/真实漂移矩阵，MCP 回归不变。
+- service + UI：初始/空/仅元文件/缺失目标/无基线 target 行/半基线/desired/managed item 漂移/同名普通目录与外部或断裂链接/中央损坏/策略权限类型错误/完整基线后真实非受管变化矩阵；首次双工具 Apply 后 InSync 且原兄弟保留，MCP 回归不变。
 - `skills-page.test.tsx`：选择和精确 payload、局部失败、失效重扫、晚到响应、双提交与关闭锁、Tab/Escape/焦点、复制后刷新失败，断言没有 assignment/Apply。
+- 分配 UI：断言中央列表与目标状态一起刷新，成功文案说明仍需显式同步；仅 `missing` 或 `external_non_owned_change` 与 pending 诊断组合覆盖徽标，其它组合不覆盖；分配/取消分配均不调用 Preview/Apply。
 - 浏览器 fixture 只证明实际组件的交互/布局；不能替代真实 Tauri 或真实安装验收。真实桌面未跑必须明确记载。
 
 ## 7. 错误与正确做法
@@ -148,3 +156,26 @@ let evidence = library::resolve_skill_source_excluding(root, entry, &excluded)?;
 错误：把“复制成功”当成“已同步”，给来源工具自动 assignment 或刷新受管 baseline。
 
 正确：只提交中央 Skill 记录和导入令牌；前端提示原安装未变、尚未分配或同步。
+
+错误：为避免“非受管变更”看起来像故障，只要 `desired` 非空就把目标显示为待同步。
+
+```rust
+if !desired.is_empty() {
+    diagnostic = Some("SKILL_TARGET_INITIAL_SYNC_PENDING");
+}
+```
+
+正确：复用完整的中央校验、baseline、managed items、scan 与 assessment 证据，只为可安全合并的首次目标增加展示诊断；通用状态与 Apply 安全边界不变。
+
+```rust
+let pending = baseline.full_hash.is_none()
+    && baseline.managed_hash.is_none()
+    && existing.is_empty()
+    && !desired.is_empty()
+    && assessment.can_merge
+    && matches!(
+        (assessment.status, &scan),
+        (SyncStatus::Missing, TargetScan::Missing)
+            | (SyncStatus::ExternalNonOwnedChange, TargetScan::Observed(_))
+    );
+```

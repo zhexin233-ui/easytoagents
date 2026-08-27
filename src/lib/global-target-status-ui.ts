@@ -19,6 +19,18 @@ export function globalTargetStatusPresentation(
   diagnosticCode: string | null,
 ): GlobalTargetStatusPresentation {
   const previewBlocked = globalPreviewBlockingStatuses.has(status);
+  if (
+    diagnosticCode === "SKILL_TARGET_INITIAL_SYNC_PENDING" &&
+    (status === "missing" || status === "external_non_owned_change")
+  ) {
+    return {
+      label: "○ 已分配，待同步",
+      description:
+        "分配已写入中央配置，但尚未写入工具目录；点击“预览全局同步”并确认应用。现有非受管内容会保留。",
+      tone: "warning",
+      previewBlocked,
+    };
+  }
   if (status === "external_non_owned_change") {
     if (diagnosticCode === "SKILL_TARGET_INITIAL_EMPTY") {
       return {
