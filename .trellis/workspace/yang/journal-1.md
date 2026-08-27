@@ -215,3 +215,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: 修复全局 Skills 首次分配与同步状态
+
+**Date**: 2026-08-27
+**Task**: 修复全局 Skills 首次分配与同步状态
+**Branch**: `main`
+
+### Summary
+
+查明导入与分配未执行原生同步的根因；新增已分配待同步诊断和操作提示，补齐冲突与漂移回归；全量检查通过，并通过真实 Debug 应用为 Claude/Codex 同步 smart-search-cli，核验链接、baseline 与 managed items 均已同步。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4f4f67c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
