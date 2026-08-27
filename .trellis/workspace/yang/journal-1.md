@@ -236,3 +236,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: 中央列表三列布局与官方平台图标
+
+**Date**: 2026-08-27
+**Task**: 中央列表三列布局与官方平台图标
+**Branch**: `main`
+
+### Summary
+
+为 MCP 与 Skills 中央列表增加单列/三列切换和紧凑卡片底栏，使用可追溯的 Claude/Codex 官方资源展示全局分配状态，并完成完整检查与桌面应用视觉验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bf7bac9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
