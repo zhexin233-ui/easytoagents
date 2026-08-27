@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"前端规范索引与适用范围"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核验共享组件、样式与无障碍语义"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验 MCP/Skills 既有行为与测试覆盖"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"核验重复实现与共享边界"}
+{"file":".trellis/tasks/08-27-central-list-grid-platform-icons/research/official-brand-assets.md","reason":"核验品牌资产来源、未手绘替代及参考布局契约"}

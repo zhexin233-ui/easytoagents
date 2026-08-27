@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/index.md","reason":"前端规范索引与适用范围"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"共享 React 组件、Tailwind 样式和无障碍按钮规范"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"布局切换应使用页面级临时 UI 状态"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"MCP/Skills 页面行为、测试与回归约束"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"两页共享平台图标与布局切换实现，避免重复"}
+{"file":".trellis/tasks/08-27-central-list-grid-platform-icons/research/official-brand-assets.md","reason":"官方 Claude/Codex 图标来源、哈希与参考图布局解释"}
