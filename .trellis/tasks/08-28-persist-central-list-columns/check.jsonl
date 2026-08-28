@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"确认质量核验覆盖本任务相关前端规范。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验证 MCP 与 Skills 相关测试、可访问语义及既有业务行为无回归。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核对共享中央列表控件、响应式布局和页面职责保持一致，并识别需同步更新的旧 transient 规则。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"核对持久化范围仅限非敏感 UI 偏好，异常回退且未引入不必要的全局状态。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"核对持久化值只接受 list/grid，所有未知字符串均安全回退。"}

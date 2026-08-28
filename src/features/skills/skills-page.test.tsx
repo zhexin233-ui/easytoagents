@@ -20,6 +20,7 @@ import {
   type SyncStatus,
   type Tool,
 } from "@/bindings/commands";
+import { centralListLayoutStorageKeys } from "@/components/use-persisted-central-list-layout";
 import { SkillsPage } from "@/features/skills/skills-page";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 
@@ -208,6 +209,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   vi.mocked(commands.discoverSkillImport).mockImplementation((tool) =>
     Promise.resolve({ status: "ok", data: nativeImport(tool) }),
   );
@@ -349,6 +351,50 @@ describe("SkillsPage", () => {
     expect(
       within(footer).getByLabelText(`${skill.name} 全局平台分配`),
     ).toHaveClass("ml-auto");
+  });
+
+  it("独立保存布局并在重新挂载后恢复，非法值回退为单列", () => {
+    localStorage.setItem(centralListLayoutStorageKeys.mcp, "grid");
+
+    const firstRender = renderPage();
+    const listButton = screen.getByRole("button", { name: "单列显示" });
+    const gridButton = screen.getByRole("button", {
+      name: "三列网格显示",
+    });
+    expect(listButton).toHaveAttribute("aria-pressed", "true");
+    expect(gridButton).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(gridButton);
+    expect(localStorage.getItem(centralListLayoutStorageKeys.skills)).toBe(
+      "grid",
+    );
+    expect(localStorage.getItem(centralListLayoutStorageKeys.mcp)).toBe("grid");
+    firstRender.unmount();
+
+    const secondRender = renderPage();
+    expect(
+      screen.getByRole("button", { name: "三列网格显示" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "单列显示" }));
+    expect(localStorage.getItem(centralListLayoutStorageKeys.skills)).toBe(
+      "list",
+    );
+    expect(localStorage.getItem(centralListLayoutStorageKeys.mcp)).toBe("grid");
+    secondRender.unmount();
+
+    const thirdRender = renderPage();
+    expect(screen.getByRole("button", { name: "单列显示" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    thirdRender.unmount();
+
+    localStorage.setItem(centralListLayoutStorageKeys.skills, "invalid-layout");
+    renderPage();
+    expect(screen.getByRole("button", { name: "单列显示" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("无效 Skill 的图标按钮仅允许取消既有分配", async () => {

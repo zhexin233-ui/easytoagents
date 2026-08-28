@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"确认 React/Tauri 前端规范范围与本任务所需细则。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"沿用项目对本地 UI 状态和窄范围 localStorage 持久化的约束，不引入全局 store。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"若抽取共享布局偏好 Hook，保持单一生命周期职责、最小类型接口和完整副作用处理。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"遵守 MCP/Skills 共享中央列表控制约定；其中“布局为临时状态”的旧规则已被本任务 PRD 明确替代，完成后需同步更新规范。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"对 localStorage 的字符串边界做显式联合类型收窄，避免断言和弱化类型。"}

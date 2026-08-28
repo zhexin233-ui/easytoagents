@@ -20,12 +20,12 @@ import {
   CentralListCardBody,
   CentralListCardFooter,
   CentralListLayoutToggle,
-  type CentralListLayout,
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import {
   globalMcpStatusesQueryOptions,
   mcpKeys,
@@ -87,7 +87,7 @@ export function McpPage() {
   const saveInFlight = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [listLayout, setListLayout] = useState<CentralListLayout>("list");
+  const [listLayout, setListLayout] = usePersistedCentralListLayout("mcp");
   const [projectId, setProjectId] = useState("");
   const [projectTool, setProjectTool] = useState<Tool>("claude");
   const [openPreview, setOpenPreview] = useState<OpenMcpPreview | null>(null);

@@ -20,9 +20,9 @@ application-state Context.
   page or component.
 - **Server state:** profiles, projects, MCP servers, Skills, status, previews,
   and dashboard data use TanStack Query and generated Tauri commands.
-- **Persistent draft state:** onboarding choices are the existing narrow use of
-  `localStorage`; tests clear it explicitly. Do not persist secrets or native
-  configuration payloads there.
+- **Persistent browser state:** onboarding choices and page-scoped MCP/Skills
+  layout preferences are narrow uses of `localStorage`; tests clear it
+  explicitly. Do not persist secrets or native configuration payloads there.
 - **URL state:** navigation and `projectId` route identity use React Router.
 - **Derived state:** compute flags such as a blocked preview from current typed
   data during render; do not mirror them into another state variable.

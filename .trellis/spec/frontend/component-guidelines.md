@@ -91,7 +91,7 @@ semantics in these components rather than duplicating Tailwind classes or SVGs
 inside feature pages.
 
 ```tsx
-const [layout, setLayout] = useState<CentralListLayout>("list");
+const [layout, setLayout] = usePersistedCentralListLayout("mcp");
 
 <CentralListLayoutToggle value={layout} onChange={setLayout} />;
 <CentralList layout={layout}>{items}</CentralList>;
@@ -103,11 +103,66 @@ const [layout, setLayout] = useState<CentralListLayout>("list");
 />;
 ```
 
-Layout choice is transient page state: list remains the default, while grid
-uses one column by default, two at `md`, and three at `lg` so a normal desktop
-window actually presents three cards per row. Grid cards use equal-height
-bodies plus a separate border-top action footer, and children keep `min-w-0`
-to contain long paths or previews.
+### Scenario: Persisted central-list layout
+
+#### 1. Scope / Trigger
+
+- Trigger: a page uses the shared central-list layout toggle and must preserve
+  the user's list/grid choice after route unmount and remount.
+
+#### 2. Signatures
+
+- `usePersistedCentralListLayout(preference: "mcp" | "skills")` returns a
+  readonly `[CentralListLayout, (layout: CentralListLayout) => void]` tuple.
+- `centralListLayoutStorageKeys` owns the separate versioned MCP and Skills
+  keys; callers must not duplicate their string values.
+
+#### 3. Contracts
+
+- Persist only `"list"` or `"grid"`; never persist central-list data, paths,
+  secrets, or native configuration payloads with this hook.
+- MCP and Skills preferences are independent. A setter updates React state even
+  when `localStorage` cannot be written.
+- Missing, invalid, or unreadable storage falls back to `"list"`.
+
+#### 4. Validation & Error Matrix
+
+| Storage condition | Required behavior |
+| --- | --- |
+| Stored `"list"` or `"grid"` | Restore that layout on mount |
+| Missing or any other string | Render list layout |
+| `getItem` throws | Render list layout without failing the page |
+| `setItem` throws | Keep the newly selected layout for the current mount |
+
+#### 5. Good/Base/Bad Cases
+
+- Good: select grid in MCP, visit another route, then return to the MCP grid
+  while Skills keeps its own selection.
+- Base: first visit with no stored preference renders list.
+- Bad: cast an arbitrary stored string to `CentralListLayout`, share one key
+  between both pages, or let a storage exception break the toggle.
+
+#### 6. Tests Required
+
+- Assert each page writes its own key, remounts with the stored layout, and does
+  not overwrite the other page's key.
+- Assert missing/invalid values and `getItem` failures render list; assert a
+  `setItem` failure still updates `aria-pressed` for the current page.
+
+#### 7. Wrong vs Correct
+
+```tsx
+// Wrong: route unmount loses the choice.
+const [layout, setLayout] = useState<CentralListLayout>("list");
+
+// Correct: page-scoped, validated browser preference.
+const [layout, setLayout] = usePersistedCentralListLayout("mcp");
+```
+
+Grid uses one column by default, two at `md`, and three at `lg` so a normal
+desktop window actually presents three cards per row. Grid cards use
+equal-height bodies plus a separate border-top action footer, and children keep
+`min-w-0` to contain long paths or previews.
 
 Claude and Codex assignment controls must use unchanged, locally bundled
 official brand assets with source and checksum provenance recorded beside the

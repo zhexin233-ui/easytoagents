@@ -18,6 +18,7 @@ import {
   type PreviewPlan,
   type Tool,
 } from "@/bindings/commands";
+import { centralListLayoutStorageKeys } from "@/components/use-persisted-central-list-layout";
 import { McpPage } from "@/features/mcp/mcp-page";
 
 vi.mock("@/bindings/commands", () => ({
@@ -197,6 +198,7 @@ async function globalButton(name: string, tool: Tool = "claude") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   vi.mocked(commands.listMcpServers).mockResolvedValue({
     status: "ok",
     data: [],
@@ -339,6 +341,76 @@ describe("McpPage", () => {
     expect(
       within(footer).getByLabelText(`${server.name} 全局平台分配`),
     ).toHaveClass("ml-auto");
+  });
+
+  it("独立保存布局并在重新挂载后恢复，非法值回退为单列", () => {
+    localStorage.setItem(centralListLayoutStorageKeys.skills, "grid");
+
+    const firstRender = renderPage();
+    const listButton = screen.getByRole("button", { name: "单列显示" });
+    const gridButton = screen.getByRole("button", {
+      name: "三列网格显示",
+    });
+    expect(listButton).toHaveAttribute("aria-pressed", "true");
+    expect(gridButton).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(gridButton);
+    expect(localStorage.getItem(centralListLayoutStorageKeys.mcp)).toBe("grid");
+    expect(localStorage.getItem(centralListLayoutStorageKeys.skills)).toBe(
+      "grid",
+    );
+    firstRender.unmount();
+
+    const secondRender = renderPage();
+    expect(
+      screen.getByRole("button", { name: "三列网格显示" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "单列显示" }));
+    expect(localStorage.getItem(centralListLayoutStorageKeys.mcp)).toBe("list");
+    expect(localStorage.getItem(centralListLayoutStorageKeys.skills)).toBe(
+      "grid",
+    );
+    secondRender.unmount();
+
+    const thirdRender = renderPage();
+    expect(screen.getByRole("button", { name: "单列显示" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    thirdRender.unmount();
+
+    localStorage.setItem(centralListLayoutStorageKeys.mcp, "invalid-layout");
+    renderPage();
+    expect(screen.getByRole("button", { name: "单列显示" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("存储读写失败时保持页面可用", () => {
+    const getItemSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new Error("storage read blocked");
+      });
+
+    renderPage();
+    expect(screen.getByRole("button", { name: "单列显示" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    getItemSpy.mockRestore();
+
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("storage write blocked");
+      });
+    fireEvent.click(screen.getByRole("button", { name: "三列网格显示" }));
+    expect(
+      screen.getByRole("button", { name: "三列网格显示" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    setItemSpy.mockRestore();
   });
 
   it("平台图标暴露分配状态并保留原全局分配 payload", async () => {

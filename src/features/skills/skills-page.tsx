@@ -18,12 +18,12 @@ import {
   CentralListCardBody,
   CentralListCardFooter,
   CentralListLayoutToggle,
-  type CentralListLayout,
 } from "@/components/central-list-layout";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
@@ -50,7 +50,7 @@ export function SkillsPage() {
   const [sourcePath, setSourcePath] = useState("");
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [listLayout, setListLayout] = useState<CentralListLayout>("list");
+  const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
   const [projectId, setProjectId] = useState("");
   const [projectTool, setProjectTool] = useState<Tool>("claude");
   const [contentPreview, setContentPreview] =
