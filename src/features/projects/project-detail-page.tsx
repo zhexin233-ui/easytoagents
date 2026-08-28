@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
@@ -11,6 +11,8 @@ import {
   type SkillProjectOptionDto,
   type Tool,
 } from "@/bindings/commands";
+import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
+import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
@@ -19,6 +21,7 @@ import { mcpKeys, mcpProjectOptionsQueryOptions } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { projectKeys, projectQueryOptions } from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
+import { cn } from "@/lib/utils";
 
 interface OpenProjectPreview {
   plan: PreviewPlan;
@@ -33,6 +36,8 @@ export function ProjectDetailPage() {
   const queryClient = useQueryClient();
   const projectQuery = useQuery(projectQueryOptions(projectId));
   const [resourceView, setResourceView] = useState<ProjectResourceView>("mcp");
+  const [toolView, setToolView] = useState<Tool>("claude");
+  const viewKey = projectViewKey(projectId, toolView, resourceView);
   const [openPreview, setOpenPreview] = useState<OpenProjectPreview | null>(
     null,
   );
@@ -57,8 +62,6 @@ export function ProjectDetailPage() {
       );
     },
     onSuccess: async () => {
-      setOpenPreview(null);
-      setMessage("项目原生配置已通过持久化预览应用并完成写后验证。");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
@@ -66,6 +69,21 @@ export function ProjectDetailPage() {
       ]);
     },
   });
+
+  const changeResourceView = (nextView: ProjectResourceView) => {
+    if (nextView === resourceView) return;
+    setResourceView(nextView);
+    setOpenPreview(null);
+    setMessage(null);
+    applyMutation.reset();
+  };
+  const changeToolView = (nextTool: Tool) => {
+    if (nextTool === toolView) return;
+    setToolView(nextTool);
+    setOpenPreview(null);
+    setMessage(null);
+    applyMutation.reset();
+  };
 
   if (projectQuery.isPending) {
     return (
@@ -165,65 +183,82 @@ export function ProjectDetailPage() {
               项目资源管理
             </h2>
             <p className="text-muted-foreground mt-1 text-sm">
-              选择当前要为 Claude 与 Codex 管理的资源类型。
+              分别选择资源类型与目标平台，当前只展示一个管理组合。
             </p>
           </div>
-          <div
-            className="flex items-center gap-2"
-            role="group"
-            aria-label="项目资源管理视图"
-          >
-            <Button
-              type="button"
-              size="sm"
-              variant={resourceView === "mcp" ? "default" : "outline"}
-              aria-label="管理项目 MCP"
-              aria-pressed={resourceView === "mcp"}
-              onClick={() => setResourceView("mcp")}
+          <div className="flex flex-wrap items-center gap-3">
+            <div
+              className="flex items-center gap-2"
+              role="group"
+              aria-label="项目资源管理视图"
             >
-              MCP
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={resourceView === "skill" ? "default" : "outline"}
-              aria-label="管理项目 Skill"
-              aria-pressed={resourceView === "skill"}
-              onClick={() => setResourceView("skill")}
+              <Button
+                type="button"
+                size="sm"
+                variant={resourceView === "mcp" ? "default" : "outline"}
+                aria-label="管理项目 MCP"
+                aria-pressed={resourceView === "mcp"}
+                onClick={() => changeResourceView("mcp")}
+              >
+                MCP
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={resourceView === "skill" ? "default" : "outline"}
+                aria-label="管理项目 Skill"
+                aria-pressed={resourceView === "skill"}
+                onClick={() => changeResourceView("skill")}
+              >
+                Skill
+              </Button>
+            </div>
+            <div
+              className="flex items-center gap-2"
+              role="group"
+              aria-label="项目平台管理视图"
             >
-              Skill
-            </Button>
+              <ProjectToolViewButton
+                tool="claude"
+                selected={toolView === "claude"}
+                onClick={() => changeToolView("claude")}
+              />
+              <ProjectToolViewButton
+                tool="codex"
+                selected={toolView === "codex"}
+                onClick={() => changeToolView("codex")}
+              />
+            </div>
           </div>
         </div>
       </section>
 
-      <div className="mx-auto mt-6 grid max-w-6xl gap-6 xl:grid-cols-2">
-        {(["claude", "codex"] as const).map((tool) => (
-          <section key={tool} className="space-y-5">
-            <h2 className="text-xl font-semibold">
-              {toolLabel(tool)} 项目追加
-            </h2>
-            {resourceView === "mcp" ? (
-              <ProjectMcpAssignments
-                project={project}
-                tool={tool}
-                onPreview={(plan) =>
-                  setOpenPreview({ plan, tool, artifactKind: "mcp" })
-                }
-                onMessage={setMessage}
-              />
-            ) : (
-              <ProjectSkillAssignments
-                project={project}
-                tool={tool}
-                onPreview={(plan) =>
-                  setOpenPreview({ plan, tool, artifactKind: "skill" })
-                }
-                onMessage={setMessage}
-              />
-            )}
-          </section>
-        ))}
+      <div className="mx-auto mt-6 max-w-6xl">
+        <section key={viewKey} className="space-y-5">
+          <h2 className="text-xl font-semibold">
+            {toolLabel(toolView)} {resourceView === "mcp" ? "MCP" : "Skill"}{" "}
+            项目追加
+          </h2>
+          {resourceView === "mcp" ? (
+            <ProjectMcpAssignments
+              project={project}
+              tool={toolView}
+              onPreview={(plan) =>
+                setOpenPreview({ plan, tool: toolView, artifactKind: "mcp" })
+              }
+              onMessage={setMessage}
+            />
+          ) : (
+            <ProjectSkillAssignments
+              project={project}
+              tool={toolView}
+              onPreview={(plan) =>
+                setOpenPreview({ plan, tool: toolView, artifactKind: "skill" })
+              }
+              onMessage={setMessage}
+            />
+          )}
+        </section>
       </div>
 
       <ChangePreviewDialog
@@ -233,10 +268,67 @@ export function ProjectDetailPage() {
         applying={applyMutation.isPending}
         onClose={() => setOpenPreview(null)}
         onApply={() => {
-          if (openPreview) applyMutation.mutate(openPreview);
+          if (!openPreview) return;
+          applyMutation.mutate(openPreview, {
+            onSuccess: () => {
+              setOpenPreview(null);
+              setMessage("项目原生配置已通过持久化预览应用并完成写后验证。");
+            },
+          });
         }}
       />
     </main>
+  );
+}
+
+function projectViewKey(
+  projectId: string,
+  tool: Tool,
+  resourceView: ProjectResourceView,
+) {
+  return `${projectId}:${tool}:${resourceView}`;
+}
+
+interface ProjectToolViewButtonProps {
+  tool: Tool;
+  selected: boolean;
+  onClick: () => void;
+}
+
+function ProjectToolViewButton({
+  tool,
+  selected,
+  onClick,
+}: ProjectToolViewButtonProps) {
+  const label = `管理 ${toolLabel(tool)} 项目资源`;
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      className={cn(
+        "size-8 p-0 shadow-none",
+        selected
+          ? "border-slate-300 bg-slate-50 shadow-sm"
+          : "border-slate-200 bg-transparent",
+      )}
+      aria-label={label}
+      aria-pressed={selected}
+      title={label}
+      onClick={onClick}
+    >
+      <img
+        src={tool === "claude" ? claudeIconUrl : codexIconUrl}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className={cn(
+          "size-5 object-contain transition-[opacity,filter]",
+          selected ? "opacity-100" : "opacity-25 grayscale",
+        )}
+      />
+    </Button>
   );
 }
 
@@ -252,6 +344,7 @@ function ProjectMcpAssignments({
   onMessage: (message: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const viewActive = useViewActive();
   const optionsQuery = useQuery(
     mcpProjectOptionsQueryOptions(project.id, tool),
   );
@@ -275,7 +368,9 @@ function ProjectMcpAssignments({
         }),
       ),
     onSuccess: async () => {
-      onMessage("MCP 项目追加意图已更新；原生配置尚未写入。");
+      if (viewActive.current) {
+        onMessage("MCP 项目追加意图已更新；原生配置尚未写入。");
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
@@ -293,6 +388,7 @@ function ProjectMcpAssignments({
         }),
       ),
     onSuccess: (preview) => {
+      if (!viewActive.current) return;
       if (preview.targets.length === 0) {
         onMessage("该项目只有全局继承 MCP，不需要创建项目配置文件。");
       } else {
@@ -360,6 +456,7 @@ function ProjectSkillAssignments({
   onMessage: (message: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const viewActive = useViewActive();
   const optionsQuery = useQuery(
     skillProjectOptionsQueryOptions(project.id, tool),
   );
@@ -383,7 +480,9 @@ function ProjectSkillAssignments({
         }),
       ),
     onSuccess: async () => {
-      onMessage("Skill 项目追加意图已更新；项目链接尚未写入。");
+      if (viewActive.current) {
+        onMessage("Skill 项目追加意图已更新；项目链接尚未写入。");
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
@@ -401,6 +500,7 @@ function ProjectSkillAssignments({
         }),
       ),
     onSuccess: (preview) => {
+      if (!viewActive.current) return;
       if (preview.targets.length === 0) {
         onMessage("该项目只有全局继承 Skills，不需要创建项目链接目录。");
       } else {
@@ -454,6 +554,19 @@ function ProjectSkillAssignments({
       ))}
     </AssignmentCard>
   );
+}
+
+function useViewActive() {
+  const active = useRef(true);
+
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
+
+  return active;
 }
 
 function AssignmentCard({

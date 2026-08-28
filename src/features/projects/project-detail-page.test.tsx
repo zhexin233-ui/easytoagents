@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -18,6 +19,8 @@ import {
   type ProjectDto,
   type SkillProjectOptionDto,
 } from "@/bindings/commands";
+import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
+import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import { ProjectDetailPage } from "@/features/projects/project-detail-page";
 
 vi.mock("@/bindings/commands", () => ({
@@ -237,6 +240,20 @@ function renderPage() {
   return { ...rendered, client };
 }
 
+function createDeferred<T>() {
+  let promiseResolve: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    promiseResolve = resolve;
+  });
+  return {
+    promise,
+    resolve(value: T) {
+      if (!promiseResolve) throw new Error("延迟 Promise 尚未初始化");
+      promiseResolve(value);
+    },
+  };
+}
+
 describe("ProjectDetailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -318,70 +335,149 @@ describe("ProjectDetailPage", () => {
 
   afterEach(cleanup);
 
-  it("默认只展示 MCP，并可在 MCP 与 Skill 管理视图间双向切换", async () => {
+  it("默认选择 Claude MCP，并可通过两组按钮切换四种管理组合", async () => {
     renderPage();
 
-    const group = await screen.findByRole("group", {
+    const resourceGroup = await screen.findByRole("group", {
       name: "项目资源管理视图",
     });
-    const mcpButton = within(group).getByRole("button", {
+    const mcpButton = within(resourceGroup).getByRole("button", {
       name: "管理项目 MCP",
     });
-    const skillButton = within(group).getByRole("button", {
+    const skillButton = within(resourceGroup).getByRole("button", {
       name: "管理项目 Skill",
+    });
+    const platformGroup = screen.getByRole("group", {
+      name: "项目平台管理视图",
+    });
+    const claudeButton = within(platformGroup).getByRole("button", {
+      name: "管理 Claude 项目资源",
+    });
+    const codexButton = within(platformGroup).getByRole("button", {
+      name: "管理 Codex 项目资源",
     });
     expect(mcpButton).toHaveAttribute("aria-pressed", "true");
     expect(skillButton).toHaveAttribute("aria-pressed", "false");
-    expect(await screen.findAllByRole("heading", { name: "MCP" })).toHaveLength(
-      2,
+    expect(claudeButton).toHaveAttribute("aria-pressed", "true");
+    expect(claudeButton).toHaveAttribute("title", "管理 Claude 项目资源");
+    expect(codexButton).toHaveAttribute("aria-pressed", "false");
+    expect(codexButton).toHaveAttribute("title", "管理 Codex 项目资源");
+    expect(claudeButton.querySelector("img")).toHaveAttribute(
+      "src",
+      claudeIconUrl,
     );
+    expect(codexButton.querySelector("img")).toHaveAttribute(
+      "src",
+      codexIconUrl,
+    );
+    expect(claudeButton.querySelector("img")).toHaveAttribute("alt", "");
+    expect(claudeButton.querySelector("img")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(codexButton.querySelector("img")).toHaveAttribute("alt", "");
+    expect(codexButton.querySelector("img")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(claudeButton.querySelector("svg")).toBeNull();
+    expect(codexButton.querySelector("svg")).toBeNull();
+    expect(claudeButton.firstElementChild).toHaveClass("opacity-100");
+    expect(codexButton.firstElementChild).toHaveClass(
+      "opacity-25",
+      "grayscale",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Claude MCP 项目追加" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: /Codex .*项目追加/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Skills" }),
     ).not.toBeInTheDocument();
     await waitFor(() =>
-      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(2),
+      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(1),
     );
+    expect(commands.listMcpProjectOptions).toHaveBeenLastCalledWith({
+      projectId: project.id,
+      tool: "claude",
+    });
     expect(commands.listSkillProjectOptions).not.toHaveBeenCalled();
 
     fireEvent.click(skillButton);
     expect(mcpButton).toHaveAttribute("aria-pressed", "false");
     expect(skillButton).toHaveAttribute("aria-pressed", "true");
     expect(
-      await screen.findAllByRole("heading", { name: "Skills" }),
-    ).toHaveLength(2);
+      await screen.findByRole("heading", { name: "Claude Skill 项目追加" }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Skills" })).toBeVisible();
     expect(
       screen.queryByRole("heading", { name: "MCP" }),
     ).not.toBeInTheDocument();
     await waitFor(() =>
+      expect(commands.listSkillProjectOptions).toHaveBeenCalledTimes(1),
+    );
+    expect(commands.listSkillProjectOptions).toHaveBeenLastCalledWith({
+      projectId: project.id,
+      tool: "claude",
+    });
+
+    fireEvent.click(codexButton);
+    expect(claudeButton).toHaveAttribute("aria-pressed", "false");
+    expect(codexButton).toHaveAttribute("aria-pressed", "true");
+    expect(
+      await screen.findByRole("heading", { name: "Codex Skill 项目追加" }),
+    ).toBeVisible();
+    await waitFor(() =>
       expect(commands.listSkillProjectOptions).toHaveBeenCalledTimes(2),
     );
+    expect(commands.listSkillProjectOptions).toHaveBeenLastCalledWith({
+      projectId: project.id,
+      tool: "codex",
+    });
 
     fireEvent.click(mcpButton);
     expect(mcpButton).toHaveAttribute("aria-pressed", "true");
     expect(skillButton).toHaveAttribute("aria-pressed", "false");
-    expect(await screen.findAllByRole("heading", { name: "MCP" })).toHaveLength(
-      2,
-    );
     expect(
-      screen.queryByRole("heading", { name: "Skills" }),
-    ).not.toBeInTheDocument();
+      await screen.findByRole("heading", { name: "Codex MCP 项目追加" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(2),
+    );
+    expect(commands.listMcpProjectOptions).toHaveBeenLastCalledWith({
+      projectId: project.id,
+      tool: "codex",
+    });
+
+    fireEvent.click(claudeButton);
+    expect(claudeButton).toHaveAttribute("aria-pressed", "true");
+    expect(codexButton).toHaveAttribute("aria-pressed", "false");
+    expect(
+      await screen.findByRole("heading", { name: "Claude MCP 项目追加" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(3),
+    );
+    expect(commands.listMcpProjectOptions).toHaveBeenLastCalledWith({
+      projectId: project.id,
+      tool: "claude",
+    });
   });
 
-  it("切换资源视图会重置尚未提交的 Git exclude 选择", async () => {
+  it("切换资源或平台会重置尚未提交的 Git exclude 选择", async () => {
     renderPage();
-    const claudeSection = (
-      await screen.findByRole("heading", { name: "Claude 项目追加" })
-    ).closest("section");
-    if (!claudeSection) throw new Error("未找到 Claude 项目管理列");
+    await screen.findByRole("heading", { name: "Claude MCP 项目追加" });
 
-    const mcpExclude = within(claudeSection).getByRole("checkbox", {
+    const mcpExclude = screen.getByRole("checkbox", {
       name: /若目标是应用新建且未跟踪/,
     });
     fireEvent.click(mcpExclude);
     expect(mcpExclude).toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
-    const skillExclude = within(claudeSection).getByRole("checkbox", {
+    const skillExclude = screen.getByRole("checkbox", {
       name: /若目标是应用新建且未跟踪/,
     });
     expect(skillExclude).not.toBeChecked();
@@ -390,17 +486,191 @@ describe("ProjectDetailPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "管理项目 MCP" }));
     expect(
-      within(claudeSection).getByRole("checkbox", {
+      screen.getByRole("checkbox", {
         name: /若目标是应用新建且未跟踪/,
       }),
     ).not.toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
     expect(
-      within(claudeSection).getByRole("checkbox", {
+      screen.getByRole("checkbox", {
         name: /若目标是应用新建且未跟踪/,
       }),
     ).not.toBeChecked();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "管理 Codex 项目资源" }),
+    );
+    const codexSection = screen
+      .getByRole("heading", { name: "Codex Skill 项目追加" })
+      .closest("section");
+    if (!codexSection) throw new Error("未找到 Codex Skill 项目管理区");
+    const codexExclude = within(codexSection).getByRole("checkbox", {
+      name: /若目标是应用新建且未跟踪/,
+    });
+    expect(codexExclude).not.toBeChecked();
+    fireEvent.click(codexExclude);
+    expect(codexExclude).toBeChecked();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "管理 Claude 项目资源" }),
+    );
+    expect(
+      screen.getByRole("checkbox", {
+        name: /若目标是应用新建且未跟踪/,
+      }),
+    ).not.toBeChecked();
+  });
+
+  it("切换组合会清理消息与预览 mutation，并忽略旧组合的迟到结果", async () => {
+    const delayedPreview =
+      createDeferred<Awaited<ReturnType<typeof commands.previewMcpSync>>>();
+    vi.mocked(commands.previewMcpSync)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { ...preview, targets: [] },
+      })
+      .mockReturnValueOnce(delayedPreview.promise);
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude MCP 同步预览" }),
+    );
+    expect(
+      await screen.findByText(
+        "该项目只有全局继承 MCP，不需要创建项目配置文件。",
+      ),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
+    expect(
+      screen.queryByText("该项目只有全局继承 MCP，不需要创建项目配置文件。"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "管理项目 MCP" }));
+    const claudePreviewButton = await screen.findByRole("button", {
+      name: "Claude MCP 同步预览",
+    });
+    fireEvent.click(claudePreviewButton);
+    await waitFor(() => expect(claudePreviewButton).toBeDisabled());
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "管理 Codex 项目资源" }),
+    );
+    const codexPreviewButton = await screen.findByRole("button", {
+      name: "Codex MCP 同步预览",
+    });
+    expect(codexPreviewButton).toBeEnabled();
+
+    await act(async () => {
+      delayedPreview.resolve({ status: "ok", data: preview });
+      await delayedPreview.promise;
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("旧组合的迟到 Apply 不会关闭当前组合的新预览或写入旧消息", async () => {
+    const delayedApply =
+      createDeferred<Awaited<ReturnType<typeof commands.applyMcpPreview>>>();
+    vi.mocked(commands.applyMcpPreview).mockReturnValueOnce(
+      delayedApply.promise,
+    );
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude MCP 同步预览" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "应用这份预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "管理 Codex 项目资源" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Codex MCP 同步预览" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      delayedApply.resolve({
+        status: "ok",
+        data: {
+          runId: "late-claude-apply",
+          status: "succeeded",
+          appliedTargets: 1,
+          snapshotCount: 1,
+        },
+      });
+      await delayedApply.promise;
+    });
+    expect(
+      screen.getByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("项目原生配置已通过持久化预览应用并完成写后验证。"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("平台切换后 MCP 与 Skill 预览和 Apply 都使用当前 Codex 目标", async () => {
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理 Codex 项目资源" }),
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Codex MCP 同步预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "codex",
+        projectId: project.id,
+        excludeFromGit: false,
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "应用这份预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "codex",
+        projectId: project.id,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+      ).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Codex Skills 同步预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewSkillSync).toHaveBeenCalledWith({
+        tool: "codex",
+        projectId: project.id,
+        excludeFromGit: false,
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "应用这份预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.applySkillPreview).toHaveBeenCalledWith({
+        previewId: skillPreview.previewId,
+        tool: "codex",
+        projectId: project.id,
+      }),
+    );
   });
 
   it("MCP 继承保持只读，项目追加刷新三组查询并用持久化预览 Apply", async () => {
@@ -442,7 +712,7 @@ describe("ProjectDetailPage", () => {
       ).toBe(8),
     );
     await waitFor(() =>
-      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(4),
+      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(2),
     );
 
     vi.mocked(commands.setProjectMcpAssignment).mockClear();
@@ -525,7 +795,7 @@ describe("ProjectDetailPage", () => {
       ).toBe(8),
     );
     await waitFor(() =>
-      expect(commands.listSkillProjectOptions).toHaveBeenCalledTimes(4),
+      expect(commands.listSkillProjectOptions).toHaveBeenCalledTimes(2),
     );
 
     vi.mocked(commands.setProjectSkillAssignment).mockClear();
@@ -543,7 +813,7 @@ describe("ProjectDetailPage", () => {
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
 
     const claudeSection = screen
-      .getByRole("heading", { name: "Claude 项目追加" })
+      .getByRole("heading", { name: "Claude Skill 项目追加" })
       .closest("section");
     if (!claudeSection) throw new Error("未找到 Claude 项目管理列");
     fireEvent.click(
@@ -622,6 +892,9 @@ describe("ProjectDetailPage", () => {
     });
     renderPage();
 
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理 Codex 项目资源" }),
+    );
     expect(
       await screen.findByRole("button", { name: "Codex MCP 同步预览" }),
     ).toBeDisabled();

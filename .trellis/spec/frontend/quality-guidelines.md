@@ -331,9 +331,19 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 - Project pages consume generated `ProjectDto` and option DTOs. Global inheritance is
   checked and read-only; there is no project-level global-disable mutation.
 - `ProjectDetailPage` is the single UI owner for project MCP/Skill assignment. It uses
-  local `"mcp" | "skill"` view state (MCP by default), exposes the switch as an
-  accessible pressed-button group, keeps Claude/Codex as parallel tool columns, and
-  mounts only the active resource assignment view.
+  independent local resource (`"mcp" | "skill"`) and tool (`"claude" | "codex"`)
+  view state, defaults to MCP + Claude, and exposes both switches as accessible
+  pressed-button groups. Claude/Codex selection uses the unchanged bundled brand
+  assets with an accessible button name, `title`, and `aria-pressed`; the decorative
+  image stays hidden from assistive technology. Mount only the active tool/resource
+  assignment view and key that subtree by project, tool, and resource so unsubmitted
+  child state cannot leak across combinations.
+- Changing either project-detail view axis clears the open preview, operation message,
+  and Apply observer state. A mutation that completes after its assignment subtree was
+  unmounted may still invalidate server queries, but it must not reopen a preview or
+  write a message for the inactive combination. Guard child mutation UI callbacks with
+  the mounted-view lifecycle, and keep Apply-only UI updates on the per-call observer
+  callback so resetting the observer detaches stale results.
 - Either MCP or Skill project assignment invalidates project, MCP, and Skill query-key
   families together because the backend increments the shared project row version.
 - Project targets keep capability, policy, trust, missing, parse, permission, managed
@@ -369,7 +379,8 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 | Inherited MCP/Skill option | Checked/read-only text; no project mutation path |
 | Policy/trust/parse/permission/drift/external-name block | Distinct text/code and `BlockingState`; never imply synchronized |
 | Assignment success | Invalidate project, MCP, and Skill key families together |
-| Project resource view switch | Update `aria-pressed`; show/query only the active MCP or Skill assignment view |
+| Project resource/tool view switch | Update both groups' `aria-pressed`; show/query only the active tool/resource combination; reset transient state |
+| Mutation completes after a project view switch | Invalidate affected server queries when required; ignore stale preview/message/dialog UI effects |
 | Tool onboarding choice omitted | Keep preview disabled until choose import/manage or explicit skip |
 | Persisted onboarding skip plus newly available import | Provider/Prompt checkbox remains enabled; selecting it clears skip |
 | All tools skipped | Call typed completion only; no preview/apply command |
@@ -392,9 +403,14 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 - Mock only generated commands with an isolated `QueryClient`.
 - Assert inherited controls cannot mutate, assignment payloads use the displayed row
   versions, and project/MCP/Skill active queries all refetch after either assignment.
-- Assert MCP is the default project resource view, both directions of the MCP/Skill
-  switch update `aria-pressed`, inactive option queries do not run, and remounting a
-  view resets unsubmitted preview-only state such as the local Git-exclude checkbox.
+- Assert MCP + Claude is the default project view; both directions of the MCP/Skill and
+  Claude/Codex switches update `aria-pressed`; only the active combination query runs;
+  and remounting a combination resets unsubmitted preview-only state such as the local
+  Git-exclude checkbox.
+- Resolve deferred preview, assignment, and Apply mutations after switching combinations
+  and assert they cannot reopen a stale dialog, close the current dialog, or write the
+  inactive combination's message. Keep the exact current tool in preview/Apply payload
+  assertions.
 - Cover explicit all-skip completion, interrupted active-profile preview regeneration,
   redacted discovery/preview rendering, exact preview ID Apply, partial-success retry
   that submits only remaining preview IDs, and no implicit native write command.

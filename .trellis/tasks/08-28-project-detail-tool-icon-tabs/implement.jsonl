@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"前端规范入口与项目详情所属层级"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"按钮复用、品牌资源、无障碍与组件组织约定"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"平台和资源类型属于页面本地交互状态"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"项目详情 MCP/Skill 合同、测试要求及本任务需要更新的旧并列平台约定"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"严格 TypeScript 与本地联合类型约定"}

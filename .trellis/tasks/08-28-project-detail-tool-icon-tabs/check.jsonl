@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"检查前端层级规范覆盖范围"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查品牌图标、按钮语义和无障碍状态"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查项目详情切换合同、查询行为与回归测试"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查严格类型与禁用断言规则"}
