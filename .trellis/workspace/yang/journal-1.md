@@ -341,3 +341,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 14: 美化 GitHub 项目展示
+
+**Date**: 2026-08-28
+**Task**: 美化 GitHub 项目展示
+**Branch**: `main`
+
+### Summary
+
+新增中文 README 与 1280×640 项目横幅，完善并回读确认 GitHub 英文简介和 Topics；完整质量门与链接检查通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `83d82c0` | (see git log) |
+
+### Status
+
+[OK] **Completed**
