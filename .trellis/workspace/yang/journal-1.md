@@ -320,3 +320,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 项目详情平台图标切换
+
+**Date**: 2026-08-28
+**Task**: 项目详情平台图标切换
+**Branch**: `main`
+
+### Summary
+
+为项目详情增加 Claude/Codex 品牌图标切换，与 MCP/Skill 构成双轴单选；仅挂载当前组合，并隔离视图切换后的迟到 mutation UI 回写；补齐回归测试与前端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2349a9d` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~322 | Active |
+| `journal-1.md` | ~343 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-08-28 | 项目详情平台图标切换 | `2349a9d` | `main` |
 | 12 | 2026-08-28 | 升级 Trellis 至 0.6.15 | `c1b6298` | `main` |
 | 11 | 2026-08-28 | 集中管理项目 MCP 与 Skill | `19bfe91` | `main` |
 | 10 | 2026-08-28 | 持久化中央列表布局选择 | `bbdbdfb` | `main` |
