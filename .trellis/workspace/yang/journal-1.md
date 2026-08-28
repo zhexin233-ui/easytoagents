@@ -299,3 +299,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 12: 升级 Trellis 至 0.6.15
+
+**Date**: 2026-08-28
+**Task**: 升级 Trellis 至 0.6.15
+**Branch**: `main`
+
+### Summary
+
+升级 Trellis 模板与运行脚本，收紧任务路径和 Hook 上下文边界，补充 DeepSeek Harness/Kimi 支持，并强化实现与检查范围纪律。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c1b6298` | (see git log) |
+
+### Status
+
+[OK] **Completed**
