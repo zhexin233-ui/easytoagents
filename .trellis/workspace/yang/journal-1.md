@@ -278,3 +278,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: 集中管理项目 MCP 与 Skill
+
+**Date**: 2026-08-28
+**Task**: 集中管理项目 MCP 与 Skill
+**Branch**: `main`
+
+### Summary
+
+移除 MCP 与 Skills 中央页的项目追加入口，在项目详情中增加 MCP/Skill 切换并保留双工具分配、预览和 Apply 流程；补齐回归测试与前端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `19bfe91` | (see git log) |
+
+### Status
+
+[OK] **Completed**
