@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-08-27
+- **Total Sessions**: 10
+- **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~259 | Active |
+| `journal-1.md` | ~280 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-08-28 | 持久化中央列表布局选择 | `bbdbdfb` | `main` |
 | 9 | 2026-08-27 | 中央列表三列布局与官方平台图标 | `bf7bac9` | `main` |
 | 8 | 2026-08-27 | 修复全局 Skills 首次分配与同步状态 | `4f4f67c` | `main` |
 | 7 | 2026-08-26 | 全局 Skills 检测导入修复 | `0f28c561d6e59b55f17b9a673e846e0c06e3f7c5` | `main` |

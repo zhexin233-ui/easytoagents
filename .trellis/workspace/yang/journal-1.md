@@ -257,3 +257,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: 持久化中央列表布局选择
+
+**Date**: 2026-08-28
+**Task**: 持久化中央列表布局选择
+**Branch**: `main`
+
+### Summary
+
+为 MCP 与 Skills 中央列表增加彼此独立的布局偏好持久化，补齐异常回退与重新挂载测试，并同步前端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bbdbdfb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
