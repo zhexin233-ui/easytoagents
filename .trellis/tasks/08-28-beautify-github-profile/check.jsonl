@@ -1,1 +1,1 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/08-28-beautify-github-profile/research/github-showcase-audit.md","reason":"核对 README 声明、品牌约束、链接命令与远端仓库元信息是否和审计事实一致。"}
