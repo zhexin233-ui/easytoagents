@@ -797,52 +797,17 @@ describe("McpPage", () => {
     expect(screen.queryByText("ui-secret")).not.toBeInTheDocument();
   });
 
-  it("把全局继承项显示为只读且不可重复选择", async () => {
-    vi.mocked(commands.listMcpServers).mockResolvedValue({
-      status: "ok",
-      data: [{ ...server, globalTools: ["claude"] }],
-    });
-    vi.mocked(commands.listMcpProjects).mockResolvedValue({
-      status: "ok",
-      data: [
-        {
-          id: "00000000-0000-4000-8000-000000000510",
-          displayName: "隔离项目",
-          rootPath: "/isolated/project",
-          codexTrustStatus: "trusted",
-          rowVersion: 4,
-        },
-      ],
-    });
-    vi.mocked(commands.listMcpProjectOptions).mockResolvedValue({
-      status: "ok",
-      data: [
-        {
-          mcpId: server.id,
-          name: server.name,
-          enabled: true,
-          state: "inherited",
-          selectable: false,
-          rowVersion: server.rowVersion,
-        },
-      ],
-    });
+  it("不再呈现或查询项目追加入口", async () => {
     renderPage();
-    await screen.findByRole("option", { name: "隔离项目" });
-    fireEvent.change(await screen.findByLabelText("项目"), {
-      target: { value: "00000000-0000-4000-8000-000000000510" },
-    });
-    await waitFor(() =>
-      expect(commands.listMcpProjectOptions).toHaveBeenCalledWith({
-        projectId: "00000000-0000-4000-8000-000000000510",
-        tool: "claude",
-      }),
-    );
-    const button = await screen.findByRole("button", { name: "只读继承" });
-    expect(button).toBeDisabled();
     expect(
-      screen.getByText("全局继承（项目不可禁用或重复选择）"),
+      await screen.findByRole("heading", { name: "全局目标状态" }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "项目追加选择器" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("项目")).not.toBeInTheDocument();
+    expect(commands.listMcpProjects).not.toHaveBeenCalled();
+    expect(commands.listMcpProjectOptions).not.toHaveBeenCalled();
     expect(commands.setProjectMcpAssignment).not.toHaveBeenCalled();
   });
 

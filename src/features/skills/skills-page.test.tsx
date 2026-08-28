@@ -461,14 +461,11 @@ describe("SkillsPage", () => {
     ).toBeDisabled();
   });
 
-  it("分别展示列表、目标和项目的加载与空状态", () => {
+  it("分别展示列表与目标的加载状态", () => {
     vi.mocked(commands.listSkills).mockReturnValue(
       new Promise(() => undefined),
     );
     vi.mocked(commands.listGlobalSkillTargetStatuses).mockReturnValue(
-      new Promise(() => undefined),
-    );
-    vi.mocked(commands.listSkillProjects).mockReturnValue(
       new Promise(() => undefined),
     );
     renderPage();
@@ -481,13 +478,9 @@ describe("SkillsPage", () => {
       "role",
       "status",
     );
-    expect(screen.getByText("正在读取已登记项目…")).toHaveAttribute(
-      "role",
-      "status",
-    );
   });
 
-  it("分别展示目标错误、项目错误和目标冲突诊断", async () => {
+  it("分别展示目标错误和目标冲突诊断", async () => {
     const rpcError = {
       code: "CONFLICT" as const,
       message: "隔离冲突",
@@ -498,16 +491,11 @@ describe("SkillsPage", () => {
       status: "error",
       error: rpcError,
     });
-    vi.mocked(commands.listSkillProjects).mockResolvedValue({
-      status: "error",
-      error: rpcError,
-    });
     renderPage();
 
-    expect((await screen.findAllByRole("alert")).length).toBeGreaterThanOrEqual(
-      2,
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "CONFLICT：隔离冲突",
     );
-    expect(screen.getAllByText("CONFLICT：隔离冲突")).toHaveLength(2);
 
     cleanup();
     vi.mocked(commands.listGlobalSkillTargetStatuses).mockResolvedValue({
@@ -521,10 +509,6 @@ describe("SkillsPage", () => {
           diagnosticCode: "CENTRAL_SKILL_CONTENT_CHANGED",
         },
       ],
-    });
-    vi.mocked(commands.listSkillProjects).mockResolvedValue({
-      status: "ok",
-      data: [],
     });
     renderPage();
     expect(
@@ -616,77 +600,18 @@ describe("SkillsPage", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("把全局继承的项目 Skill 显示为只读且不可重复选择", async () => {
-    vi.mocked(commands.listSkillProjects).mockResolvedValue({
-      status: "ok",
-      data: [
-        {
-          id: "00000000-0000-4000-8000-000000000610",
-          displayName: "隔离项目",
-          rootPath: "/isolated/project",
-          codexTrustStatus: "trusted",
-          rowVersion: 4,
-        },
-      ],
-    });
-    vi.mocked(commands.listSkillProjectOptions).mockResolvedValue({
-      status: "ok",
-      data: [
-        {
-          skillId: skill.id,
-          name: skill.name,
-          status: "ready",
-          state: "inherited",
-          selectable: false,
-          rowVersion: skill.rowVersion,
-        },
-      ],
-    });
+  it("不再呈现或查询项目追加入口", async () => {
     renderPage();
-    await screen.findByRole("option", { name: "隔离项目" });
-    fireEvent.change(await screen.findByLabelText("项目"), {
-      target: { value: "00000000-0000-4000-8000-000000000610" },
-    });
-    await waitFor(() =>
-      expect(commands.listSkillProjectOptions).toHaveBeenCalledWith({
-        projectId: "00000000-0000-4000-8000-000000000610",
-        tool: "claude",
-      }),
-    );
-    const inherited = await screen.findByText(/全局继承（只读）/);
-    const checkbox = inherited.closest("label")?.querySelector("input");
-    expect(checkbox).toBeDisabled();
+    expect(
+      await screen.findByRole("heading", { name: "全局目标状态" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "项目追加与全局继承" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("项目")).not.toBeInTheDocument();
+    expect(commands.listSkillProjects).not.toHaveBeenCalled();
+    expect(commands.listSkillProjectOptions).not.toHaveBeenCalled();
     expect(commands.setProjectSkillAssignment).not.toHaveBeenCalled();
-  });
-
-  it("Codex 项目未受信任时独立阻止项目 Skill 预览", async () => {
-    vi.mocked(commands.listSkillProjects).mockResolvedValue({
-      status: "ok",
-      data: [
-        {
-          id: "00000000-0000-4000-8000-000000000611",
-          displayName: "未受信任项目",
-          rootPath: "/isolated/untrusted-project",
-          codexTrustStatus: "untrusted",
-          rowVersion: 1,
-        },
-      ],
-    });
-    renderPage();
-    await screen.findByRole("option", { name: "未受信任项目" });
-    fireEvent.change(await screen.findByLabelText("项目"), {
-      target: { value: "00000000-0000-4000-8000-000000000611" },
-    });
-    fireEvent.change(screen.getByLabelText("工具"), {
-      target: { value: "codex" },
-    });
-
-    expect(await screen.findByText(/Codex 项目尚未受信任/)).toHaveAttribute(
-      "role",
-      "alert",
-    );
-    expect(screen.getByRole("button", { name: "预览项目同步" })).toBeDisabled();
-    expect(commands.previewSkillSync).not.toHaveBeenCalled();
   });
 
   it("使用持久化 previewId Apply Skills 链接计划", async () => {
@@ -718,6 +643,30 @@ describe("SkillsPage", () => {
         projectId: null,
       }),
     );
+  });
+
+  it("全局空目标预览只提示无需写入，不展示可 Apply 的对话框", async () => {
+    vi.mocked(commands.previewSkillSync).mockResolvedValue({
+      status: "ok",
+      data: { ...preview, targets: [] },
+    });
+    renderPage();
+    const section = screen
+      .getByRole("heading", { name: "全局目标状态" })
+      .closest("section");
+    const card = section
+      ? (await within(section).findByText("Claude")).closest("article")
+      : null;
+    if (!card) throw new Error("未找到 Claude Skills 状态卡");
+
+    fireEvent.click(within(card).getByRole("button", { name: "预览全局同步" }));
+    expect(
+      await screen.findByText("当前工具没有需要同步的全局 Skill。"),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1009,7 +958,8 @@ describe("全局 Skills 检测与复制导入", () => {
       expect(trigger).toHaveFocus();
       expect(commands.listSkills).toHaveBeenCalledTimes(2);
       expect(commands.listGlobalSkillTargetStatuses).toHaveBeenCalledTimes(2);
-      expect(commands.listSkillProjects).toHaveBeenCalledTimes(2);
+      expect(commands.listSkillProjects).not.toHaveBeenCalled();
+      expect(commands.listSkillProjectOptions).not.toHaveBeenCalled();
       expect(commands.discoverSkillImport).toHaveBeenCalledTimes(1);
       await waitFor(() =>
         expect(

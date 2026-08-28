@@ -26,10 +26,13 @@ interface OpenProjectPreview {
   artifactKind: ArtifactKind;
 }
 
+type ProjectResourceView = "mcp" | "skill";
+
 export function ProjectDetailPage() {
   const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
   const projectQuery = useQuery(projectQueryOptions(projectId));
+  const [resourceView, setResourceView] = useState<ProjectResourceView>("mcp");
   const [openPreview, setOpenPreview] = useState<OpenProjectPreview | null>(
     null,
   );
@@ -149,28 +152,76 @@ export function ProjectDetailPage() {
         </div>
       </section>
 
+      <section
+        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+        aria-labelledby="project-resource-management-title"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2
+              id="project-resource-management-title"
+              className="text-lg font-semibold"
+            >
+              项目资源管理
+            </h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              选择当前要为 Claude 与 Codex 管理的资源类型。
+            </p>
+          </div>
+          <div
+            className="flex items-center gap-2"
+            role="group"
+            aria-label="项目资源管理视图"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant={resourceView === "mcp" ? "default" : "outline"}
+              aria-label="管理项目 MCP"
+              aria-pressed={resourceView === "mcp"}
+              onClick={() => setResourceView("mcp")}
+            >
+              MCP
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={resourceView === "skill" ? "default" : "outline"}
+              aria-label="管理项目 Skill"
+              aria-pressed={resourceView === "skill"}
+              onClick={() => setResourceView("skill")}
+            >
+              Skill
+            </Button>
+          </div>
+        </div>
+      </section>
+
       <div className="mx-auto mt-6 grid max-w-6xl gap-6 xl:grid-cols-2">
         {(["claude", "codex"] as const).map((tool) => (
           <section key={tool} className="space-y-5">
             <h2 className="text-xl font-semibold">
               {toolLabel(tool)} 项目追加
             </h2>
-            <ProjectMcpAssignments
-              project={project}
-              tool={tool}
-              onPreview={(plan) =>
-                setOpenPreview({ plan, tool, artifactKind: "mcp" })
-              }
-              onMessage={setMessage}
-            />
-            <ProjectSkillAssignments
-              project={project}
-              tool={tool}
-              onPreview={(plan) =>
-                setOpenPreview({ plan, tool, artifactKind: "skill" })
-              }
-              onMessage={setMessage}
-            />
+            {resourceView === "mcp" ? (
+              <ProjectMcpAssignments
+                project={project}
+                tool={tool}
+                onPreview={(plan) =>
+                  setOpenPreview({ plan, tool, artifactKind: "mcp" })
+                }
+                onMessage={setMessage}
+              />
+            ) : (
+              <ProjectSkillAssignments
+                project={project}
+                tool={tool}
+                onPreview={(plan) =>
+                  setOpenPreview({ plan, tool, artifactKind: "skill" })
+                }
+                onMessage={setMessage}
+              />
+            )}
           </section>
         ))}
       </div>

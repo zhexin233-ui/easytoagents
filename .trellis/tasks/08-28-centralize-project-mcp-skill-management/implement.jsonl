@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"项目详情切换控件、原生交互语义、accessible name 与 aria-pressed 约束"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"切换使用本地 UI 状态，项目/MCP/Skill 服务端状态继续由 TanStack Query 管理"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"项目 MCP/Skill assignment、联合 query invalidation、持久化预览与显式 Apply 合同"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"使用窄联合类型与生成 DTO/commands，避免手写或弱化 RPC 类型"}

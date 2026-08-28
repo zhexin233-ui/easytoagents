@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -6,7 +6,6 @@ import {
   commands,
   type ApplySkillPreviewInput,
   type PreviewPlan,
-  type SetProjectSkillAssignmentInput,
   type SkillContentPreviewDto,
   type SkillDto,
   type Tool,
@@ -30,8 +29,6 @@ import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
   globalSkillStatusesQueryOptions,
   skillKeys,
-  skillProjectOptionsQueryOptions,
-  skillProjectsQueryOptions,
   skillsQueryOptions,
 } from "@/lib/skills-api";
 import { cn } from "@/lib/utils";
@@ -39,20 +36,16 @@ import { cn } from "@/lib/utils";
 interface OpenSkillPreview {
   plan: PreviewPlan;
   tool: Tool;
-  projectId: string | null;
 }
 
 export function SkillsPage() {
   const queryClient = useQueryClient();
   const skillsQuery = useQuery(skillsQueryOptions());
-  const projectsQuery = useQuery(skillProjectsQueryOptions());
   const statusesQuery = useQuery(globalSkillStatusesQueryOptions());
   const [sourcePath, setSourcePath] = useState("");
   const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
-  const [projectId, setProjectId] = useState("");
-  const [projectTool, setProjectTool] = useState<Tool>("claude");
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenSkillPreview | null>(null);
@@ -63,17 +56,6 @@ export function SkillsPage() {
   const closeContentPreview = () => setContentPreview(null);
   const { dialogRef: contentDialogRef, onKeyDown: onContentDialogKeyDown } =
     useDialogFocus(contentPreview !== null, closeContentPreview);
-  const projectOptionsQuery = useQuery(
-    skillProjectOptionsQueryOptions(projectId, projectTool),
-  );
-  const selectedProject = useMemo(
-    () => projectsQuery.data?.find((project) => project.id === projectId),
-    [projectId, projectsQuery.data],
-  );
-  const projectTrustBlocked =
-    projectId.length > 0 &&
-    projectTool === "codex" &&
-    selectedProject?.codexTrustStatus !== "trusted";
 
   const invalidateSkills = async () => {
     await queryClient.invalidateQueries({ queryKey: skillKeys.all });
@@ -129,41 +111,24 @@ export function SkillsPage() {
     },
   });
 
-  const projectAssignmentMutation = useMutation({
-    mutationFn: async (input: SetProjectSkillAssignmentInput) =>
-      unwrapResult(await commands.setProjectSkillAssignment(input)),
-    onSuccess: invalidateSkills,
-  });
-
   const previewMutation = useMutation({
-    mutationFn: async ({
+    mutationFn: async ({ tool }: { tool: Tool }) => ({
       tool,
-      targetProjectId,
-    }: {
-      tool: Tool;
-      targetProjectId: string | null;
-    }) => ({
-      tool,
-      projectId: targetProjectId,
       plan: unwrapResult(
         await commands.previewSkillSync({
           tool,
-          projectId: targetProjectId,
+          projectId: null,
           excludeFromGit: false,
         }),
       ),
     }),
-    onSuccess: ({ plan, tool, projectId: previewProjectId }) => {
+    onSuccess: ({ plan, tool }) => {
       if (plan.targets.length === 0) {
-        setMessage(
-          previewProjectId
-            ? "该项目只有全局继承项，无需创建项目 Skill 链接。"
-            : "当前工具没有需要同步的全局 Skill。",
-        );
+        setMessage("当前工具没有需要同步的全局 Skill。");
         setOpenPreview(null);
         return;
       }
-      setOpenPreview({ plan, tool, projectId: previewProjectId });
+      setOpenPreview({ plan, tool });
     },
   });
 
@@ -181,7 +146,6 @@ export function SkillsPage() {
 
   const operationError = [
     globalAssignmentMutation.error,
-    projectAssignmentMutation.error,
     previewMutation.error,
     applyMutation.error,
   ]
@@ -547,7 +511,6 @@ export function SkillsPage() {
                     onClick={() =>
                       previewMutation.mutate({
                         tool: status.tool,
-                        targetProjectId: null,
                       })
                     }
                   >
@@ -558,139 +521,6 @@ export function SkillsPage() {
             );
           })}
         </div>
-      </section>
-
-      <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
-        aria-labelledby="skill-project-title"
-      >
-        <h2 id="skill-project-title" className="text-lg font-semibold">
-          项目追加与全局继承
-        </h2>
-        {projectsQuery.isPending ? (
-          <p role="status" className="mt-4 text-sm">
-            正在读取已登记项目…
-          </p>
-        ) : null}
-        {projectsQuery.isError ? (
-          <p role="alert" className="mt-4 text-sm text-red-700">
-            {profileErrorText(projectsQuery.error)}
-          </p>
-        ) : null}
-        {projectsQuery.data?.length === 0 ? (
-          <p className="text-muted-foreground mt-4 text-sm">
-            尚无已登记项目。请先在项目功能中登记本地目录。
-          </p>
-        ) : null}
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <label className="text-sm font-medium">
-            项目
-            <select
-              className="field mt-2"
-              value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-            >
-              <option value="">请选择已登记项目</option>
-              {projectsQuery.data?.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm font-medium">
-            工具
-            <select
-              className="field mt-2"
-              value={projectTool}
-              onChange={(event) =>
-                setProjectTool(
-                  event.target.value === "codex" ? "codex" : "claude",
-                )
-              }
-            >
-              <option value="claude">Claude</option>
-              <option value="codex">Codex</option>
-            </select>
-          </label>
-        </div>
-        <div className="mt-4 space-y-2">
-          {!projectId ? (
-            <p className="text-muted-foreground text-sm">
-              选择项目后可查看项目追加项和只读的全局继承项。
-            </p>
-          ) : null}
-          {projectId && projectOptionsQuery.isPending ? (
-            <p role="status" className="text-sm">
-              正在读取项目 Skill 选项…
-            </p>
-          ) : null}
-          {projectOptionsQuery.isError ? (
-            <p role="alert" className="text-sm text-red-700">
-              {profileErrorText(projectOptionsQuery.error)}
-            </p>
-          ) : null}
-          {projectId && projectOptionsQuery.data?.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              中央库暂无可用于该项目的 Skill。
-            </p>
-          ) : null}
-          {projectTrustBlocked ? (
-            <p role="alert" className="text-sm text-amber-800">
-              Codex 项目尚未受信任，不能预览或应用项目 Skill 链接。
-            </p>
-          ) : null}
-          {projectOptionsQuery.data?.map((option) => (
-            <label
-              key={option.skillId}
-              className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
-            >
-              <span>
-                {option.name} ·{" "}
-                {option.state === "inherited"
-                  ? "全局继承（只读）"
-                  : option.state === "selected"
-                    ? "项目追加"
-                    : "可选"}
-                {option.status !== "ready" ? ` · ${option.status}` : ""}
-              </span>
-              <input
-                type="checkbox"
-                checked={option.state !== "available"}
-                disabled={
-                  !option.selectable || projectAssignmentMutation.isPending
-                }
-                onChange={(event) =>
-                  selectedProject
-                    ? projectAssignmentMutation.mutate({
-                        projectId: selectedProject.id,
-                        tool: projectTool,
-                        skillId: option.skillId,
-                        assigned: event.target.checked,
-                        skillRowVersion: option.rowVersion,
-                        projectRowVersion: selectedProject.rowVersion,
-                      })
-                    : undefined
-                }
-              />
-            </label>
-          ))}
-        </div>
-        <Button
-          className="mt-4"
-          variant="outline"
-          disabled={
-            !projectId || projectTrustBlocked || previewMutation.isPending
-          }
-          onClick={() =>
-            previewMutation.mutate({
-              tool: projectTool,
-              targetProjectId: projectId,
-            })
-          }
-        >
-          预览项目同步
-        </Button>
       </section>
 
       {contentPreview ? (
@@ -773,7 +603,7 @@ export function SkillsPage() {
           applyMutation.mutate({
             previewId,
             tool,
-            projectId: openPreview?.projectId ?? null,
+            projectId: null,
           })
         }
       />

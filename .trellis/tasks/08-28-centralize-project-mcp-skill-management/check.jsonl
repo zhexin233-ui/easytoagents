@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核验切换控件、页面状态与可访问性测试符合组件规范"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"核验本地/服务端状态边界和跨域查询失效完整"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验项目 assignment 双版本契约、继承只读、阻断、preview/apply 与测试覆盖"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"核验未引入手写 DTO、断言或弱类型状态"}

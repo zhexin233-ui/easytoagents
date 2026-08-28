@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -9,7 +9,6 @@ import {
   type McpServerInput,
   type McpTransport,
   type PreviewPlan,
-  type SetProjectMcpAssignmentInput,
   type Tool,
   type UpdateMcpServerInput,
 } from "@/bindings/commands";
@@ -29,8 +28,6 @@ import { usePersistedCentralListLayout } from "@/components/use-persisted-centra
 import {
   globalMcpStatusesQueryOptions,
   mcpKeys,
-  mcpProjectOptionsQueryOptions,
-  mcpProjectsQueryOptions,
   mcpServersQueryOptions,
 } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
@@ -57,7 +54,6 @@ interface McpFormState {
 interface OpenMcpPreview {
   plan: PreviewPlan;
   tool: Tool;
-  projectId: string | null;
 }
 
 const emptyForm: McpFormState = {
@@ -80,7 +76,6 @@ const emptyForm: McpFormState = {
 export function McpPage() {
   const queryClient = useQueryClient();
   const serversQuery = useQuery(mcpServersQueryOptions());
-  const projectsQuery = useQuery(mcpProjectsQueryOptions());
   const statusesQuery = useQuery(globalMcpStatusesQueryOptions());
   const [form, setForm] = useState<McpFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
@@ -88,21 +83,11 @@ export function McpPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [listLayout, setListLayout] = usePersistedCentralListLayout("mcp");
-  const [projectId, setProjectId] = useState("");
-  const [projectTool, setProjectTool] = useState<Tool>("claude");
   const [openPreview, setOpenPreview] = useState<OpenMcpPreview | null>(null);
   const [openImport, setOpenImport] = useState<{
     tool: Tool;
     requestId: string;
   } | null>(null);
-  const projectOptionsQuery = useQuery(
-    mcpProjectOptionsQueryOptions(projectId, projectTool),
-  );
-  const selectedProject = useMemo(
-    () => projectsQuery.data?.find((project) => project.id === projectId),
-    [projectId, projectsQuery.data],
-  );
-
   const invalidateMcp = async () => {
     await queryClient.invalidateQueries({ queryKey: mcpKeys.all });
   };
@@ -186,41 +171,26 @@ export function McpPage() {
     onSuccess: invalidateMcp,
   });
 
-  const projectAssignmentMutation = useMutation({
-    mutationFn: async (input: SetProjectMcpAssignmentInput) =>
-      unwrapResult(await commands.setProjectMcpAssignment(input)),
-    onSuccess: invalidateMcp,
-  });
-
   const previewMutation = useMutation({
-    mutationFn: async ({
+    mutationFn: async ({ tool }: { tool: Tool }) => ({
       tool,
-      projectId,
-    }: {
-      tool: Tool;
-      projectId: string | null;
-    }) => ({
-      tool,
-      projectId,
       plan: unwrapResult(
         await commands.previewMcpSync({
           tool,
-          projectId,
+          projectId: null,
           excludeFromGit: false,
         }),
       ),
     }),
-    onSuccess: ({ plan, tool, projectId }) => {
+    onSuccess: ({ plan, tool }) => {
       if (plan.targets.length === 0) {
         setMessage(
-          projectId
-            ? "该项目只有全局继承项，无需创建或修改项目配置。"
-            : "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
+          "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
         );
         setOpenPreview(null);
         return;
       }
-      setOpenPreview({ plan, tool, projectId });
+      setOpenPreview({ plan, tool });
     },
   });
 
@@ -240,7 +210,6 @@ export function McpPage() {
     enabledMutation.error,
     deleteMutation.error,
     globalAssignmentMutation.error,
-    projectAssignmentMutation.error,
     previewMutation.error,
     applyMutation.error,
   ]
@@ -520,7 +489,6 @@ export function McpPage() {
                   onClick={() =>
                     previewMutation.mutate({
                       tool: status.tool,
-                      projectId: null,
                     })
                   }
                 >
@@ -530,140 +498,6 @@ export function McpPage() {
             );
           })}
         </div>
-      </section>
-
-      <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
-        aria-labelledby="mcp-project-title"
-      >
-        <h2 id="mcp-project-title" className="text-lg font-semibold">
-          项目追加选择器
-        </h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <Field label="项目">
-            <select
-              className="field"
-              value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-            >
-              <option value="">选择已登记项目</option>
-              {projectsQuery.data?.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.displayName}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="工具">
-            <select
-              className="field"
-              value={projectTool}
-              onChange={(event) =>
-                setProjectTool(
-                  event.target.value === "codex" ? "codex" : "claude",
-                )
-              }
-            >
-              <option value="claude">Claude</option>
-              <option value="codex">Codex</option>
-            </select>
-          </Field>
-        </div>
-        {projectsQuery.isPending ? (
-          <p role="status" className="mt-4 text-sm">
-            正在读取已登记项目…
-          </p>
-        ) : null}
-        {projectsQuery.data?.length === 0 ? (
-          <p className="text-muted-foreground mt-4 text-sm">
-            尚无已登记项目；项目登记将在“项目”页面完成。
-          </p>
-        ) : null}
-        {projectsQuery.isError || projectOptionsQuery.isError ? (
-          <p role="alert" className="mt-4 text-sm text-red-700">
-            {profileErrorText(projectsQuery.error ?? projectOptionsQuery.error)}
-          </p>
-        ) : null}
-        {selectedProject ? (
-          <p className="text-muted-foreground mt-4 text-xs">
-            {selectedProject.rootPath} · Codex trust:{" "}
-            {selectedProject.codexTrustStatus}
-          </p>
-        ) : null}
-        {projectId && projectOptionsQuery.isPending ? (
-          <p role="status" className="mt-4 text-sm">
-            正在读取项目 MCP 选择状态…
-          </p>
-        ) : null}
-        {projectId && projectOptionsQuery.data?.length === 0 ? (
-          <p className="text-muted-foreground mt-4 text-sm">
-            中央库尚无可供该项目继承或追加的 MCP；请先创建 MCP。
-          </p>
-        ) : null}
-        <div className="mt-4 space-y-2">
-          {projectOptionsQuery.data?.map((option) => (
-            <div
-              key={option.mcpId}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-sm"
-            >
-              <div>
-                <p className="font-medium">{option.name}</p>
-                <p className="text-muted-foreground text-xs">
-                  {option.state === "inherited"
-                    ? "全局继承（项目不可禁用或重复选择）"
-                    : option.state === "selected"
-                      ? "项目追加"
-                      : "可追加"}
-                  {!option.enabled ? " · 中央项已停用" : ""}
-                </p>
-              </div>
-              <Button
-                size="sm"
-                variant={option.state === "selected" ? "default" : "outline"}
-                disabled={
-                  !option.selectable ||
-                  !selectedProject ||
-                  projectAssignmentMutation.isPending
-                }
-                onClick={() =>
-                  selectedProject
-                    ? projectAssignmentMutation.mutate({
-                        projectId: selectedProject.id,
-                        tool: projectTool,
-                        mcpId: option.mcpId,
-                        assigned: option.state !== "selected",
-                        mcpRowVersion: option.rowVersion,
-                        projectRowVersion: selectedProject.rowVersion,
-                      })
-                    : undefined
-                }
-              >
-                {option.state === "inherited"
-                  ? "只读继承"
-                  : option.state === "selected"
-                    ? "移除追加"
-                    : "追加到项目"}
-              </Button>
-            </div>
-          ))}
-        </div>
-        <Button
-          className="mt-4"
-          disabled={
-            !projectId ||
-            previewMutation.isPending ||
-            (projectTool === "codex" &&
-              selectedProject?.codexTrustStatus !== "trusted")
-          }
-          onClick={() =>
-            previewMutation.mutate({
-              tool: projectTool,
-              projectId: projectId || null,
-            })
-          }
-        >
-          生成项目预览
-        </Button>
       </section>
 
       <FormDialog
@@ -869,7 +703,7 @@ export function McpPage() {
             applyMutation.mutate({
               previewId: openPreview.plan.previewId,
               tool: openPreview.tool,
-              projectId: openPreview.projectId,
+              projectId: null,
             });
           }
         }}

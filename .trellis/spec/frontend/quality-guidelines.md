@@ -153,6 +153,10 @@ const result = unwrapResult(
 - MCP feature code imports generated commands and DTOs only. Query options live in
   `src/lib/mcp-api.ts`, and every successful central mutation invalidates the MCP key
   family because row versions and inheritance can change together.
+- `McpPage` owns central-library CRUD, global tool assignment, status, and global
+  preview/apply only. Project option queries, project assignment, and project-scoped
+  preview/apply belong to `ProjectDetailPage`; do not reintroduce a project selector on
+  the central MCP page.
 - Header/env inputs are password fields. Editing starts with `keep`; secret values are
   never reconstructed from header/env names or redacted extension values.
 - Global inheritance is visibly read-only and cannot call the project-assignment
@@ -190,6 +194,8 @@ const result = unwrapResult(
 - Mock only the generated `commands` object with an isolated `QueryClient`.
 - Assert create/update secret payloads, row versions, inherited disabled controls,
   exact project/tool identity, redacted previews, and exact preview ID consumption.
+- Assert the central MCP page neither renders project-assignment controls nor calls
+  project list/option/assignment commands.
 - Cover list/project-option loading, errors, empty states, and the absence of secret
   values in rendered editing state.
 
@@ -235,6 +241,10 @@ const update: UpdateMcpServerInput = {
   accessible pending/error/empty/conflict feedback. Central CRUD and assignment success
   invalidate the entire Skills key family because versions, inheritance, and statuses
   can change together; none applies native writes implicitly.
+- `SkillsPage` owns central-library import/content/delete, global tool assignment,
+  status, and global preview/apply only. Project option queries, project assignment,
+  and project-scoped preview/apply belong to `ProjectDetailPage`; do not reintroduce a
+  project selector on the central Skills page.
 - The ordinary list renders only the safe description and status diagnostics, never an
   arbitrary frontmatter object or Skill body. Full `SKILL.md` appears only after the
   explicit content-preview command in a closable, Escape-aware dialog.
@@ -273,6 +283,8 @@ const update: UpdateMcpServerInput = {
 ### 6. Tests Required
 
 - Mock only generated commands and use an isolated `QueryClient`.
+- Assert the central Skills page neither renders project-assignment controls nor calls
+  project list/option/assignment commands.
 - Cover directory selection, operation-specific loading/errors, list/status/project/
   option empty states, central diagnostics, safe descriptions, content dialog,
   content-dialog focus restoration, deletion conflicts, inherited controls, Codex
@@ -318,6 +330,10 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 
 - Project pages consume generated `ProjectDto` and option DTOs. Global inheritance is
   checked and read-only; there is no project-level global-disable mutation.
+- `ProjectDetailPage` is the single UI owner for project MCP/Skill assignment. It uses
+  local `"mcp" | "skill"` view state (MCP by default), exposes the switch as an
+  accessible pressed-button group, keeps Claude/Codex as parallel tool columns, and
+  mounts only the active resource assignment view.
 - Either MCP or Skill project assignment invalidates project, MCP, and Skill query-key
   families together because the backend increments the shared project row version.
 - Project targets keep capability, policy, trust, missing, parse, permission, managed
@@ -353,6 +369,7 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 | Inherited MCP/Skill option | Checked/read-only text; no project mutation path |
 | Policy/trust/parse/permission/drift/external-name block | Distinct text/code and `BlockingState`; never imply synchronized |
 | Assignment success | Invalidate project, MCP, and Skill key families together |
+| Project resource view switch | Update `aria-pressed`; show/query only the active MCP or Skill assignment view |
 | Tool onboarding choice omitted | Keep preview disabled until choose import/manage or explicit skip |
 | Persisted onboarding skip plus newly available import | Provider/Prompt checkbox remains enabled; selecting it clears skip |
 | All tools skipped | Call typed completion only; no preview/apply command |
@@ -375,6 +392,9 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 - Mock only generated commands with an isolated `QueryClient`.
 - Assert inherited controls cannot mutate, assignment payloads use the displayed row
   versions, and project/MCP/Skill active queries all refetch after either assignment.
+- Assert MCP is the default project resource view, both directions of the MCP/Skill
+  switch update `aria-pressed`, inactive option queries do not run, and remounting a
+  view resets unsubmitted preview-only state such as the local Git-exclude checkbox.
 - Cover explicit all-skip completion, interrupted active-profile preview regeneration,
   redacted discovery/preview rendering, exact preview ID Apply, partial-success retry
   that submits only remaining preview IDs, and no implicit native write command.
