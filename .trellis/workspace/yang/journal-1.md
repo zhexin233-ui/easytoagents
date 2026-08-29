@@ -426,3 +426,24 @@ Skills 页移除常驻本地目录导入卡片，改为中央列表头部按钮�
 ### Status
 
 [OK] **Completed**
+
+## Session 18: 中央副本目录改用 Skill 名称命名
+
+**Date**: 2026-08-29
+**Task**: 中央副本目录改用 Skill 名称命名
+**Branch**: `main`
+
+### Summary
+
+Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶段解析名称后即确定 `central_skills/<name>` 并提前冲突清理；finalize/verify 校验改用 record.name；inspect 兼容 name 与历史 id 两种布局。新增启动迁移 `migrate_legacy_central_skill_directories`（app 初始化时运行）：校验（真实目录、直属中央根、hash 一致）通过后原子 rename，同事务更新 `skills.central_path` 与 `managed_items.last_applied_item_hash`，并原子改写指向旧目录的受管 symlink；漂移/占用记录跳过保持 legacy 可用，崩溃后按"旧缺失+新核验"补完，幂等。用户本机数据已被手工迁移为名称化布局，迁移在该机器上自然 no-op。191 项 Rust 测试全绿，clippy 0 告警；前端零改动。真实桌面应用未重启实测（用户数据已是目标状态，单元测试覆盖迁移矩阵）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5f99dca` | (see git log) |
+| `a7ad5b9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
