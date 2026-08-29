@@ -55,7 +55,7 @@ export function McpImportDialog(props: McpImportDialogProps) {
         aria-describedby="mcp-import-description"
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-6 shadow-xl"
+        className="bg-card max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4">
           <h2 id="mcp-import-title" className="text-xl font-semibold">
@@ -83,7 +83,10 @@ export function McpImportDialog(props: McpImportDialogProps) {
           </p>
         ) : null}
         {error ? (
-          <p role="alert" className="mt-4 text-sm text-red-700">
+          <p
+            role="alert"
+            className="mt-4 text-sm text-red-700 dark:text-red-300"
+          >
             {error} 请重新检测后再确认。
           </p>
         ) : null}
@@ -143,7 +146,7 @@ export function McpImportDialog(props: McpImportDialogProps) {
                     </p>
                   ) : null}
                   {candidate.reason ? (
-                    <p className="mt-2 text-xs text-amber-800">
+                    <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
                       {candidate.reason}
                     </p>
                   ) : null}

@@ -165,14 +165,14 @@ export function SkillsPage() {
 
       <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
         {message ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
             {message}
           </p>
         ) : null}
         {operationError ? (
           <p
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
           >
             {operationError}
           </p>
@@ -186,7 +186,7 @@ export function SkillsPage() {
         )}
       >
         <section
-          className="rounded-xl border bg-white p-5"
+          className="bg-card rounded-xl border p-5"
           aria-labelledby="skill-import-title"
         >
           <h2 id="skill-import-title" className="text-lg font-semibold">
@@ -243,19 +243,25 @@ export function SkillsPage() {
             </Button>
           </div>
           {directoryError ? (
-            <p role="alert" className="mt-3 text-sm text-red-700">
+            <p
+              role="alert"
+              className="mt-3 text-sm text-red-700 dark:text-red-300"
+            >
               {directoryError}
             </p>
           ) : null}
           {importMutation.isError ? (
-            <p role="alert" className="mt-3 text-sm text-red-700">
+            <p
+              role="alert"
+              className="mt-3 text-sm text-red-700 dark:text-red-300"
+            >
               {profileErrorText(importMutation.error)}
             </p>
           ) : null}
         </section>
 
         <section
-          className="rounded-xl border bg-white p-5"
+          className="bg-card rounded-xl border p-5"
           aria-labelledby="skill-list-title"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -273,7 +279,10 @@ export function SkillsPage() {
             </p>
           ) : null}
           {skillsQuery.isError ? (
-            <p role="alert" className="mt-4 text-sm text-red-700">
+            <p
+              role="alert"
+              className="mt-4 text-sm text-red-700 dark:text-red-300"
+            >
               {profileErrorText(skillsQuery.error)}
             </p>
           ) : null}
@@ -284,12 +293,18 @@ export function SkillsPage() {
             </p>
           ) : null}
           {contentMutation.isError ? (
-            <p role="alert" className="mt-4 text-sm text-red-700">
+            <p
+              role="alert"
+              className="mt-4 text-sm text-red-700 dark:text-red-300"
+            >
               内容预览失败：{profileErrorText(contentMutation.error)}
             </p>
           ) : null}
           {deleteMutation.isError ? (
-            <p role="alert" className="mt-4 text-sm text-red-700">
+            <p
+              role="alert"
+              className="mt-4 text-sm text-red-700 dark:text-red-300"
+            >
               移出中央库失败：{profileErrorText(deleteMutation.error)}
             </p>
           ) : null}
@@ -374,7 +389,7 @@ export function SkillsPage() {
                           …
                         </p>
                         {skill.diagnosticCode ? (
-                          <p className="mt-1 text-xs break-all text-red-700">
+                          <p className="mt-1 text-xs break-all text-red-700 dark:text-red-300">
                             {skill.diagnosticCode}
                           </p>
                         ) : null}
@@ -430,7 +445,7 @@ export function SkillsPage() {
       </div>
 
       <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
         aria-labelledby="skill-target-title"
       >
         <h2 id="skill-target-title" className="text-lg font-semibold">
@@ -442,7 +457,10 @@ export function SkillsPage() {
           </p>
         ) : null}
         {statusesQuery.isError ? (
-          <p role="alert" className="mt-4 text-sm text-red-700">
+          <p
+            role="alert"
+            className="mt-4 text-sm text-red-700 dark:text-red-300"
+          >
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
@@ -481,7 +499,7 @@ export function SkillsPage() {
                   </p>
                 ) : null}
                 {status.diagnosticCode ? (
-                  <p className="mt-2 text-xs text-amber-800">
+                  <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
                     诊断码：<code>{status.diagnosticCode}</code>
                   </p>
                 ) : null}
@@ -532,7 +550,7 @@ export function SkillsPage() {
             aria-labelledby="skill-content-title"
             tabIndex={-1}
             onKeyDown={onContentDialogKeyDown}
-            className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-6 shadow-xl"
+            className="bg-card max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
           >
             <div className="flex items-start justify-between gap-3">
               <div>

@@ -92,7 +92,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
         aria-describedby={descriptionId}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-xl bg-white shadow-xl"
+        className="bg-card flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-xl shadow-xl"
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
           <div className="min-w-0">
@@ -150,7 +150,10 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               <p role="status">正在检测已有全局 Skills…</p>
             ) : null}
             {error ? (
-              <p role="alert" className="text-sm text-red-700">
+              <p
+                role="alert"
+                className="text-sm text-red-700 dark:text-red-300"
+              >
                 {copied ? "已复制到中央库，但列表刷新失败：" : ""}
                 {error} 请重新检测后再确认。
               </p>
@@ -188,7 +191,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                         <p className="mt-2">{source.message}</p>
                       ) : null}
                       {source.diagnosticCode ? (
-                        <p className="mt-2 text-xs text-amber-800">
+                        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
                           诊断码：<code>{source.diagnosticCode}</code>
                         </p>
                       ) : null}
@@ -257,7 +260,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                         </p>
                       ) : null}
                       {candidate.reason ? (
-                        <p className="mt-2 text-xs text-amber-800">
+                        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
                           {candidate.reason}
                         </p>
                       ) : null}

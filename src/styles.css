@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
+/* 手动主题切换：<html> 上的 dark 类是唯一全局信号，dark: 变体不绑定
+   prefers-color-scheme（Tailwind v4 默认跟随系统，这里改为类驱动）。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-muted: var(--muted);
@@ -27,6 +33,8 @@
     sans-serif;
   --background: oklch(0.985 0.002 247.839);
   --foreground: oklch(0.21 0.034 264.665);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
   --primary: oklch(0.278 0.033 256.848);
   --primary-foreground: oklch(0.985 0.002 247.839);
   --muted: oklch(0.967 0.003 264.542);
@@ -35,6 +43,21 @@
   --input: oklch(0.928 0.006 264.531);
   --ring: oklch(0.707 0.022 261.325);
   --radius: 0.625rem;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.141 0.005 285.823);
+  --foreground: oklch(0.985 0.002 247.839);
+  --card: oklch(0.21 0.006 285.885);
+  --card-foreground: var(--foreground);
+  --primary: oklch(0.985 0.002 247.839);
+  --primary-foreground: oklch(0.21 0.034 264.665);
+  --muted: oklch(0.274 0.006 285.885);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.552 0.016 285.938);
 }
 
 * {
@@ -68,7 +91,7 @@ select {
   width: 100%;
   border: 1px solid var(--input);
   border-radius: var(--radius-sm);
-  background: white;
+  background: var(--card);
   padding: 0.6rem 0.75rem;
   color: var(--foreground);
   outline: none;

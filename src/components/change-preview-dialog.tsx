@@ -44,7 +44,7 @@ export function ChangePreviewDialog({
         aria-describedby="change-preview-description"
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-6 shadow-xl"
+        className="bg-card max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -65,9 +65,9 @@ export function ChangePreviewDialog({
           {preview.warningCodes.length > 0 ? (
             <section
               aria-label="预览警告"
-              className="rounded-lg border border-amber-200 bg-amber-50 p-4"
+              className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40"
             >
-              <ul className="list-disc pl-5 text-sm text-amber-800">
+              <ul className="list-disc pl-5 text-sm text-amber-800 dark:text-amber-300">
                 {preview.warningCodes.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
@@ -86,7 +86,7 @@ export function ChangePreviewDialog({
                 />
               </div>
               {target.warningCodes.length > 0 ? (
-                <ul className="mt-3 list-disc pl-5 text-sm text-amber-800">
+                <ul className="mt-3 list-disc pl-5 text-sm text-amber-800 dark:text-amber-300">
                   {target.warningCodes.map((warning) => (
                     <li key={warning}>{warning}</li>
                   ))}

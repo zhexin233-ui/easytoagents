@@ -48,7 +48,7 @@ export function FormDialog({
         aria-describedby={descriptionId}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl min-w-0 flex-col overflow-hidden rounded-xl bg-white shadow-xl"
+        className="bg-card flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl min-w-0 flex-col overflow-hidden rounded-xl shadow-xl"
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
           <div className="min-w-0">
@@ -87,7 +87,10 @@ export function FormDialog({
           <div className="min-h-0 space-y-4 overflow-y-auto p-6">
             {children}
             {error ? (
-              <p role="alert" className="text-sm text-red-700">
+              <p
+                role="alert"
+                className="text-sm text-red-700 dark:text-red-300"
+              >
                 {error}
               </p>
             ) : null}

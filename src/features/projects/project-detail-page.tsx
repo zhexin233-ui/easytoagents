@@ -130,7 +130,11 @@ export function ProjectDetailPage() {
             code={project.pathStatus}
           />
         ) : null}
-        {message ? <p className="text-sm text-emerald-800">{message}</p> : null}
+        {message ? (
+          <p className="text-sm text-emerald-800 dark:text-emerald-300">
+            {message}
+          </p>
+        ) : null}
         {applyMutation.isError ? (
           <BlockingState
             title="应用项目预览失败"
@@ -140,7 +144,7 @@ export function ProjectDetailPage() {
       </div>
 
       <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
         aria-labelledby="project-status-title"
       >
         <h2 id="project-status-title" className="text-lg font-semibold">
@@ -171,7 +175,7 @@ export function ProjectDetailPage() {
       </section>
 
       <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
         aria-labelledby="project-resource-management-title"
       >
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -310,8 +314,8 @@ function ProjectToolViewButton({
       className={cn(
         "size-8 p-0 shadow-none",
         selected
-          ? "border-slate-300 bg-slate-50 shadow-sm"
-          : "border-slate-200 bg-transparent",
+          ? "border-slate-300 bg-slate-50 shadow-sm dark:border-slate-600 dark:bg-slate-800"
+          : "border-slate-200 bg-transparent dark:border-slate-700",
       )}
       aria-label={label}
       aria-pressed={selected}
@@ -597,7 +601,7 @@ function AssignmentCard({
   children: React.ReactNode;
 }) {
   return (
-    <article className="rounded-xl border bg-white p-5">
+    <article className="bg-card rounded-xl border p-5">
       <h3 className="font-semibold">{title}</h3>
       <p className="text-muted-foreground mt-1 text-sm leading-6">
         {description}

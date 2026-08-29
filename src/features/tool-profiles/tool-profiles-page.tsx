@@ -56,9 +56,9 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
 
       <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
         {statusQuery.data ? (
-          <section className="rounded-lg border bg-white p-4 text-sm">
+          <section className="bg-card rounded-lg border p-4 text-sm">
             {statusQuery.data.availability === "installed" ? (
-              <p className="font-medium text-emerald-800">
+              <p className="font-medium text-emerald-800 dark:text-emerald-300">
                 已安全检测到 {title}
                 {statusQuery.data.installationVersion
                   ? ` ${statusQuery.data.installationVersion}`
@@ -66,42 +66,42 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               </p>
             ) : null}
             {statusQuery.data.availability === "unavailable" ? (
-              <p className="font-medium text-red-700">
+              <p className="font-medium text-red-700 dark:text-red-300">
                 未在发布进程的安全搜索路径中检测到 {title}
                 ；原生目标保持不可应用。
               </p>
             ) : null}
             {statusQuery.data.availability === "unsupported" ? (
-              <p className="font-medium text-amber-800">
+              <p className="font-medium text-amber-800 dark:text-amber-300">
                 {title}
                 安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
               </p>
             ) : null}
             <p>{statusQuery.data.newSessionNotice}</p>
             {statusQuery.data.bearerTokenWarning ? (
-              <p className="mt-2 text-amber-800">
+              <p className="mt-2 text-amber-800 dark:text-amber-300">
                 {statusQuery.data.bearerTokenWarning}
               </p>
             ) : null}
             {statusQuery.data.promptOverride === "present" ? (
-              <p className="mt-2 font-medium text-amber-800">
+              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
                 检测到更高优先级的 Codex 指令来源（如 AGENTS.override.md）；当前
                 AGENTS.md 可能被遮蔽。
               </p>
             ) : null}
             {statusQuery.data.promptOverride === "unknown" ? (
-              <p className="mt-2 font-medium text-amber-800">
+              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
                 无法安全确认 Codex 指令遮蔽状态，请检查 AGENTS.override.md
                 后再应用。
               </p>
             ) : null}
             {statusQuery.data.providerPolicy === "blocked" ? (
-              <p className="mt-2 font-medium text-red-700">
+              <p className="mt-2 font-medium text-red-700 dark:text-red-300">
                 Claude Provider 由宿主平台管理，本应用不会覆盖渠道配置。
               </p>
             ) : null}
             {statusQuery.data.providerPolicy === "unknown" ? (
-              <p className="mt-2 font-medium text-amber-800">
+              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
                 无法确认 Claude Provider
                 是否由宿主管理；渠道预览将保持阻止状态。
               </p>
@@ -109,27 +109,27 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
           </section>
         ) : null}
         {statusQuery.isPending ? (
-          <p role="status" className="rounded-lg border bg-white p-4 text-sm">
+          <p role="status" className="bg-card rounded-lg border p-4 text-sm">
             正在检测工具配置状态…
           </p>
         ) : null}
         {statusQuery.isError ? (
           <p
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
           >
             {profileErrorText(statusQuery.error)}
           </p>
         ) : null}
         {applyMessage ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
             {applyMessage}
           </p>
         ) : null}
         {applyError ? (
           <p
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
           >
             {applyError}
           </p>

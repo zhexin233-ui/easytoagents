@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
 import codexIconUrl from "@/assets/brand/codex-icon-light.png";
+import { type ThemePreference, useTheme } from "@/components/use-theme";
 import { projectsQueryOptions } from "@/lib/projects-api";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +37,7 @@ export function AppShell() {
     <div className="flex h-screen flex-col overflow-hidden">
       <TopBar />
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-60 shrink-0 flex-col border-r bg-white">
+        <aside className="bg-card flex w-60 shrink-0 flex-col border-r">
           <nav
             aria-label="一级导航"
             className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4"
@@ -69,7 +70,7 @@ export function AppShell() {
 
 function TopBar() {
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b bg-white px-4 lg:px-6">
+    <header className="bg-card flex h-14 shrink-0 items-center justify-between gap-4 border-b px-4 lg:px-6">
       <div className="flex items-center gap-2.5">
         <span
           aria-hidden="true"
@@ -84,32 +85,132 @@ function TopBar() {
           </p>
         </div>
       </div>
-      <nav aria-label="工具入口" className="flex items-center gap-1.5">
-        {toolLinks.map((link) => (
-          <NavLink
-            key={link.to}
-            to={link.to}
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-primary text-primary-foreground border-transparent"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )
-            }
-          >
-            <img
-              src={link.icon}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="size-4 rounded-[4px] object-contain"
-            />
-            {link.label}
-          </NavLink>
-        ))}
-      </nav>
+      <div className="flex items-center gap-2.5">
+        <nav aria-label="工具入口" className="flex items-center gap-1.5">
+          {toolLinks.map((link) => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-primary text-primary-foreground border-transparent"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )
+              }
+            >
+              <img
+                src={link.icon}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="size-4 rounded-[4px] object-contain"
+              />
+              {link.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div aria-hidden="true" className="bg-border h-5 w-px" />
+        <ThemeToggleGroup />
+      </div>
     </header>
+  );
+}
+
+const themeToggleOptions = [
+  { value: "light", label: "亮色模式", Icon: SunIcon },
+  { value: "dark", label: "暗色模式", Icon: MoonIcon },
+  { value: "system", label: "跟随系统外观", Icon: MonitorIcon },
+] as const satisfies readonly {
+  value: ThemePreference;
+  label: string;
+  Icon: () => ReactElement;
+}[];
+
+function ThemeToggleGroup() {
+  const { preference, setPreference } = useTheme();
+  return (
+    <div
+      role="group"
+      aria-label="外观模式"
+      className="flex items-center gap-0.5 rounded-md border p-0.5"
+    >
+      {themeToggleOptions.map(({ value, label, Icon }) => {
+        const selected = preference === value;
+        return (
+          <button
+            key={value}
+            type="button"
+            aria-label={label}
+            aria-pressed={selected}
+            title={label}
+            onClick={() => setPreference(value)}
+            className={cn(
+              "flex size-6 items-center justify-center rounded transition-colors",
+              selected
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            <Icon />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="size-3.5"
+    >
+      <circle cx="8" cy="8" r="3" />
+      <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M12.8 3.2l-1.1 1.1M4.3 11.7l-1.1 1.1" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="size-3.5"
+    >
+      <path d="M13.4 9.6A6 6 0 1 1 6.4 2.6a4.8 4.8 0 0 0 7 7Z" />
+    </svg>
+  );
+}
+
+function MonitorIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="size-3.5"
+    >
+      <rect x="1.75" y="2.75" width="12.5" height="8.5" rx="1" />
+      <path d="M5.5 13.75h5M8 11.25v2.5" />
+    </svg>
   );
 }
 
@@ -171,7 +272,10 @@ function ProjectNavSection({
             </p>
           ) : null}
           {projectsQuery.isError ? (
-            <p role="alert" className="px-2 py-1 text-xs text-red-700">
+            <p
+              role="alert"
+              className="px-2 py-1 text-xs text-red-700 dark:text-red-300"
+            >
               项目列表加载失败
             </p>
           ) : null}

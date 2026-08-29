@@ -223,7 +223,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
   return (
     <section
       aria-labelledby={`${tool}-providers-title`}
-      className="rounded-xl border bg-white p-5"
+      className="bg-card rounded-xl border p-5"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -252,10 +252,12 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
       </div>
 
       {notice ? (
-        <p className="mt-4 text-sm text-emerald-700">{notice}</p>
+        <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">
+          {notice}
+        </p>
       ) : null}
       {mutationError ? (
-        <p role="alert" className="mt-4 text-sm text-red-700">
+        <p role="alert" className="mt-4 text-sm text-red-700 dark:text-red-300">
           {mutationError}
         </p>
       ) : null}
@@ -266,7 +268,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
         </p>
       ) : null}
       {profilesQuery.isError ? (
-        <p role="alert" className="mt-5 text-sm text-red-700">
+        <p role="alert" className="mt-5 text-sm text-red-700 dark:text-red-300">
           {profileErrorText(profilesQuery.error)}
         </p>
       ) : null}
@@ -335,14 +337,14 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
       </ul>
 
       {importPreview ? (
-        <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40">
           <p className="font-medium">发现已有渠道，仅生成了导入预览</p>
           <p className="mt-1 text-sm break-all">{importPreview.targetPath}</p>
           <p className="text-muted-foreground mt-1 text-xs">
             {importPreview.defaultModel} ·{" "}
             {importCredentialText(tool, importPreview)}
           </p>
-          <pre className="mt-3 overflow-auto rounded bg-white p-3 text-xs">
+          <pre className="bg-card mt-3 overflow-auto rounded p-3 text-xs dark:bg-slate-900/60">
             {JSON.stringify(importPreview.redactedProjection, null, 2)}
           </pre>
           <div className="mt-3 flex gap-2">

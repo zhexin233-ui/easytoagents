@@ -280,7 +280,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         aria-describedby="onboarding-description"
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl bg-white p-6 shadow-xl"
+        className="bg-card max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl p-6 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -393,7 +393,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     <p
                       key={error}
                       role="alert"
-                      className="mt-2 text-xs text-amber-800"
+                      className="mt-2 text-xs text-amber-800 dark:text-amber-300"
                     >
                       {error}
                     </p>
@@ -488,7 +488,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         {step === "preview" ? (
           <div className="mt-6 space-y-4">
             {previewWarnings.length > 0 ? (
-              <ul className="list-disc rounded-lg border border-amber-200 bg-amber-50 p-4 pl-9 text-sm text-amber-800">
+              <ul className="list-disc rounded-lg border border-amber-200 bg-amber-50 p-4 pl-9 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
                 {previewWarnings.map((warning, index) => (
                   <li key={`${warning}-${index}`}>{warning}</li>
                 ))}
@@ -516,12 +516,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                         />
                       </div>
                       {target.errorCode ? (
-                        <p role="alert" className="mt-2 text-xs text-red-700">
+                        <p
+                          role="alert"
+                          className="mt-2 text-xs text-red-700 dark:text-red-300"
+                        >
                           阻止应用：{target.errorCode}
                         </p>
                       ) : null}
                       {target.warningCodes.length > 0 ? (
-                        <ul className="mt-2 list-disc pl-5 text-xs text-amber-800">
+                        <ul className="mt-2 list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">
                           {target.warningCodes.map((warning) => (
                             <li key={warning}>{warning}</li>
                           ))}
@@ -554,7 +557,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         ) : null}
 
         {step === "done" ? (
-          <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-5">
+          <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/40">
             <p className="font-semibold">向导已完成</p>
             <p className="mt-2 text-sm">
               已选择项完成导入与显式应用；跳过或未选择的工具保持非受管。

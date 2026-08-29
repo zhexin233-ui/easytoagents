@@ -230,14 +230,14 @@ export function McpPage() {
 
       <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
         {message ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
             {message}
           </p>
         ) : null}
         {operationError ? (
           <p
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
           >
             {operationError}
           </p>
@@ -246,7 +246,7 @@ export function McpPage() {
 
       <div className="mx-auto mt-6 max-w-6xl">
         <section
-          className="rounded-xl border bg-white p-5"
+          className="bg-card rounded-xl border p-5"
           aria-labelledby="mcp-list-title"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -269,7 +269,10 @@ export function McpPage() {
             </p>
           ) : null}
           {serversQuery.isError ? (
-            <p role="alert" className="mt-4 text-sm text-red-700">
+            <p
+              role="alert"
+              className="mt-4 text-sm text-red-700 dark:text-red-300"
+            >
               {profileErrorText(serversQuery.error)}
             </p>
           ) : null}
@@ -414,7 +417,7 @@ export function McpPage() {
       </div>
 
       <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
         aria-labelledby="mcp-target-title"
       >
         <h2 id="mcp-target-title" className="text-lg font-semibold">
@@ -426,7 +429,10 @@ export function McpPage() {
           </p>
         ) : null}
         {statusesQuery.isError ? (
-          <p role="alert" className="mt-3 text-sm text-red-700">
+          <p
+            role="alert"
+            className="mt-3 text-sm text-red-700 dark:text-red-300"
+          >
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
@@ -460,7 +466,7 @@ export function McpPage() {
                   </p>
                 ) : null}
                 {status.diagnosticCode ? (
-                  <p className="mt-2 text-xs text-amber-800">
+                  <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
                     诊断码：<code>{status.diagnosticCode}</code>
                   </p>
                 ) : null}

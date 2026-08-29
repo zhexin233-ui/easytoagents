@@ -16,7 +16,7 @@ export function BlockingState({
   return (
     <div
       role="alert"
-      className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"
+      className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
     >
       <p className="font-semibold">⛔ {title}</p>
       <p className="mt-1 leading-6">{description}</p>

@@ -62,7 +62,7 @@ export function DashboardPage() {
       ) : null}
 
       {dashboardQuery.data?.needsOnboarding ? (
-        <section className="mx-auto mt-8 max-w-3xl rounded-xl border border-dashed bg-white p-8 text-center">
+        <section className="bg-card mx-auto mt-8 max-w-3xl rounded-xl border border-dashed p-8 text-center">
           <h2 className="text-xl font-semibold">尚未接管任何配置</h2>
           <p className="text-muted-foreground mt-2 text-sm leading-6">
             唯一下一步是运行只读检测；你可以逐工具选择导入/接管，也可以跳过并保持非受管。
@@ -82,7 +82,7 @@ export function DashboardPage() {
             {dashboardQuery.data.tools.map((tool) => (
               <article
                 key={tool.tool}
-                className="rounded-xl border bg-white p-5"
+                className="bg-card rounded-xl border p-5"
               >
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-lg font-semibold">
@@ -125,7 +125,7 @@ export function DashboardPage() {
               value={dashboardQuery.data.conflictCount}
               link="/projects?status=conflict"
             />
-            <article className="rounded-xl border bg-white p-5">
+            <article className="bg-card rounded-xl border p-5">
               <p className="text-muted-foreground text-sm">私有快照</p>
               <p className="mt-2 text-3xl font-semibold">
                 {dashboardQuery.data.snapshotCount}
@@ -142,7 +142,7 @@ export function DashboardPage() {
           </section>
 
           <section
-            className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+            className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
             aria-labelledby="recent-sync-title"
           >
             <h2 id="recent-sync-title" className="text-lg font-semibold">
@@ -212,7 +212,7 @@ function MetricCard({
   link: string;
 }) {
   return (
-    <article className="rounded-xl border bg-white p-5">
+    <article className="bg-card rounded-xl border p-5">
       <p className="text-muted-foreground text-sm">{label}</p>
       <p className="mt-2 text-3xl font-semibold">{value}</p>
       <Link className="mt-4 inline-block text-sm underline" to={link}>

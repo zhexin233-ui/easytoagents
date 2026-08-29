@@ -77,7 +77,7 @@ export function SnapshotRestoreDialog({
         aria-describedby="snapshot-restore-description"
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-6 shadow-xl"
+        className="bg-card max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>

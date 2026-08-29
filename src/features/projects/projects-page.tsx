@@ -81,7 +81,7 @@ export function ProjectsPage() {
       </header>
 
       <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
         aria-labelledby="register-project-title"
       >
         <h2 id="register-project-title" className="text-lg font-semibold">
@@ -137,7 +137,11 @@ export function ProjectsPage() {
       </section>
 
       <div className="mx-auto mt-4 max-w-6xl" aria-live="polite">
-        {message ? <p className="text-sm text-emerald-800">{message}</p> : null}
+        {message ? (
+          <p className="text-sm text-emerald-800 dark:text-emerald-300">
+            {message}
+          </p>
+        ) : null}
         {operationError ? (
           <BlockingState
             title="项目操作未完成"
@@ -149,7 +153,7 @@ export function ProjectsPage() {
       </div>
 
       <section
-        className="mx-auto mt-6 max-w-6xl rounded-xl border bg-white p-5"
+        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
         aria-labelledby="project-list-title"
       >
         <h2 id="project-list-title" className="text-lg font-semibold">

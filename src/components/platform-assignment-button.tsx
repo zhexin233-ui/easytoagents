@@ -28,8 +28,8 @@ export function PlatformAssignmentButton({
       className={cn(
         "size-8 p-0 shadow-none",
         assigned
-          ? "border-slate-300 bg-slate-50 shadow-sm"
-          : "border-slate-200 bg-transparent",
+          ? "border-slate-300 bg-slate-50 shadow-sm dark:border-slate-600 dark:bg-slate-800"
+          : "border-slate-200 bg-transparent dark:border-slate-700",
       )}
       aria-label={label}
       aria-pressed={assigned}
