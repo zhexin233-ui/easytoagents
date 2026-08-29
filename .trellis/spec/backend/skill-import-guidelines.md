@@ -60,6 +60,10 @@ commands.confirmSkillImport({ previewId, candidateIds });
 
 中央已有项只有精确 name/hash、记录状态及磁盘副本均有效才识别为 `already_imported`。已指向中央目录的原生链接必须匹配已知记录的直接私有子目录，不能重新复制中央目录到自身。
 
+### 中央副本目录命名
+
+中央副本目录以 `central_skills/<frontmatter.name>` 命名（`validate_skill_name` 保证其为安全的单段小写名）；`skills.id` 仍是 UUID，仅目录名与主键解耦。重名中央目录在 prepare 阶段即冲突清理，finalize 仍用排他 rename 兜底。中央路径边界校验（`validate_direct_child`）的期望名是 `record.name`；`inspect_central_skill` 同时接受 `record.name` 与历史 `record.id` 两种布局——启动迁移 `migrate_legacy_central_skill_directories` 对校验失败（hash 漂移、目标名被占用等）的记录跳过重命名，这些记录必须以 legacy 布局继续可用。迁移在 `AppState` 初始化时运行：原子 rename → 改写仍指向旧目录的受管 symlink（临时链接 + rename）→ 单事务更新 `skills.central_path` 与 `managed_items.last_applied_item_hash`；崩溃后重启按"旧目录缺失 + 新目录核验通过"补完记录，必须保持幂等。
+
 ### DTO 与选择
 
 - 预览：`previewId: string | null`、`tool`、`sources`、`candidates`、`message`。无可新增候选时没有确认令牌。

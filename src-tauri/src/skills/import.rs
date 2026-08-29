@@ -252,12 +252,7 @@ pub fn discover_skill_import(
                     .iter()
                     .find(|record| Path::new(&record.central_path) == evidence.resolved)
                 {
-                    Some(record)
-                        if Path::new(&record.central_path)
-                            == paths.central_skills().join(&record.id) =>
-                    {
-                        Some(record)
-                    }
+                    Some(record) if central_record_in_private_root(paths, record) => Some(record),
                     _ => {
                         preview
                             .candidates
@@ -431,6 +426,13 @@ pub fn discover_skill_import(
         )?;
     }
     Ok(preview)
+}
+
+/// 中央记录必须是中央根的直属私有子目录；名称化是当前布局，id 命名是启动迁移前的历史布局。
+fn central_record_in_private_root(paths: &AppPaths, record: &skills::SkillRecord) -> bool {
+    let central = Path::new(&record.central_path);
+    central == paths.central_skills().join(&record.id)
+        || central == paths.central_skills().join(&record.name)
 }
 
 fn invalid_candidate(entry: &Path, reason: &str) -> SkillImportCandidateDto {

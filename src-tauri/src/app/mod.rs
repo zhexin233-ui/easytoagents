@@ -15,6 +15,7 @@ use crate::{
     security::{
         audit_private_tree, ensure_private_directory, reject_symlink_components, SecretRedactor,
     },
+    skills::migrate_legacy_central_skill_directories,
     sync::{detect_interrupted_run, InterruptedRunPlan},
 };
 
@@ -150,7 +151,8 @@ impl AppState {
         environment: Option<ExplicitEnvironment>,
     ) -> Result<Self, AppError> {
         paths.initialize()?;
-        let database = Database::open(&paths)?;
+        let mut database = Database::open(&paths)?;
+        migrate_legacy_central_skill_directories(&mut database, &paths)?;
         paths.audit_permissions()?;
         let interrupted_run = detect_interrupted_run(&database, &paths)?;
         Ok(Self {

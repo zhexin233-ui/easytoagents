@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "Skills 导入安全边界：排他 rename、事务顺序、中央副本校验、already_imported 与 private_record 合同"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移与 row_version/UUID 主键约定；启动备份；symlink_metadata 安全检查"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "中央库与同步管理的通用约束"}

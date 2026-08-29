@@ -168,11 +168,10 @@ fn prepare_skill_import_budgeted(
     let source_text = path_text(&source, "sourcePath")?;
     let id = Uuid::new_v4().to_string();
     let staging_path = paths.staging().join(format!("skill-import-{id}"));
-    let central_path = paths.central_skills().join(&id);
-    if fs::symlink_metadata(&staging_path).is_ok() || fs::symlink_metadata(&central_path).is_ok() {
+    if fs::symlink_metadata(&staging_path).is_ok() {
         return Err(AppError::conflict(
             "centralSkill",
-            "Skill 导入临时目录或中央目录已存在",
+            "Skill 导入临时目录已存在",
         ));
     }
 
@@ -196,6 +195,11 @@ fn prepare_skill_import_budgeted(
             .skill_md
             .ok_or_else(|| AppError::invalid_input("SKILL.md", "Skill 缺少普通 SKILL.md"))?;
         let (name, frontmatter) = parse_skill_frontmatter(&skill_md)?;
+        // 中央副本以 frontmatter.name 命名；重名目录提前失败，避免拖到 finalize 才发现。
+        let central_path = paths.central_skills().join(&name);
+        if fs::symlink_metadata(&central_path).is_ok() {
+            return Err(AppError::conflict("centralSkill", "中央已存在同名技能目录"));
+        }
         sync_directory(&staging_path)?;
         Ok(PreparedSkillImport {
             id,
@@ -249,7 +253,7 @@ pub(super) fn finalize_skill_import_budgeted(
         ));
     }
     let central_path = Path::new(&prepared.central_path);
-    validate_direct_child(central_path, paths.central_skills(), &prepared.id)?;
+    validate_direct_child(central_path, paths.central_skills(), &prepared.name)?;
     verify_prepared_import_budgeted(paths, prepared, budget)?;
     match fs::symlink_metadata(central_path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -270,7 +274,7 @@ pub(super) fn finalize_skill_import_budgeted(
 }
 
 /// 原子拒绝已存在的目标；存在检查与普通 rename 之间不能留下覆盖窗口。
-fn rename_import_exclusively(source: &Path, destination: &Path) -> Result<(), AppError> {
+pub(crate) fn rename_import_exclusively(source: &Path, destination: &Path) -> Result<(), AppError> {
     let parent = |path: &Path| {
         path.parent()
             .map(Path::to_path_buf)
@@ -356,7 +360,7 @@ pub(super) fn verify_prepared_import_budgeted(
         (
             Path::new(&prepared.central_path),
             paths.central_skills(),
-            prepared.id.clone(),
+            prepared.name.clone(),
         )
     } else {
         (
@@ -388,13 +392,14 @@ pub(super) fn verify_prepared_import_budgeted(
 pub(crate) fn inspect_central_skill(
     paths: &AppPaths,
     id: &str,
+    name: &str,
     central_path: &str,
     expected_hash: &str,
     stored_status: SkillStatus,
     include_content: bool,
 ) -> Result<CentralSkillInspection, AppError> {
     let path = Path::new(central_path);
-    validate_direct_child(path, paths.central_skills(), id)?;
+    validate_central_skill_directory(path, paths.central_skills(), id, name)?;
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -473,12 +478,14 @@ pub(crate) fn inspect_central_skill(
 pub(crate) fn quarantine_central_skill(
     paths: &AppPaths,
     id: &str,
+    name: &str,
     central_path: &str,
     expected_hash: &str,
 ) -> Result<Option<PathBuf>, AppError> {
     let inspection = inspect_central_skill(
         paths,
         id,
+        name,
         central_path,
         expected_hash,
         SkillStatus::Ready,
@@ -1413,7 +1420,26 @@ fn validate_direct_child(path: &Path, owner: &Path, expected_name: &str) -> Resu
     Ok(())
 }
 
-fn sync_directory(path: &Path) -> Result<(), AppError> {
+/// 名称化目录是当前布局；启动迁移完成前，历史记录可能仍以记录 id 命名，两种都必须可用。
+pub(crate) fn validate_central_skill_directory(
+    path: &Path,
+    owner: &Path,
+    id: &str,
+    name: &str,
+) -> Result<(), AppError> {
+    if validate_direct_child(path, owner, name).is_ok()
+        || validate_direct_child(path, owner, id).is_ok()
+    {
+        Ok(())
+    } else {
+        Err(AppError::conflict(
+            "centralPath",
+            "中央 Skill 路径与数据库身份不匹配",
+        ))
+    }
+}
+
+pub(crate) fn sync_directory(path: &Path) -> Result<(), AppError> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "sync_skill_directory"))
@@ -1775,6 +1801,11 @@ mod tests {
         assert!(source.join("runner").is_symlink());
         let central = std::path::Path::new(&prepared.central_path);
         assert_eq!(
+            central.file_name().and_then(|name| name.to_str()),
+            Some("fixture-skill"),
+            "中央副本目录必须以 frontmatter.name 命名"
+        );
+        assert_eq!(
             prepared.content_hash,
             digest_tree(central, None).unwrap().hash
         );
@@ -1821,6 +1852,30 @@ mod tests {
             .unwrap()
             .next()
             .is_none());
+    }
+
+    #[test]
+    fn same_name_import_conflicts_without_leaving_partial_copies() {
+        let fixture = Fixture::new();
+        let first = fixture.source("first");
+        write_valid_skill(&first, "fixture-skill");
+        let mut prepared = prepare_skill_import(&fixture.paths, &first).unwrap();
+        finalize_skill_import(&fixture.paths, &mut prepared).unwrap();
+
+        // 来源目录名与 frontmatter.name 不同：中央命名只看 frontmatter.name。
+        let second = fixture.source("second");
+        write_valid_skill(&second, "fixture-skill");
+        assert!(prepare_skill_import(&fixture.paths, &second).is_err());
+        assert!(fs::read_dir(fixture.paths.staging())
+            .unwrap()
+            .next()
+            .is_none());
+        assert_eq!(
+            fs::read_dir(fixture.paths.central_skills())
+                .unwrap()
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1974,6 +2029,7 @@ mod tests {
         let quarantine = quarantine_central_skill(
             &fixture.paths,
             &prepared.id,
+            &prepared.name,
             &prepared.central_path,
             &prepared.content_hash,
         )

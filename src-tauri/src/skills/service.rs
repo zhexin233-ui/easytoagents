@@ -2,11 +2,13 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs, io,
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -14,7 +16,8 @@ use super::{
     library::{
         cleanup_failed_import, delete_quarantined_skill, finalize_skill_import,
         inspect_central_skill, prepare_skill_import, quarantine_central_skill,
-        restore_quarantined_skill,
+        rename_import_exclusively, restore_quarantined_skill, sync_directory,
+        validate_central_skill_directory,
     },
     ApplySkillPreviewInput, DeleteSkillResultDto, ImportSkillInput, PreparedSkillRecord,
     PreviewSkillSyncInput, SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput,
@@ -94,6 +97,7 @@ pub fn preview_skill_content(
     let inspection = inspect_central_skill(
         paths,
         &record.id,
+        &record.name,
         &record.central_path,
         &record.content_hash,
         record.status,
@@ -124,6 +128,7 @@ pub fn delete_skill(
     let quarantine = quarantine_central_skill(
         paths,
         &record.id,
+        &record.name,
         &record.central_path,
         &record.content_hash,
     )?;
@@ -896,11 +901,190 @@ fn inspect_record(
     inspect_central_skill(
         paths,
         &record.id,
+        &record.name,
         &record.central_path,
         &record.content_hash,
         record.status,
         include_content,
     )
+}
+
+/// 启动时把历史以记录 id 命名的中央目录迁移为 frontmatter.name 命名：
+/// 校验通过后原子重命名，同事务更新 `skills.central_path` 与受管链接基线，
+/// 并把仍指向旧目录的受管 symlink 原子改写到新位置。
+/// 单条记录不满足安全前提时保持 legacy 布局（inspect 兼容两种布局），不阻塞启动。
+pub fn migrate_legacy_central_skill_directories(
+    database: &mut Database,
+    paths: &AppPaths,
+) -> Result<(), AppError> {
+    for record in repository::list_skills(database)? {
+        migrate_legacy_skill_directory(database, paths, &record)?;
+    }
+    Ok(())
+}
+
+fn migrate_legacy_skill_directory(
+    database: &mut Database,
+    paths: &AppPaths,
+    record: &SkillRecord,
+) -> Result<(), AppError> {
+    let central_root = paths.central_skills();
+    let expected = central_root.join(&record.name);
+    let old = PathBuf::from(&record.central_path);
+    if old == expected {
+        return Ok(());
+    }
+    // 只迁移已知 legacy 布局：中央根直属、以记录 id 命名的目录；其它布局一律不碰。
+    if validate_central_skill_directory(&old, central_root, &record.id, &record.name).is_err() {
+        return Ok(());
+    }
+    let old_canonical = fs::canonicalize(&old).ok();
+    match fs::symlink_metadata(&old) {
+        Ok(metadata) if !metadata.is_symlink() && metadata.is_dir() => {
+            // 内容核验通过才改名；漂移或状态异常的记录保持原位，由既有 Invalid 展示处理。
+            let inspection = inspect_central_skill(
+                paths,
+                &record.id,
+                &record.name,
+                &record.central_path,
+                &record.content_hash,
+                record.status,
+                false,
+            );
+            match inspection {
+                Ok(inspection) if inspection.status == SkillStatus::Ready => {}
+                _ => return Ok(()),
+            }
+            // 目标名被占用等冲突时保持 legacy；绝不覆盖中央根内的未知目录。
+            if rename_import_exclusively(&old, &expected).is_err() {
+                return Ok(());
+            }
+            // rename 已原子完成；目录 fsync 只是持久性优化，失败不回滚也不阻塞启动。
+            let _ = sync_directory(central_root);
+        }
+        // 上次迁移可能已完成 rename 但未更新数据库；仅当新位置核验通过才补完记录。
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let inspection = inspect_central_skill(
+                paths,
+                &record.id,
+                &record.name,
+                &expected.to_string_lossy(),
+                &record.content_hash,
+                record.status,
+                false,
+            );
+            match inspection {
+                Ok(inspection) if inspection.status == SkillStatus::Ready => {}
+                _ => return Ok(()),
+            }
+        }
+        // 符号链接、特殊文件或权限异常：不动未知内容，保持 legacy 可用。
+        _ => return Ok(()),
+    }
+    let rewritten =
+        rewrite_managed_skill_links(database, record, &old, old_canonical.as_deref(), &expected);
+    persist_migrated_skill_directory(database, &record.id, &expected, &rewritten)
+}
+
+/// 把仍指向旧中央目录的受管 symlink 原子改写到新位置；返回被改写的 managed item id。
+/// 链接缺失或已指向其它位置时不动作，交给既有 drift 检测与重新 Apply 自愈。
+fn rewrite_managed_skill_links(
+    database: &Database,
+    record: &SkillRecord,
+    old: &Path,
+    old_canonical: Option<&Path>,
+    expected: &Path,
+) -> Vec<String> {
+    let rows = (|| {
+        let mut statement = database
+            .connection()
+            .prepare(
+                "SELECT item.id, target.target_path, item.external_key
+                 FROM managed_items AS item
+                 JOIN managed_targets AS target ON target.id = item.target_id
+                 WHERE item.resource_kind = 'skill' AND item.resource_id = ?1",
+            )
+            .ok()?;
+        let rows = statement
+            .query_map([&record.id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .ok()?
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        Some(rows)
+    })();
+    let Some(rows) = rows else {
+        return Vec::new();
+    };
+    let mut rewritten = Vec::new();
+    for (item_id, target_path, external_key) in rows {
+        let link = PathBuf::from(&target_path).join(&external_key);
+        let points_at_old = match fs::symlink_metadata(&link) {
+            Ok(metadata) if metadata.file_type().is_symlink() => match fs::read_link(&link) {
+                Ok(current) if current == old => true,
+                Ok(current) => old_canonical.is_some_and(|canonical| current == canonical),
+                Err(_) => false,
+            },
+            _ => false,
+        };
+        if !points_at_old {
+            continue;
+        }
+        let temporary = link
+            .parent()
+            .map(|parent| parent.join(format!(".ea-skill-migrate-{}", Uuid::new_v4())));
+        let Some(temporary) = temporary else { continue };
+        let rewritten_link =
+            symlink(expected, &temporary).is_ok() && fs::rename(&temporary, &link).is_ok();
+        if !rewritten_link {
+            let _ = fs::remove_file(&temporary);
+            continue;
+        }
+        rewritten.push(item_id);
+    }
+    rewritten
+}
+
+fn persist_migrated_skill_directory(
+    database: &mut Database,
+    skill_id: &str,
+    expected: &Path,
+    rewritten_item_ids: &[String],
+) -> Result<(), AppError> {
+    let database_path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| AppError::database(&database_path, "begin_skill_directory_migration"))?;
+    transaction
+        .execute(
+            "UPDATE skills SET central_path = ?2 WHERE id = ?1",
+            params![skill_id, expected.to_string_lossy()],
+        )
+        .map_err(|_| AppError::database(&database_path, "migrate_skill_central_path"))?;
+    // 与 build_managed_item_changes 的 native 投影保持同一形状，避免迁移本身制造 managed item 漂移。
+    let native = json!({
+        "targetType": "symlink",
+        "linkTarget": expected.to_string_lossy(),
+    });
+    let item_hash = hash_json(&native);
+    for item_id in rewritten_item_ids {
+        transaction
+            .execute(
+                "UPDATE managed_items SET last_applied_item_hash = ?2
+                 WHERE id = ?1 AND resource_kind = 'skill'",
+                params![item_id, item_hash],
+            )
+            .map_err(|_| AppError::database(&database_path, "migrate_skill_managed_item_hash"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|_| AppError::database(&database_path, "commit_skill_directory_migration"))
 }
 
 fn skill_dto(
@@ -982,15 +1166,15 @@ mod tests {
         },
         app::AppPaths,
         db::Database,
-        domain::{SyncStatus, Tool},
+        domain::{SkillStatus, SyncStatus, Tool},
         error::ErrorCode,
         security::SecretRedactor,
         skills::{
             ApplySkillPreviewInput, ImportSkillInput, PreviewSkillSyncInput,
-            SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput,
+            SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput, SkillDto,
             SkillProjectOptionsInput, SkillProjectSelectionState, VersionedSkillInput,
         },
-        sync::{list_snapshots, preview_restore, restore_snapshot},
+        sync::{hash_json, list_snapshots, preview_restore, restore_snapshot},
     };
 
     const CONTENT_MARKER: &str = "phase6-private-content-marker";
@@ -2444,5 +2628,188 @@ mod tests {
         .unwrap();
         assert!(!Path::new(&skill.central_path).exists());
         assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), source_skill_md);
+    }
+
+    fn downgrade_to_legacy_layout(fixture: &Fixture, skill: &SkillDto) -> std::path::PathBuf {
+        let legacy = fixture.paths.central_skills().join(&skill.id);
+        fs::rename(Path::new(&skill.central_path), &legacy).unwrap();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE skills SET central_path = ?2 WHERE id = ?1",
+                rusqlite::params![skill.id, legacy.to_string_lossy()],
+            )
+            .unwrap();
+        legacy
+    }
+
+    fn legacy_managed_link(
+        fixture: &Fixture,
+        skill: &SkillDto,
+        legacy: &Path,
+    ) -> (String, std::path::PathBuf) {
+        let target = fixture.home.join(".claude/skills");
+        fs::create_dir_all(&target).unwrap();
+        let target_id = Uuid::new_v4().to_string();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                 VALUES (?1, 'claude', 'skill', 'global', ?2)",
+                rusqlite::params![target_id, target.to_string_lossy()],
+            )
+            .unwrap();
+        let native = json!({
+            "targetType": "symlink",
+            "linkTarget": legacy.to_string_lossy(),
+        });
+        let item_id = Uuid::new_v4().to_string();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO managed_items(
+                    id, target_id, resource_kind, resource_id, external_key,
+                    last_applied_item_hash
+                 ) VALUES (?1, ?2, 'skill', ?3, ?4, ?5)",
+                rusqlite::params![item_id, target_id, skill.id, skill.name, hash_json(&native)],
+            )
+            .unwrap();
+        let link = target.join(&skill.name);
+        symlink(legacy, &link).unwrap();
+        (item_id, link)
+    }
+
+    #[test]
+    fn legacy_central_directories_migrate_with_database_and_managed_links() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("migration-skill");
+        let legacy = downgrade_to_legacy_layout(&fixture, &skill);
+        let (item_id, link) = legacy_managed_link(&fixture, &skill, &legacy);
+
+        super::migrate_legacy_central_skill_directories(&mut fixture.database, &fixture.paths)
+            .unwrap();
+
+        let expected = fixture.paths.central_skills().join(&skill.name);
+        assert!(!legacy.exists());
+        assert!(expected.join("SKILL.md").is_file());
+        let stored: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT central_path FROM skills WHERE id = ?1",
+                [&skill.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, expected.to_string_lossy());
+        assert_eq!(fs::read_link(&link).unwrap(), expected);
+        assert_eq!(fs::canonicalize(&link).unwrap(), expected);
+        let item_hash: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT last_applied_item_hash FROM managed_items WHERE id = ?1",
+                [&item_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            item_hash,
+            hash_json(&json!({
+                "targetType": "symlink",
+                "linkTarget": expected.to_string_lossy(),
+            }))
+        );
+        assert!(
+            super::list_skills(&fixture.database, &fixture.paths).unwrap()[0]
+                .central_path
+                .ends_with(&skill.name)
+        );
+
+        // 二次启动幂等。
+        super::migrate_legacy_central_skill_directories(&mut fixture.database, &fixture.paths)
+            .unwrap();
+        assert!(expected.join("SKILL.md").is_file());
+        assert_eq!(fs::read_link(&link).unwrap(), expected);
+    }
+
+    #[test]
+    fn drifted_or_occupied_legacy_directories_keep_the_legacy_layout() {
+        let mut fixture = Fixture::new();
+        let drifted = fixture.import("drifted-skill");
+        let drifted_legacy = downgrade_to_legacy_layout(&fixture, &drifted);
+        fs::write(
+            drifted_legacy.join("SKILL.md"),
+            "---\nname: drifted-skill\ndescription: tampered\n---\n\nbody\n",
+        )
+        .unwrap();
+
+        let blocked = fixture.import("blocked-skill");
+        // 先降级为 legacy 布局，再让同名名称化目录被未知目录占用。
+        let blocked_legacy = downgrade_to_legacy_layout(&fixture, &blocked);
+        let blocked_expected = fixture.paths.central_skills().join("blocked-skill");
+        fs::create_dir(&blocked_expected).unwrap();
+        let sentinel = blocked_expected.join("sentinel.txt");
+        fs::write(&sentinel, "occupy").unwrap();
+
+        super::migrate_legacy_central_skill_directories(&mut fixture.database, &fixture.paths)
+            .unwrap();
+
+        assert!(drifted_legacy.join("SKILL.md").is_file());
+        let drifted_stored: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT central_path FROM skills WHERE id = ?1",
+                [&drifted.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(drifted_stored, drifted_legacy.to_string_lossy());
+        // 漂移记录仍可被中央核验识别为 Invalid，而不是报路径身份错误。
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        let drifted_dto = listed.iter().find(|entry| entry.id == drifted.id).unwrap();
+        assert_eq!(drifted_dto.status, SkillStatus::Invalid);
+
+        assert!(blocked_legacy.join("SKILL.md").is_file());
+        assert!(sentinel.is_file());
+        let blocked_stored: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT central_path FROM skills WHERE id = ?1",
+                [&blocked.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(blocked_stored, blocked_legacy.to_string_lossy());
+    }
+
+    #[test]
+    fn interrupted_migration_completes_the_pending_database_update() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("recovered-skill");
+        let legacy = downgrade_to_legacy_layout(&fixture, &skill);
+        // 模拟迁移在 rename 之后、数据库更新之前崩溃。
+        let expected = fixture.paths.central_skills().join("recovered-skill");
+        fs::rename(&legacy, &expected).unwrap();
+
+        super::migrate_legacy_central_skill_directories(&mut fixture.database, &fixture.paths)
+            .unwrap();
+
+        let stored: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT central_path FROM skills WHERE id = ?1",
+                [&skill.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, expected.to_string_lossy());
+        assert!(expected.join("SKILL.md").is_file());
     }
 }
