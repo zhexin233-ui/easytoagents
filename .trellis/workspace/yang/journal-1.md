@@ -447,3 +447,23 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 ### Status
 
 [OK] **Completed**
+
+## Session 19: Skills 启动基线对账修复受管内容冲突死锁
+
+**Date**: 2026-08-29
+**Task**: 中央副本目录改用 Skill 名称命名（后续修复）
+**Branch**: `main`
+
+### Summary
+
+用户实测报 EXTERNAL_OWNED_CHANGE。排查发现上一会话迁移设计的错误假设：assess_drift 对「观察态≠目标基线」的兜底分支 can_merge=false，Preview 变 Conflict、Apply 被拒，且快照恢复会写回旧 UUID 链接、移出中央库被受管链接阻止——用户在 UI 里死锁。新增启动对账 reconcile_skill_target_baselines：仅当全部受管 item 基线与磁盘一致且观察投影等于期望投影（纯记账漂移签名）时，按 scan_target 同口径（read_directory_target）回填 baseline 三元组并置 in_sync；其余漂移不动。用真实库快照 + 临时 example 验证对账前后与 python 独立计算的 hash 完全吻合、二次运行幂等。发现用户 dev 构建已在我编码过程中自动重编译重启，真实库已于 19:34 被对账修复（独立验证通过）。191 项测试全绿；误删的 export-bindings.rs 已恢复。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `61a53c1` | (see git log) |
+
+### Status
+
+[OK] **Completed**
