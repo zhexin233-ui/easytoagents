@@ -383,3 +383,25 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: 前端新增暗色与亮色主题模式
+
+**Date**: 2026-08-29
+**Task**: 前端新增暗色与亮色主题模式
+**Branch**: `main`
+
+### Summary
+
+为桌面前端实现三态主题（亮/暗/跟随系统，默认跟随系统）：styles.css 增加 .dark 变量组、--card 令牌与 @custom-variant dark；新增 use-theme hook（localStorage easytoagents.theme.v1，system 模式订阅 matchMedia）与 TopBar 三态切换按钮组（aria-pressed）；main.tsx 渲染前同步 applyThemeFromStorage 实现无闪烁（Tauri CSP 禁止 index.html 内联脚本）；全量 bg-white→bg-card，状态色保留浅色类并追加 dark: 变体以兼容既有测试断言。浏览器实测两种模式、对话框、刷新持久化与错误态；check 代理补齐平台分配按钮与项目详情视图切换的暗色适配；主题约定沉淀到 component-guidelines.md。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a92ef9e` | (see git log) |
+| `24da1c1` | (see git log) |
+
+### Status
+
+[OK] **Completed**

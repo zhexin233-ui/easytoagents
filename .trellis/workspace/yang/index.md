@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-08-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~385 | Active |
+| `journal-1.md` | ~407 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-08-29 | 前端新增暗色与亮色主题模式 | `a92ef9e`, `24da1c1` | `main` |
 | 15 | 2026-08-29 | 重构应用外壳布局：顶栏工具入口 + 侧边栏项目导航 | `36974fe` | `main` |
 | 14 | 2026-08-28 | 美化 GitHub 项目展示 | `83d82c0` | `main` |
 | 13 | 2026-08-28 | 项目详情平台图标切换 | `2349a9d` | `main` |
