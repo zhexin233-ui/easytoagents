@@ -405,3 +405,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 17: Skills 本地目录导入改为按钮加弹窗
+
+**Date**: 2026-08-29
+**Task**: Skills 本地目录导入改为按钮加弹窗
+**Branch**: `main`
+
+### Summary
+
+Skills 页移除常驻本地目录导入卡片，改为中央列表头部按钮打开 SkillDirectoryImportDialog 弹窗；弹窗自持目录选择与 importSkill mutation，遵循既有 dialog 焦点/锁定约定；更新并新增测试（134 项全过），浏览器实测弹窗交互正常。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `88f4e44` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
+- **Total Sessions**: 17
 - **Last Active**: 2026-08-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~407 | Active |
+| `journal-1.md` | ~428 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-08-29 | Skills 本地目录导入改为按钮加弹窗 | `88f4e44` | `main` |
 | 16 | 2026-08-29 | 前端新增暗色与亮色主题模式 | `a92ef9e`, `24da1c1` | `main` |
 | 15 | 2026-08-29 | 重构应用外壳布局：顶栏工具入口 + 侧边栏项目导航 | `36974fe` | `main` |
 | 14 | 2026-08-28 | 美化 GitHub 项目展示 | `83d82c0` | `main` |
