@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec entry: conventions overview and guideline index"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Where the theme hook/toggle files belong and naming rules"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "use-theme hook must follow custom hook lifecycle/cleanup rules"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "localStorage persistence rules; no global store/Context for theme"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Toggle button group and shell component composition rules"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing CSS variable token system instead of inventing parallel styling"}
