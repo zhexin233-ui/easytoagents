@@ -70,7 +70,7 @@ export function ProjectsPage() {
   );
 
   return (
-    <main className="min-h-screen p-6 lg:p-8">
+    <main className="p-6 lg:p-8">
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm font-medium">项目</p>
         <h1 className="mt-1 text-2xl font-semibold">项目登记与配置状态</h1>

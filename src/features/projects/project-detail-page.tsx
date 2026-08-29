@@ -87,14 +87,14 @@ export function ProjectDetailPage() {
 
   if (projectQuery.isPending) {
     return (
-      <main className="min-h-screen p-8">
+      <main className="p-6 lg:p-8">
         <p role="status">正在读取项目详情…</p>
       </main>
     );
   }
   if (projectQuery.isError || !projectQuery.data) {
     return (
-      <main className="min-h-screen p-8">
+      <main className="p-6 lg:p-8">
         <BlockingState
           title="项目详情不可用"
           description={
@@ -109,7 +109,7 @@ export function ProjectDetailPage() {
   const project = projectQuery.data;
 
   return (
-    <main className="min-h-screen p-6 lg:p-8">
+    <main className="p-6 lg:p-8">
       <header className="mx-auto max-w-6xl">
         <Link className="text-sm underline" to="/projects">
           ← 返回项目列表

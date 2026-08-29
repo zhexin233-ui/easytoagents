@@ -44,10 +44,10 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   const applyError = profileErrorText(applyMutation.error);
 
   return (
-    <main className="p-5 sm:p-8">
+    <main className="p-6 lg:p-8">
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">工具配置</p>
-        <h1 className="mt-1 text-3xl font-semibold">{title}</h1>
+        <h1 className="mt-1 text-2xl font-semibold">{title}</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
           中央档案的 CRUD
           不会直接改写原生配置；切换后先生成持久化预览，再由你确认 Apply。

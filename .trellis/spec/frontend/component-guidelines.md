@@ -185,6 +185,10 @@ rules.
   inside a feature.
 - Hiding loading, empty, policy, conflict, and RPC failure behind one generic
   message.
+- Wrapping a `NavLink`/`Link` `className` render-prop function inside `cn(...)`
+  (or any clsx call): clsx skips function arguments silently, so the
+  `isActive`/`isPending` classes disappear with no error or test failure. Pass
+  the function directly to `className` and call `cn` inside its body.
 
 ## 新增与编辑弹窗
 

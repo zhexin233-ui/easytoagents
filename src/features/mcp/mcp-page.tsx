@@ -217,10 +217,10 @@ export function McpPage() {
     .find(Boolean);
 
   return (
-    <main className="p-5 sm:p-8">
+    <main className="p-6 lg:p-8">
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">中央配置库</p>
-        <h1 className="mt-1 text-3xl font-semibold">MCP</h1>
+        <h1 className="mt-1 text-2xl font-semibold">MCP</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
           MCP 的 CRUD、启停和分配只更新中央意图。header、env
           与识别出的敏感扩展不会从后端回填到普通

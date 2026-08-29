@@ -15,12 +15,10 @@ export function DashboardPage() {
   const [restoreOpen, setRestoreOpen] = useState(false);
 
   return (
-    <main className="min-h-screen p-6 lg:p-8">
+    <main className="p-6 lg:p-8">
       <header className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-muted-foreground text-sm font-medium">
-            EasyToAgents
-          </p>
+          <p className="text-muted-foreground text-sm font-medium">总览</p>
           <h1 className="mt-1 text-2xl font-semibold">
             Claude 与 Codex 配置总览
           </h1>

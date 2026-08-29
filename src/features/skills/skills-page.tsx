@@ -153,10 +153,10 @@ export function SkillsPage() {
     .find(Boolean);
 
   return (
-    <main className="p-5 sm:p-8">
+    <main className="p-6 lg:p-8">
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">应用私有中央库</p>
-        <h1 className="mt-1 text-3xl font-semibold">Skills</h1>
+        <h1 className="mt-1 text-2xl font-semibold">Skills</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
           导入只复制本地目录，不移动或修改来源。Claude/Codex
           目标始终使用指向中央副本的符号链接，并且只能通过持久化预览 Apply。
