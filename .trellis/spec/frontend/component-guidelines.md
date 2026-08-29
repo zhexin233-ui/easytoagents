@@ -77,6 +77,50 @@ export function ChangePreviewDialog(props: ChangePreviewDialogProps) {
 
 ---
 
+## Theming (Dark / Light)
+
+The app supports `light` / `dark` / `system` appearance. The single global
+theme signal is the `dark` class on `document.documentElement`; components
+never read theme state from React (only `AppShell` consumes `useTheme` for
+the toggle). Do not introduce a theme Context or store.
+
+- Colors come from CSS variables declared in `src/styles.css` (`:root` light
+  values, `.dark` overrides) and mapped through Tailwind v4 `@theme inline`.
+  Class-based dark mode is enabled with
+  `@custom-variant dark (&:where(.dark, .dark *));` — the default Tailwind v4
+  `dark:` variant tracks `prefers-color-scheme` and would ignore the manual
+  toggle.
+- Surfaces use semantic tokens, not raw palette classes: `bg-card` for
+  cards/panels/dialogs/sidebar/header (never `bg-white`), token utilities
+  (`bg-background`, `bg-muted`, `text-muted-foreground`, `border`) otherwise.
+  The `field` utility input background is `var(--card)`.
+- Status colors (red/amber/emerald notice surfaces) keep their existing light
+  classes and APPEND `dark:` variants (e.g.
+  `bg-red-50 dark:bg-red-950/40 dark:text-red-300`). Existing tests assert the
+  light class names; renaming them breaks tests and the light-mode regression
+  guarantee. Icon-button chrome on themed cards (e.g.
+  `PlatformAssignmentButton`) must pair every light `border-*`/`bg-*` with a
+  `dark:` variant.
+- `color-scheme` flips with the theme (`.dark { color-scheme: dark }`) so
+  native scrollbars, selects, and password inputs follow.
+- No-flash bootstrap lives in `src/main.tsx` (`applyThemeFromStorage()` before
+  `createRoot(...).render(...)`), NOT as an inline script in `index.html`: the
+  Tauri CSP (`default-src 'self'`, no `script-src 'unsafe-inline'`) blocks
+  inline scripts in production builds. `useTheme` stores the raw preference
+  at `easytoagents.theme.v1` (`light | dark | system`, invalid → `system`)
+  and resolves `system` through `matchMedia` with a live change listener.
+
+```tsx
+// Wrong: hardcoded surface breaks dark mode and is grepped for in review.
+<section className="rounded-xl border bg-white p-5">
+
+// Correct: token surface; status colors keep light classes + dark variants.
+<section className="rounded-xl border bg-card p-5">
+<div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/40">
+```
+
+---
+
 ## Accessibility
 
 - Use native interactive elements and queryable accessible names. Tests select
