@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
-- **Last Active**: 2026-08-28
+- **Total Sessions**: 15
+- **Last Active**: 2026-08-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~364 | Active |
+| `journal-1.md` | ~385 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-08-29 | 重构应用外壳布局：顶栏工具入口 + 侧边栏项目导航 | `36974fe` | `main` |
 | 14 | 2026-08-28 | 美化 GitHub 项目展示 | `83d82c0` | `main` |
 | 13 | 2026-08-28 | 项目详情平台图标切换 | `2349a9d` | `main` |
 | 12 | 2026-08-28 | 升级 Trellis 至 0.6.15 | `c1b6298` | `main` |

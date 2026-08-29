@@ -362,3 +362,24 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: 重构应用外壳布局：顶栏工具入口 + 侧边栏项目导航
+
+**Date**: 2026-08-29
+**Task**: 重构应用外壳布局：顶栏工具入口 + 侧边栏项目导航
+**Branch**: `main`
+
+### Summary
+
+重写 AppShell：Claude/Codex 移至顶栏右上角（品牌图标+激活态）；侧边栏一级导航收敛为 总览/MCP/Skills/项目，项目下以子项列出已登记项目可直达详情页，支持折叠、详情路由自动展开与加载/空/错误态；内容区改为外壳统一滚动，各页面移除 min-h-screen 并统一页头与间距。浏览器注入 mock 数据完成视觉验证；pnpm check 全绿。沉淀 spec：cn() 包裹 NavLink className 函数会静默丢激活态样式（clsx 不调用函数参数）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `36974fe` | (see git log) |
+
+### Status
+
+[OK] **Completed**
