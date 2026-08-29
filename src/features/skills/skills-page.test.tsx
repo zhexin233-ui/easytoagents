@@ -300,7 +300,6 @@ describe("SkillsPage", () => {
     expect(gridButton).toHaveAttribute("aria-pressed", "false");
     expect(list).toHaveClass("space-y-3");
     expect(list).not.toHaveClass("grid");
-    expect(pageGrid).toHaveClass("xl:grid-cols-[0.8fr_1.2fr]");
     expect(article).toHaveAttribute("data-layout", "list");
     expect(within(article).getByText("原来源（只读溯源）")).toBeVisible();
     expect(within(article).getByText("中央副本")).toBeVisible();
@@ -321,7 +320,6 @@ describe("SkillsPage", () => {
       "lg:grid-cols-3",
     );
     expect(list).not.toHaveClass("space-y-3");
-    expect(pageGrid).not.toHaveClass("xl:grid-cols-[0.8fr_1.2fr]");
     expect(article).toHaveAttribute("data-layout", "grid");
     expect(article).toHaveClass(
       "flex",
@@ -517,6 +515,37 @@ describe("SkillsPage", () => {
     expect(screen.getByText("external_owned_change")).toBeVisible();
   });
 
+  it("本地目录导入默认收起，按钮打开弹窗且未选目录时禁止提交", async () => {
+    renderPage();
+    expect(
+      screen.queryByRole("dialog", { name: "从本地目录导入" }),
+    ).not.toBeInTheDocument();
+    expect(commands.importSkill).not.toHaveBeenCalled();
+
+    const trigger = screen.getByRole("button", { name: "从本地目录导入" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "从本地目录导入" });
+    expect(within(dialog).getByLabelText("已选择目录")).toHaveDisplayValue("");
+    expect(within(dialog).getByPlaceholderText("尚未选择")).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    ).toBeDisabled();
+    expect(commands.importSkill).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+
+    fireEvent.click(trigger);
+    const reopened = screen.getByRole("dialog", { name: "从本地目录导入" });
+    expect(within(reopened).getByPlaceholderText("尚未选择")).toBeVisible();
+    fireEvent.keyDown(reopened, { key: "Escape" });
+    await waitFor(() => expect(reopened).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+    expect(commands.importSkill).not.toHaveBeenCalled();
+  });
+
   it("通过目录选择器显式选择来源并只调用生成的导入 command", async () => {
     vi.mocked(open).mockResolvedValue("/isolated/source/new-skill");
     vi.mocked(commands.importSkill).mockResolvedValue({
@@ -524,16 +553,77 @@ describe("SkillsPage", () => {
       data: skill,
     });
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "选择目录" }));
+    fireEvent.click(screen.getByRole("button", { name: "从本地目录导入" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "从本地目录导入",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "选择目录" }));
     expect(
-      await screen.findByDisplayValue("/isolated/source/new-skill"),
+      await within(dialog).findByDisplayValue("/isolated/source/new-skill"),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "复制到中央库" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    );
     await waitFor(() =>
       expect(commands.importSkill).toHaveBeenCalledWith({
         sourcePath: "/isolated/source/new-skill",
       }),
     );
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(
+      screen.getByText(
+        "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
+      ),
+    ).toBeVisible();
+  });
+
+  it("本地目录导入失败时保留弹窗、已选目录与重试入口", async () => {
+    vi.mocked(open).mockResolvedValue("/isolated/source/broken");
+    vi.mocked(commands.importSkill).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "PARSE_ERROR",
+        message: "SKILL.md frontmatter 不合法",
+        recoverable: true,
+      },
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "从本地目录导入" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "从本地目录导入",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "选择目录" }));
+    await within(dialog).findByDisplayValue("/isolated/source/broken");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "PARSE_ERROR：SKILL.md frontmatter 不合法",
+    );
+    expect(
+      within(dialog).getByDisplayValue("/isolated/source/broken"),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    ).toBeEnabled();
+    expect(commands.listSkills).toHaveBeenCalledTimes(1);
+  });
+
+  it("目录选择器失败时在弹窗内展示结构化错误且不调用导入", async () => {
+    vi.mocked(open).mockRejectedValue(new Error("无法访问所选目录"));
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "从本地目录导入" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "从本地目录导入",
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "选择目录" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "选择目录失败：无法访问所选目录",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    ).toBeDisabled();
+    expect(commands.importSkill).not.toHaveBeenCalled();
   });
 
   it("独立展示内容预览和删除冲突，不泄露 frontmatter 元数据", async () => {
@@ -871,7 +961,7 @@ describe("全局 Skills 检测与复制导入", () => {
       });
       const { client } = renderPage();
       expect(
-        await screen.findByText(/尚无 Skill。请在下方全局目标卡片/),
+        await screen.findByText(/尚无 Skill。可在下方全局目标卡片/),
       ).toBeVisible();
       expect(commands.discoverSkillImport).not.toHaveBeenCalled();
       const trigger = await screen.findByRole("button", {

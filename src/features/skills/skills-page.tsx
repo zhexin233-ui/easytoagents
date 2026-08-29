@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { open } from "@tauri-apps/plugin-dialog";
 
 import {
   commands,
@@ -23,6 +22,7 @@ import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
+import { SkillDirectoryImportDialog } from "@/features/skills/skill-directory-import-dialog";
 import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
@@ -31,7 +31,6 @@ import {
   skillKeys,
   skillsQueryOptions,
 } from "@/lib/skills-api";
-import { cn } from "@/lib/utils";
 
 interface OpenSkillPreview {
   plan: PreviewPlan;
@@ -42,10 +41,9 @@ export function SkillsPage() {
   const queryClient = useQueryClient();
   const skillsQuery = useQuery(skillsQueryOptions());
   const statusesQuery = useQuery(globalSkillStatusesQueryOptions());
-  const [sourcePath, setSourcePath] = useState("");
-  const [directoryError, setDirectoryError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
+  const [openDirectoryImport, setOpenDirectoryImport] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenSkillPreview | null>(null);
@@ -60,18 +58,6 @@ export function SkillsPage() {
   const invalidateSkills = async () => {
     await queryClient.invalidateQueries({ queryKey: skillKeys.all });
   };
-
-  const importMutation = useMutation({
-    mutationFn: async (path: string) =>
-      unwrapResult(await commands.importSkill({ sourcePath: path })),
-    onSuccess: async () => {
-      setSourcePath("");
-      setMessage(
-        "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
-      );
-      await invalidateSkills();
-    },
-  });
 
   const deleteMutation = useMutation({
     mutationFn: async (skill: SkillDto) =>
@@ -179,87 +165,7 @@ export function SkillsPage() {
         ) : null}
       </div>
 
-      <div
-        className={cn(
-          "mx-auto mt-6 grid max-w-6xl gap-6",
-          listLayout === "list" && "xl:grid-cols-[0.8fr_1.2fr]",
-        )}
-      >
-        <section
-          className="bg-card rounded-xl border p-5"
-          aria-labelledby="skill-import-title"
-        >
-          <h2 id="skill-import-title" className="text-lg font-semibold">
-            从本地目录导入
-          </h2>
-          <p className="text-muted-foreground mt-2 text-sm leading-6">
-            目录必须包含合法 SKILL.md
-            frontmatter。循环、断裂、逃逸链接和特殊文件会被拒绝。
-          </p>
-          <label
-            htmlFor="skill-source-path"
-            className="mt-4 block text-sm font-medium"
-          >
-            已选择目录
-          </label>
-          <input
-            id="skill-source-path"
-            className="field mt-2"
-            value={sourcePath}
-            readOnly
-            placeholder="尚未选择"
-          />
-          <div className="mt-3 flex flex-wrap gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setDirectoryError(null);
-                void open({
-                  directory: true,
-                  multiple: false,
-                  title: "选择包含 SKILL.md 的目录",
-                })
-                  .then((selected) => {
-                    if (typeof selected === "string") {
-                      setSourcePath(selected);
-                    }
-                  })
-                  .catch((error: unknown) => {
-                    setDirectoryError(
-                      `选择目录失败：${profileErrorText(error)}`,
-                    );
-                  });
-              }}
-            >
-              选择目录
-            </Button>
-            <Button
-              type="button"
-              disabled={!sourcePath || importMutation.isPending}
-              onClick={() => importMutation.mutate(sourcePath)}
-            >
-              {importMutation.isPending ? "正在安全导入…" : "复制到中央库"}
-            </Button>
-          </div>
-          {directoryError ? (
-            <p
-              role="alert"
-              className="mt-3 text-sm text-red-700 dark:text-red-300"
-            >
-              {directoryError}
-            </p>
-          ) : null}
-          {importMutation.isError ? (
-            <p
-              role="alert"
-              className="mt-3 text-sm text-red-700 dark:text-red-300"
-            >
-              {profileErrorText(importMutation.error)}
-            </p>
-          ) : null}
-        </section>
-
+      <div className="mx-auto mt-6 max-w-6xl">
         <section
           className="bg-card rounded-xl border p-5"
           aria-labelledby="skill-list-title"
@@ -268,10 +174,15 @@ export function SkillsPage() {
             <h2 id="skill-list-title" className="text-lg font-semibold">
               中央列表
             </h2>
-            <CentralListLayoutToggle
-              value={listLayout}
-              onChange={setListLayout}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <CentralListLayoutToggle
+                value={listLayout}
+                onChange={setListLayout}
+              />
+              <Button size="sm" onClick={() => setOpenDirectoryImport(true)}>
+                从本地目录导入
+              </Button>
+            </div>
           </div>
           {skillsQuery.isPending ? (
             <p role="status" className="mt-4 text-sm">
@@ -288,8 +199,8 @@ export function SkillsPage() {
           ) : null}
           {skillsQuery.data?.length === 0 ? (
             <p className="text-muted-foreground mt-4 text-sm">
-              尚无 Skill。请在下方全局目标卡片选择“检测并导入已有
-              Skills”，或选择本地目录导入。
+              尚无 Skill。可在下方全局目标卡片选择“检测并导入已有
+              Skills”，或点击“从本地目录导入”复制本地目录。
             </p>
           ) : null}
           {contentMutation.isError ? (
@@ -584,6 +495,18 @@ export function SkillsPage() {
             ) : null}
           </section>
         </div>
+      ) : null}
+
+      {openDirectoryImport ? (
+        <SkillDirectoryImportDialog
+          onClose={() => setOpenDirectoryImport(false)}
+          onImported={async () => {
+            await invalidateSkills();
+            setMessage(
+              "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
+            );
+          }}
+        />
       ) : null}
 
       {openImport ? (
