@@ -41,10 +41,11 @@ use crate::{
     git::inspect_path,
     security::SecretRedactor,
     sync::{
-        apply_persisted_preview, assess_drift, build_preview_plan, hash_json,
-        load_managed_target_baseline, load_persisted_preview, persist_preview, scan_target,
-        ApplyResult, ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion, ManagedItemApply,
-        ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest, TargetScan,
+        apply_persisted_preview, assess_drift, build_preview_plan, canonical_json, hash_json,
+        load_managed_target_baseline, load_persisted_preview, persist_preview,
+        read_directory_target, scan_target, ApplyResult, ApplyTargetInput, DatabaseEntityType,
+        DatabaseRowVersion, ManagedItemApply, ManagedTargetBaseline, NoApplyFault, PreviewPlan,
+        PreviewTargetRequest, TargetScan,
     },
 };
 
@@ -1085,6 +1086,129 @@ fn persist_migrated_skill_directory(
     transaction
         .commit()
         .map_err(|_| AppError::database(&database_path, "commit_skill_directory_migration"))
+}
+
+/// 启动时对 Skills 受管目标做一次基线记账对账。目录迁移会改写受管链接并刷新
+/// item 基线，但目标 `managed_targets.baseline_*` 无法在迁移中可靠重算，会留下
+/// 「磁盘已与期望一致、仅基线记账过期」的目标——该状态被 assess_drift 判为
+/// `external_owned_change` 且不可合并，Preview 会变成 Conflict，用户无法通过 UI 自愈。
+/// 因此仅当【全部受管 item 基线与磁盘一致】且【磁盘观察投影等于当前分配的期望投影】时，
+/// 按 `scan_target` 同一口径回填基线；其余漂移一律不动，交给显式 Preview/Apply/回滚。
+/// 对账是尽力而为的：任何读取或前提不满足都静默跳过。
+pub fn reconcile_skill_target_baselines(database: &Database) {
+    let Ok(targets) = list_skill_managed_targets(database) else {
+        return;
+    };
+    for (target_id, tool, project_id, target_path) in targets {
+        let _ =
+            reconcile_skill_target_baseline(database, &target_id, tool, project_id, &target_path);
+    }
+}
+
+type SkillManagedTargetRow = (String, Tool, Option<String>, String);
+
+fn list_skill_managed_targets(database: &Database) -> Result<Vec<SkillManagedTargetRow>, AppError> {
+    let database_path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare(
+            "SELECT id, tool, project_id, target_path
+             FROM managed_targets
+             WHERE artifact_kind = 'skill'
+             ORDER BY id",
+        )
+        .map_err(|_| AppError::database(&database_path, "prepare_list_skill_managed_targets"))?;
+    let rows = statement
+        .query_map([], |row| {
+            let tool = match row.get::<_, String>(1)?.as_str() {
+                "claude" => Tool::Claude,
+                "codex" => Tool::Codex,
+                _ => return Err(rusqlite::Error::InvalidQuery),
+            };
+            Ok((
+                row.get::<_, String>(0)?,
+                tool,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|_| AppError::database(&database_path, "query_list_skill_managed_targets"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::database(&database_path, "decode_list_skill_managed_targets"))?;
+    Ok(rows)
+}
+
+fn reconcile_skill_target_baseline(
+    database: &Database,
+    target_id: &str,
+    tool: Tool,
+    project_id: Option<String>,
+    target_path: &str,
+) -> Result<(), AppError> {
+    let items = repository::list_managed_skill_items(database, target_id)?;
+    if items.is_empty() {
+        return Ok(());
+    }
+    for item in &items {
+        repository::get_skill(database, &item.resource_id)?;
+    }
+    let desired_records = repository::list_assigned_skills(database, tool, project_id.as_deref())?;
+    let inherited_records = if project_id.is_some() {
+        repository::list_assigned_skills(database, tool, None)?
+    } else {
+        Vec::new()
+    };
+    let ownership = build_skill_ownership(&desired_records, &inherited_records, &items);
+    let ManagedOwnership::SymlinkNames(names) = &ownership else {
+        return Ok(());
+    };
+    let Ok((entries, full_hash)) = read_directory_target(Path::new(target_path)) else {
+        return Ok(());
+    };
+    // 与 adapters::project_document 的 SymlinkDirectory/SymlinkNames 分支保持同一形状。
+    let mut observed = serde_json::Map::new();
+    for name in names {
+        if let Some(entry) = entries.get(name) {
+            let Ok(value) = serde_json::to_value(entry) else {
+                return Ok(());
+            };
+            observed.insert(name.clone(), value);
+        }
+    }
+    let observed_hash = hash_json(&Value::Object(observed.clone()));
+    for item in &items {
+        let Some(value) = observed.get(&item.external_key) else {
+            return Ok(());
+        };
+        if hash_json(value) != item.last_applied_item_hash {
+            return Ok(());
+        }
+    }
+    let desired = canonical_json(&build_desired_projection(&desired_records));
+    if hash_json(&desired) != observed_hash {
+        return Ok(());
+    }
+    let desired_text = serde_json::to_string(&desired)
+        .map_err(|_| AppError::invalid_input("projection", "期望投影无法序列化"))?;
+    let database_path = database.path().to_string_lossy().into_owned();
+    let updated = database
+        .connection()
+        .execute(
+            "UPDATE managed_targets
+             SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
+                 baseline_projection_json = ?4, last_status = 'in_sync'
+             WHERE id = ?1
+               AND (baseline_full_hash IS NOT ?2 OR baseline_managed_hash IS NOT ?3)",
+            params![target_id, full_hash, observed_hash, desired_text],
+        )
+        .map_err(|_| AppError::database(&database_path, "reconcile_skill_target_baseline"))?;
+    if updated > 1 {
+        return Err(AppError::database(
+            &database_path,
+            "reconcile_skill_target_baseline",
+        ));
+    }
+    Ok(())
 }
 
 fn skill_dto(
@@ -2686,11 +2810,47 @@ mod tests {
     fn legacy_central_directories_migrate_with_database_and_managed_links() {
         let mut fixture = Fixture::new();
         let skill = fixture.import("migration-skill");
+        // 分配先于迁移：与真实用户时序一致，迁移时目标已有期望投影可供对账。
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
         let legacy = downgrade_to_legacy_layout(&fixture, &skill);
         let (item_id, link) = legacy_managed_link(&fixture, &skill, &legacy);
+        // 模拟真实状态：目标 baseline 来自上一次成功 Apply，仍记录旧布局的 hash。
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE managed_targets SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
+                     baseline_projection_json = ?4, last_status = 'in_sync' WHERE id = ?1",
+                rusqlite::params![
+                    fixture
+                        .database
+                        .connection()
+                        .query_row::<String, _, _>(
+                            "SELECT id FROM managed_targets LIMIT 1",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .unwrap(),
+                    "a".repeat(64),
+                    "b".repeat(64),
+                    r#"{"stale":"projection"}"#,
+                ],
+            )
+            .unwrap();
 
         super::migrate_legacy_central_skill_directories(&mut fixture.database, &fixture.paths)
             .unwrap();
+        super::reconcile_skill_target_baselines(&fixture.database);
 
         let expected = fixture.paths.central_skills().join(&skill.name);
         assert!(!legacy.exists());
@@ -2729,11 +2889,43 @@ mod tests {
                 .ends_with(&skill.name)
         );
 
+        // 迁移刷新 item 基线后，对账回填目标 baseline：
+        // 不再留下不可合并（Preview 变 Conflict）的受管内容冲突。
+        let statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &fixture.allowed_policy(),
+        )
+        .unwrap();
+        assert_eq!(statuses[0].status, SyncStatus::InSync);
+        assert_eq!(statuses[0].diagnostic_code, None);
+        let projection_json: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT baseline_projection_json FROM managed_targets LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(projection_json.contains("linkTarget"));
+        assert!(!projection_json.contains("stale"));
+
         // 二次启动幂等。
         super::migrate_legacy_central_skill_directories(&mut fixture.database, &fixture.paths)
             .unwrap();
+        super::reconcile_skill_target_baselines(&fixture.database);
         assert!(expected.join("SKILL.md").is_file());
         assert_eq!(fs::read_link(&link).unwrap(), expected);
+        let statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &fixture.allowed_policy(),
+        )
+        .unwrap();
+        assert_eq!(statuses[0].status, SyncStatus::InSync);
     }
 
     #[test]

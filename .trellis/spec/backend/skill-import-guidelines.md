@@ -64,6 +64,8 @@ commands.confirmSkillImport({ previewId, candidateIds });
 
 中央副本目录以 `central_skills/<frontmatter.name>` 命名（`validate_skill_name` 保证其为安全的单段小写名）；`skills.id` 仍是 UUID，仅目录名与主键解耦。重名中央目录在 prepare 阶段即冲突清理，finalize 仍用排他 rename 兜底。中央路径边界校验（`validate_direct_child`）的期望名是 `record.name`；`inspect_central_skill` 同时接受 `record.name` 与历史 `record.id` 两种布局——启动迁移 `migrate_legacy_central_skill_directories` 对校验失败（hash 漂移、目标名被占用等）的记录跳过重命名，这些记录必须以 legacy 布局继续可用。迁移在 `AppState` 初始化时运行：原子 rename → 改写仍指向旧目录的受管 symlink（临时链接 + rename）→ 单事务更新 `skills.central_path` 与 `managed_items.last_applied_item_hash`；崩溃后重启按"旧目录缺失 + 新目录核验通过"补完记录，必须保持幂等。
 
+链接改写会让 `managed_targets.baseline_*` 过期，而 `assess_drift` 对「观察态 ≠ 基线」的兜底分支判为不可合并（Preview 变 Conflict，Apply 被拒），用户无法通过 UI 自愈——**不能指望"重新 Apply 恢复"**。因此迁移后必须执行启动对账 `reconcile_skill_target_baselines`（仅当无中断同步 run 时）：只处理【全部受管 item 基线与磁盘一致】且【磁盘观察投影等于当前分配的期望投影】的目标，按 `scan_target` 同一口径（`read_directory_target`）回填 `baseline_full_hash`/`baseline_managed_hash`/`baseline_projection_json` 并置 `last_status='in_sync'`；其余漂移（链接缺失、指向未知位置、期望与观察不一致）一律不动，保持真实阻断。对账必须幂等且尽力而为，不得吞掉真实漂移。
+
 ### DTO 与选择
 
 - 预览：`previewId: string | null`、`tool`、`sources`、`candidates`、`message`。无可新增候选时没有确认令牌。

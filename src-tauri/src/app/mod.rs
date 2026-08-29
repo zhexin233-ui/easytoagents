@@ -15,7 +15,7 @@ use crate::{
     security::{
         audit_private_tree, ensure_private_directory, reject_symlink_components, SecretRedactor,
     },
-    skills::migrate_legacy_central_skill_directories,
+    skills::{migrate_legacy_central_skill_directories, reconcile_skill_target_baselines},
     sync::{detect_interrupted_run, InterruptedRunPlan},
 };
 
@@ -155,6 +155,10 @@ impl AppState {
         migrate_legacy_central_skill_directories(&mut database, &paths)?;
         paths.audit_permissions()?;
         let interrupted_run = detect_interrupted_run(&database, &paths)?;
+        // 中断的同步等待用户显式回滚；对账只处理无活动写入者的记账漂移。
+        if interrupted_run.is_none() {
+            reconcile_skill_target_baselines(&database);
+        }
         Ok(Self {
             database: Mutex::new(database),
             write_operations: Mutex::new(()),

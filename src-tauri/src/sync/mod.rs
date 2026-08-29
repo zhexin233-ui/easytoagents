@@ -114,15 +114,11 @@ pub fn scan_target(
             (ObservedRaw::File(bytes), full_hash)
         }
         TargetType::Directory => {
-            let entries = match read_directory_entries(path) {
-                Ok(entries) => entries,
+            let (entries, full_hash) = match read_directory_target(path) {
+                Ok(result) => result,
                 Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
                     return TargetScan::PermissionDenied;
                 }
-                Err(_) => return TargetScan::Failed,
-            };
-            let full_hash = match serde_json::to_vec(&entries) {
-                Ok(bytes) => hash_bytes(&bytes),
                 Err(_) => return TargetScan::Failed,
             };
             (ObservedRaw::Directory(entries), full_hash)
@@ -196,6 +192,15 @@ fn inspect_target_ancestors(path: &Path) -> Option<TargetScan> {
     None
 }
 
+/// 读取目录目标的全部条目与完整 hash；`scan_target` 与启动基线对账共用同一口径。
+pub(crate) fn read_directory_target(
+    path: &Path,
+) -> io::Result<(BTreeMap<String, DirectoryEntry>, String)> {
+    let entries = read_directory_entries(path)?;
+    let full_hash = hash_bytes(&serde_json::to_vec(&entries)?);
+    Ok((entries, full_hash))
+}
+
 fn read_directory_entries(path: &Path) -> io::Result<BTreeMap<String, DirectoryEntry>> {
     let mut entries = BTreeMap::new();
     for child in fs::read_dir(path)? {
@@ -253,7 +258,7 @@ pub fn hash_json(value: &Value) -> String {
     )
 }
 
-fn canonical_json(value: &Value) -> Value {
+pub(crate) fn canonical_json(value: &Value) -> Value {
     match value {
         Value::Object(object) => Value::Object(
             object
