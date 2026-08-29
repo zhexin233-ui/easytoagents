@@ -41,9 +41,16 @@
   border-color: var(--border);
 }
 
+html,
+body {
+  height: 100%;
+  /* 外壳（AppShell）自管滚动：WebKit 会把内部滚动容器的内容误计入文档
+     scrollHeight，导致整个文档可滚动、外壳被整体顶出视口露出白块。 */
+  overflow: hidden;
+}
+
 body {
   min-width: 320px;
-  min-height: 100vh;
   margin: 0;
   background: var(--background);
   color: var(--foreground);

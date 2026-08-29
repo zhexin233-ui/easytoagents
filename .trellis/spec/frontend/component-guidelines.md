@@ -66,6 +66,14 @@ export function ChangePreviewDialog(props: ChangePreviewDialogProps) {
   do not duplicate badge colors or error-state markup in each page.
 - Prettier with `prettier-plugin-tailwindcss` is authoritative for class order,
   double quotes, semicolons, and trailing commas.
+- App shell scroll ownership is a document-level contract: `html, body` must
+  keep `height: 100%; overflow: hidden` in `src/styles.css`, and only the
+  shell's content column scrolls. macOS WKWebView (Tauri) wrongly counts an
+  inner `overflow-y-auto` container's content toward
+  `documentElement.scrollHeight` (Chromium follows spec), so removing that
+  rule lets trackpad scrolling move the whole shell out of the viewport and
+  expose the body background as a white block below the sidebar — verified
+  live in the Tauri window, invisible in Chromium-based tests.
 
 ---
 
