@@ -35,7 +35,9 @@ export function profileErrorText(error: unknown): string | null {
         return "尚无生效提示词档案，也没有可清理的受管基线；请先检测已有配置或创建并激活提示词。";
       }
     }
-    return `${error.appError.code}：${error.appError.message}`;
+    // message 是按错误码分类的通用文案；details.reason 才是后端给出的具体原因。
+    const reason = errorDetailString(error, "reason");
+    return `${error.appError.code}：${reason ?? error.appError.message}`;
   }
   if (error instanceof Error) {
     return error.message;
