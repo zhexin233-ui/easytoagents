@@ -507,3 +507,23 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 ### Status
 
 [OK] **Completed**
+
+## Session 22: 直接应用接入 Provider/提示词与中央操作自动同步
+
+**Date**: 2026-08-30
+**Task**: 直接应用模式接入 Provider/提示词并支持中央操作自动同步
+**Branch**: `main`
+
+### Summary
+
+两点延伸：把直接应用开关接入 Provider/提示词同步（页面统一 handlePreview，「预览渠道同步/切换并预览/预览提示词同步」直接模式切换文案，冲突回退）；并修复用户反馈——直接模式下 Skills/MCP 中央分配、MCP 启停、项目追加勾选此前仍只改中央配置要求再点同步，现改为 mutation 失效后自动触发既有 previewMutation（其 onSuccess 已含直接应用分支），保存/删除/导入保持手动。设置页说明与 spec direct-apply scenario 同步更新。+7 测试，pnpm check 全绿（前端 154、Rust 195）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f7b23a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
