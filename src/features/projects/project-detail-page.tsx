@@ -205,26 +205,42 @@ export function ProjectDetailPage() {
           双工具配置状态
         </h2>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {project.targets.map((target) => (
-            <article
-              key={`${target.tool}-${target.artifactKind}`}
-              className="rounded-lg border p-4"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-medium">
-                  {toolLabel(target.tool)} ·{" "}
-                  {artifactLabel(target.artifactKind)}
-                </p>
-                <SyncStatusBadge status={target.status} />
-              </div>
-              <code className="mt-2 block text-xs break-all">
-                {target.targetPath ?? "目标路径不可用"}
-              </code>
-              {target.diagnosticCode ? (
-                <p className="mt-2 text-xs">诊断：{target.diagnosticCode}</p>
-              ) : null}
-            </article>
-          ))}
+          {project.targets.map((target) => {
+            const initialUnmanaged =
+              target.diagnosticCode === "PROJECT_TARGET_INITIAL_UNMANAGED";
+            return (
+              <article
+                key={`${target.tool}-${target.artifactKind}`}
+                className="rounded-lg border p-4"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-medium">
+                    {toolLabel(target.tool)} ·{" "}
+                    {artifactLabel(target.artifactKind)}
+                  </p>
+                  {initialUnmanaged ? (
+                    <SyncStatusBadge
+                      status={target.status}
+                      label="○ 未纳管"
+                      tone="muted"
+                    />
+                  ) : (
+                    <SyncStatusBadge status={target.status} />
+                  )}
+                </div>
+                <code className="mt-2 block text-xs break-all">
+                  {target.targetPath ?? "目标路径不可用"}
+                </code>
+                {initialUnmanaged ? (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
+                  </p>
+                ) : target.diagnosticCode ? (
+                  <p className="mt-2 text-xs">诊断：{target.diagnosticCode}</p>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       </section>
 

@@ -32,6 +32,8 @@ struct PersistedProjectTarget {
     baseline: ManagedTargetBaseline,
 }
 
+const DIAGNOSTIC_PROJECT_TARGET_INITIAL_UNMANAGED: &str = "PROJECT_TARGET_INITIAL_UNMANAGED";
+
 pub fn list_projects(
     database: &Database,
     environment: &ExplicitEnvironment,
@@ -481,6 +483,7 @@ fn assess_managed_target(
     descriptor: &TargetDescriptor,
     persisted: &PersistedProjectTarget,
 ) -> Result<Option<crate::sync::DriftAssessment>, AppError> {
+    let existing_items_absent;
     let ownership = match descriptor.artifact_kind {
         ArtifactKind::Mcp => {
             let desired = mcp_repository::list_assigned_mcp_servers(
@@ -498,6 +501,7 @@ fn assess_managed_target(
                     .collect::<Vec<_>>();
             let existing =
                 mcp_repository::list_managed_mcp_items(database, &persisted.baseline.target_id)?;
+            existing_items_absent = existing.is_empty();
             let names = desired
                 .iter()
                 .chain(inherited.iter())
@@ -525,6 +529,7 @@ fn assess_managed_target(
                 database,
                 &persisted.baseline.target_id,
             )?;
+            existing_items_absent = existing.is_empty();
             let names = desired
                 .iter()
                 .chain(inherited.iter())
@@ -544,7 +549,18 @@ fn assess_managed_target(
         &persisted.baseline.target_id,
         scan_target(tool_adapter(descriptor.tool), descriptor, &ownership),
     )?;
-    Ok(Some(assess_drift(descriptor, &persisted.baseline, &scan)))
+    let mut assessment = assess_drift(descriptor, &persisted.baseline, &scan);
+    if assessment.status == SyncStatus::ExternalNonOwnedChange
+        && assessment.can_merge
+        && persisted.baseline.full_hash.is_none()
+        && persisted.baseline.managed_hash.is_none()
+        && existing_items_absent
+    {
+        // 应用从未写入该目标且其中没有受管条目：这是"尚未纳管"的初始态
+        // 而非外部改写，用中性诊断码供呈现层区分两种场景。
+        assessment.diagnostic_codes = vec![DIAGNOSTIC_PROJECT_TARGET_INITIAL_UNMANAGED.to_owned()];
+    }
+    Ok(Some(assessment))
 }
 
 fn verify_managed_item_baselines(
@@ -1103,5 +1119,71 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn initial_external_project_config_reports_neutral_unmanaged_diagnostic() {
+        let mut fixture = fixture();
+        let project = fixture.home.join("project");
+        fs::create_dir_all(project.join(".codex")).unwrap();
+        fs::write(
+            fixture.home.join(".codex/config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                project.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            project.join(".codex/config.toml"),
+            "[shell_environment_policy]\ninherit = \"core\"\n",
+        )
+        .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO mcp_servers(id, name, transport, command)
+                 VALUES ('00000000-0000-4000-8000-000000000721', 'fixture-global', 'stdio', 'cmd')",
+                [],
+            )
+            .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO mcp_global_assignments(tool, mcp_id)
+                 VALUES ('codex', '00000000-0000-4000-8000-000000000721')",
+                [],
+            )
+            .unwrap();
+        let registered = register_project(
+            &mut fixture.database,
+            &fixture.environment,
+            &RegisterProjectInput {
+                display_name: "Fixture".to_owned(),
+                root_path: project.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap();
+        let rescanned = rescan_project(
+            &mut fixture.database,
+            &fixture.environment,
+            &VersionedProjectInput {
+                id: registered.id,
+                row_version: registered.row_version,
+            },
+        )
+        .unwrap();
+        let codex_mcp = rescanned
+            .targets
+            .iter()
+            .find(|target| target.tool == Tool::Codex && target.artifact_kind == ArtifactKind::Mcp)
+            .unwrap();
+        assert_eq!(codex_mcp.status, SyncStatus::ExternalNonOwnedChange);
+        assert_eq!(
+            codex_mcp.diagnostic_code.as_deref(),
+            Some(super::DIAGNOSTIC_PROJECT_TARGET_INITIAL_UNMANAGED)
+        );
     }
 }
