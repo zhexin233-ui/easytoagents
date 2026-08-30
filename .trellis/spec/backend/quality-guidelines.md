@@ -827,3 +827,104 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
   apply rewrites central intent.
 - Missing-file re-adoption returns to the mergeable missing state.
 - Unreadable targets refuse with a stable error and central rows are untouched.
+
+---
+
+## Scenario: Snapshot batch deletion
+
+### 1. Scope / Trigger
+
+- Trigger: any change to `delete_snapshots`, the snapshot storage-path
+  validation helper, or anything that mutates the `snapshots` table or removes
+  files under `<snapshots_root>/<run_id>/`.
+- Snapshots are the crash-recovery safety net; deletion is the only mutation
+  of the snapshots domain besides creation, so it must stay fail-closed.
+
+### 2. Signatures
+
+- `delete_snapshots(write_operations: &Mutex<()>, database: &mut Database,
+  paths: &AppPaths, input: &DeleteSnapshotsInput) -> Result<DeleteSnapshotsResultDto, AppError>`
+  lives in `sync/apply.rs` next to `list_snapshots`; re-exported via
+  `sync/mod.rs`; command wrapper in `commands/overview.rs` locks
+  `state.database()` and passes `state.write_operations()` exactly like
+  `restore_snapshot`.
+- `validate_snapshot_storage_path(paths, run_id, snapshot_id, snapshot_path)`
+  is shared with `load_snapshot_record`; never re-implement an ad-hoc path
+  check at a new call site.
+
+### 3. Contracts
+
+- Input is `snapshot_ids: Vec<String>` (deduped in place); empty input is a
+  no-op returning empty results, not an error. Single delete, multi-select
+  delete, and delete-all share this one command.
+- Per-item flow: pre-check (existence, active-run blocker, storage-path
+  validation) for the WHOLE batch BEFORE any file removal, then
+  `fs::remove_file` (a missing file counts as already deleted and succeeds),
+  then ONE `IMMEDIATE` transaction deleting the rows whose files were removed.
+- Active-run blocker: a snapshot whose `run_id` has status
+  `applying` / `restoring` / `rollback_failed` must be refused; those journals
+  reference the snapshot for crash recovery.
+- Deletion order is file-first, DB-second. A DB commit failure after file
+  removal leaves rows pointing at missing files, which fail closed on restore
+  (mirrored risk of create's file-first/insert-second); never invert the order
+  so a live row never keeps a removed file.
+- Infrastructure failures (lock unavailable, permission audit, DB commit) fail
+  the whole command with `Err(AppError)`; per-item problems never do.
+- Pending restore previews (kind='restore', status='previewed') are NOT
+  blockers; executing one against a deleted snapshot fails closed with
+  NOT_FOUND inside `load_snapshot_record`. Do not add JSON-envelope scans.
+
+### 4. Validation & Error Matrix
+
+- Unknown id (or empty batch entry) -> per-item `NOT_FOUND`.
+- Snapshot's run status in `applying`/`restoring`/`rollback_failed` ->
+  per-item `CONFLICT`; file and row untouched.
+- `snapshot_path` mismatching `<snapshots_root>/<run_id>/<snapshot_id>.snapshot`
+  or parent canonicalizing outside the snapshots root -> per-item `CONFLICT`;
+  the file must NOT be removed (anti-impersonation guard).
+- `fs::remove_file` failure -> per-item `ATOMIC_WRITE_FAILED`
+  (`AppError::atomic_write(path, "remove_snapshot")`).
+- Lock/audit/DB commit failure -> command-level `WRITE_IN_PROGRESS` /
+  `PERMISSION_DENIED` / `DATABASE_ERROR`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: mixed batch where blocked and free snapshots coexist; free ones are
+  deleted, blocked ones reported with their codes.
+- Base: single-id batch (single delete is just batch of one); empty batch.
+- Bad: any branch that deletes a DB row whose file removal failed, or that
+  removes a file whose path failed validation.
+
+### 6. Tests Required
+
+- Batch success removes rows and files; missing-file self-heal counts as
+  deleted.
+- All three active statuses reject (file + row preserved) while an unaffected
+  item in the same batch still deletes.
+- Unknown id in a mixed batch is `NOT_FOUND` without blocking the others.
+- Impersonated storage path is refused and the real file survives.
+- Duplicate ids delete once; empty input is a no-op.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Per-item interleave: check item, remove file, delete row, next item.
+// A mid-batch DB failure leaves earlier items half-deleted.
+for id in ids {
+    let row = load_row(id)?;
+    check_blockers(&row)?;
+    fs::remove_file(&row.snapshot_path)?;
+    delete_row(id)?; // one transaction per item
+}
+```
+
+#### Correct
+
+```rust
+// Pre-check the whole batch, then remove files, then one transaction.
+let plan = plan_deletions(database, paths, &ids)?; // per-item pre-checks
+remove_files(&plan)?;                              // per-item results
+delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
+```

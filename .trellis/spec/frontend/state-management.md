@@ -79,3 +79,8 @@ export function providerProfilesQueryOptions(tool: Tool) {
   versions or inheritance.
 - Treating a persisted preview as applied state before the explicit Apply
   command succeeds.
+- Pruning stale ids from a selection `Set` inside a `useEffect`:
+  `react-hooks/set-state-in-effect` is an error-level lint rule. Intersect the
+  selection with the current query list at render time (and lazily inside the
+  state updater) instead, so stale ids never reach counts, confirm dialogs, or
+  mutation payloads.
