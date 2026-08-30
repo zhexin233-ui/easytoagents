@@ -634,3 +634,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: 提示词页中央列表改版与项目级隐藏全局生效档案
+
+**Date**: 2026-08-30
+**Task**: 提示词页中央列表改版与项目级隐藏全局生效档案
+**Branch**: `main`
+
+### Summary
+
+提示词页参考 Skills 页改为中央列表形态（单列/三列切换持久化到 prompts 键、卡片化、图标选中生效且每工具仅一份、工具状态区下移）；项目详情页提示词分配列表隐藏全局生效档案（已分配档案例外保留可解除），后端分配事务内拒绝全局生效档案并保留重复写入幂等；后端/前端测试覆盖，pnpm check 全绿，运行中的应用里实测项目页隐藏生效档案。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `af6d421` | (see git log) |
+
+### Status
+
+[OK] **Completed**
