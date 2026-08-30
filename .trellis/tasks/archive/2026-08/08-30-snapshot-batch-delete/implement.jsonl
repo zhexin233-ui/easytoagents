@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "快照删除是原生写入，必须遵循 fail-closed、显式路径校验与审计要求"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "删除涉及 SQLite Immediate 事务与错误语义，需对齐既有 DB 模式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "per-item failure 的错误码选择与 AppError 构造需对齐规范"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "SnapshotRestoreDialog 新增多选/确认区块需遵循组件与弹窗模式"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "TanStack Query mutation/失效策略（syncKeys + dashboardKeys）需对齐"}
