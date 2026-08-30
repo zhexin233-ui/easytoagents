@@ -18,7 +18,13 @@ import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { mcpKeys, mcpProjectOptionsQueryOptions } from "@/lib/mcp-api";
-import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import {
+  profileErrorText,
+  profileKeys,
+  promptProfilesQueryOptions,
+  promptProjectAssignmentQueryOptions,
+  unwrapResult,
+} from "@/lib/profile-api";
 import { projectKeys, projectQueryOptions } from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
 import {
@@ -33,7 +39,7 @@ interface OpenProjectPreview {
   artifactKind: ArtifactKind;
 }
 
-type ProjectResourceView = "mcp" | "skill";
+type ProjectResourceView = "mcp" | "skill" | "prompt";
 
 export function ProjectDetailPage() {
   const { projectId = "" } = useParams();
@@ -59,6 +65,16 @@ export function ProjectDetailPage() {
           }),
         );
       }
+      if (preview.artifactKind === "prompt") {
+        return unwrapResult(
+          await commands.applyProfilePreview({
+            previewId: preview.plan.previewId,
+            tool: preview.tool,
+            artifactKind: "prompt",
+            projectId,
+          }),
+        );
+      }
       return unwrapResult(
         await commands.applySkillPreview({
           previewId: preview.plan.previewId,
@@ -72,6 +88,7 @@ export function ProjectDetailPage() {
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
+        queryClient.invalidateQueries({ queryKey: profileKeys.all }),
       ]);
     },
   });
@@ -286,6 +303,16 @@ export function ProjectDetailPage() {
               >
                 Skill
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={resourceView === "prompt" ? "default" : "outline"}
+                aria-label="管理项目提示词"
+                aria-pressed={resourceView === "prompt"}
+                onClick={() => changeResourceView("prompt")}
+              >
+                提示词
+              </Button>
             </div>
             <div
               className="flex items-center gap-2"
@@ -310,7 +337,12 @@ export function ProjectDetailPage() {
       <div className="mx-auto mt-6 max-w-6xl">
         <section key={viewKey} className="space-y-5">
           <h2 className="text-xl font-semibold">
-            {toolLabel(toolView)} {resourceView === "mcp" ? "MCP" : "Skill"}{" "}
+            {toolLabel(toolView)}{" "}
+            {resourceView === "mcp"
+              ? "MCP"
+              : resourceView === "skill"
+                ? "Skill"
+                : "提示词"}{" "}
             项目追加
           </h2>
           {resourceView === "mcp" ? (
@@ -321,12 +353,20 @@ export function ProjectDetailPage() {
               onPreview={(plan) => handlePreview(plan, toolView, "mcp")}
               onMessage={setMessage}
             />
-          ) : (
+          ) : resourceView === "skill" ? (
             <ProjectSkillAssignments
               project={project}
               tool={toolView}
               directApply={directApply}
               onPreview={(plan) => handlePreview(plan, toolView, "skill")}
+              onMessage={setMessage}
+            />
+          ) : (
+            <ProjectPromptAssignments
+              project={project}
+              tool={toolView}
+              directApply={directApply}
+              onPreview={(plan) => handlePreview(plan, toolView, "prompt")}
               onMessage={setMessage}
             />
           )}
@@ -657,6 +697,187 @@ function useViewActive() {
   }, []);
 
   return active;
+}
+
+function ProjectPromptAssignments({
+  project,
+  tool,
+  directApply,
+  onPreview,
+  onMessage,
+}: {
+  project: ProjectDto;
+  tool: Tool;
+  directApply: boolean;
+  onPreview: (preview: PreviewPlan) => void;
+  onMessage: (message: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const viewActive = useViewActive();
+  const assignmentQuery = useQuery(
+    promptProjectAssignmentQueryOptions(project.id, tool),
+  );
+  const profilesQuery = useQuery(promptProfilesQueryOptions(tool));
+  const assignmentMutation = useMutation({
+    mutationFn: async (promptProfileId: string | null) =>
+      unwrapResult(
+        await commands.setPromptProjectAssignment({
+          projectId: project.id,
+          tool,
+          promptProfileId,
+          projectRowVersion: project.rowVersion,
+        }),
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: profileKeys.all }),
+        queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
+        queryClient.invalidateQueries({ queryKey: skillKeys.all }),
+      ]);
+      if (!viewActive.current) return;
+      onMessage("项目提示词分配已更新；项目记忆文件尚未写入。");
+    },
+  });
+  const previewMutation = useMutation({
+    mutationFn: async () =>
+      unwrapResult(await commands.previewPromptSync(tool, project.id)),
+    onSuccess: (preview) => {
+      if (!viewActive.current) return;
+      if (preview.targets.length === 0) {
+        onMessage("该项目提示词没有需要应用的变更。");
+      } else {
+        onPreview(preview);
+      }
+    },
+  });
+  const blocked = projectBlocked(project, tool);
+  const assignedProfileId = assignmentQuery.data?.profileId ?? null;
+  const profiles = profilesQuery.data ?? [];
+  const mutationError = profileErrorText(
+    assignmentQuery.error ??
+      profilesQuery.error ??
+      assignmentMutation.error ??
+      previewMutation.error,
+  );
+  const targetFile = tool === "claude" ? "CLAUDE.md" : "AGENTS.md";
+
+  return (
+    <article className="bg-card rounded-xl border p-5">
+      <h3 className="font-semibold">提示词</h3>
+      <p className="text-muted-foreground mt-1 text-sm leading-6">
+        分配后会把所选档案硬拷贝为项目根 {targetFile}
+        ；此后文件归项目所有、可随时自行修改，重新应用会以档案内容覆盖。解除分配会保留项目文件、仅停止纳管。
+      </p>
+      {assignmentQuery.isPending || profilesQuery.isPending ? (
+        <p role="status" className="mt-3 text-sm">
+          正在读取提示词分配…
+        </p>
+      ) : null}
+      {mutationError ? (
+        <div className="mt-3">
+          <BlockingState title="提示词分配不可用" description={mutationError} />
+        </div>
+      ) : null}
+      {blocked ? (
+        <div className="mt-3">
+          <BlockingState title="项目目标受阻" description={blocked} />
+        </div>
+      ) : null}
+      {profiles.length === 0 ? (
+        <p className="text-muted-foreground mt-3 text-sm">
+          {toolLabel(tool)} 还没有全局提示词档案；请先在侧边栏「提示词」页创建。
+        </p>
+      ) : null}
+      <ul className="mt-3 space-y-2">
+        {profiles.map((profile) => {
+          const selected = profile.id === assignedProfileId;
+          return (
+            <li
+              key={profile.id}
+              className={cn(
+                "rounded-lg border p-3",
+                selected && "border-primary bg-primary/5",
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium">
+                    {profile.name}
+                    {selected ? (
+                      <span className="text-muted-foreground"> · 当前分配</span>
+                    ) : null}
+                    {profile.isActive ? (
+                      <span className="text-muted-foreground"> · 全局生效</span>
+                    ) : null}
+                  </p>
+                  <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+                    {profile.body}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {!selected ? (
+                    <Button
+                      size="sm"
+                      aria-label={`分配 ${profile.name} 为项目提示词`}
+                      disabled={
+                        Boolean(blocked) || assignmentMutation.isPending
+                      }
+                      onClick={() => assignmentMutation.mutate(profile.id)}
+                    >
+                      分配到此项目
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          aria-label={
+            directApply
+              ? `${toolLabel(tool)} 提示词直接应用`
+              : `${toolLabel(tool)} 提示词同步预览`
+          }
+          disabled={
+            Boolean(blocked) ||
+            assignedProfileId === null ||
+            previewMutation.isPending
+          }
+          onClick={() => previewMutation.mutate()}
+        >
+          {previewMutation.isPending
+            ? directApply
+              ? "正在应用…"
+              : "正在生成…"
+            : directApply
+              ? `直接应用项目 ${toolLabel(tool)} 提示词`
+              : `预览项目 ${toolLabel(tool)} 提示词同步`}
+        </Button>
+        {assignedProfileId !== null ? (
+          <Button
+            variant="outline"
+            aria-label="解除项目提示词分配"
+            disabled={assignmentMutation.isPending}
+            onClick={() => {
+              if (
+                globalThis.confirm(
+                  `解除分配将保留项目根 ${targetFile} 的当前内容，仅停止纳管。确认解除？`,
+                )
+              ) {
+                assignmentMutation.mutate(null);
+              }
+            }}
+          >
+            解除分配
+          </Button>
+        ) : null}
+      </div>
+    </article>
+  );
 }
 
 function AssignmentCard({

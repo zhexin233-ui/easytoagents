@@ -5,8 +5,8 @@
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::{
-    db::Database,
-    domain::{ArtifactKind, Tool},
+    db::{mcp::touch_versioned_row, mcp::verify_row_version, Database},
+    domain::{ArtifactKind, EntityId, Tool},
     error::AppError,
 };
 
@@ -486,6 +486,164 @@ pub fn find_active_prompt_profile(
         )
         .optional()
         .map_err(|_| AppError::database(&database_path, "find_active_prompt_profile"))
+}
+
+/// 读取项目的提示词分配档案；未分配返回 `None`。
+pub fn find_prompt_project_assignment(
+    database: &Database,
+    project_id: &str,
+    tool: Tool,
+) -> Result<Option<PromptProfileRecord>, AppError> {
+    let database_path = database.path().to_string_lossy();
+    database
+        .connection()
+        .query_row(
+            "SELECT profile.id, profile.tool, profile.name, profile.body, profile.is_active,
+                    profile.imported_from_path, profile.row_version
+             FROM prompt_project_assignments AS assignment
+             JOIN prompt_profiles AS profile ON profile.id = assignment.prompt_profile_id
+             WHERE assignment.project_id = ?1 AND assignment.tool = ?2",
+            params![project_id, tool.as_str()],
+            prompt_from_row,
+        )
+        .optional()
+        .map_err(|_| AppError::database(&database_path, "find_prompt_project_assignment"))
+}
+
+/// 设置或解除项目的提示词分配。分配变化会递增项目 `row_version`；
+/// 重复写入相同分配是无操作，不递增版本。
+pub fn set_prompt_project_assignment(
+    database: &mut Database,
+    project_id: &str,
+    tool: Tool,
+    prompt_profile_id: Option<&str>,
+    expected_project_row_version: u32,
+) -> Result<(), AppError> {
+    let database_path = database.path().to_string_lossy().into_owned();
+    EntityId::parse(project_id)?;
+    if let Some(profile_id) = prompt_profile_id {
+        EntityId::parse(profile_id)?;
+    }
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| AppError::database(&database_path, "begin_set_prompt_project_assignment"))?;
+    verify_row_version(
+        &transaction,
+        "projects",
+        project_id,
+        expected_project_row_version,
+        "project",
+        &database_path,
+    )?;
+    if let Some(profile_id) = prompt_profile_id {
+        // 档案必须存在且属于同一工具；跨工具档案不允许写入项目记忆文件。
+        let profile_tool: Option<String> = transaction
+            .query_row(
+                "SELECT tool FROM prompt_profiles WHERE id = ?1",
+                [profile_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| AppError::database(&database_path, "read_prompt_profile_tool"))?;
+        match profile_tool {
+            Some(existing) if existing == tool.as_str() => {}
+            Some(_) => {
+                return Err(AppError::invalid_input(
+                    "promptProfileId",
+                    "提示词档案与工具不匹配",
+                ));
+            }
+            None => return Err(AppError::not_found("promptProfile", profile_id)),
+        }
+    }
+    let current: Option<String> = transaction
+        .query_row(
+            "SELECT prompt_profile_id FROM prompt_project_assignments
+             WHERE project_id = ?1 AND tool = ?2",
+            params![project_id, tool.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| AppError::database(&database_path, "read_prompt_project_assignment"))?;
+    let changed = match (prompt_profile_id, current) {
+        (Some(profile_id), Some(existing)) if existing == profile_id => false,
+        (Some(profile_id), _) => {
+            transaction
+                .execute(
+                    "INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(project_id, tool) DO UPDATE SET
+                         prompt_profile_id = excluded.prompt_profile_id,
+                         created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                    params![project_id, tool.as_str(), profile_id],
+                )
+                .map_err(|error| {
+                    map_profile_write_error(
+                        error,
+                        &database_path,
+                        "upsert_prompt_project_assignment",
+                    )
+                })?;
+            true
+        }
+        (None, Some(_)) => {
+            // 解除分配同时清空项目基线（行保留、哈希置空），二者同事务原子生效：
+            // 项目文件保留，应用回到「已登记未纳管」状态。基线行与快照保持外键
+            // 关联不被破坏（与 mcp/skill 的行保留模式一致）。
+            transaction
+                .execute(
+                    "DELETE FROM prompt_project_assignments WHERE project_id = ?1 AND tool = ?2",
+                    params![project_id, tool.as_str()],
+                )
+                .map_err(|_| {
+                    AppError::database(&database_path, "delete_prompt_project_assignment")
+                })?;
+            transaction
+                .execute(
+                    "UPDATE managed_targets
+                     SET baseline_full_hash = NULL, baseline_managed_hash = NULL,
+                         baseline_projection_json = NULL, last_status = 'missing',
+                         row_version = row_version + 1,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE tool = ?1 AND artifact_kind = 'prompt'
+                       AND scope = 'project' AND project_id = ?2",
+                    params![tool.as_str(), project_id],
+                )
+                .map_err(|_| AppError::database(&database_path, "clear_prompt_project_baseline"))?;
+            true
+        }
+        (None, None) => false,
+    };
+    if changed {
+        touch_versioned_row(
+            &transaction,
+            "projects",
+            project_id,
+            expected_project_row_version,
+            &database_path,
+        )?;
+    }
+    transaction
+        .commit()
+        .map_err(|_| AppError::database(&database_path, "commit_set_prompt_project_assignment"))?;
+    Ok(())
+}
+
+/// 统计引用某档案的项目分配数量；档案删除前的显式阻塞检查。
+pub fn count_prompt_project_assignments(
+    database: &Database,
+    prompt_profile_id: &str,
+) -> Result<i64, AppError> {
+    let database_path = database.path().to_string_lossy();
+    database
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM prompt_project_assignments WHERE prompt_profile_id = ?1",
+            [prompt_profile_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| AppError::database(&database_path, "count_prompt_project_assignments"))
 }
 
 pub fn insert_prompt_profile(

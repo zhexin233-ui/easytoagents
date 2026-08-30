@@ -9,7 +9,8 @@ use crate::{
     profiles::{
         self, ApplyProfilePreviewInput, ConfirmImportInput, CopyProviderProfileInput,
         DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto, PromptProfileInput,
-        ProviderImportPreviewDto, ProviderProfileDto, ProviderProfileInput, ToolProfileStatusDto,
+        PromptProjectAssignmentDto, ProviderImportPreviewDto, ProviderProfileDto,
+        ProviderProfileInput, SetPromptProjectAssignmentInput, ToolProfileStatusDto,
         UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
     },
     sync::{ApplyResult, PreviewPlan},
@@ -197,10 +198,38 @@ pub fn preview_provider_sync(
 pub fn preview_prompt_sync(
     state: State<'_, AppState>,
     tool: Tool,
+    project_id: Option<String>,
 ) -> Result<PreviewPlan, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     let redactor = state.redactor().read().map_err(|_| state_lock_error())?;
-    profiles::preview_prompt_sync(&mut database, state.environment()?, &redactor, tool)
+    profiles::preview_prompt_sync(
+        &mut database,
+        state.environment()?,
+        &redactor,
+        tool,
+        project_id,
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_prompt_project_assignment(
+    state: State<'_, AppState>,
+    input: SetPromptProjectAssignmentInput,
+) -> Result<PromptProjectAssignmentDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    profiles::set_prompt_project_assignment(&mut database, state.environment()?, &input)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_prompt_project_assignment(
+    state: State<'_, AppState>,
+    project_id: String,
+    tool: Tool,
+) -> Result<PromptProjectAssignmentDto, AppError> {
+    let database = state.database().lock().map_err(|_| state_lock_error())?;
+    profiles::get_prompt_project_assignment(&database, &project_id, tool)
 }
 
 #[tauri::command]
@@ -220,6 +249,7 @@ pub fn apply_profile_preview(
         &input.preview_id,
         input.tool,
         input.artifact_kind,
+        input.project_id.as_deref(),
     )
 }
 

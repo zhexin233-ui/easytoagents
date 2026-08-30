@@ -1549,7 +1549,11 @@ mod tests {
                 .filter(|target| target.scope == Scope::Project)
                 .map(|target| target.trust)
                 .collect::<Vec<_>>(),
-            vec![TargetTrustState::Untrusted, TargetTrustState::Untrusted]
+            vec![
+                TargetTrustState::Untrusted,
+                TargetTrustState::Untrusted,
+                TargetTrustState::Untrusted,
+            ]
         );
     }
 

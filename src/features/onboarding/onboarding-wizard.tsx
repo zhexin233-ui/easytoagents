@@ -187,7 +187,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
           prepared.push({
             tool,
             artifactKind: "prompt",
-            plan: unwrapResult(await commands.previewPromptSync(tool)),
+            plan: unwrapResult(await commands.previewPromptSync(tool, null)),
           });
         }
       }
@@ -216,6 +216,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             previewId: preview.plan.previewId,
             tool: preview.tool,
             artifactKind: preview.artifactKind,
+            projectId: null,
           }),
         );
         // 多份持久化预览按顺序消费。部分成功后只保留未消费项，确保重试

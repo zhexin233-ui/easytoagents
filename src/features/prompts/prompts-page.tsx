@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import type { ArtifactKind, PreviewPlan, Tool } from "@/bindings/commands";
+import type { PreviewPlan, Tool } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
-import { ProviderPanel } from "@/features/tool-profiles/provider-panel";
+import { PromptPanel } from "@/features/prompts/prompt-panel";
 import {
   profileErrorText,
   toolProfileStatusQueryOptions,
@@ -14,17 +14,20 @@ import {
   canAutoApplyPreview,
 } from "@/lib/settings-api";
 import { commands } from "@/bindings/commands";
+import { cn } from "@/lib/utils";
 
-interface ToolProfilesPageProps {
-  tool: Tool;
-}
+const tools = [
+  { tool: "claude", label: "Claude" },
+  { tool: "codex", label: "Codex" },
+] satisfies Array<{ tool: Tool; label: string }>;
 
 interface OpenPreview {
   plan: PreviewPlan;
-  artifactKind: ArtifactKind;
+  tool: Tool;
 }
 
-export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
+export function PromptsPage() {
+  const [tool, setTool] = useState<Tool>("claude");
   const statusQuery = useQuery(toolProfileStatusQueryOptions(tool));
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
@@ -35,8 +38,8 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
       unwrapResult(
         await commands.applyProfilePreview({
           previewId: preview.plan.previewId,
-          tool,
-          artifactKind: preview.artifactKind,
+          tool: preview.tool,
+          artifactKind: "prompt",
           projectId: null,
         }),
       ),
@@ -46,36 +49,59 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
     },
   });
 
-  // 直接应用模式下仍先生成持久化预览；与预览对话框 Apply 可用条件一致的无冲突
-  // 预览才跳过确认，冲突或错误一律回退到人工确认。
-  const handlePreview = (plan: PreviewPlan, artifactKind: ArtifactKind) => {
+  const handlePreview = (plan: PreviewPlan, previewTool: Tool) => {
     if (directApply && canAutoApplyPreview(plan)) {
-      applyMutation.mutate({ plan, artifactKind });
+      applyMutation.mutate({ plan, tool: previewTool });
       return;
     }
-    setOpenPreview({ plan, artifactKind });
+    setOpenPreview({ plan, tool: previewTool });
   };
 
-  const title = tool === "claude" ? "Claude" : "Codex";
+  const toolLabel = tool === "claude" ? "Claude" : "Codex";
   const applyError = profileErrorText(applyMutation.error);
 
   return (
     <main className="p-6 lg:p-8">
       <header className="mx-auto max-w-6xl">
-        <p className="text-muted-foreground text-sm">工具配置</p>
-        <h1 className="mt-1 text-2xl font-semibold">{title}</h1>
+        <p className="text-muted-foreground text-sm">提示词</p>
+        <h1 className="mt-1 text-2xl font-semibold">全局提示词档案</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          中央档案的 CRUD
-          不会直接改写原生配置；切换后先生成持久化预览，再由你确认 Apply。
+          集中维护 Claude 与 Codex
+          的全局指令文档；档案库的修改不会直接改写原生配置，切换后先生成持久化预览，再由你确认
+          Apply。项目级的提示词分配在各项目详情页中进行。
         </p>
       </header>
+
+      <div
+        className="mx-auto mt-6 flex max-w-6xl gap-2"
+        role="tablist"
+        aria-label="提示词工具切换"
+      >
+        {tools.map(({ tool: tabTool, label }) => (
+          <button
+            key={tabTool}
+            type="button"
+            role="tab"
+            aria-selected={tool === tabTool}
+            onClick={() => setTool(tabTool)}
+            className={cn(
+              "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
+              tool === tabTool
+                ? "bg-primary text-primary-foreground border-transparent"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
         {statusQuery.data ? (
           <section className="bg-card rounded-lg border p-4 text-sm">
             {statusQuery.data.availability === "installed" ? (
               <p className="font-medium text-emerald-800 dark:text-emerald-300">
-                已安全检测到 {title}
+                已安全检测到 {toolLabel}
                 {statusQuery.data.installationVersion
                   ? ` ${statusQuery.data.installationVersion}`
                   : ""}
@@ -83,22 +109,17 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
             ) : null}
             {statusQuery.data.availability === "unavailable" ? (
               <p className="font-medium text-red-700 dark:text-red-300">
-                未在发布进程的安全搜索路径中检测到 {title}
+                未在发布进程的安全搜索路径中检测到 {toolLabel}
                 ；原生目标保持不可应用。
               </p>
             ) : null}
             {statusQuery.data.availability === "unsupported" ? (
               <p className="font-medium text-amber-800 dark:text-amber-300">
-                {title}
+                {toolLabel}
                 安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
               </p>
             ) : null}
             <p>{statusQuery.data.newSessionNotice}</p>
-            {statusQuery.data.bearerTokenWarning ? (
-              <p className="mt-2 text-amber-800 dark:text-amber-300">
-                {statusQuery.data.bearerTokenWarning}
-              </p>
-            ) : null}
             {statusQuery.data.promptOverride === "present" ? (
               <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
                 检测到更高优先级的 Codex 指令来源（如 AGENTS.override.md）；当前
@@ -109,17 +130,6 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
                 无法安全确认 Codex 指令遮蔽状态，请检查 AGENTS.override.md
                 后再应用。
-              </p>
-            ) : null}
-            {statusQuery.data.providerPolicy === "blocked" ? (
-              <p className="mt-2 font-medium text-red-700 dark:text-red-300">
-                Claude Provider 由宿主平台管理，本应用不会覆盖渠道配置。
-              </p>
-            ) : null}
-            {statusQuery.data.providerPolicy === "unknown" ? (
-              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
-                无法确认 Claude Provider
-                是否由宿主管理；渠道预览将保持阻止状态。
               </p>
             ) : null}
           </section>
@@ -153,17 +163,18 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
       </div>
 
       <div className="mx-auto mt-6 max-w-6xl">
-        <ProviderPanel
+        <PromptPanel
+          key={tool}
           tool={tool}
           directApply={directApply}
-          onPreview={(plan) => handlePreview(plan, "provider")}
+          onPreview={(plan) => handlePreview(plan, tool)}
         />
       </div>
 
       <ChangePreviewDialog
         preview={openPreview?.plan ?? null}
-        tool={tool}
-        artifactKind={openPreview?.artifactKind ?? "provider"}
+        tool={openPreview?.tool ?? tool}
+        artifactKind="prompt"
         applying={applyMutation.isPending}
         onClose={() => setOpenPreview(null)}
         onApply={() => {

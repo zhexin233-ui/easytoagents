@@ -14,7 +14,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   commands,
   type PreviewPlan,
-  type PromptProfileDto,
   type ProviderProfileDto,
 } from "@/bindings/commands";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
@@ -22,7 +21,6 @@ import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 vi.mock("@/bindings/commands", () => ({
   commands: {
     listProviderProfiles: vi.fn(),
-    listPromptProfiles: vi.fn(),
     getToolProfileStatus: vi.fn(),
     createProviderProfile: vi.fn(),
     updateProviderProfile: vi.fn(),
@@ -32,13 +30,6 @@ vi.mock("@/bindings/commands", () => ({
     discoverProviderImport: vi.fn(),
     confirmProviderImport: vi.fn(),
     previewProviderSync: vi.fn(),
-    createPromptProfile: vi.fn(),
-    updatePromptProfile: vi.fn(),
-    setActivePromptProfile: vi.fn(),
-    deletePromptProfile: vi.fn(),
-    discoverPromptImport: vi.fn(),
-    confirmPromptImport: vi.fn(),
-    previewPromptSync: vi.fn(),
     applyProfilePreview: vi.fn(),
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
@@ -77,16 +68,6 @@ const codexOAuthProvider: ProviderProfileDto = {
   },
   isActive: true,
   rowVersion: 4,
-};
-
-const promptProfile: PromptProfileDto = {
-  id: "00000000-0000-4000-8000-000000000402",
-  tool: "claude",
-  name: "默认提示词",
-  body: "# 原始规则",
-  isActive: false,
-  importedFromPath: null,
-  rowVersion: 3,
 };
 
 const preview: PreviewPlan = {
@@ -162,25 +143,19 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fillProfileForm(dialog: HTMLElement, kind: "渠道" | "提示词") {
+function fillProfileForm(dialog: HTMLElement) {
   fireEvent.change(within(dialog).getByLabelText("名称"), {
     target: { value: "新草稿" },
   });
-  if (kind === "渠道") {
-    fireEvent.change(within(dialog).getByLabelText("API 地址"), {
-      target: { value: "https://draft.example.com/v1" },
-    });
-    fireEvent.change(within(dialog).getByLabelText("API Key（默认遮罩）"), {
-      target: { value: "draft-secret" },
-    });
-    fireEvent.change(within(dialog).getByLabelText("默认模型"), {
-      target: { value: "draft-model" },
-    });
-  } else {
-    fireEvent.change(within(dialog).getByLabelText("Markdown 正文"), {
-      target: { value: "# 草稿规则" },
-    });
-  }
+  fireEvent.change(within(dialog).getByLabelText("API 地址"), {
+    target: { value: "https://draft.example.com/v1" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("API Key（默认遮罩）"), {
+    target: { value: "draft-secret" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("默认模型"), {
+    target: { value: "draft-model" },
+  });
 }
 
 beforeEach(() => {
@@ -190,10 +165,6 @@ beforeEach(() => {
     data: { applyMode: "preview_confirm" },
   });
   vi.mocked(commands.listProviderProfiles).mockResolvedValue({
-    status: "ok",
-    data: [],
-  });
-  vi.mocked(commands.listPromptProfiles).mockResolvedValue({
     status: "ok",
     data: [],
   });
@@ -215,25 +186,13 @@ beforeEach(() => {
     status: "ok",
     data: null,
   });
-  vi.mocked(commands.discoverPromptImport).mockResolvedValue({
-    status: "ok",
-    data: null,
-  });
   vi.mocked(commands.previewProviderSync).mockResolvedValue({
-    status: "ok",
-    data: preview,
-  });
-  vi.mocked(commands.previewPromptSync).mockResolvedValue({
     status: "ok",
     data: preview,
   });
   vi.mocked(commands.setActiveProviderProfile).mockResolvedValue({
     status: "ok",
     data: provider,
-  });
-  vi.mocked(commands.setActivePromptProfile).mockResolvedValue({
-    status: "ok",
-    data: promptProfile,
   });
   vi.mocked(commands.applyProfilePreview).mockResolvedValue({
     status: "ok",
@@ -251,24 +210,16 @@ afterEach(() => {
 });
 
 describe("ToolProfilesPage", () => {
-  it.each([
-    ["claude", "渠道"],
-    ["codex", "渠道"],
-    ["claude", "提示词"],
-    ["codex", "提示词"],
-  ] as const)(
-    "%s %s 默认隐藏表单，新增和编辑可关闭清理且焦点不离开弹窗",
-    async (tool, kind) => {
+  it.each(["claude", "codex"] as const)(
+    "%s 渠道 默认隐藏表单，新增和编辑可关闭清理且焦点不离开弹窗",
+    async (tool) => {
+      const kind = "渠道" as const;
       vi.mocked(commands.listProviderProfiles).mockResolvedValue({
         status: "ok",
         data: [{ ...provider, tool }],
       });
-      vi.mocked(commands.listPromptProfiles).mockResolvedValue({
-        status: "ok",
-        data: [{ ...promptProfile, tool }],
-      });
       renderPage(tool);
-      const section = sectionByHeading(kind === "渠道" ? "渠道" : "全局提示词");
+      const section = sectionByHeading("渠道");
       const toolName = tool === "claude" ? "Claude" : "Codex";
       const edit = await within(section).findByRole("button", { name: "编辑" });
       const trigger = within(section).getByRole("button", {
@@ -282,14 +233,7 @@ describe("ToolProfilesPage", () => {
       let dialog = screen.getByRole("dialog", {
         name: `编辑 ${toolName} ${kind}`,
       });
-      expect(within(dialog).getByLabelText("名称")).toHaveValue(
-        kind === "渠道" ? provider.name : promptProfile.name,
-      );
-      if (kind === "提示词") {
-        expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue(
-          promptProfile.body,
-        );
-      }
+      expect(within(dialog).getByLabelText("名称")).toHaveValue(provider.name);
       fireEvent.change(within(dialog).getByLabelText("名称"), {
         target: { value: "未保存的编辑" },
       });
@@ -312,7 +256,7 @@ describe("ToolProfilesPage", () => {
       expect(submit).toHaveFocus();
       fireEvent.keyDown(submit, { key: "Tab" });
       expect(close).toHaveFocus();
-      fillProfileForm(dialog, kind);
+      fillProfileForm(dialog);
       fireEvent.keyDown(dialog, { key: "Escape" });
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(trigger).toHaveFocus();
@@ -320,69 +264,55 @@ describe("ToolProfilesPage", () => {
       fireEvent.click(trigger);
       dialog = screen.getByRole("dialog", { name: `新增 ${toolName} ${kind}` });
       expect(within(dialog).getByLabelText("名称")).toHaveValue("");
-      expect(
-        within(dialog).getByLabelText(
-          kind === "渠道" ? "API Key（默认遮罩）" : "Markdown 正文",
-        ),
-      ).toHaveValue("");
+      expect(within(dialog).getByLabelText("API Key（默认遮罩）")).toHaveValue(
+        "",
+      );
       fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(trigger).toHaveFocus();
       expect(commands.createProviderProfile).not.toHaveBeenCalled();
       expect(commands.updateProviderProfile).not.toHaveBeenCalled();
-      expect(commands.createPromptProfile).not.toHaveBeenCalled();
-      expect(commands.updatePromptProfile).not.toHaveBeenCalled();
     },
   );
 
-  it.each(["渠道", "提示词"] as const)(
-    "%s 保存失败在弹窗内保留输入，关闭重开不保留错误",
-    async (kind) => {
-      const error = {
+  it("渠道 保存失败在弹窗内保留输入，关闭重开不保留错误", async () => {
+    vi.mocked(commands.createProviderProfile).mockResolvedValue({
+      status: "error",
+      error: {
         code: "INVALID_INPUT",
         message: "档案输入无效",
         recoverable: true,
         action: "rescan",
-      } as const;
-      vi.mocked(commands.createProviderProfile).mockResolvedValue({
-        status: "error",
-        error,
-      });
-      vi.mocked(commands.createPromptProfile).mockResolvedValue({
-        status: "error",
-        error,
-      });
-      renderPage();
-      const trigger = screen.getByRole("button", { name: `新增${kind}` });
-      fireEvent.click(trigger);
-      let dialog = screen.getByRole("dialog", { name: `新增 Claude ${kind}` });
-      fillProfileForm(dialog, kind);
-      fireEvent.submit(within(dialog).getByRole("form"));
-      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-        "INVALID_INPUT：档案输入无效",
-      );
-      expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
-      expect(
-        within(dialog).getByLabelText(
-          kind === "渠道" ? "API Key（默认遮罩）" : "Markdown 正文",
-        ),
-      ).toHaveValue(kind === "渠道" ? "draft-secret" : "# 草稿规则");
-      fireEvent.keyDown(dialog, { key: "Escape" });
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      fireEvent.click(trigger);
-      dialog = screen.getByRole("dialog", { name: `新增 Claude ${kind}` });
-      expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
-      expect(within(dialog).getByLabelText("名称")).toHaveValue("");
-      expect(commands.applyProfilePreview).not.toHaveBeenCalled();
-    },
-  );
+      },
+    });
+    renderPage();
+    const trigger = screen.getByRole("button", { name: "新增渠道" });
+    fireEvent.click(trigger);
+    let dialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
+    fillProfileForm(dialog);
+    fireEvent.submit(within(dialog).getByRole("form"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "INVALID_INPUT：档案输入无效",
+    );
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
+    expect(within(dialog).getByLabelText("API Key（默认遮罩）")).toHaveValue(
+      "draft-secret",
+    );
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
 
   it("渠道 env 校验错误保留草稿，取消后重新新增会清除校验状态", async () => {
     renderPage();
     const trigger = screen.getByRole("button", { name: "新增渠道" });
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
-    fillProfileForm(dialog, "渠道");
+    fillProfileForm(dialog);
     fireEvent.change(
       within(dialog).getByLabelText("额外 env（每行 KEY=VALUE）"),
       {
@@ -405,106 +335,82 @@ describe("ToolProfilesPage", () => {
     ).toHaveValue("");
   });
 
-  it.each(["渠道", "提示词"] as const)(
-    "%s 保存和刷新期间阻止重复提交与关闭，完成后不影响新草稿",
-    async (kind) => {
-      const pending = deferred<void>();
-      const refresh = deferred<void>();
-      vi.mocked(commands.createProviderProfile).mockImplementation(async () => {
-        await pending.promise;
-        return { status: "ok", data: provider };
-      });
-      vi.mocked(commands.createPromptProfile).mockImplementation(async () => {
-        await pending.promise;
-        return { status: "ok", data: promptProfile };
-      });
-      renderPage();
-      const section = sectionByHeading(kind === "渠道" ? "渠道" : "全局提示词");
-      await within(section).findByText(/尚无.*档案/);
-      if (kind === "渠道") {
-        vi.mocked(commands.listProviderProfiles).mockImplementationOnce(
-          async () => {
-            await refresh.promise;
-            return { status: "ok", data: [provider] };
-          },
-        );
-      } else {
-        vi.mocked(commands.listPromptProfiles).mockImplementationOnce(
-          async () => {
-            await refresh.promise;
-            return { status: "ok", data: [promptProfile] };
-          },
-        );
-      }
-      const trigger = within(section).getByRole("button", {
-        name: `新增${kind}`,
-      });
-      trigger.focus();
-      fireEvent.click(trigger);
-      const dialog = screen.getByRole("dialog", {
-        name: `新增 Claude ${kind}`,
-      });
-      fillProfileForm(dialog, kind);
-      const form = within(dialog).getByRole("form");
-      act(() => {
-        fireEvent.submit(form);
-        fireEvent.submit(form);
-        fireEvent.click(trigger);
-        fireEvent.keyDown(dialog, { key: "Escape" });
-      });
-      expect(await within(dialog).findByRole("status")).toHaveTextContent(
-        "正在保存",
-      );
-      for (const name of ["关闭", "取消", "正在保存…"]) {
-        const button = within(dialog).getByRole("button", { name });
-        expect(button).toBeDisabled();
-        fireEvent.click(button);
-      }
-      fireEvent.keyDown(dialog, { key: "Escape" });
-      fireEvent.submit(form);
-      const createCommand =
-        kind === "渠道"
-          ? commands.createProviderProfile
-          : commands.createPromptProfile;
-      const listCommand =
-        kind === "渠道"
-          ? commands.listProviderProfiles
-          : commands.listPromptProfiles;
-      expect(createCommand).toHaveBeenCalledTimes(1);
-      expect(dialog).toBeVisible();
-
-      await act(async () => {
-        pending.resolve();
-        await pending.promise;
-      });
-      await waitFor(() => expect(listCommand).toHaveBeenCalledTimes(2));
-      fireEvent.click(trigger);
-      fireEvent.keyDown(dialog, { key: "Escape" });
-      expect(dialog).toBeVisible();
-      expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
-      await act(async () => {
-        refresh.resolve();
+  it("渠道 保存和刷新期间阻止重复提交与关闭，完成后不影响新草稿", async () => {
+    const pending = deferred<void>();
+    const refresh = deferred<void>();
+    vi.mocked(commands.createProviderProfile).mockImplementation(async () => {
+      await pending.promise;
+      return { status: "ok", data: provider };
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    await within(section).findByText(/尚无.*档案/);
+    vi.mocked(commands.listProviderProfiles).mockImplementationOnce(
+      async () => {
         await refresh.promise;
-      });
-      await waitFor(() =>
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-      );
-      expect(trigger).toHaveFocus();
+        return { status: "ok", data: [provider] };
+      },
+    );
+    const trigger = within(section).getByRole("button", {
+      name: "新增渠道",
+    });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "新增 Claude 渠道",
+    });
+    fillProfileForm(dialog);
+    const form = within(dialog).getByRole("form");
+    act(() => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
       fireEvent.click(trigger);
-      const nextDialog = screen.getByRole("dialog", {
-        name: `新增 Claude ${kind}`,
-      });
-      expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
-      fireEvent.change(within(nextDialog).getByLabelText("名称"), {
-        target: { value: "下一份草稿" },
-      });
-      expect(within(nextDialog).getByLabelText("名称")).toHaveValue(
-        "下一份草稿",
-      );
-      expect(createCommand).toHaveBeenCalledTimes(1);
-      expect(commands.applyProfilePreview).not.toHaveBeenCalled();
-    },
-  );
+      fireEvent.keyDown(dialog, { key: "Escape" });
+    });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent(
+      "正在保存",
+    );
+    for (const name of ["关闭", "取消", "正在保存…"]) {
+      const button = within(dialog).getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    fireEvent.submit(form);
+    const createCommand = commands.createProviderProfile;
+    const listCommand = commands.listProviderProfiles;
+    expect(createCommand).toHaveBeenCalledTimes(1);
+    expect(dialog).toBeVisible();
+
+    await act(async () => {
+      pending.resolve();
+      await pending.promise;
+    });
+    await waitFor(() => expect(listCommand).toHaveBeenCalledTimes(2));
+    fireEvent.click(trigger);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(dialog).toBeVisible();
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
+    await act(async () => {
+      refresh.resolve();
+      await refresh.promise;
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    const nextDialog = screen.getByRole("dialog", {
+      name: "新增 Claude 渠道",
+    });
+    expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
+    fireEvent.change(within(nextDialog).getByLabelText("名称"), {
+      target: { value: "下一份草稿" },
+    });
+    expect(within(nextDialog).getByLabelText("名称")).toHaveValue("下一份草稿");
+    expect(createCommand).toHaveBeenCalledTimes(1);
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
 
   it("创建渠道时使用遮罩密钥输入并只调用生成 command", async () => {
     vi.mocked(commands.createProviderProfile).mockResolvedValue({
@@ -723,6 +629,7 @@ describe("ToolProfilesPage", () => {
         previewId: preview.previewId,
         tool: "claude",
         artifactKind: "provider",
+        projectId: null,
       }),
     );
   });
@@ -806,6 +713,7 @@ describe("ToolProfilesPage", () => {
         previewId: preview.previewId,
         tool: "claude",
         artifactKind: "provider",
+        projectId: null,
       }),
     );
     expect(
@@ -871,6 +779,7 @@ describe("ToolProfilesPage", () => {
         previewId: preview.previewId,
         tool: "claude",
         artifactKind: "provider",
+        projectId: null,
       }),
     );
     expect(
@@ -898,112 +807,6 @@ describe("ToolProfilesPage", () => {
 
     expect(await within(section).findByRole("alert")).toHaveTextContent(
       "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。",
-    );
-  });
-
-  it("可创建独立的提示词档案", async () => {
-    vi.mocked(commands.createPromptProfile).mockResolvedValue({
-      status: "ok",
-      data: {
-        id: "00000000-0000-4000-8000-000000000402",
-        tool: "claude",
-        name: "代码审查",
-        body: "# 审查规则",
-        isActive: true,
-        importedFromPath: null,
-        rowVersion: 1,
-      },
-    });
-    renderPage();
-    const section = sectionByHeading("全局提示词");
-    await within(section).findByText(/尚无提示词档案/);
-    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
-      status: "ok",
-      data: [{ ...promptProfile, name: "代码审查", isActive: true }],
-    });
-    fireEvent.click(
-      within(section).getByRole("button", { name: "新增提示词" }),
-    );
-    fireEvent.change(within(section).getByLabelText("名称"), {
-      target: { value: "代码审查" },
-    });
-    fireEvent.change(within(section).getByLabelText("Markdown 正文"), {
-      target: { value: "# 审查规则" },
-    });
-    fireEvent.click(
-      within(section).getByRole("button", { name: "创建提示词" }),
-    );
-    await waitFor(() =>
-      expect(commands.createPromptProfile).toHaveBeenCalledWith({
-        tool: "claude",
-        name: "代码审查",
-        body: "# 审查规则",
-        activate: true,
-      }),
-    );
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
-    expect(within(section).getByRole("listitem")).toHaveTextContent(
-      "代码审查 · 当前生效",
-    );
-    expect(commands.listPromptProfiles).toHaveBeenCalledTimes(2);
-    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
-  });
-
-  it("可编辑并切换提示词，应用时消费提示词 preview", async () => {
-    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
-      status: "ok",
-      data: [promptProfile],
-    });
-    vi.mocked(commands.updatePromptProfile).mockResolvedValue({
-      status: "ok",
-      data: { ...promptProfile, name: "更新后的提示词", body: "# 新规则" },
-    });
-    renderPage();
-    const section = sectionByHeading("全局提示词");
-
-    fireEvent.click(
-      await within(section).findByRole("button", { name: "编辑" }),
-    );
-    expect(
-      screen.getByRole("dialog", { name: "编辑 Claude 提示词" }),
-    ).toBeVisible();
-    fireEvent.change(within(section).getByLabelText("名称"), {
-      target: { value: "更新后的提示词" },
-    });
-    fireEvent.change(within(section).getByLabelText("Markdown 正文"), {
-      target: { value: "# 新规则" },
-    });
-    fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
-    await waitFor(() =>
-      expect(commands.updatePromptProfile).toHaveBeenCalledWith({
-        id: promptProfile.id,
-        name: "更新后的提示词",
-        body: "# 新规则",
-        rowVersion: promptProfile.rowVersion,
-      }),
-    );
-
-    fireEvent.click(
-      within(section).getByRole("button", { name: "切换并预览" }),
-    );
-    await waitFor(() =>
-      expect(commands.setActivePromptProfile).toHaveBeenCalledWith("claude", {
-        id: promptProfile.id,
-        rowVersion: promptProfile.rowVersion,
-      }),
-    );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
-    await waitFor(() =>
-      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
-        previewId: preview.previewId,
-        tool: "claude",
-        artifactKind: "prompt",
-      }),
     );
   });
 
@@ -1035,6 +838,5 @@ describe("ToolProfilesPage", () => {
       await screen.findByText(/无法确认 Claude Provider 是否由宿主管理/),
     ).toBeVisible();
     expect(await screen.findByText(/安装探针未能安全确认版本/)).toBeVisible();
-    expect(await screen.findByText(/尚无提示词档案/)).toBeVisible();
   });
 });

@@ -58,6 +58,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "app_settings",
         sql: include_str!("migrations/0007_app_settings.sql"),
     },
+    Migration {
+        version: 8,
+        name: "prompt_project_assignments",
+        sql: include_str!("migrations/0008_prompt_project_assignments.sql"),
+    },
 ];
 
 struct Migration {
@@ -219,6 +224,15 @@ fn run_migrations(connection: &mut Connection, path: &Path) -> Result<(), AppErr
             .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
         transaction
             .commit()
+            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+        // 迁移可能原地修订 sqlite_schema 文本（writable_schema）；这类修订不会推进
+        // schema cookie，本连接会继续持有陈旧 schema 缓存。每次迁移提交后显式推进
+        // cookie，强制该连接与所有缓存语句重新解析最新 schema。
+        let schema_version: i64 = connection
+            .query_row("PRAGMA schema_version", [], |row| row.get(0))
+            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+        connection
+            .pragma_update(None, "schema_version", schema_version + 1)
             .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
     }
     Ok(())
@@ -382,7 +396,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 7);
+        assert_eq!(database.schema_version().unwrap(), 8);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -910,7 +924,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 7);
+            assert_eq!(database.schema_version().unwrap(), 8);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -945,11 +959,90 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 7);
+            assert_eq!(database.schema_version().unwrap(), 8);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
             assert!(database.connection().execute("INSERT INTO skill_import_previews(id, tool, context_json, redacted_preview_json) VALUES (?1, 'codex', '[]', '{}')", [MCP_ID]).is_err());
+        }
+    }
+
+    #[test]
+    fn prompt_project_assignment_migration_rewrites_managed_targets_check() {
+        const GLOBAL_TARGET_ID: &str = "00000000-0000-4000-8000-000000000201";
+        const CANARY_PROJECT_ID: &str = "00000000-0000-4000-8000-000000000202";
+        const CANARY_TARGET_ID: &str = "00000000-0000-4000-8000-000000000203";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v7-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..7] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            // v7 状态下项目作用域不允许 prompt 基线（artifact_kind 受限）。
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                     VALUES (?1, 'claude', 'prompt', 'global', '/fixture/home/.claude/CLAUDE.md')",
+                    [GLOBAL_TARGET_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO projects(id, display_name, root_path)
+                     VALUES (?1, 'Prompt Canary', '/fixture/prompt-canary')",
+                    [CANARY_PROJECT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'claude', 'prompt', 'project', ?2, '/fixture/prompt-canary/CLAUDE.md')",
+                    params![CANARY_TARGET_ID, CANARY_PROJECT_ID],
+                )
+                .unwrap_err();
+        }
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 8);
+            // 既有全局 prompt 基线在迁移后原样保留。
+            let preserved: i64 = database
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_targets
+                     WHERE id = ?1 AND tool = 'claude' AND artifact_kind = 'prompt'
+                       AND scope = 'global' AND project_id IS NULL",
+                    [GLOBAL_TARGET_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(preserved, 1);
+            let connection = database.connection();
+            // 迁移执行所用的同一连接必须立即识别修订后的 CHECK。
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'claude', 'prompt', 'project', ?2, '/fixture/prompt-canary/CLAUDE.md')",
+                    params![CANARY_TARGET_ID, CANARY_PROJECT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM managed_targets WHERE id = ?1",
+                    [CANARY_TARGET_ID],
+                )
+                .unwrap();
         }
     }
 

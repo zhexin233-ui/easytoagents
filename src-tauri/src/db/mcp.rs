@@ -492,7 +492,7 @@ fn stale_or_missing_mcp(database: &Database, id: &str) -> Result<McpServerRecord
     }
 }
 
-fn verify_row_version(
+pub(crate) fn verify_row_version(
     transaction: &rusqlite::Transaction<'_>,
     table: &str,
     id: &str,
@@ -515,7 +515,7 @@ fn verify_row_version(
     Ok(())
 }
 
-fn touch_versioned_row(
+pub(crate) fn touch_versioned_row(
     transaction: &rusqlite::Transaction<'_>,
     table: &str,
     id: &str,

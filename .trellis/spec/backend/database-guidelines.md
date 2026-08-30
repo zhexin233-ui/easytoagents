@@ -31,6 +31,50 @@ targets and must not replace relational constraints with unvalidated JSON.
 - Migration tests must use `tempfile` roots and must prove reopening is
   idempotent. Never point a test at a developer database.
 
+### Scenario: In-place schema-text revision for CHECK-only changes
+
+背景：`managed_targets` 被三张子表外键引用（`managed_items` CASCADE、
+`sync_targets`/`snapshots` RESTRICT），且迁移事务内 `PRAGMA foreign_keys=OFF`
+是 no-op；为放开项目作用域 `artifact_kind` CHECK 而重建表会触发隐式
+`DELETE` 的级联清空或 RESTRICT 失败。
+
+#### Wrong
+
+```sql
+-- 迁移事务内重建被外键引用的表：DROP 的隐式 DELETE 会级联清空
+-- managed_items，或被 sync_targets/snapshots 的 RESTRICT 中止。
+DROP TABLE managed_targets;
+```
+
+#### Correct
+
+```sql
+-- 0008: 官方支持的 sqlite_schema 文本原地修订；同迁移内的普通 DDL
+-- （CREATE TABLE）会推进 schema cookie。事务内同连接的 schema 缓存
+-- 不会自动重解析，由 run_migrations 在每次迁移提交后显式推进
+-- PRAGMA schema_version 强制重解析（见 db/mod.rs）。
+PRAGMA writable_schema = ON;
+UPDATE sqlite_master
+SET sql = replace(sql,
+    'artifact_kind IN (''mcp'', ''skill''))',
+    'artifact_kind IN (''mcp'', ''skill'', ''prompt''))')
+WHERE type = 'table' AND name = 'managed_targets'
+  AND instr(sql, 'artifact_kind IN (''mcp'', ''skill''))') > 0;
+PRAGMA writable_schema = OFF;
+CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
+```
+
+要点：
+
+- UPDATE 的 `WHERE` 必须锚定旧文本（`instr(...) > 0`），幂等且防止空改。
+- 迁移事务内**不能**用 INSERT 金丝雀验证新 CHECK（同连接缓存仍旧）；
+  生效性由迁移测试在 `Database::open` 后的金丝雀插入断言
+  （`prompt_project_assignment_migration_rewrites_managed_targets_check`）。
+- 基线行是**永久行**：解除纳管清空 `baseline_full_hash` /
+  `baseline_managed_hash` / `baseline_projection_json`（两者同 NULL），
+  不删除行——快照 RESTRICT 外键引用行 id，删除会失败；NULL 基线 +
+  观测内容即规范中的中性 `PROJECT_TARGET_INITIAL_UNMANAGED` 语义。
+
 ## Naming Conventions
 
 - Tables and columns use `snake_case`; indexes use `uq_` or `idx_`; triggers use

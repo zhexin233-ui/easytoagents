@@ -179,6 +179,25 @@ pub struct ApplyProfilePreviewInput {
     pub preview_id: String,
     pub tool: Tool,
     pub artifact_kind: ArtifactKind,
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPromptProjectAssignmentInput {
+    pub project_id: String,
+    pub tool: Tool,
+    /// `None` 表示解除分配：项目文件保留，应用停止纳管。
+    pub prompt_profile_id: Option<String>,
+    pub project_row_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptProjectAssignmentDto {
+    pub project_id: String,
+    pub tool: Tool,
+    pub profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]

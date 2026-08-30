@@ -149,9 +149,21 @@ impl ToolAdapter for ClaudeAdapter {
                     TargetFormat::SymlinkDirectory,
                     vec!["$children"],
                     vec![],
-                    tool_capability,
+                    tool_capability.clone(),
                     customization_policy.skill,
                     SymlinkPolicy::ManagedChildrenOnly,
+                ),
+                descriptor(
+                    ArtifactKind::Prompt,
+                    Scope::Project,
+                    Some(project_root.as_str().to_owned()),
+                    Some(path_text(&root.join("CLAUDE.md"))?),
+                    TargetFormat::Markdown,
+                    vec!["$document"],
+                    vec![],
+                    tool_capability,
+                    PolicyState::Allowed,
+                    SymlinkPolicy::Reject,
                 ),
             ]);
         }

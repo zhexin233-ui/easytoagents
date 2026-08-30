@@ -645,6 +645,7 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
         &fixture.environment,
         &fixture.redactor,
         Tool::Claude,
+        None,
     )
     .expect("生成 Markdown 持久化预览失败");
     assert_serialized_secrets_absent("Markdown 预览 RPC DTO", &prompt_preview);
@@ -664,6 +665,7 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
         &prompt_preview.preview_id,
         Tool::Claude,
         ArtifactKind::Prompt,
+        None,
     )
     .expect("应用 Markdown 持久化预览失败");
     assert_serialized_secrets_absent("Markdown Apply RPC DTO", &prompt_result);

@@ -368,6 +368,76 @@ let preview = preview_provider_sync(database, context, tool)?;
 let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind::Provider)?;
 ```
 
+### Scenario: Project-level prompt assignment (hard copy)
+
+#### 1. Scope / Trigger
+
+- Trigger: prompt project assignment, project-scope prompt preview/apply,
+  unassignment, or prompt profile deletion changes.
+
+#### 2. Signatures
+
+- `preview_prompt_sync(tool, projectId: Option<String>) -> PreviewPlan`；
+  `apply_profile_preview(ApplyProfilePreviewInput{previewId, tool, artifactKind,
+  projectId}) -> ApplyResult`；projectId 为 None 时保持全局语义不变。
+- `set_prompt_project_assignment(SetPromptProjectAssignmentInput{projectId,
+  tool, promptProfileId: Option, projectRowVersion}) -> PromptProjectAssignmentDto`；
+  `get_prompt_project_assignment(projectId, tool)`。
+- 目标矩阵补全：Claude 项目 `<root>/CLAUDE.md`、Codex 项目
+  `<root>/AGENTS.md`（均为 `TargetFormat::Markdown` + `$document` +
+  `WholeDocument`）。全局与项目分配**互不排斥**（与 mcp/skill 的互斥触发器
+  有意不同）；每 (项目, 工具) 至多一份（`prompt_project_assignments` PK）。
+
+#### 3. Contracts
+
+- 项目级为**硬拷贝**语义：apply 写普通文件，此后项目文件归项目所有；
+  外部修改不构成 stale，而是把观测内容作为本次预览的确认基线（不落库），
+  apply 端指纹绑定保证预览与应用间未被再次改动。全局作用域保持外部修改
+  必须走接管导入的严格语义。
+- 解除分配 = 同事务删除分配行 + 清空基线哈希（行保留，见 database-guidelines），
+  项目文件保留、仅停止纳管；重复提交相同分配为 no-op（不 bump 项目版本）；
+  分配/解除都会 bump 项目 `row_version`。
+- 被项目分配引用的档案禁止删除（`count_prompt_project_assignments` 前置
+  校验 + FK RESTRICT 兜底）；跨工具档案分配拒绝。
+- 档案分配与同步都只改中央意图；原生写入必须经持久化预览 + 显式 Apply。
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| 档案与工具不匹配 | `INVALID_INPUT`；无写入 |
+| 项目分配缺失但基线哈希仍存在 | `CONFLICT`（防御分支，正常流程不可达） |
+| 解除分配时重复提交 / 相同分配重复提交 | no-op，不 bump 项目版本 |
+| 档案仍被项目引用时删除 | `CONFLICT`；档案保留 |
+| 项目外部修改 CLAUDE.md/AGENTS.md | 预览可合并（覆盖式重新应用），apply 前再校验指纹 |
+| 全局目标外部修改 | stale/conflict；走接管导入（严格语义不变） |
+
+#### 5. Tests Required
+
+- 分配→预览→应用写出项目根文件；外部修改→覆盖；解除分配保留文件且基线
+  哈希清空；跨工具拒绝；删除阻塞；全局回归不变（`profiles/service.rs`）。
+- 迁移金丝雀：同连接识别修订后的 CHECK（`db/mod.rs`）。
+
+#### 6. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// 解除分配删除基线行会破坏快照 RESTRICT 外键；也不允许在 CRUD 内写原生文件。
+repository::delete_prompt_project_baseline(database, project_id, tool)?;
+fs::remove_file(project_root.join("CLAUDE.md"))?;
+```
+
+#### Correct
+
+```rust
+// 解除分配：同事务删分配行 + 清空基线哈希，文件保留。
+repository::set_prompt_project_assignment(database, project_id, tool, None, expected)?;
+// 写入必须经预览 + Apply。
+let plan = preview_prompt_sync(database, environment, redactor, tool, Some(project_id))?;
+apply_profile_preview(state, plan.preview_id, tool, ArtifactKind::Prompt, Some(project_id))?;
+```
+
 ## Scenario: MCP central intent and inherited project projections
 
 ### 1. Scope / Trigger

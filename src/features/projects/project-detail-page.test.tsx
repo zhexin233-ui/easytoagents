@@ -17,6 +17,7 @@ import {
   type McpProjectOptionDto,
   type PreviewPlan,
   type ProjectDto,
+  type PromptProfileDto,
   type SkillProjectOptionDto,
 } from "@/bindings/commands";
 import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
@@ -37,6 +38,11 @@ vi.mock("@/bindings/commands", () => ({
     readoptMcpTarget: vi.fn(),
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
+    getPromptProjectAssignment: vi.fn(),
+    setPromptProjectAssignment: vi.fn(),
+    listPromptProfiles: vi.fn(),
+    previewPromptSync: vi.fn(),
+    applyProfilePreview: vi.fn(),
   },
 }));
 
@@ -227,6 +233,64 @@ const skillPreview: PreviewPlan = {
         ignoredByLocalExclude: false,
       },
       excludeFromGit: true,
+    },
+  ],
+};
+
+const promptProfileFixture: PromptProfileDto = {
+  id: "00000000-0000-4000-8000-000000000731",
+  tool: "claude",
+  name: "项目提示词",
+  body: "# 项目规则",
+  isActive: false,
+  importedFromPath: null,
+  rowVersion: 2,
+};
+
+const promptPreview: PreviewPlan = {
+  previewId: "00000000-0000-4000-8000-000000000732",
+  scope: "project",
+  projectId: project.id,
+  dbVersion: 9,
+  warningCodes: [],
+  targets: [
+    {
+      targetId: "00000000-0000-4000-8000-000000000733",
+      descriptor: {
+        tool: "claude",
+        artifactKind: "prompt",
+        scope: "project",
+        projectRoot: project.rootPath,
+        path: "/isolated/projects/detail/CLAUDE.md",
+        format: "markdown",
+        managedSelectorRoots: ["$document"],
+        sensitiveSelectors: [],
+        capability: { state: "supported", diagnosticCode: null },
+        policy: "allowed",
+        trust: "not_required",
+        promptOverride: "not_applicable",
+        symlinkPolicy: "reject",
+      },
+      ownership: { kind: "whole_document" },
+      changeKind: "add",
+      status: "missing",
+      currentFullHash: null,
+      currentManagedHash: null,
+      desiredManagedHash: "d".repeat(64),
+      targetRowVersion: 1,
+      rowVersions: [],
+      redactedDiff: { before: null, after: "# 项目规则" },
+      warningCodes: [],
+      baselineMismatchedItems: [],
+      readoptAvailable: false,
+      errorCode: null,
+      git: {
+        isRepository: true,
+        tracked: false,
+        ignored: false,
+        ignoredByLocalExclude: false,
+      },
+      excludeFromGit: false,
     },
   ],
 };
@@ -1056,6 +1120,102 @@ describe("ProjectDetailPage", () => {
         projectId: project.id,
       }),
     );
+  });
+
+  it("提示词分配支持硬拷贝覆盖语义、预览与显式 Apply，解除分配保留项目文件", async () => {
+    vi.mocked(commands.getProject)
+      .mockResolvedValueOnce({ status: "ok", data: project })
+      .mockResolvedValue({
+        status: "ok",
+        data: { ...project, rowVersion: project.rowVersion + 1 },
+      });
+    vi.mocked(commands.getPromptProjectAssignment)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { projectId: project.id, tool: "claude", profileId: null },
+      })
+      .mockResolvedValue({
+        status: "ok",
+        data: {
+          projectId: project.id,
+          tool: "claude",
+          profileId: promptProfileFixture.id,
+        },
+      });
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfileFixture],
+    });
+    vi.mocked(commands.setPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        projectId: project.id,
+        tool: "claude",
+        profileId: promptProfileFixture.id,
+      },
+    });
+    vi.mocked(commands.previewPromptSync).mockResolvedValue({
+      status: "ok",
+      data: promptPreview,
+    });
+    const { client } = renderPage();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目提示词" }),
+    );
+
+    const assignButton = await screen.findByRole("button", {
+      name: "分配 项目提示词 为项目提示词",
+    });
+    fireEvent.click(assignButton);
+    await waitFor(() =>
+      expect(commands.setPromptProjectAssignment).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        promptProfileId: promptProfileFixture.id,
+        projectRowVersion: 7,
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["profiles"] });
+
+    // 分配成功后由失效刷新取回已分配状态。
+    await screen.findByRole("button", { name: "解除项目提示词分配" });
+    const enabledPreview = screen.getByRole("button", {
+      name: "Claude 提示词同步预览",
+    });
+    expect(enabledPreview).toBeEnabled();
+    fireEvent.click(enabledPreview);
+    await waitFor(() =>
+      expect(commands.previewPromptSync).toHaveBeenCalledWith(
+        "claude",
+        project.id,
+      ),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: promptPreview.previewId,
+        tool: "claude",
+        artifactKind: "prompt",
+        projectId: project.id,
+      }),
+    );
+
+    vi.mocked(commands.setPromptProjectAssignment).mockClear();
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "解除项目提示词分配" }));
+    await waitFor(() =>
+      expect(commands.setPromptProjectAssignment).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        promptProfileId: null,
+        projectRowVersion: 8,
+      }),
+    );
+    vi.mocked(globalThis.confirm).mockRestore();
   });
 
   it("已追加与异常状态以 tag 展示且按钮显示禁用", async () => {

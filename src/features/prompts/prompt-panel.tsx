@@ -102,7 +102,7 @@ export function PromptPanel({
           rowVersion: profile.rowVersion,
         }),
       );
-      return unwrapResult(await commands.previewPromptSync(tool));
+      return unwrapResult(await commands.previewPromptSync(tool, null));
     },
     onSuccess: onPreview,
     // 生效档案的中央写入发生在预览之前；预览失败不应让查询缓存停留在旧状态。
@@ -110,7 +110,7 @@ export function PromptPanel({
   });
   const previewMutation = useMutation({
     mutationFn: async () =>
-      unwrapResult(await commands.previewPromptSync(tool)),
+      unwrapResult(await commands.previewPromptSync(tool, null)),
     onSuccess: onPreview,
   });
   const deleteMutation = useMutation({

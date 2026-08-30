@@ -70,6 +70,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<profiles::ApplyProfilePreviewInput>()
         .typ::<profiles::ToolProfileStatusDto>()
         .typ::<profiles::DeleteProfileResultDto>()
+        .typ::<profiles::SetPromptProjectAssignmentInput>()
+        .typ::<profiles::PromptProjectAssignmentDto>()
         .typ::<mcp::McpServerInput>()
         .typ::<mcp::SensitiveMapUpdate>()
         .typ::<mcp::SensitiveJsonUpdate>()
@@ -161,6 +163,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::profiles::confirm_prompt_import,
             commands::profiles::preview_provider_sync,
             commands::profiles::preview_prompt_sync,
+            commands::profiles::set_prompt_project_assignment,
+            commands::profiles::get_prompt_project_assignment,
             commands::profiles::apply_profile_preview,
             commands::mcp::list_mcp_servers,
             commands::mcp::get_mcp_server,
