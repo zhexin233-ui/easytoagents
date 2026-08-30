@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
+- **Total Sessions**: 23
 - **Last Active**: 2026-08-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~657 | Active |
+| `journal-1.md` | ~678 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-08-30 | 提示词档案工具无关化并按 Skills 范式每工具图标启用 | `b8f4293` | `main` |
 | 22 | 2026-08-30 | 提示词页中央列表改版与项目级隐藏全局生效档案 | `af6d421` | `main` |
 | 21 | 2026-08-30 | 提示词模块：全局/项目级硬拷贝分配与统一收纳 | `5ac1663` | `main` |
 | 20 | 2026-08-30 | 项目目标初始未纳管状态中性化 | `0e21565`, `b8f665f` | `main` |

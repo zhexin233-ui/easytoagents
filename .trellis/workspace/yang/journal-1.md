@@ -655,3 +655,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: 提示词档案工具无关化并按 Skills 范式每工具图标启用
+
+**Date**: 2026-08-30
+**Task**: 提示词档案工具无关化并按 Skills 范式每工具图标启用
+**Branch**: `main`
+
+### Summary
+
+提示词页移除工具页签改为 Skills 同款中央列表：每档案卡片带 Claude/Codex 图标启用/停用（每工具至多一份生效，启用替换旧档），检测导入与同步入口移入每工具状态卡。迁移 0009 新增 is_active_claude/codex 启用位并按旧数据种子、遗留 tool 列 CHECK 原地放宽；后端 set_global_prompt_assignment 替代 set_active_prompt_profile、DTO 改 globalTools、bindings 再生成；项目级分配与总览/onboarding 同步适配。pnpm check 全绿，运行中的应用实测迁移种子与新 UI 正确。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b8f4293` | (see git log) |
+
+### Status
+
+[OK] **Completed**
