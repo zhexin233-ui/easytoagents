@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移 0008（新表 + managed_targets 重建）必须遵守迁移与 row_version/触发器约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "显式发现、预览安全与非受管内容保护是本模块的硬性质量要求"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 判别联合与错误码约定，命令层返回合同"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "src-tauri 模块组织约定（profiles 原位扩展、commands 注册）"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "显式选择、原子接管与预览合同的最近似规范参照（接管导入沿用同一套语义）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "react-query queryOptions 工厂与失效约定，profile-api 项目维度扩展需遵循"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "bindings 生成类型唯一来源，前端不得手写合同类型"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "页面/弹窗组件结构与样式约定（新 prompts 页与项目页签）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "新增命令参数/表/预览项的跨层清单，本项目同时改 RPC 合同与存储"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 profiles/整文档引擎与 mcp 项目分配模式，识别有意差异（每项目单份、外部修改语义）"}

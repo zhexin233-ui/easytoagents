@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验收检查表：显式发现/预览安全/非受管内容不被触碰的核对口径"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对迁移命名、managed_targets 重建与 row_version 触发器是否符合约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对错误码与 Result<T, AppError> 合同"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量验收清单"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 RPC 合同 / 迁移 / bindings / UI 各层是否同步更新"}
