@@ -467,3 +467,23 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 ### Status
 
 [OK] **Completed**
+
+## Session 20: 错误提示展示 details.reason 具体原因
+
+**Date**: 2026-08-30
+**Task**: 错误提示展示 details.reason 具体原因
+**Branch**: `main`
+
+### Summary
+
+排查 skill-install 同步 Claude 报 CONFLICT 的根因后，用户要求把具体原因透出到界面。后端 AppError::conflict/invalid_input 的 message 是分类通用文案，具体原因在 details.reason；前端全局错误渲染出口 profileErrorText 只展示 message。现改为存在字符串型 details.reason 时展示 code：reason，否则回退 message；NOT_FOUND 专用文案与非字符串 reason 回退保持不变。新增 profile-api.test.ts 五个用例（真实生产形态、两种回退、专用文案、兜底）。139 项前端测试全过，lint/typecheck/format 干净。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `605bae9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
