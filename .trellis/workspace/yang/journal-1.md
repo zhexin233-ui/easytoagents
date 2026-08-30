@@ -569,3 +569,25 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: 私有快照批量删除与选中删除
+
+**Date**: 2026-08-30
+**Task**: 私有快照批量删除与选中删除
+**Branch**: `main`
+
+### Summary
+
+为私有恢复点（SnapshotRestoreDialog）新增删除能力：后端新增 delete_snapshots 命令（写入互斥锁+路径审计，全批预检[NOT_FOUND/活动run CONFLICT/存储路径校验]→先删文件后单事务删行，逐项 best-effort 反馈）；从 load_snapshot_record 抽出共享 validate_snapshot_storage_path；重新生成 bindings；前端加复选框多选、删除选中(N)/全部删除工具条、弹窗内二次确认，删除后失效 syncKeys+dashboardKeys。规范沉淀：后端新增 Snapshot batch deletion 场景（7段），前端记录 set-state-in-effect 禁令下的渲染期交集剪枝模式。pnpm check 全绿（Rust 206+测试、前端 160 测试）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `36bce6f` | (see git log) |
+| `3fad27b` | (see git log) |
+
+### Status
+
+[OK] **Completed**

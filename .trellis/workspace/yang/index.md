@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-08-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~571 | Active |
+| `journal-1.md` | ~593 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-08-30 | 私有快照批量删除与选中删除 | `36bce6f`, `3fad27b` | `main` |
 | 18 | 2026-08-30 | 修复 Codex Skills 同步目标路径错指 .agents/skills | `91d8a17`, `70beed4` | `main` |
 | 17 | 2026-08-29 | Skills 本地目录导入改为按钮加弹窗 | `88f4e44` | `main` |
 | 16 | 2026-08-29 | 前端新增暗色与亮色主题模式 | `a92ef9e`, `24da1c1` | `main` |
