@@ -97,8 +97,52 @@ export function PromptsPage() {
       </div>
 
       <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
+        {applyMessage ? (
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
+            {applyMessage}
+          </p>
+        ) : null}
+        {applyError ? (
+          <p
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
+          >
+            {applyError}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="mx-auto mt-6 max-w-6xl">
+        <PromptPanel
+          key={tool}
+          tool={tool}
+          directApply={directApply}
+          onPreview={(plan) => handlePreview(plan, tool)}
+        />
+      </div>
+
+      <section
+        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
+        aria-labelledby="prompt-tool-status-title"
+      >
+        <h2 id="prompt-tool-status-title" className="text-lg font-semibold">
+          工具状态
+        </h2>
+        {statusQuery.isPending ? (
+          <p role="status" className="mt-4 text-sm">
+            正在检测工具配置状态…
+          </p>
+        ) : null}
+        {statusQuery.isError ? (
+          <p
+            role="alert"
+            className="mt-4 text-sm text-red-700 dark:text-red-300"
+          >
+            {profileErrorText(statusQuery.error)}
+          </p>
+        ) : null}
         {statusQuery.data ? (
-          <section className="bg-card rounded-lg border p-4 text-sm">
+          <article className="mt-4 rounded-lg border p-4 text-sm">
             {statusQuery.data.availability === "installed" ? (
               <p className="font-medium text-emerald-800 dark:text-emerald-300">
                 已安全检测到 {toolLabel}
@@ -132,44 +176,9 @@ export function PromptsPage() {
                 后再应用。
               </p>
             ) : null}
-          </section>
+          </article>
         ) : null}
-        {statusQuery.isPending ? (
-          <p role="status" className="bg-card rounded-lg border p-4 text-sm">
-            正在检测工具配置状态…
-          </p>
-        ) : null}
-        {statusQuery.isError ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
-          >
-            {profileErrorText(statusQuery.error)}
-          </p>
-        ) : null}
-        {applyMessage ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
-            {applyMessage}
-          </p>
-        ) : null}
-        {applyError ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
-          >
-            {applyError}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="mx-auto mt-6 max-w-6xl">
-        <PromptPanel
-          key={tool}
-          tool={tool}
-          directApply={directApply}
-          onPreview={(plan) => handlePreview(plan, tool)}
-        />
-      </div>
+      </section>
 
       <ChangePreviewDialog
         preview={openPreview?.plan ?? null}

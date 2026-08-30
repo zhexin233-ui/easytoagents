@@ -8,14 +8,23 @@ import {
   type PromptProfileDto,
   type Tool,
 } from "@/bindings/commands";
+import {
+  CentralList,
+  CentralListCard,
+  CentralListCardBody,
+  CentralListCardFooter,
+  CentralListLayoutToggle,
+} from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
 import { Button } from "@/components/ui/button";
+import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import {
   profileErrorText,
   profileKeys,
   promptProfilesQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
+import { cn } from "@/lib/utils";
 
 interface PromptPanelProps {
   tool: Tool;
@@ -29,6 +38,7 @@ export function PromptPanel({
   onPreview,
 }: PromptPanelProps) {
   const queryClient = useQueryClient();
+  const [listLayout, setListLayout] = usePersistedCentralListLayout("prompts");
   const profilesQuery = useQuery(promptProfilesQueryOptions(tool));
   const [editing, setEditing] = useState<PromptProfileDto | null>(null);
   const [name, setName] = useState("");
@@ -171,16 +181,20 @@ export function PromptPanel({
       aria-labelledby={`${tool}-prompts-title`}
       className="bg-card rounded-xl border p-5"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 id={`${tool}-prompts-title`} className="text-xl font-semibold">
             全局提示词
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Markdown 正文原样写入工具的全局指令文件。
+            Markdown 正文原样写入工具的全局指令文件；每个工具同时只有一份生效。
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <CentralListLayoutToggle
+            value={listLayout}
+            onChange={setListLayout}
+          />
           <Button size="sm" onClick={() => openForm(null)}>
             新增提示词
           </Button>
@@ -224,55 +238,100 @@ export function PromptPanel({
         </p>
       ) : null}
 
-      <ul className="mt-5 space-y-3">
-        {profilesQuery.data?.map((profile) => (
-          <li key={profile.id} className="rounded-lg border p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="font-medium">
-                  {profile.name}{" "}
-                  {profile.isActive ? <span>· 当前生效</span> : null}
-                </p>
-                <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                  {profile.body}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                {!profile.isActive ? (
-                  <Button
-                    size="sm"
-                    onClick={() => activateMutation.mutate(profile)}
+      <CentralList layout={listLayout}>
+        {profilesQuery.data?.map((profile) => {
+          const cardActions = (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className={listLayout === "grid" ? "px-2" : undefined}
+                onClick={() => openForm(profile)}
+              >
+                编辑
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className={listLayout === "grid" ? "px-2" : undefined}
+                onClick={() => {
+                  if (
+                    globalThis.confirm(
+                      "删除中央提示词档案？原生文件不会在此步骤修改。",
+                    )
+                  ) {
+                    deleteMutation.mutate(profile);
+                  }
+                }}
+              >
+                删除
+              </Button>
+            </>
+          );
+          return (
+            <CentralListCard key={profile.id} layout={listLayout}>
+              <CentralListCardBody layout={listLayout}>
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="font-medium">{profile.name}</h3>
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      {profile.isActive ? "当前生效" : "未生效"}
+                      {profile.importedFromPath
+                        ? ` · 导入自 ${profile.importedFromPath}`
+                        : null}
+                    </p>
+                  </div>
+                  {listLayout === "list" ? (
+                    <div className="flex shrink-0 gap-2">{cardActions}</div>
+                  ) : null}
+                </div>
+                {listLayout === "list" ? (
+                  <p className="bg-muted mt-3 line-clamp-6 rounded p-2 text-xs leading-5 whitespace-pre-wrap">
+                    {profile.body}
+                  </p>
+                ) : (
+                  <p
+                    className="text-muted-foreground mt-4 line-clamp-3 text-sm leading-6 whitespace-pre-wrap"
+                    title={profile.body}
                   >
-                    {directApply ? "切换并直接应用" : "切换并预览"}
-                  </Button>
-                ) : null}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openForm(profile)}
-                >
-                  编辑
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    if (
-                      globalThis.confirm(
-                        "删除中央提示词档案？原生文件不会在此步骤修改。",
-                      )
-                    ) {
-                      deleteMutation.mutate(profile);
+                    {profile.body}
+                  </p>
+                )}
+              </CentralListCardBody>
+              <CentralListCardFooter
+                layout={listLayout}
+                label={`${profile.name} 提示词操作`}
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  {listLayout === "grid" ? cardActions : null}
+                  <div
+                    className={
+                      listLayout === "grid"
+                        ? "ml-auto flex shrink-0 items-center gap-2"
+                        : "flex items-center gap-2"
                     }
-                  }}
-                >
-                  删除
-                </Button>
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
+                    role="group"
+                    aria-label={`${profile.name} 生效状态`}
+                  >
+                    <PromptActiveButton
+                      profileName={profile.name}
+                      active={profile.isActive}
+                      disabled={activateMutation.isPending}
+                      onActivate={() => activateMutation.mutate(profile)}
+                    />
+                  </div>
+                </div>
+                {listLayout === "list" ? (
+                  <p className="text-muted-foreground mt-2 text-xs leading-5">
+                    切换生效只更新中央档案；原生写入仍需预览后确认
+                    Apply，或使用直接应用模式。
+                  </p>
+                ) : null}
+              </CentralListCardFooter>
+            </CentralListCard>
+          );
+        })}
+      </CentralList>
 
       {importPreview ? (
         <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40">
@@ -338,5 +397,67 @@ export function PromptPanel({
         </div>
       </FormDialog>
     </section>
+  );
+}
+
+interface PromptActiveButtonProps {
+  profileName: string;
+  active: boolean;
+  disabled: boolean;
+  onActivate: () => void;
+}
+
+function PromptActiveButton({
+  profileName,
+  active,
+  disabled,
+  onActivate,
+}: PromptActiveButtonProps) {
+  const label = active
+    ? `${profileName} 当前生效`
+    : `将 ${profileName} 设为当前生效`;
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      className={cn(
+        "size-8 p-0 shadow-none",
+        active
+          ? "border-slate-300 bg-slate-50 shadow-sm dark:border-slate-600 dark:bg-slate-800"
+          : "border-slate-200 bg-transparent dark:border-slate-700",
+      )}
+      aria-label={label}
+      aria-pressed={active}
+      title={active ? "当前生效" : "设为当前生效"}
+      disabled={active || disabled}
+      onClick={onActivate}
+    >
+      <CheckIcon dimmed={!active} />
+    </Button>
+  );
+}
+
+function CheckIcon({ dimmed }: { dimmed: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      className={cn(
+        "size-5 transition-[opacity,filter]",
+        dimmed ? "opacity-25" : "opacity-100",
+      )}
+    >
+      <circle cx="10" cy="10" r="8" strokeWidth="1.5" className="opacity-40" />
+      <path
+        d="M6.2 10.3 8.8 12.9 13.8 7.4"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

@@ -1218,6 +1218,71 @@ describe("ProjectDetailPage", () => {
     vi.mocked(globalThis.confirm).mockRestore();
   });
 
+  it("全局生效的提示词档案不进入项目分配列表也不可分配", async () => {
+    vi.mocked(commands.getProject).mockResolvedValue({
+      status: "ok",
+      data: project,
+    });
+    vi.mocked(commands.getPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: { projectId: project.id, tool: "claude", profileId: null },
+    });
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [
+        { ...promptProfileFixture, name: "全局生效档案", isActive: true },
+        promptProfileFixture,
+      ],
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目提示词" }),
+    );
+
+    expect(await screen.findByText("项目提示词")).toBeVisible();
+    expect(screen.queryByText("全局生效档案")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "分配 全局生效档案 为项目提示词",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("已分配档案变为全局生效后仍保留当前分配展示，可解除分配", async () => {
+    vi.mocked(commands.getProject).mockResolvedValue({
+      status: "ok",
+      data: project,
+    });
+    vi.mocked(commands.getPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        projectId: project.id,
+        tool: "claude",
+        profileId: promptProfileFixture.id,
+      },
+    });
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [{ ...promptProfileFixture, isActive: true }],
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目提示词" }),
+    );
+
+    expect(await screen.findByText("项目提示词")).toBeVisible();
+    expect(screen.getByText(/当前分配/)).toBeVisible();
+    expect(screen.getByText(/全局生效/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: `分配 ${promptProfileFixture.name} 为项目提示词`,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "解除项目提示词分配" }),
+    ).toBeEnabled();
+  });
+
   it("已追加与异常状态以 tag 展示且按钮显示禁用", async () => {
     vi.mocked(commands.listMcpProjectOptions).mockResolvedValue({
       status: "ok",

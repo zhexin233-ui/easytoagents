@@ -536,27 +536,6 @@ pub fn set_prompt_project_assignment(
         "project",
         &database_path,
     )?;
-    if let Some(profile_id) = prompt_profile_id {
-        // 档案必须存在且属于同一工具；跨工具档案不允许写入项目记忆文件。
-        let profile_tool: Option<String> = transaction
-            .query_row(
-                "SELECT tool FROM prompt_profiles WHERE id = ?1",
-                [profile_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|_| AppError::database(&database_path, "read_prompt_profile_tool"))?;
-        match profile_tool {
-            Some(existing) if existing == tool.as_str() => {}
-            Some(_) => {
-                return Err(AppError::invalid_input(
-                    "promptProfileId",
-                    "提示词档案与工具不匹配",
-                ));
-            }
-            None => return Err(AppError::not_found("promptProfile", profile_id)),
-        }
-    }
     let current: Option<String> = transaction
         .query_row(
             "SELECT prompt_profile_id FROM prompt_project_assignments
@@ -566,6 +545,36 @@ pub fn set_prompt_project_assignment(
         )
         .optional()
         .map_err(|_| AppError::database(&database_path, "read_prompt_project_assignment"))?;
+    if let Some(profile_id) = prompt_profile_id {
+        // 档案必须存在且属于同一工具；跨工具档案不允许写入项目记忆文件。
+        // 全局生效档案同样排除：同一份指令不应同时写入全局与项目记忆文件；
+        // 已是本项目当前分配的档案例外，重复写入保持无操作语义。
+        let profile_state: Option<(String, bool)> = transaction
+            .query_row(
+                "SELECT tool, is_active FROM prompt_profiles WHERE id = ?1",
+                [profile_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|_| AppError::database(&database_path, "read_prompt_profile_tool"))?;
+        match profile_state {
+            Some((existing, false)) if existing == tool.as_str() => {}
+            Some((_, true)) if current.as_deref() == Some(profile_id) => {}
+            Some((_, true)) => {
+                return Err(AppError::conflict(
+                    "promptProfile",
+                    "全局生效的提示词档案不能分配到项目；请先在提示词页切换其他档案生效",
+                ));
+            }
+            Some(_) => {
+                return Err(AppError::invalid_input(
+                    "promptProfileId",
+                    "提示词档案与工具不匹配",
+                ));
+            }
+            None => return Err(AppError::not_found("promptProfile", profile_id)),
+        }
+    }
     let changed = match (prompt_profile_id, current) {
         (Some(profile_id), Some(existing)) if existing == profile_id => false,
         (Some(profile_id), _) => {

@@ -754,6 +754,10 @@ function ProjectPromptAssignments({
   const blocked = projectBlocked(project, tool);
   const assignedProfileId = assignmentQuery.data?.profileId ?? null;
   const profiles = profilesQuery.data ?? [];
+  // 全局生效档案不作为项目分配选项展示；已被本项目分配的档案例外保留，便于解除分配。
+  const assignableProfiles = profiles.filter(
+    (profile) => !profile.isActive || profile.id === assignedProfileId,
+  );
   const mutationError = profileErrorText(
     assignmentQuery.error ??
       profilesQuery.error ??
@@ -788,9 +792,13 @@ function ProjectPromptAssignments({
         <p className="text-muted-foreground mt-3 text-sm">
           {toolLabel(tool)} 还没有全局提示词档案；请先在侧边栏「提示词」页创建。
         </p>
+      ) : assignableProfiles.length === 0 ? (
+        <p className="text-muted-foreground mt-3 text-sm">
+          暂无可分配的提示词档案；全局生效的档案不会分配到项目，请先在「提示词」页新增或切换生效档案。
+        </p>
       ) : null}
       <ul className="mt-3 space-y-2">
-        {profiles.map((profile) => {
+        {assignableProfiles.map((profile) => {
           const selected = profile.id === assignedProfileId;
           return (
             <li

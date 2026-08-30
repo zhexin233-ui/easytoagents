@@ -18,6 +18,7 @@ import {
   type Tool,
 } from "@/bindings/commands";
 import { PromptsPage } from "@/features/prompts/prompts-page";
+import { centralListLayoutStorageKeys } from "@/components/use-persisted-central-list-layout";
 
 vi.mock("@/bindings/commands", () => ({
   commands: {
@@ -391,9 +392,12 @@ describe("PromptsPage", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    expect(within(section).getByRole("listitem")).toHaveTextContent(
-      "代码审查 · 当前生效",
-    );
+    const activeButton = await within(section).findByRole("button", {
+      name: "代码审查 当前生效",
+    });
+    expect(activeButton).toBeDisabled();
+    expect(activeButton).toHaveAttribute("aria-pressed", "true");
+    expect(activeButton.closest("article")).toHaveTextContent("当前生效");
     expect(commands.listPromptProfiles).toHaveBeenCalledTimes(2);
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
@@ -432,9 +436,11 @@ describe("PromptsPage", () => {
       }),
     );
 
-    fireEvent.click(
-      within(section).getByRole("button", { name: "切换并预览" }),
-    );
+    const activate = await within(section).findByRole("button", {
+      name: `将 ${promptProfile.name} 设为当前生效`,
+    });
+    expect(activate).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(activate);
     await waitFor(() =>
       expect(commands.setActivePromptProfile).toHaveBeenCalledWith("claude", {
         id: promptProfile.id,
@@ -484,5 +490,79 @@ describe("PromptsPage", () => {
     expect(
       await screen.findByText(/无法安全确认 Codex 指令遮蔽状态/),
     ).toBeVisible();
+  });
+
+  it("图标选中生效：当前生效档案选中禁用，未生效档案点击走预览链路", async () => {
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [
+        { ...promptProfile, name: "生效档案", isActive: true },
+        {
+          ...promptProfile,
+          id: "00000000-0000-4000-8000-000000000403",
+          name: "备用档案",
+          isActive: false,
+        },
+      ],
+    });
+    renderPromptsPage();
+
+    const active = await screen.findByRole("button", {
+      name: "生效档案 当前生效",
+    });
+    expect(active).toBeDisabled();
+    expect(active).toHaveAttribute("aria-pressed", "true");
+    const standby = screen.getByRole("button", {
+      name: "将 备用档案 设为当前生效",
+    });
+    expect(standby).toBeEnabled();
+    expect(standby).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(standby);
+    await waitFor(() =>
+      expect(commands.setActivePromptProfile).toHaveBeenCalledWith("claude", {
+        id: "00000000-0000-4000-8000-000000000403",
+        rowVersion: promptProfile.rowVersion,
+      }),
+    );
+    expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null);
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+  });
+
+  it("中央列表布局独立持久化并在重新挂载后恢复，非法值回退为单列", () => {
+    localStorage.setItem(centralListLayoutStorageKeys.mcp, "grid");
+
+    const firstRender = renderPromptsPage();
+    expect(screen.getByRole("button", { name: "单列显示" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "三列网格显示" }));
+    expect(localStorage.getItem(centralListLayoutStorageKeys.prompts)).toBe(
+      "grid",
+    );
+    expect(localStorage.getItem(centralListLayoutStorageKeys.mcp)).toBe("grid");
+    firstRender.unmount();
+
+    const secondRender = renderPromptsPage();
+    expect(
+      screen.getByRole("button", { name: "三列网格显示" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "单列显示" }));
+    expect(localStorage.getItem(centralListLayoutStorageKeys.prompts)).toBe(
+      "list",
+    );
+    secondRender.unmount();
+
+    localStorage.setItem(
+      centralListLayoutStorageKeys.prompts,
+      "invalid-layout",
+    );
+    renderPromptsPage();
+    expect(screen.getByRole("button", { name: "单列显示" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });

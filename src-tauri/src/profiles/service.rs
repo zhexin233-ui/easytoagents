@@ -328,6 +328,8 @@ pub fn set_prompt_project_assignment(
                 "提示词档案与工具不匹配",
             ));
         }
+        // 全局生效档案不可分配到项目的守卫在 repository 事务内统一执行
+        // （含「重复写入当前分配为无操作」的幂等例外）。
     }
     repository::set_prompt_project_assignment(
         database,
@@ -3112,5 +3114,84 @@ tenant = "fixture"
             )
             .unwrap();
         assert_eq!(after_repeat, after_assign);
+    }
+
+    #[test]
+    fn prompt_project_assignment_rejects_globally_active_profile() {
+        let mut fixture = fixture();
+        let project = register_demo_project(&mut fixture);
+        let active = create_prompt_profile(
+            &mut fixture.database,
+            PromptProfileInput {
+                tool: Tool::Claude,
+                name: "全局生效".to_owned(),
+                body: "# 全局指令\n".to_owned(),
+                activate: true,
+            },
+        )
+        .unwrap();
+
+        // 全局生效档案不允许分配到项目，项目 row_version 不变。
+        let rejected = crate::profiles::set_prompt_project_assignment(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::profiles::SetPromptProjectAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Claude,
+                prompt_profile_id: Some(active.id.clone()),
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(rejected.code(), crate::error::ErrorCode::Conflict);
+        let reason = rejected
+            .details()
+            .and_then(|details| details.get("reason"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(reason.contains("全局生效"));
+
+        // 先分配后激活的历史分配：重复写入当前分配保持无操作语义。
+        let inactive = create_prompt_profile(
+            &mut fixture.database,
+            PromptProfileInput {
+                tool: Tool::Claude,
+                name: "先分配后激活".to_owned(),
+                body: "# 项目指引\n".to_owned(),
+                activate: false,
+            },
+        )
+        .unwrap();
+        crate::profiles::set_prompt_project_assignment(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::profiles::SetPromptProjectAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Claude,
+                prompt_profile_id: Some(inactive.id.clone()),
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap();
+        super::set_active_prompt_profile(
+            &mut fixture.database,
+            Tool::Claude,
+            &crate::profiles::VersionedProfileInput {
+                id: inactive.id.clone(),
+                row_version: inactive.row_version,
+            },
+        )
+        .unwrap();
+        crate::profiles::set_prompt_project_assignment(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::profiles::SetPromptProjectAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Claude,
+                prompt_profile_id: Some(inactive.id.clone()),
+                project_row_version: project.row_version + 1,
+            },
+        )
+        .unwrap();
     }
 }

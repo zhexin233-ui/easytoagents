@@ -136,11 +136,13 @@ the toggle). Do not introduce a theme Context or store.
 
 ## Shared Central List Controls
 
-MCP and Skills central libraries share `CentralList`,
+MCP, Skills, and Prompts central libraries share `CentralList`,
 `CentralListLayoutToggle`, and `PlatformAssignmentButton` from
 `src/components/`. Keep their list/grid behavior and Claude/Codex assignment
 semantics in these components rather than duplicating Tailwind classes or SVGs
-inside feature pages.
+inside feature pages. Prompt profiles use the same card chrome with a
+domain-only active-state icon button (per-tool single activation) kept in the
+feature file.
 
 ```tsx
 const [layout, setLayout] = usePersistedCentralListLayout("mcp");
@@ -164,17 +166,18 @@ const [layout, setLayout] = usePersistedCentralListLayout("mcp");
 
 #### 2. Signatures
 
-- `usePersistedCentralListLayout(preference: "mcp" | "skills")` returns a
-  readonly `[CentralListLayout, (layout: CentralListLayout) => void]` tuple.
-- `centralListLayoutStorageKeys` owns the separate versioned MCP and Skills
-  keys; callers must not duplicate their string values.
+- `usePersistedCentralListLayout(preference: "mcp" | "skills" | "prompts")`
+  returns a readonly `[CentralListLayout, (layout: CentralListLayout) => void]`
+  tuple.
+- `centralListLayoutStorageKeys` owns the separate versioned MCP, Skills, and
+  Prompts keys; callers must not duplicate their string values.
 
 #### 3. Contracts
 
 - Persist only `"list"` or `"grid"`; never persist central-list data, paths,
   secrets, or native configuration payloads with this hook.
-- MCP and Skills preferences are independent. A setter updates React state even
-  when `localStorage` cannot be written.
+- MCP, Skills, and Prompts preferences are independent. A setter updates React
+  state even when `localStorage` cannot be written.
 - Missing, invalid, or unreadable storage falls back to `"list"`.
 
 #### 4. Validation & Error Matrix
