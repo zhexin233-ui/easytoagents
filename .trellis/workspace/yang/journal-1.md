@@ -547,3 +547,25 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: 修复 Codex Skills 同步目标路径错指 .agents/skills
+
+**Date**: 2026-08-30
+**Task**: 修复 Codex Skills 同步目标路径错指 .agents/skills
+**Branch**: `main`
+
+### Summary
+
+EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills 与 <project>/.agents/skills，而 Codex 实际读取 $CODEX_HOME/skills 与 <project>/.codex/skills，导致应用显示已同步但 Codex 看不到技能（实机 ~2 个受管链接落错位置）。按 Trellis 全流程修复：全局/项目 target descriptor 改为 codex_home 与 .codex/skills（跟随 CODEX_HOME）；导入来源主次对调，枚举 codex_compatibility 重命名 codex_home 并重生成 bindings；前端导入对话框标签更正；同步调整 prepare_skill_sync allowed_root 与 overview 恢复矩阵的 (Codex, Skill) 分支；Rust/前端测试与 phase8 e2e 全部迁移到新路径。pnpm check 全绿（vitest 156、cargo 198+3 通过）。spec 同步更新 quality-guidelines 与 skill-import-guidelines 的路径契约，并记录"同步目标必须镜像工具真实读取路径"的教训。遗留：用户需在应用内对 Codex 全局 Skills 重新 Apply；~/.agents/skills 旧链接（skill-install、smart-search-cli）按用户决定保留（ZCode 仍在读该目录）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `91d8a17` | (see git log) |
+| `70beed4` | (see git log) |
+
+### Status
+
+[OK] **Completed**
