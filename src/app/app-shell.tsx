@@ -1,10 +1,11 @@
-import { useState, type ReactElement } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
 import codexIconUrl from "@/assets/brand/codex-icon-light.png";
-import { type ThemePreference, useTheme } from "@/components/use-theme";
+import { useTheme } from "@/components/use-theme";
+import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { projectsQueryOptions } from "@/lib/projects-api";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +13,6 @@ const primaryLinks = [
   { to: "/", label: "总览", end: true },
   { to: "/mcp", label: "MCP", end: false },
   { to: "/skills", label: "Skills", end: false },
-  { to: "/settings", label: "设置", end: false },
 ] as const;
 
 const toolLinks = [
@@ -30,6 +30,8 @@ const primaryLinkClass = ({ isActive }: { isActive: boolean }) =>
 
 export function AppShell() {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { preference, setPreference } = useTheme();
   const { pathname } = useLocation();
   const projectSectionOpen =
     projectsExpanded || pathname.startsWith("/projects/");
@@ -60,12 +62,47 @@ export function AppShell() {
               onNavigate={() => setProjectsExpanded(true)}
             />
           </nav>
+          <div className="border-t px-3 py-3">
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              onClick={() => setSettingsOpen(true)}
+              className="text-muted-foreground hover:bg-muted hover:text-foreground flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+            >
+              <SettingsIcon />
+              设置
+            </button>
+          </div>
         </aside>
         <div className="min-w-0 flex-1 overflow-y-auto">
           <Outlet />
         </div>
       </div>
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        themePreference={preference}
+        onThemePreferenceChange={setPreference}
+      />
     </div>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="size-4 shrink-0"
+    >
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
   );
 }
 
@@ -112,106 +149,8 @@ function TopBar() {
             </NavLink>
           ))}
         </nav>
-        <div aria-hidden="true" className="bg-border h-5 w-px" />
-        <ThemeToggleGroup />
       </div>
     </header>
-  );
-}
-
-const themeToggleOptions = [
-  { value: "light", label: "亮色模式", Icon: SunIcon },
-  { value: "dark", label: "暗色模式", Icon: MoonIcon },
-  { value: "system", label: "跟随系统外观", Icon: MonitorIcon },
-] as const satisfies readonly {
-  value: ThemePreference;
-  label: string;
-  Icon: () => ReactElement;
-}[];
-
-function ThemeToggleGroup() {
-  const { preference, setPreference } = useTheme();
-  return (
-    <div
-      role="group"
-      aria-label="外观模式"
-      className="flex items-center gap-0.5 rounded-md border p-0.5"
-    >
-      {themeToggleOptions.map(({ value, label, Icon }) => {
-        const selected = preference === value;
-        return (
-          <button
-            key={value}
-            type="button"
-            aria-label={label}
-            aria-pressed={selected}
-            title={label}
-            onClick={() => setPreference(value)}
-            className={cn(
-              "flex size-6 items-center justify-center rounded transition-colors",
-              selected
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:bg-muted",
-            )}
-          >
-            <Icon />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function SunIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="size-3.5"
-    >
-      <circle cx="8" cy="8" r="3" />
-      <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M12.8 3.2l-1.1 1.1M4.3 11.7l-1.1 1.1" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="size-3.5"
-    >
-      <path d="M13.4 9.6A6 6 0 1 1 6.4 2.6a4.8 4.8 0 0 0 7 7Z" />
-    </svg>
-  );
-}
-
-function MonitorIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="size-3.5"
-    >
-      <rect x="1.75" y="2.75" width="12.5" height="8.5" rx="1" />
-      <path d="M5.5 13.75h5M8 11.25v2.5" />
-    </svg>
   );
 }
 

@@ -11,6 +11,8 @@ import { themeStorageKey } from "@/components/use-theme";
 vi.mock("@/bindings/commands", () => ({
   commands: {
     listProjects: vi.fn(),
+    getAppSettings: vi.fn(),
+    updateAppSettings: vi.fn(),
   },
 }));
 
@@ -27,12 +29,17 @@ function renderShell() {
   );
 }
 
-describe("AppShell 外观模式切换", () => {
+describe("AppShell 侧边栏设置入口", () => {
   beforeEach(() => {
     vi.mocked(commands.listProjects).mockReset();
     vi.mocked(commands.listProjects).mockResolvedValue({
       status: "ok",
       data: [],
+    });
+    vi.mocked(commands.getAppSettings).mockReset();
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "preview_confirm" },
     });
     localStorage.clear();
     document.documentElement.classList.remove("dark");
@@ -40,35 +47,51 @@ describe("AppShell 外观模式切换", () => {
 
   afterEach(cleanup);
 
-  it("默认选中跟随系统，三态按钮均暴露 aria-pressed 与 title", () => {
+  it("设置不再是一级导航链接，而是左下角的图标按钮", () => {
     renderShell();
 
-    expect(screen.getByRole("button", { name: "亮色模式" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
+    expect(
+      screen.queryByRole("link", { name: "设置" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute(
+      "aria-haspopup",
+      "dialog",
     );
-    expect(screen.getByRole("button", { name: "暗色模式" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    const systemButton = screen.getByRole("button", {
-      name: "跟随系统外观",
-    });
-    expect(systemButton).toHaveAttribute("aria-pressed", "true");
-    expect(systemButton).toHaveAttribute("title", "跟随系统外观");
   });
 
-  it("点击暗色后立即挂 dark class 并持久化；切回亮色后移除", () => {
+  it("点击后打开设置对话框，关闭后消失", async () => {
     renderShell();
 
-    fireEvent.click(screen.getByRole("button", { name: "暗色模式" }));
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(await screen.findByRole("dialog", { name: "设置" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("顶栏不再渲染外观切换，外观切换位于设置弹窗内", async () => {
+    renderShell();
+
+    expect(
+      screen.queryByRole("group", { name: "外观模式" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const group = await screen.findByRole("group", { name: "外观模式" });
+    expect(group).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "跟随系统外观" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("在设置弹窗中切换外观会立即挂 dark class 并持久化", async () => {
+    renderShell();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: "暗色模式" }));
     expect(screen.getByRole("button", { name: "暗色模式" })).toHaveAttribute(
       "aria-pressed",
       "true",
-    );
-    expect(screen.getByRole("button", { name: "亮色模式" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
     );
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(localStorage.getItem(themeStorageKey)).toBe("dark");
@@ -76,8 +99,5 @@ describe("AppShell 外观模式切换", () => {
     fireEvent.click(screen.getByRole("button", { name: "亮色模式" }));
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(localStorage.getItem(themeStorageKey)).toBe("light");
-    expect(
-      screen.getByRole("button", { name: "跟随系统外观" }),
-    ).toHaveAttribute("aria-pressed", "false");
   });
 });
