@@ -527,3 +527,23 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 ### Status
 
 [OK] **Completed**
+
+## Session 23: 冲突条目定位与受管条目重新接管
+
+**Date**: 2026-08-30
+**Task**: 冲突面板标出不匹配条目并支持受管条目以当前内容重新接管
+**Branch**: `main`
+
+### Summary
+
+诊断用户反馈「Codex 启用 MCP 一直提示该目标阻止应用但又能正常启用」：8-26 导入接管的 node_repl 在 8-29 被 ChatGPT.app（cua）重写（env 变化、enabled 键丢失），条目基线失配导致整个 codex config.toml 目标永久冲突，启用只写中央所以 UI 正常。产品化修复：预览计划新增 baselineMismatchedItems/readoptAvailable（仅 MCP ExternalOwnedChange 冲突类）；readopt_mcp_target 命令以当前磁盘内容同时刷新两级基线（Missing 清基线可重建，不可读拒绝，与 apply 互斥，只动基线表）；对话框列出「内容不一致的受管条目」并提供接管按钮，MCP 页接管后自动重新预览。Rust +3 / 前端 +2 测试，pnpm check 全绿（198/156）。spec 沉淀基线接管契约与对话框契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3742093` | (see git log) |
+
+### Status
+
+[OK] **Completed**
