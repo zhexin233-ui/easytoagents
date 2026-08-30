@@ -34,6 +34,7 @@ vi.mock("@/bindings/commands", () => ({
     previewSkillSync: vi.fn(),
     applyMcpPreview: vi.fn(),
     applySkillPreview: vi.fn(),
+    readoptMcpTarget: vi.fn(),
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
   },
@@ -165,6 +166,8 @@ const preview: PreviewPlan = {
       rowVersions: [],
       redactedDiff: { after: { mcpServers: { "项目 MCP": {} } } },
       warningCodes: ["GIT_TRACKED"],
+      baselineMismatchedItems: [],
+      readoptAvailable: false,
       errorCode: null,
       git: {
         isRepository: true,
@@ -214,6 +217,8 @@ const skillPreview: PreviewPlan = {
         after: { "项目 Skill": { targetType: "symlink" } },
       },
       warningCodes: [],
+      baselineMismatchedItems: [],
+      readoptAvailable: false,
       errorCode: null,
       git: {
         isRepository: true,
@@ -432,6 +437,59 @@ describe("ProjectDetailPage", () => {
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "应用这份预览" })).toBeDisabled();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
+  it("冲突项目预览展示不匹配条目并支持以当前内容重新接管", async () => {
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewMcpSync).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...preview,
+        targets: [
+          {
+            ...baseTarget,
+            changeKind: "conflict",
+            status: "external_owned_change",
+            warningCodes: ["MANAGED_ITEM_BASELINE_MISMATCH"],
+            baselineMismatchedItems: ["项目 MCP"],
+            readoptAvailable: true,
+            errorCode: "CONFLICT",
+          },
+        ],
+      },
+    });
+    vi.mocked(commands.readoptMcpTarget).mockResolvedValue({
+      status: "ok",
+      data: {
+        targetPath: "/isolated/projects/detail/.mcp.json",
+        updatedItemCount: 1,
+        removedItemCount: 0,
+      },
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude MCP 同步预览" }),
+    );
+    expect(
+      await screen.findByText("内容不一致的受管条目：项目 MCP"),
+    ).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "以当前内容重新接管 /isolated/projects/detail/.mcp.json",
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.readoptMcpTarget).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: project.id,
+      }),
+    );
+    expect(await screen.findByText(/请再次点击同步按钮完成写入/)).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
   });
 
   it("默认选择 Claude MCP，并可通过两组按钮切换四种管理组合", async () => {

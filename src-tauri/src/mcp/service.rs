@@ -6,16 +6,16 @@ use std::{
     sync::Mutex,
 };
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use super::{
     ApplyMcpPreviewInput, DeleteMcpResultDto, McpProjectDto, McpProjectOptionDto,
     McpProjectOptionsInput, McpProjectSelectionState, McpServerDto, McpServerInput,
-    McpTargetStatusDto, PreviewMcpSyncInput, SetGlobalMcpAssignmentInput,
-    SetProjectMcpAssignmentInput, UpdateMcpServerInput, ValidatedMcpConfiguration,
-    VersionedMcpInput,
+    McpTargetStatusDto, PreviewMcpSyncInput, ReadoptMcpTargetInput, ReadoptMcpTargetResultDto,
+    SetGlobalMcpAssignmentInput, SetProjectMcpAssignmentInput, UpdateMcpServerInput,
+    ValidatedMcpConfiguration, VersionedMcpInput,
 };
 use crate::{
     adapters::{
@@ -226,6 +226,8 @@ pub fn preview_mcp_sync_with_probes(
                 ownership: target.ownership,
                 baseline: target.baseline,
                 scan: target.scan,
+                baseline_mismatched_items: target.baseline_mismatched_items,
+                readopt_available: target.readopt_available,
                 desired_projection: target.desired_projection,
                 row_versions: target.row_versions,
                 git: target.git,
@@ -324,6 +326,169 @@ pub fn apply_mcp_preview_with_probes(
     )
 }
 
+/// 以当前磁盘内容重新接管受管目标：仅刷新目标级与条目级基线，解除
+/// 「外部改写受管内容」类冲突。不改中央意图，也不写原生文件；下一次
+/// 预览会基于新基线通过校验，Apply 时按中央意图重新写入受管内容。
+pub fn readopt_mcp_target(
+    database: &mut Database,
+    environment: &crate::adapters::ExplicitEnvironment,
+    input: &ReadoptMcpTargetInput,
+) -> Result<ReadoptMcpTargetResultDto, AppError> {
+    let project = input
+        .project_id
+        .as_deref()
+        .map(|id| repository::get_project(database, id))
+        .transpose()?;
+    let project_root = project
+        .as_ref()
+        .map(|project| canonical_project(&project.root_path))
+        .transpose()?;
+    let descriptor = descriptor_for(
+        environment,
+        input.tool,
+        project_root.as_ref(),
+        environment.claude_user_mcp_probe(),
+        environment.claude_customization_policy_probe(),
+    )?;
+    let baseline = find_mcp_target_baseline(
+        database,
+        &descriptor,
+        project.as_ref().map(|project| project.id.as_str()),
+    )?
+    .ok_or_else(|| AppError::not_found("managedTarget", "该目标尚未纳入受管基线，无需重新接管"))?;
+    // 基线刷新必须与下一次预览使用同一套 ownership 口径，否则目标级
+    // managed hash 会再次判定为外部改写。
+    let container = native_container(input.tool);
+    let desired_records = repository::list_assigned_mcp_servers(
+        database,
+        input.tool,
+        project.as_ref().map(|project| project.id.as_str()),
+    )?
+    .into_iter()
+    .filter(|record| record.enabled)
+    .collect::<Vec<_>>();
+    let inherited_records = if project.is_some() {
+        repository::list_assigned_mcp_servers(database, input.tool, None)?
+            .into_iter()
+            .filter(|record| record.enabled)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let existing_items = repository::list_managed_mcp_items(database, &baseline.target_id)?;
+    let ownership = build_mcp_ownership(
+        container,
+        &desired_records,
+        &inherited_records,
+        &existing_items,
+    );
+    let scan = scan_target(tool_adapter(input.tool), &descriptor, &ownership);
+    readopt_with_scan(
+        database,
+        &baseline,
+        &existing_items,
+        &scan,
+        container,
+        &descriptor,
+    )
+}
+
+fn readopt_with_scan(
+    database: &mut Database,
+    baseline: &ManagedTargetBaseline,
+    existing_items: &[ManagedMcpItemRecord],
+    scan: &TargetScan,
+    container: &str,
+    descriptor: &TargetDescriptor,
+) -> Result<ReadoptMcpTargetResultDto, AppError> {
+    let database_path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| AppError::database(&database_path, "begin_readopt"))?;
+    let (updated_items, removed_items) = match scan {
+        TargetScan::Observed(observed) => {
+            transaction
+                .execute(
+                    "UPDATE managed_targets SET baseline_full_hash = ?2, baseline_managed_hash = ?3
+                     WHERE id = ?1",
+                    params![
+                        baseline.target_id,
+                        observed.full_hash,
+                        observed.managed_hash
+                    ],
+                )
+                .map_err(|_| AppError::database(&database_path, "readopt_target_baseline"))?;
+            let projection = observed
+                .managed_projection
+                .get(container)
+                .and_then(Value::as_object);
+            let mut updated = 0u32;
+            let mut removed = 0u32;
+            for item in existing_items {
+                let current = projection.and_then(|items| items.get(&item.external_key));
+                match current {
+                    Some(value) => {
+                        transaction
+                            .execute(
+                                "UPDATE managed_items SET last_applied_item_hash = ?2
+                                 WHERE id = ?1 AND target_id = ?3",
+                                params![item.id, hash_json(value), baseline.target_id],
+                            )
+                            .map_err(|_| {
+                                AppError::database(&database_path, "readopt_item_baseline")
+                            })?;
+                        updated += 1;
+                    }
+                    None => {
+                        transaction
+                            .execute(
+                                "DELETE FROM managed_items WHERE id = ?1 AND target_id = ?2",
+                                params![item.id, baseline.target_id],
+                            )
+                            .map_err(|_| {
+                                AppError::database(&database_path, "readopt_remove_item")
+                            })?;
+                        removed += 1;
+                    }
+                }
+            }
+            (updated, removed)
+        }
+        TargetScan::Missing => {
+            transaction
+                .execute(
+                    "DELETE FROM managed_items WHERE target_id = ?1",
+                    params![baseline.target_id],
+                )
+                .map_err(|_| AppError::database(&database_path, "readopt_clear_items"))?;
+            transaction
+                .execute(
+                    "UPDATE managed_targets
+                     SET baseline_full_hash = NULL, baseline_managed_hash = NULL
+                     WHERE id = ?1",
+                    params![baseline.target_id],
+                )
+                .map_err(|_| AppError::database(&database_path, "readopt_clear_baseline"))?;
+            (0, existing_items.len().min(u32::MAX as usize) as u32)
+        }
+        _ => {
+            return Err(AppError::conflict(
+                "readopt",
+                "目标当前无法安全读取，请先恢复文件内容或权限后再重新接管",
+            ));
+        }
+    };
+    transaction
+        .commit()
+        .map_err(|_| AppError::database(&database_path, "commit_readopt"))?;
+    Ok(ReadoptMcpTargetResultDto {
+        target_path: descriptor.path.clone().unwrap_or_default(),
+        updated_item_count: updated_items,
+        removed_item_count: removed_items,
+    })
+}
+
 pub fn list_global_mcp_target_statuses(
     database: &Database,
     environment: &crate::adapters::ExplicitEnvironment,
@@ -382,6 +547,8 @@ struct PreparedMcpTarget {
     ownership: ManagedOwnership,
     baseline: ManagedTargetBaseline,
     scan: TargetScan,
+    baseline_mismatched_items: Vec<String>,
+    readopt_available: bool,
     desired_projection: Value,
     row_versions: Vec<DatabaseRowVersion>,
     git: Option<crate::git::GitPathStatus>,
@@ -483,11 +650,15 @@ fn prepare_mcp_sync(
         &inherited_records,
         &existing_items,
     );
-    let scan = verify_managed_item_baselines(
+    let (scan, baseline_mismatched_items) = verify_managed_item_baselines(
         scan_target(tool_adapter(input.tool), &descriptor, &ownership),
         container,
         &existing_items,
     );
+    // 重新接管只对「外部改写了受管内容」这一类冲突有意义；策略、信任、解析失败
+    // 等其他阻塞状态必须走各自的恢复路径。
+    let readopt_available = crate::sync::assess_drift(&descriptor, &baseline, &scan).status
+        == SyncStatus::ExternalOwnedChange;
     // 项目层只有全局继承项时不拥有任何原生条目。仍扫描继承名称以发现外部同名
     // 冲突，但在目标缺失或这些名称均不存在时，不生成空 `.mcp.json`/TOML 写入。
     if desired_records.is_empty()
@@ -528,6 +699,8 @@ fn prepare_mcp_sync(
             ownership,
             baseline,
             scan,
+            baseline_mismatched_items,
+            readopt_available,
             desired_projection: desired,
             row_versions,
             git,
@@ -716,29 +889,49 @@ fn verify_managed_item_baselines(
     scan: TargetScan,
     container: &str,
     existing: &[ManagedMcpItemRecord],
-) -> TargetScan {
+) -> (TargetScan, Vec<String>) {
     if existing.is_empty() {
-        return scan;
+        return (scan, Vec::new());
     }
-    let matches = match &scan {
+    let mismatched = match &scan {
         TargetScan::Observed(observed) => observed
             .managed_projection
             .get(container)
             .and_then(Value::as_object)
-            .is_some_and(|items| {
-                existing.iter().all(|item| {
-                    items
-                        .get(&item.external_key)
-                        .is_some_and(|value| hash_json(value) == item.last_applied_item_hash)
-                })
-            }),
+            .map_or_else(
+                || {
+                    existing
+                        .iter()
+                        .map(|item| item.external_key.clone())
+                        .collect()
+                },
+                |items| {
+                    existing
+                        .iter()
+                        .filter(|item| {
+                            items.get(&item.external_key).map_or(true, |value| {
+                                hash_json(value) != item.last_applied_item_hash
+                            })
+                        })
+                        .map(|item| item.external_key.clone())
+                        .collect()
+                },
+            ),
+        TargetScan::Missing => existing
+            .iter()
+            .map(|item| item.external_key.clone())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let matches = match &scan {
+        TargetScan::Observed(_) => mismatched.is_empty(),
         TargetScan::Missing => false,
-        _ => return scan,
+        _ => return (scan, Vec::new()),
     };
     if matches {
-        scan
+        (scan, Vec::new())
     } else {
-        TargetScan::ManagedItemBaselineMismatch
+        (TargetScan::ManagedItemBaselineMismatch, mismatched)
     }
 }
 
@@ -1093,9 +1286,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_mcp_preview_with_probes, create_mcp_server, list_mcp_project_options,
-        preview_mcp_sync_with_probes, set_global_mcp_assignment, set_project_mcp_assignment,
-        update_mcp_server,
+        apply_mcp_preview_with_probes, create_mcp_server, get_mcp_server, list_mcp_project_options,
+        preview_mcp_sync_with_probes, readopt_mcp_target, set_global_mcp_assignment,
+        set_project_mcp_assignment, update_mcp_server,
     };
     use crate::{
         adapters::{
@@ -1108,7 +1301,7 @@ mod tests {
         error::ErrorCode,
         mcp::{
             ApplyMcpPreviewInput, McpProjectOptionsInput, McpProjectSelectionState, McpServerInput,
-            PreviewMcpSyncInput, SensitiveJsonUpdate, SensitiveMapUpdate,
+            PreviewMcpSyncInput, ReadoptMcpTargetInput, SensitiveJsonUpdate, SensitiveMapUpdate,
             SetGlobalMcpAssignmentInput, SetProjectMcpAssignmentInput, UpdateMcpServerInput,
         },
         security::SecretRedactor,
@@ -3200,5 +3393,295 @@ enabled = true
             }
         }
         output
+    }
+
+    #[test]
+    fn readopt_refreshes_baselines_and_unlocks_conflicted_target() {
+        let mut fixture = Fixture::new();
+        let write_operations = std::sync::Mutex::new(());
+        let claude_path = fixture.home.join(".claude.json");
+        fs::write(
+            &claude_path,
+            br#"{"theme":"dark","mcpServers":{"external":{"command":"keep"}}}"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let created = create_mcp_server(
+            &mut fixture.database,
+            &mut redactor,
+            &stdio_input("managed-a"),
+        )
+        .unwrap();
+        set_global_mcp_assignment(
+            &mut fixture.database,
+            &redactor,
+            &SetGlobalMcpAssignmentInput {
+                tool: Tool::Claude,
+                mcp_id: created.id.clone(),
+                assigned: true,
+                row_version: created.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let preview = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+        apply_mcp_preview_with_probes(
+            &write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &ApplyMcpPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+
+        // 外部工具改写受管条目 → 目标冲突，并列出具体不匹配条目。
+        fs::write(
+            &claude_path,
+            br#"{"theme":"dark","mcpServers":{"external":{"command":"keep"},"managed-a":{"command":"hijacked"}}}"#,
+        )
+        .unwrap();
+        let conflicted = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(conflicted.targets[0].change_kind.as_str(), "conflict");
+        assert!(conflicted.targets[0].readopt_available);
+        assert_eq!(
+            conflicted.targets[0].baseline_mismatched_items,
+            vec!["managed-a".to_owned()]
+        );
+
+        let central_before = get_mcp_server(&fixture.database, &redactor, &created.id).unwrap();
+        let result = readopt_mcp_target(
+            &mut fixture.database,
+            &fixture.environment,
+            &ReadoptMcpTargetInput {
+                tool: Tool::Claude,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.updated_item_count, 1);
+        assert_eq!(result.removed_item_count, 0);
+        let central_after = get_mcp_server(&fixture.database, &redactor, &created.id).unwrap();
+        assert_eq!(central_before.row_version, central_after.row_version);
+
+        // 接管后冲突解除，正常同步把中央意图写回。
+        let recovered = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+        assert_ne!(recovered.targets[0].change_kind.as_str(), "conflict");
+        assert!(recovered.targets[0].error_code.is_none());
+        apply_mcp_preview_with_probes(
+            &write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &ApplyMcpPreviewInput {
+                preview_id: recovered.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+        let native: Value = serde_json::from_slice(&fs::read(&claude_path).unwrap()).unwrap();
+        assert_eq!(native["mcpServers"]["managed-a"]["command"], "npx");
+        // 接管不改中央意图。
+        let central = get_mcp_server(&fixture.database, &redactor, &created.id).unwrap();
+        assert_eq!(central.row_version, created.row_version + 1);
+    }
+
+    #[test]
+    fn readopt_missing_target_clears_baselines_for_rebuild() {
+        let mut fixture = Fixture::new();
+        let write_operations = std::sync::Mutex::new(());
+        let claude_path = fixture.home.join(".claude.json");
+        fs::write(&claude_path, br#"{"mcpServers":{}}"#).unwrap();
+        let mut redactor = SecretRedactor::default();
+        let created = create_mcp_server(
+            &mut fixture.database,
+            &mut redactor,
+            &stdio_input("managed-a"),
+        )
+        .unwrap();
+        set_global_mcp_assignment(
+            &mut fixture.database,
+            &redactor,
+            &SetGlobalMcpAssignmentInput {
+                tool: Tool::Claude,
+                mcp_id: created.id.clone(),
+                assigned: true,
+                row_version: created.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let preview = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+        apply_mcp_preview_with_probes(
+            &write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &ApplyMcpPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+
+        fs::remove_file(&claude_path).unwrap();
+        let conflicted = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(conflicted.targets[0].change_kind.as_str(), "conflict");
+        assert_eq!(
+            conflicted.targets[0].baseline_mismatched_items,
+            vec!["managed-a".to_owned()]
+        );
+
+        let result = readopt_mcp_target(
+            &mut fixture.database,
+            &fixture.environment,
+            &ReadoptMcpTargetInput {
+                tool: Tool::Claude,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.removed_item_count, 1);
+
+        // 基线清空后目标回到「缺失、可创建」状态。
+        let recovered = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(recovered.targets[0].change_kind.as_str(), "add");
+        assert!(recovered.targets[0].error_code.is_none());
+    }
+
+    #[test]
+    fn readopt_refuses_unreadable_targets() {
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        let created = create_mcp_server(
+            &mut fixture.database,
+            &mut redactor,
+            &stdio_input("managed-a"),
+        )
+        .unwrap();
+        set_global_mcp_assignment(
+            &mut fixture.database,
+            &redactor,
+            &SetGlobalMcpAssignmentInput {
+                tool: Tool::Claude,
+                mcp_id: created.id.clone(),
+                assigned: true,
+                row_version: created.row_version,
+            },
+        )
+        .unwrap();
+        // 首次预览会创建 managed_targets 行（目标缺失但可创建）。
+        let policy = fixture.allowed_policy();
+        preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            fixture.environment.claude_user_mcp_probe(),
+            &policy,
+        )
+        .unwrap();
+
+        fs::write(fixture.home.join(".claude.json"), b"{not-json").unwrap();
+        let error = readopt_mcp_target(
+            &mut fixture.database,
+            &fixture.environment,
+            &ReadoptMcpTargetInput {
+                tool: Tool::Claude,
+                project_id: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
     }
 }

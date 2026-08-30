@@ -85,6 +85,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<mcp::McpProjectOptionsInput>()
         .typ::<mcp::PreviewMcpSyncInput>()
         .typ::<mcp::ApplyMcpPreviewInput>()
+        .typ::<mcp::ReadoptMcpTargetInput>()
+        .typ::<mcp::ReadoptMcpTargetResultDto>()
         .typ::<mcp::McpTargetStatusDto>()
         .typ::<mcp::McpImportCandidateStatus>()
         .typ::<mcp::McpImportAction>()
@@ -172,6 +174,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::mcp::list_global_mcp_target_statuses,
             commands::mcp::preview_mcp_sync,
             commands::mcp::apply_mcp_preview,
+            commands::mcp::readopt_mcp_target,
             commands::mcp::discover_mcp_import,
             commands::mcp::confirm_mcp_import,
             commands::skills::list_skills,

@@ -368,6 +368,14 @@ async applyMcpPreview(input: ApplyMcpPreviewInput) : Promise<Result<ApplyResult,
     else return { status: "error", error: e  as any };
 }
 },
+async readoptMcpTarget(input: ReadoptMcpTargetInput) : Promise<Result<ReadoptMcpTargetResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("readopt_mcp_target", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async discoverMcpImport(tool: Tool) : Promise<Result<McpImportPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("discover_mcp_import", { tool }) };
@@ -573,7 +581,7 @@ export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
 export type PreviewSkillSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
-export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
+export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; baselineMismatchedItems: string[]; readoptAvailable: boolean; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
 export type ProjectDto = { id: string; displayName: string; rootPath: string; pathStatus: ProjectPathStatus; gitStatus: GitRepositoryStatus; codexTrustStatus: TrustStatus; claudePolicyStatus: PolicyState; targets: ProjectTargetStatusDto[]; lastScannedAt: string | null; rowVersion: number }
 export type ProjectPathStatus = "valid" | "missing" | "permission_denied" | "invalid"
 export type ProjectTargetStatusDto = { tool: Tool; artifactKind: ArtifactKind; targetPath: string | null; capability: CapabilityState; policy: PolicyState; trust: TargetTrustState; status: SyncStatus; diagnosticCode: string | null }
@@ -586,6 +594,8 @@ export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | nu
 export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null }
 export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
 export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
+export type ReadoptMcpTargetInput = { tool: Tool; projectId: string | null }
+export type ReadoptMcpTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
 export type RecentSyncRunDto = { id: string; kind: SyncRunKind; status: SyncRunStatus; scope: Scope; projectId: string | null; startedAt: string; finishedAt: string | null; errorCode: ErrorCode | null }
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
 export type RegisterProjectInput = { displayName: string; rootPath: string }

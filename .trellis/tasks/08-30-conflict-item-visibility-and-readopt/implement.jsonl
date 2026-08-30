@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "预览与集成安全约束；重新接管不得绕过基线模型"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "managed_targets/managed_items 更新需遵循 row_version 与命名约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "新命令稳定错误契约"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "direct-apply 场景与对话框契约扩展"}

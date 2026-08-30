@@ -96,6 +96,8 @@ const preview: PreviewPlan = {
         after: { "fixture-skill": { targetType: "symlink" } },
       },
       warningCodes: [],
+      baselineMismatchedItems: [],
+      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,

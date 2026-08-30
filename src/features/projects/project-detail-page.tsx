@@ -76,6 +76,27 @@ export function ProjectDetailPage() {
     },
   });
 
+  const readoptMutation = useMutation({
+    mutationFn: async (preview: OpenProjectPreview) =>
+      unwrapResult(
+        await commands.readoptMcpTarget({
+          tool: preview.tool,
+          projectId,
+        }),
+      ),
+    onSuccess: async (result) => {
+      setOpenPreview(null);
+      setMessage(
+        `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；请再次点击同步按钮完成写入。`,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
+        queryClient.invalidateQueries({ queryKey: skillKeys.all }),
+      ]);
+    },
+  });
+
   const changeResourceView = (nextView: ProjectResourceView) => {
     if (nextView === resourceView) return;
     setResourceView(nextView);
@@ -166,6 +187,12 @@ export function ProjectDetailPage() {
           <BlockingState
             title="应用项目预览失败"
             description={profileErrorText(applyMutation.error) ?? "应用失败"}
+          />
+        ) : null}
+        {readoptMutation.isError ? (
+          <BlockingState
+            title="重新接管失败"
+            description={profileErrorText(readoptMutation.error) ?? "接管失败"}
           />
         ) : null}
       </div>
@@ -295,6 +322,12 @@ export function ProjectDetailPage() {
         tool={openPreview?.tool ?? "claude"}
         artifactKind={openPreview?.artifactKind ?? "mcp"}
         applying={applyMutation.isPending}
+        readopting={readoptMutation.isPending}
+        onReadopt={() => {
+          if (openPreview) {
+            readoptMutation.mutate(openPreview);
+          }
+        }}
         onClose={() => setOpenPreview(null)}
         onApply={() => {
           if (!openPreview) return;

@@ -179,6 +179,21 @@ pub struct ApplyMcpPreviewInput {
     pub project_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadoptMcpTargetInput {
+    pub tool: Tool,
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadoptMcpTargetResultDto {
+    pub target_path: String,
+    pub updated_item_count: u32,
+    pub removed_item_count: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct McpTargetStatusDto {

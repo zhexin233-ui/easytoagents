@@ -97,6 +97,8 @@ const syncPreview: PreviewPlan = {
       rowVersions: [],
       redactedDiff: { before: "[REDACTED]", after: "[REDACTED]" },
       warningCodes: [],
+      baselineMismatchedItems: [],
+      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,

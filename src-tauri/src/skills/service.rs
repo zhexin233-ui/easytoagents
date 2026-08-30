@@ -262,6 +262,8 @@ pub fn preview_skill_sync_with_policy_probe(
                 ownership: target.ownership,
                 baseline: target.baseline,
                 scan: target.scan,
+                baseline_mismatched_items: Vec::new(),
+                readopt_available: false,
                 desired_projection: target.desired_projection,
                 row_versions: target.row_versions,
                 git: target.git,

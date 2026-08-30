@@ -9,6 +9,8 @@ interface ChangePreviewDialogProps {
   tool: Tool;
   artifactKind: ArtifactKind;
   applying: boolean;
+  readopting?: boolean;
+  onReadopt?: () => void;
   onClose: () => void;
   onApply: (previewId: string, tool: Tool, artifactKind: ArtifactKind) => void;
 }
@@ -18,6 +20,8 @@ export function ChangePreviewDialog({
   tool,
   artifactKind,
   applying,
+  readopting = false,
+  onReadopt,
   onClose,
   onApply,
 }: ChangePreviewDialogProps) {
@@ -92,6 +96,12 @@ export function ChangePreviewDialog({
                   ))}
                 </ul>
               ) : null}
+              {target.baselineMismatchedItems.length > 0 ? (
+                <p className="mt-3 text-sm text-amber-800 dark:text-amber-300">
+                  内容不一致的受管条目：
+                  {target.baselineMismatchedItems.join("、")}
+                </p>
+              ) : null}
               {target.errorCode ? (
                 <div className="mt-3">
                   <BlockingState
@@ -99,6 +109,22 @@ export function ChangePreviewDialog({
                     description="请先重新扫描或处理冲突，再生成一份新的预览。"
                     code={target.errorCode}
                   />
+                  {target.readoptAvailable && onReadopt ? (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-muted-foreground text-xs leading-5">
+                        若接受当前文件内容作为新基线，可重新接管；之后重新同步会把中央意图写回受管条目。只调整基线，不会立即修改文件。
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={readopting || applying}
+                        aria-label={`以当前内容重新接管 ${target.descriptor.path ?? "目标"}`}
+                        onClick={onReadopt}
+                      >
+                        {readopting ? "正在重新接管…" : "以当前内容重新接管"}
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <pre className="bg-muted mt-3 overflow-auto rounded-md p-3 text-xs leading-5">

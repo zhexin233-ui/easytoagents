@@ -126,6 +126,8 @@ const preview: PreviewPlan = {
         after: { env: { ANTHROPIC_API_KEY: "[REDACTED]" } },
       },
       warningCodes: [],
+      baselineMismatchedItems: [],
+      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,

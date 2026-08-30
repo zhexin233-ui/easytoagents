@@ -495,3 +495,34 @@ projectAssignmentMutation.mutate(input);
   payload and the auto-applied preview ID.
 - Settings page: toggle persists both directions and surfaces read failures
   without rendering the toggle.
+
+---
+
+## Scenario: Conflict readopt in ChangePreviewDialog
+
+### 1. Scope / Trigger
+
+- Trigger: any change to `ChangePreviewDialog` readopt props, the preview plan
+  `baselineMismatchedItems` / `readoptAvailable` fields, or page-level
+  `readoptMcpTarget` wiring.
+
+### 2. Signatures
+
+- `ChangePreviewDialog` takes optional `readopting: boolean` and
+  `onReadopt: () => void`; the button renders only when the target has
+  `readoptAvailable && onReadopt` and sits inside the errorCode block.
+- Pages pass the plan identity to `commands.readoptMcpTarget({ tool,
+  projectId })`.
+
+### 3. Contracts
+
+- Mismatched items render as「内容不一致的受管条目：a、b」next to the blocking
+  state; the button explains that re-adoption only moves baselines and does not
+  write files immediately.
+- The MCP page closes the dialog, invalidates, and regenerates the preview
+  automatically (direct-apply mode then continues into Apply). The project page
+  closes the dialog and asks the user to press the sync button again because
+  the preview mutation lives in the child components.
+- Readopt errors surface through the page-level error areas like apply errors.
+- Skills/Provider/Prompt plans never set `readoptAvailable`; do not wire the
+  handler there until the backend supports those ownership kinds.

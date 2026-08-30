@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查接管只动基线、不隐式写原生文件"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查对话框可访问性与禁用态"}

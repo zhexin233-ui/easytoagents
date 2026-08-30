@@ -779,3 +779,48 @@ let probe = probe_release_environment(&ReleaseToolProbeInput::for_macos_release(
 ))?;
 app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 ```
+
+---
+
+## Scenario: Baseline re-adoption for externally rewritten managed targets
+
+### 1. Scope / Trigger
+
+- Trigger: any change to `verify_managed_item_baselines`, `readopt_mcp_target`,
+  `PreviewTargetRequest.readopt_available` / `baseline_mismatched_items`, or the
+  preview conflict classification for managed-item targets.
+
+### 2. Signatures
+
+- `verify_managed_item_baselines` returns `(TargetScan, Vec<String>)`; the vec
+  lists external keys whose on-disk hash diverges from
+  `managed_items.last_applied_item_hash` (or that vanished from disk; a missing
+  target file lists every managed key).
+- `readopt_mcp_target(database, environment, input)` refreshes BOTH baseline
+  levels: `managed_targets.baseline_full_hash/baseline_managed_hash` and every
+  `managed_items.last_applied_item_hash`.
+
+### 3. Contracts
+
+- Re-adoption only mutates baseline rows. Central records, assignments, and
+  native files must not change; row_version bumps come from the existing
+  triggers and invalidate older persisted previews naturally.
+- Ownership used to rescan must be built from the current central intent with
+  the same construction as `prepare_mcp_sync`, otherwise the next preview
+  immediately re-flags the target as externally changed.
+- `TargetScan::Missing` clears item rows and nulls both target hashes (the
+  schema requires both NULL or both set); the next preview returns to the
+  mergeable "missing, create" state.
+- Parse/permission/target-type/failed scans refuse re-adoption with a stable
+  conflict error; capability/policy/trust blocks never set
+  `readopt_available`.
+- The command takes the `write_operations` mutex so an in-flight apply cannot
+  interleave with baseline rewrites.
+
+### 4. Tests Required
+
+- Conflict preview carries the mismatched external keys and
+  `readopt_available=true`; after re-adoption the next preview is mergeable and
+  apply rewrites central intent.
+- Missing-file re-adoption returns to the mergeable missing state.
+- Unreadable targets refuse with a stable error and central rows are untouched.

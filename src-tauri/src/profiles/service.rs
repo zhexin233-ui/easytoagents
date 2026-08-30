@@ -753,6 +753,8 @@ fn persist_prepared_preview(
             ownership: prepared.ownership,
             baseline: prepared.baseline,
             scan: prepared.scan,
+            baseline_mismatched_items: Vec::new(),
+            readopt_available: false,
             desired_projection: prepared.desired_projection,
             row_versions: prepared.row_versions,
             git: None,

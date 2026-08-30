@@ -240,12 +240,26 @@ export function McpPage() {
     },
   });
 
+  const readoptMutation = useMutation({
+    mutationFn: async ({ tool }: { tool: Tool }) =>
+      unwrapResult(await commands.readoptMcpTarget({ tool, projectId: null })),
+    onSuccess: async (result, { tool }) => {
+      setOpenPreview(null);
+      setMessage(
+        `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
+      );
+      await invalidateMcp();
+      previewMutation.mutate({ tool });
+    },
+  });
+
   const operationError = [
     enabledMutation.error,
     deleteMutation.error,
     globalAssignmentMutation.error,
     previewMutation.error,
     applyMutation.error,
+    readoptMutation.error,
   ]
     .map(profileErrorText)
     .find(Boolean);
@@ -745,6 +759,12 @@ export function McpPage() {
         tool={openPreview?.tool ?? "claude"}
         artifactKind="mcp"
         applying={applyMutation.isPending}
+        readopting={readoptMutation.isPending}
+        onReadopt={() => {
+          if (openPreview) {
+            readoptMutation.mutate({ tool: openPreview.tool });
+          }
+        }}
         onClose={() => setOpenPreview(null)}
         onApply={() => {
           if (openPreview) {

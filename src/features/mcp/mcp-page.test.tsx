@@ -38,6 +38,7 @@ vi.mock("@/bindings/commands", () => ({
     updateAppSettings: vi.fn(),
     previewMcpSync: vi.fn(),
     applyMcpPreview: vi.fn(),
+    readoptMcpTarget: vi.fn(),
     discoverMcpImport: vi.fn(),
     confirmMcpImport: vi.fn(),
   },
@@ -95,6 +96,8 @@ const preview: PreviewPlan = {
         after: { mcpServers: { "fixture-mcp": { env: "[REDACTED]" } } },
       },
       warningCodes: [],
+      baselineMismatchedItems: [],
+      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,
@@ -995,6 +998,60 @@ describe("McpPage", () => {
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "应用这份预览" })).toBeDisabled();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
+  it("冲突预览展示不匹配条目并支持以当前内容重新接管", async () => {
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewMcpSync).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...preview,
+        targets: [
+          {
+            ...baseTarget,
+            changeKind: "conflict",
+            status: "external_owned_change",
+            warningCodes: ["MANAGED_ITEM_BASELINE_MISMATCH"],
+            baselineMismatchedItems: ["node_repl"],
+            readoptAvailable: true,
+            errorCode: "CONFLICT",
+          },
+        ],
+      },
+    });
+    vi.mocked(commands.readoptMcpTarget).mockResolvedValue({
+      status: "ok",
+      data: {
+        targetPath: "/isolated/home/.claude.json",
+        updatedItemCount: 1,
+        removedItemCount: 0,
+      },
+    });
+    renderPage();
+    fireEvent.click(await globalButton("生成全局预览"));
+    expect(
+      await screen.findByText("内容不一致的受管条目：node_repl"),
+    ).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "以当前内容重新接管 /isolated/home/.claude.json",
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.readoptMcpTarget).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    // 接管后自动重新生成预览。
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
   });
 
   it.each([
