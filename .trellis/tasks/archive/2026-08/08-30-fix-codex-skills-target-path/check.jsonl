@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端改动是否违反预览/Apply 安全模型与集成安全约束"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "核对 Skills 导入来源/入口链接/内置排除合同未被破坏"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对前端标签、bindings 类型与测试改动符合前端标准"}
