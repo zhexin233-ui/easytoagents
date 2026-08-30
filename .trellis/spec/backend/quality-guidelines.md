@@ -600,6 +600,20 @@ let inspection = inspect_central_skill(paths, id, central_path, expected_hash, s
   files/links untouched.
 - Project assignment updates bump the project row version. Every frontend consumer of
   project, MCP, and Skill project DTOs must refresh together after either assignment.
+- A project target whose scan is observed with an empty managed projection, both
+  baseline hashes absent, and no existing managed items carries the neutral
+  diagnostic `PROJECT_TARGET_INITIAL_UNMANAGED` instead of
+  `EXTERNAL_NON_OWNED_CHANGE`; the `SyncStatus` value stays
+  `external_non_owned_change` and `can_merge` stays `true`. The frontend renders it
+  as a muted "未纳管" badge with an explanatory line, not as a drift warning. This is
+  the project-target counterpart of the Skills `SKILL_TARGET_INITIAL_*` presentation
+  diagnostics; it must not change the shared drift algorithm or preview/apply
+  conflict handling.
+- Registration observes targets before the project row exists, so the managed
+  assessment (including the neutral initial diagnostic) only applies after the row is
+  persisted; registration-time observation falls back to the unmanaged scan path.
+  Assertions on managed-target diagnostics must read a post-registration rescan or
+  project read.
 - Dashboard run kind/status/error values use generated enums, not open strings. Unknown
   database values fail closed. Counts and recovery entries expose only central
   metadata, status, paths, hashes, and stable codes.
@@ -642,6 +656,9 @@ let inspection = inspect_central_skill(paths, id, central_path, expected_hash, s
 - Cover symlink aliases, `NOCASE` duplicates, soft reactivation, stale removal CAS,
   active-writer removal blocking, native preservation, live managed drift, and
   external same-name conflict before the first preview.
+- Cover the neutral `PROJECT_TARGET_INITIAL_UNMANAGED` diagnostic for an observed
+  external-only project target with global inheritance and no baseline, and its muted
+  frontend rendering without the raw diagnostic line.
 - Cover explicit all-skip persistence, typed recent-run DTOs, custom config-root
   restore routing, removed-project restore blocking, and zero secret values in all
   dashboard/project/recovery serialization.
