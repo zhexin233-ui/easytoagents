@@ -591,3 +591,25 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 项目目标初始未纳管状态中性化
+
+**Date**: 2026-08-30
+**Task**: 项目目标初始未纳管状态中性化
+**Branch**: `main`
+
+### Summary
+
+项目目标在基线双空+无受管条目+can_merge 时改发中性诊断 PROJECT_TARGET_INITIAL_UNMANAGED（状态枚举不变，对齐 Skills SKILL_TARGET_INITIAL_* 先例）；SyncStatusBadge 新增 muted 灰调 tone，项目详情卡对该诊断渲染「○ 未纳管」徽章与说明并隐藏原始诊断码，消除仅全局继承项目的非受管变更误报。MCP/Skills 项目目标统一生效；沉淀登记时序陷阱（register 时项目行未入库，受管评估仅在登记后 rescan/读取生效）至 backend quality-guidelines。前端 162、后端 207+e2e、lint/typecheck/fmt/clippy 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0e21565` | (see git log) |
+| `b8f665f` | (see git log) |
+
+### Status
+
+[OK] **Completed**

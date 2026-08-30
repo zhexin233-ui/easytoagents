@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 19
+- **Total Sessions**: 20
 - **Last Active**: 2026-08-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~593 | Active |
+| `journal-1.md` | ~615 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-08-30 | 项目目标初始未纳管状态中性化 | `0e21565`, `b8f665f` | `main` |
 | 19 | 2026-08-30 | 私有快照批量删除与选中删除 | `36bce6f`, `3fad27b` | `main` |
 | 18 | 2026-08-30 | 修复 Codex Skills 同步目标路径错指 .agents/skills | `91d8a17`, `70beed4` | `main` |
 | 17 | 2026-08-29 | Skills 本地目录导入改为按钮加弹窗 | `88f4e44` | `main` |
