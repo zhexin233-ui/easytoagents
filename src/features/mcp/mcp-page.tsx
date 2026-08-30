@@ -145,7 +145,14 @@ export function McpPage() {
           !server.enabled,
         ),
       ),
-    onSuccess: invalidateMcp,
+    onSuccess: async (_result, server) => {
+      await invalidateMcp();
+      if (!directApply) return;
+      // 启停改变已分配工具的期望投影；逐个工具自动同步，未分配则无需同步。
+      for (const tool of server.globalTools) {
+        await previewMutation.mutateAsync({ tool }).catch(() => undefined);
+      }
+    },
   });
 
   const deleteMutation = useMutation({
@@ -182,7 +189,12 @@ export function McpPage() {
           rowVersion: server.rowVersion,
         }),
       ),
-    onSuccess: invalidateMcp,
+    onSuccess: async (_result, { tool }) => {
+      await invalidateMcp();
+      if (directApply) {
+        previewMutation.mutate({ tool });
+      }
+    },
   });
 
   const previewMutation = useMutation({

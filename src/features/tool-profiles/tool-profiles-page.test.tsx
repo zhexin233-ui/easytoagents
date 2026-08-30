@@ -40,6 +40,8 @@ vi.mock("@/bindings/commands", () => ({
     confirmPromptImport: vi.fn(),
     previewPromptSync: vi.fn(),
     applyProfilePreview: vi.fn(),
+    getAppSettings: vi.fn(),
+    updateAppSettings: vi.fn(),
   },
 }));
 
@@ -181,6 +183,10 @@ function fillProfileForm(dialog: HTMLElement, kind: "渠道" | "提示词") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(commands.getAppSettings).mockResolvedValue({
+    status: "ok",
+    data: { applyMode: "preview_confirm" },
+  });
   vi.mocked(commands.listProviderProfiles).mockResolvedValue({
     status: "ok",
     data: [],
@@ -778,6 +784,96 @@ describe("ToolProfilesPage", () => {
     expect(await within(section).findByRole("alert")).toHaveTextContent(
       "INVALID_INPUT：输入内容无效",
     );
+  });
+
+  it("直接应用模式下无冲突渠道预览跳过对话框立即 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+
+    fireEvent.click(
+      await within(section).findByRole("button", {
+        name: "直接应用渠道同步",
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("已应用 1 个目标，可从快照恢复。"),
+    ).toBeVisible();
+  });
+
+  it("直接应用模式下冲突渠道预览回退为人工确认且 Apply 禁用", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewProviderSync).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...preview,
+        targets: [
+          {
+            ...baseTarget,
+            changeKind: "conflict",
+            status: "external_owned_change",
+          },
+        ],
+      },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+
+    fireEvent.click(
+      await within(section).findByRole("button", {
+        name: "直接应用渠道同步",
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "应用这份预览" })).toBeDisabled();
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
+
+  it("直接应用模式下切换生效渠道自动同步并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [provider],
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "切换并直接应用" }),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
   });
 
   it("无生效渠道且无受管基线时把预览 NOT_FOUND 显示为可操作空状态", async () => {

@@ -19,10 +19,15 @@ import {
 
 interface PromptPanelProps {
   tool: Tool;
+  directApply: boolean;
   onPreview: (preview: PreviewPlan) => void;
 }
 
-export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
+export function PromptPanel({
+  tool,
+  directApply,
+  onPreview,
+}: PromptPanelProps) {
   const queryClient = useQueryClient();
   const profilesQuery = useQuery(promptProfilesQueryOptions(tool));
   const [editing, setEditing] = useState<PromptProfileDto | null>(null);
@@ -187,7 +192,7 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
             检测已有提示词
           </Button>
           <Button size="sm" onClick={() => previewMutation.mutate()}>
-            预览提示词同步
+            {directApply ? "直接应用提示词同步" : "预览提示词同步"}
           </Button>
         </div>
       </div>
@@ -238,7 +243,7 @@ export function PromptPanel({ tool, onPreview }: PromptPanelProps) {
                     size="sm"
                     onClick={() => activateMutation.mutate(profile)}
                   >
-                    切换并预览
+                    {directApply ? "切换并直接应用" : "切换并预览"}
                   </Button>
                 ) : null}
                 <Button

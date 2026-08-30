@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查直接应用不绕过预览契约、禁用模式与错误展示"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "确认无新增写入路径、预览与集成安全约束未被绕过"}

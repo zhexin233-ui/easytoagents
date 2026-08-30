@@ -447,13 +447,14 @@ projectAssignmentMutation.mutate(input);
 
 ---
 
-## Scenario: Direct-apply mode (MCP/Skills sync)
+## Scenario: Direct-apply mode (MCP/Skills/Provider/Prompt sync)
 
 ### 1. Scope / Trigger
 
 - Trigger: any change to global MCP/Skills sync buttons, project MCP/Skill
-  append buttons, `src/lib/settings-api.ts`, or the settings page apply-mode
-  toggle.
+  append buttons, Provider/Prompt sync and activate buttons, central-list
+  assignment or enable toggles, `src/lib/settings-api.ts`, or the settings page
+  apply-mode toggle.
 
 ### 2. Signatures
 
@@ -474,8 +475,14 @@ projectAssignmentMutation.mutate(input);
   behave as `preview_confirm`.
 - The apply itself must keep calling the existing `apply*Preview` command with
   the exact preview ID; no new write path may be introduced.
-- Provider/Prompt (tool-profiles) flows are out of scope and always require the
-  preview dialog.
+- Under direct mode, central-list intent mutations auto-trigger the affected
+  sync: Skills/MCP global assignment toggles sync that tool, MCP enable/disable
+  syncs every tool in the server's `globalTools`, project assignment checkboxes
+  sync that project+tool, and Provider/Prompt activation (切换并直接应用)
+  previews then auto-applies. Save/delete/import stay manual and their notices
+  keep pointing at the sync button.
+- The direct-mode branch must run after mutation invalidations so the UI
+  reflects committed intent; the backend preview reads committed DB state.
 
 ### 4. Tests Required
 
@@ -483,6 +490,8 @@ projectAssignmentMutation.mutate(input);
   asserted) without the dialog; conflicted preview opens the dialog with Apply
   disabled and never calls apply.
 - With `applyMode: "preview_confirm"` (default): existing preview→confirm
-  behavior is unchanged.
+  behavior is unchanged and central toggles never trigger an implicit sync.
+- Assignment/enable toggles under direct mode assert both the preview command
+  payload and the auto-applied preview ID.
 - Settings page: toggle persists both directions and surfaces read failures
   without rendering the toggle.

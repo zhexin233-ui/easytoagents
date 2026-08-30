@@ -368,6 +368,41 @@ describe("ProjectDetailPage", () => {
     ).toBeVisible();
   });
 
+  it("直接应用模式下勾选项目追加自动同步并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByLabelText("项目 MCP MCP 项目追加"));
+    await waitFor(() =>
+      expect(commands.setProjectMcpAssignment).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        mcpId: mcpOptions[1]?.mcpId,
+        assigned: true,
+        mcpRowVersion: mcpOptions[1]?.rowVersion,
+        projectRowVersion: project.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: project.id,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "项目原生配置已通过持久化预览应用并完成写后验证。",
+      ),
+    ).toBeVisible();
+  });
+
   it("直接应用模式下冲突项目预览回退为人工确认且 Apply 禁用", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",

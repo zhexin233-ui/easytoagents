@@ -900,6 +900,48 @@ describe("SkillsPage", () => {
     },
   );
 
+  it("直接应用模式下分配切换自动同步并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    const updatedSkill: SkillDto = {
+      ...skill,
+      globalTools: ["claude", "codex"],
+      rowVersion: skill.rowVersion + 1,
+    };
+    vi.mocked(commands.listSkills)
+      .mockResolvedValueOnce({ status: "ok", data: [skill] })
+      .mockResolvedValue({ status: "ok", data: [updatedSkill] });
+    vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
+      status: "ok",
+      data: updatedSkill,
+    });
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Codex 全局未分配" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewSkillSync).toHaveBeenCalledWith({
+        tool: "codex",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applySkillPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "codex",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/已应用 1 个 Skills 目标/)).toBeVisible();
+  });
+
   it.each([
     [
       "CLAUDE_POLICY_UNKNOWN",

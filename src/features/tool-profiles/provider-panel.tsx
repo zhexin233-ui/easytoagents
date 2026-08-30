@@ -20,6 +20,7 @@ import {
 
 interface ProviderPanelProps {
   tool: Tool;
+  directApply: boolean;
   onPreview: (preview: PreviewPlan) => void;
 }
 
@@ -43,7 +44,11 @@ const emptyForm: ProviderFormState = {
   wireApi: "",
 };
 
-export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
+export function ProviderPanel({
+  tool,
+  directApply,
+  onPreview,
+}: ProviderPanelProps) {
   const queryClient = useQueryClient();
   const profilesQuery = useQuery(providerProfilesQueryOptions(tool));
   const [editing, setEditing] = useState<ProviderProfileDto | null>(null);
@@ -246,7 +251,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
             检测已有配置
           </Button>
           <Button size="sm" onClick={() => previewMutation.mutate()}>
-            预览渠道同步
+            {directApply ? "直接应用渠道同步" : "预览渠道同步"}
           </Button>
         </div>
       </div>
@@ -297,7 +302,7 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
                     size="sm"
                     onClick={() => activateMutation.mutate(profile)}
                   >
-                    切换并预览
+                    {directApply ? "切换并直接应用" : "切换并预览"}
                   </Button>
                 ) : null}
                 <Button

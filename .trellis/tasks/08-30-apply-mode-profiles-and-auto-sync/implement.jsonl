@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "direct-apply scenario 契约与禁用模式；本次扩展其覆盖范围"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "设置读取与 mutation 失效约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "directApply 是派生的服务器状态，不得复制进本地状态"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "面板 prop 扩展与按钮文案遵循组件约定"}

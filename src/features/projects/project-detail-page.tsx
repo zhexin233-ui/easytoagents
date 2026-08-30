@@ -399,14 +399,17 @@ function ProjectMcpAssignments({
         }),
       ),
     onSuccess: async () => {
-      if (viewActive.current) {
-        onMessage("MCP 项目追加意图已更新；原生配置尚未写入。");
-      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
       ]);
+      if (!viewActive.current) return;
+      if (directApply) {
+        previewMutation.mutate();
+        return;
+      }
+      onMessage("MCP 项目追加意图已更新；原生配置尚未写入。");
     },
   });
   const previewMutation = useMutation({
@@ -518,14 +521,17 @@ function ProjectSkillAssignments({
         }),
       ),
     onSuccess: async () => {
-      if (viewActive.current) {
-        onMessage("Skill 项目追加意图已更新；项目链接尚未写入。");
-      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
       ]);
+      if (!viewActive.current) return;
+      if (directApply) {
+        previewMutation.mutate();
+        return;
+      }
+      onMessage("Skill 项目追加意图已更新；项目链接尚未写入。");
     },
   });
   const previewMutation = useMutation({

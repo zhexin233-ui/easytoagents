@@ -496,6 +496,99 @@ describe("McpPage", () => {
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
+  it("直接应用模式下分配切换自动同步并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    const updatedServer: McpServerDto = {
+      ...assignedServer,
+      globalTools: ["claude", "codex"],
+      rowVersion: assignedServer.rowVersion + 1,
+    };
+    vi.mocked(commands.listMcpServers)
+      .mockResolvedValueOnce({ status: "ok", data: [assignedServer] })
+      .mockResolvedValue({ status: "ok", data: [updatedServer] });
+    vi.mocked(commands.setGlobalMcpAssignment).mockResolvedValue({
+      status: "ok",
+      data: updatedServer,
+    });
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Codex 全局未分配" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "codex",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "codex",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
+  });
+
+  it("直接应用模式下启停已分配 MCP 自动同步其分配工具", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listMcpServers)
+      .mockResolvedValueOnce({ status: "ok", data: [assignedServer] })
+      .mockResolvedValue({
+        status: "ok",
+        data: [
+          {
+            ...assignedServer,
+            enabled: false,
+            rowVersion: assignedServer.rowVersion + 1,
+          },
+        ],
+      });
+    vi.mocked(commands.setMcpEnabled).mockResolvedValue({
+      status: "ok",
+      data: { ...assignedServer, enabled: false },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "停用" }));
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("MCP 非受管变更保留共享状态原义，不使用 Skills 首次目录文案", async () => {
     vi.mocked(commands.listGlobalMcpTargetStatuses).mockResolvedValueOnce({
       status: "ok",

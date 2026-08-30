@@ -95,13 +95,15 @@ export function SkillsPage() {
           rowVersion: skill.rowVersion,
         }),
       ),
-    onSuccess: async () => {
-      setMessage(
-        directApply
-          ? "全局分配已更新；这只改变中央配置，点击「直接应用全局同步」写入工具目录。"
-          : "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
-      );
+    onSuccess: async (_result, { tool }) => {
       await invalidateSkills();
+      if (!directApply) {
+        setMessage(
+          "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
+        );
+        return;
+      }
+      previewMutation.mutate({ tool });
     },
   });
 

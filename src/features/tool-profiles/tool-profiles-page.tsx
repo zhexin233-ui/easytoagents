@@ -10,6 +10,10 @@ import {
   toolProfileStatusQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
+import {
+  appSettingsQueryOptions,
+  canAutoApplyPreview,
+} from "@/lib/settings-api";
 import { commands } from "@/bindings/commands";
 
 interface ToolProfilesPageProps {
@@ -23,6 +27,8 @@ interface OpenPreview {
 
 export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   const statusQuery = useQuery(toolProfileStatusQueryOptions(tool));
+  const settingsQuery = useQuery(appSettingsQueryOptions());
+  const directApply = settingsQuery.data?.applyMode === "direct";
   const [openPreview, setOpenPreview] = useState<OpenPreview | null>(null);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
   const applyMutation = useMutation({
@@ -39,6 +45,16 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
       setOpenPreview(null);
     },
   });
+
+  // 直接应用模式下仍先生成持久化预览；与预览对话框 Apply 可用条件一致的无冲突
+  // 预览才跳过确认，冲突或错误一律回退到人工确认。
+  const handlePreview = (plan: PreviewPlan, artifactKind: ArtifactKind) => {
+    if (directApply && canAutoApplyPreview(plan)) {
+      applyMutation.mutate({ plan, artifactKind });
+      return;
+    }
+    setOpenPreview({ plan, artifactKind });
+  };
 
   const title = tool === "claude" ? "Claude" : "Codex";
   const applyError = profileErrorText(applyMutation.error);
@@ -139,13 +155,13 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
       <div className="mx-auto mt-6 grid max-w-6xl gap-6 xl:grid-cols-2">
         <ProviderPanel
           tool={tool}
-          onPreview={(plan) =>
-            setOpenPreview({ plan, artifactKind: "provider" })
-          }
+          directApply={directApply}
+          onPreview={(plan) => handlePreview(plan, "provider")}
         />
         <PromptPanel
           tool={tool}
-          onPreview={(plan) => setOpenPreview({ plan, artifactKind: "prompt" })}
+          directApply={directApply}
+          onPreview={(plan) => handlePreview(plan, "prompt")}
         />
       </div>
 
