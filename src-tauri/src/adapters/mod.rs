@@ -1256,6 +1256,7 @@ mod tests {
         let home = fs::canonicalize(temporary.path()).unwrap();
         let project = home.join("project");
         fs::create_dir(&project).unwrap();
+        let project_root = fs::canonicalize(&project).unwrap();
         let project = canonicalize_project_root(&project).unwrap();
         let default_environment = environment(&home, None, None);
         let conservative_probe = ConservativeClaudeUserMcpProbe;
@@ -1334,8 +1335,20 @@ mod tests {
                 .unwrap()
                 .path
                 .as_deref(),
-            Some(home.join(".agents/skills").to_str().unwrap()),
-            "Codex 用户 Skills 不能随 CODEX_HOME 迁移"
+            Some(custom_codex.join("skills").to_str().unwrap()),
+            "Codex 用户 Skills 跟随 CODEX_HOME，与 Codex 自身读取规则一致"
+        );
+        assert_eq!(
+            codex
+                .iter()
+                .find(|target| {
+                    target.artifact_kind == ArtifactKind::Skill && target.scope == Scope::Project
+                })
+                .unwrap()
+                .path
+                .as_deref(),
+            Some(project_root.join(".codex/skills").to_str().unwrap()),
+            "Codex 项目级 Skills 固定在项目 .codex/skills"
         );
 
         let verified_path = home.join("verified/user-mcp.json");

@@ -148,8 +148,8 @@ pub struct SkillTargetStatusDto {
 #[serde(rename_all = "snake_case")]
 pub enum SkillImportSourceKind {
     ClaudeGlobal,
+    CodexHome,
     CodexAgents,
-    CodexCompatibility,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]

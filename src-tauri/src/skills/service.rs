@@ -579,7 +579,8 @@ fn prepare_skill_sync(
     let allowed_root = project_root.as_ref().map_or_else(
         || match input.tool {
             Tool::Claude => environment.claude_config_dir().to_path_buf(),
-            Tool::Codex => environment.home().to_path_buf(),
+            // Codex 全局 Skills 目标位于 CODEX_HOME/skills，写入根必须跟随。
+            Tool::Codex => environment.codex_home().to_path_buf(),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -1770,7 +1771,10 @@ mod tests {
         assert!(claude_target.join("external-untouched").is_dir());
         for link in [
             claude_target.join("first-sync-skill"),
-            fixture.home.join(".agents/skills/first-sync-skill"),
+            fixture
+                .environment
+                .codex_home()
+                .join("skills/first-sync-skill"),
         ] {
             assert!(link.is_symlink());
             assert_eq!(
@@ -1869,7 +1873,7 @@ mod tests {
         assert!(!ordinary_rpc.contains(CONTENT_MARKER));
         assert!(!ordinary_rpc.contains(FRONTMATTER_MARKER));
         assert!(!fixture.home.join(".claude/skills").exists());
-        assert!(!fixture.home.join(".agents/skills").exists());
+        assert!(!fixture.environment.codex_home().join("skills").exists());
 
         let preview = preview_skill_content(&fixture.database, &fixture.paths, &skill.id).unwrap();
         assert!(preview.skill_md.contains(CONTENT_MARKER));
@@ -2387,7 +2391,7 @@ mod tests {
     }
 
     #[test]
-    fn project_links_use_official_paths_and_codex_user_skills_ignore_codex_home() {
+    fn project_links_use_official_paths_and_codex_user_skills_follow_codex_home() {
         let mut fixture = Fixture::new();
         let skill = fixture.import("project-skill");
         let assigned = set_project_skill_assignment(
@@ -2474,7 +2478,14 @@ mod tests {
             super::descriptor_for(&fixture.environment, Tool::Codex, None, &policy).unwrap();
         assert_eq!(
             descriptor.path.as_deref(),
-            Some(fixture.home.join(".agents/skills").to_str().unwrap())
+            Some(
+                fixture
+                    .environment
+                    .codex_home()
+                    .join("skills")
+                    .to_str()
+                    .unwrap()
+            )
         );
     }
 

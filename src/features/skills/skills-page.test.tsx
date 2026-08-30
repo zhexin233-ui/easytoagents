@@ -126,18 +126,18 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
           ]
         : [
             {
+              kind: "codex_home",
+              path: root,
+              status: "ready",
+              diagnosticCode: "SKILL_IMPORT_BUILTIN_EXCLUDED",
+              message: "已排除内置技能集合。",
+            },
+            {
               kind: "codex_agents",
               path: "/isolated/home/.agents/skills",
               status: "missing",
               diagnosticCode: "SKILL_IMPORT_SOURCE_MISSING",
               message: null,
-            },
-            {
-              kind: "codex_compatibility",
-              path: root,
-              status: "ready",
-              diagnosticCode: "SKILL_IMPORT_BUILTIN_EXCLUDED",
-              message: "已排除内置技能集合。",
             },
           ],
     candidates: [
@@ -246,7 +246,7 @@ beforeEach(() => {
       {
         tool: "codex",
         projectId: null,
-        targetPath: "/isolated/home/.agents/skills",
+        targetPath: "/isolated/home/.codex/skills",
         status: "missing",
         diagnosticCode: null,
       },
@@ -830,7 +830,7 @@ describe("SkillsPage", () => {
             {
               tool: "codex",
               projectId: null,
-              targetPath: "/isolated/home/.agents/skills",
+              targetPath: "/isolated/home/.codex/skills",
               status: "missing",
               diagnosticCode: null,
             },
@@ -845,7 +845,7 @@ describe("SkillsPage", () => {
               targetPath:
                 tool === "claude"
                   ? "/isolated/home/.claude/skills"
-                  : "/isolated/home/.agents/skills",
+                  : "/isolated/home/.codex/skills",
               status: "missing",
               diagnosticCode: assigned
                 ? "SKILL_TARGET_INITIAL_SYNC_PENDING"
@@ -1086,10 +1086,10 @@ describe("全局 Skills 检测与复制导入", () => {
       ).toBeDisabled();
       if (tool === "codex") {
         expect(
-          within(dialog).getByText("Codex 用户目录（正式同步目标）"),
+          within(dialog).getByText("Codex 官方目录（正式同步目标）"),
         ).toBeVisible();
         expect(
-          within(dialog).getByText("Codex 兼容目录（仅导入来源）"),
+          within(dialog).getByText("Codex Agents 通用目录（仅导入来源）"),
         ).toBeVisible();
         expect(within(dialog).getByText("来源目录不存在")).toBeVisible();
         expect(
@@ -1230,7 +1230,7 @@ describe("全局 Skills 检测与复制导入", () => {
           message: null,
           sources: [
             {
-              kind: "codex_compatibility",
+              kind: "codex_home",
               path: "/isolated/custom-codex/skills",
               status,
               diagnosticCode,
@@ -1537,7 +1537,7 @@ describe("Skills 首次目标状态展示", () => {
         {
           tool: "codex",
           projectId: null,
-          targetPath: "/isolated/home/.agents/skills",
+          targetPath: "/isolated/home/.codex/skills",
           status: "missing",
           diagnosticCode: "SKILL_TARGET_INITIAL_SYNC_PENDING",
         },

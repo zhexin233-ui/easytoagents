@@ -31,8 +31,8 @@ const candidateLabels: Record<SkillImportCandidateDto["status"], string> = {
 
 const sourceLabels: Record<SkillImportSourceDto["kind"], string> = {
   claude_global: "Claude 全局目录",
-  codex_agents: "Codex 用户目录（正式同步目标）",
-  codex_compatibility: "Codex 兼容目录（仅导入来源）",
+  codex_home: "Codex 官方目录（正式同步目标）",
+  codex_agents: "Codex Agents 通用目录（仅导入来源）",
 };
 
 const sourceStatusLabels: Record<SkillImportSourceDto["status"], string> = {

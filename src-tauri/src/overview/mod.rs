@@ -342,10 +342,9 @@ fn global_allowed_root(
         }
     };
     Ok(match (tool, artifact_kind) {
-        (Tool::Claude, ArtifactKind::Mcp) | (Tool::Codex, ArtifactKind::Skill) => {
-            environment.home().to_path_buf()
-        }
+        (Tool::Claude, ArtifactKind::Mcp) => environment.home().to_path_buf(),
         (Tool::Claude, _) => environment.claude_config_dir().to_path_buf(),
+        // Codex 全局 Skills 目标位于 CODEX_HOME/skills，恢复根与同步写入根一致。
         (Tool::Codex, _) => environment.codex_home().to_path_buf(),
     })
 }

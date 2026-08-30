@@ -82,7 +82,7 @@ const project: ProjectDto = {
     {
       tool: "codex",
       artifactKind: "skill",
-      targetPath: "/isolated/projects/detail/.agents/skills",
+      targetPath: "/isolated/projects/detail/.codex/skills",
       capability: "supported",
       policy: "allowed",
       trust: "trusted",

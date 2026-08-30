@@ -57,12 +57,14 @@ fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKin
         )],
         Tool::Codex => vec![
             (
-                SourceKind::CodexAgents,
-                environment.home().join(".agents/skills"),
+                // 官方目录，正式同步目标，优先展示。
+                SourceKind::CodexHome,
+                environment.codex_home().join("skills"),
             ),
             (
-                SourceKind::CodexCompatibility,
-                environment.codex_home().join("skills"),
+                // 跨工具通用目录，仅作为导入来源，不再是同步目标。
+                SourceKind::CodexAgents,
+                environment.home().join(".agents/skills"),
             ),
         ],
     }
@@ -829,8 +831,8 @@ mod tests {
         let before = fs::metadata(source.join("asset.sh")).unwrap();
         let metadata = fixture.metadata_counts();
         let preview = fixture.preview(Tool::Codex);
-        assert_eq!(preview.sources[0].status, SourceStatus::Missing);
-        assert_eq!(preview.sources[1].status, SourceStatus::Ready);
+        assert_eq!(preview.sources[0].status, SourceStatus::Ready);
+        assert_eq!(preview.sources[1].status, SourceStatus::Missing);
         assert_eq!(preview.candidates.len(), 2);
         let candidate = preview
             .candidates
@@ -977,8 +979,8 @@ mod tests {
             ToolAvailability::all_installed(),
         )
         .unwrap();
-        let official = fixture.environment.home().join(".agents/skills");
-        fixture.skill(&official.join("one"), "same");
+        let agents = fixture.environment.home().join(".agents/skills");
+        fixture.skill(&agents.join("one"), "same");
         fixture.skill(&custom.join("skills/two"), "same");
         let preview = fixture.preview(Tool::Codex);
         assert_eq!(preview.candidates.len(), 1);
@@ -991,11 +993,11 @@ mod tests {
             .iter()
             .all(|candidate| candidate.status == CandidateStatus::NameConflict));
         assert!(preview.preview_id.is_none());
-        symlink("missing", official.join("broken")).unwrap();
-        symlink("cycle", official.join("cycle")).unwrap();
-        symlink(fixture.paths.staging(), official.join("private")).unwrap();
-        fixture.skill(&official.join("escape"), "escape");
-        symlink("../../outside", official.join("escape/link")).unwrap();
+        symlink("missing", agents.join("broken")).unwrap();
+        symlink("cycle", agents.join("cycle")).unwrap();
+        symlink(fixture.paths.staging(), agents.join("private")).unwrap();
+        fixture.skill(&agents.join("escape"), "escape");
+        symlink("../../outside", agents.join("escape/link")).unwrap();
         let preview = fixture.preview(Tool::Codex);
         assert_eq!(
             preview
@@ -1160,12 +1162,13 @@ mod tests {
         let blocked = fixture.preview(Tool::Claude);
         assert!(blocked.candidates.is_empty());
         assert_eq!(blocked.sources[0].status, SourceStatus::Unavailable);
-        let official_parent = fixture.environment.home().join(".agents");
-        fs::create_dir(&official_parent).unwrap();
-        symlink(&claude, official_parent.join("skills")).unwrap();
+        let agents_parent = fixture.environment.home().join(".agents");
+        fs::create_dir(&agents_parent).unwrap();
+        symlink(&claude, agents_parent.join("skills")).unwrap();
         fixture.skill(&fixture.environment.codex_home().join("skills/two"), "two");
         let preview = fixture.preview(Tool::Codex);
-        assert_eq!(preview.sources[0].status, SourceStatus::Unavailable);
+        // codex_home/skills 优先且可用；.agents/skills 不可用不隐藏其余来源。
+        assert_eq!(preview.sources[1].status, SourceStatus::Unavailable);
         assert_eq!(preview.candidates[0].name, "two");
     }
     #[test]
@@ -1178,10 +1181,10 @@ mod tests {
         let preview = fixture.preview(Tool::Codex);
         assert_eq!(preview.candidates.len(), MAX_CANDIDATE_ENTRIES);
         assert_eq!(
-            preview.sources[1].diagnostic_code.as_deref(),
+            preview.sources[0].diagnostic_code.as_deref(),
             Some("SKILL_IMPORT_SCAN_LIMIT")
         );
-        assert_eq!(preview.sources[1].status, SourceStatus::Unavailable);
+        assert_eq!(preview.sources[0].status, SourceStatus::Unavailable);
         fixture.assert_no_partial();
         let one = root.join("entry-000");
         fixture.skill(&one, "one");

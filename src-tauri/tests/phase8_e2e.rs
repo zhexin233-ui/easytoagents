@@ -95,10 +95,9 @@ impl Fixture {
         }
         for directory in [
             claude_config.join("skills"),
-            home.join(".agents/skills"),
+            codex_home.join("skills"),
             project.join(".claude/skills"),
-            project.join(".agents/skills"),
-            project.join(".codex"),
+            project.join(".codex/skills"),
         ] {
             fs::create_dir_all(directory).expect("创建隔离原生目标目录失败");
         }
@@ -112,14 +111,11 @@ impl Fixture {
             "保留未知普通目录\n",
         )
         .expect("写入未知普通目录失败");
-        symlink(
-            &external_skill,
-            home.join(".agents/skills/external-symlink"),
-        )
-        .expect("创建未知外部链接失败");
+        symlink(&external_skill, codex_home.join("skills/external-symlink"))
+            .expect("创建未知外部链接失败");
         symlink(
             root.join("missing-external-skill"),
-            project.join(".agents/skills/broken-external-symlink"),
+            project.join(".codex/skills/broken-external-symlink"),
         )
         .expect("创建未知断链失败");
 
@@ -355,7 +351,7 @@ unknown = "preserve"
         } else if tool == Tool::Claude {
             self.claude_config.clone()
         } else {
-            self.home.clone()
+            self.codex_home.clone()
         };
         self.restore_case(
             &result.run_id,
@@ -855,7 +851,7 @@ fn assert_native_round_trip(fixture: &Fixture) {
             "phase8-global-skill",
         ),
         (
-            fixture.home.join(".agents/skills/phase8-global-skill"),
+            fixture.codex_home.join("skills/phase8-global-skill"),
             "phase8-global-skill",
         ),
         (
@@ -863,7 +859,7 @@ fn assert_native_round_trip(fixture: &Fixture) {
             "phase8-project-skill",
         ),
         (
-            fixture.project.join(".agents/skills/phase8-project-skill"),
+            fixture.project.join(".codex/skills/phase8-project-skill"),
             "phase8-project-skill",
         ),
     ];
@@ -882,7 +878,7 @@ fn assert_native_round_trip(fixture: &Fixture) {
         .join("skills/external-directory/KEEP.md")
         .is_file());
     assert!(
-        fs::symlink_metadata(fixture.home.join(".agents/skills/external-symlink"))
+        fs::symlink_metadata(fixture.codex_home.join("skills/external-symlink"))
             .unwrap()
             .file_type()
             .is_symlink()
@@ -890,7 +886,7 @@ fn assert_native_round_trip(fixture: &Fixture) {
     assert!(fs::symlink_metadata(
         fixture
             .project
-            .join(".agents/skills/broken-external-symlink")
+            .join(".codex/skills/broken-external-symlink")
     )
     .unwrap()
     .file_type()
