@@ -140,9 +140,10 @@ MCP, Skills, and Prompts central libraries share `CentralList`,
 `CentralListLayoutToggle`, and `PlatformAssignmentButton` from
 `src/components/`. Keep their list/grid behavior and Claude/Codex assignment
 semantics in these components rather than duplicating Tailwind classes or SVGs
-inside feature pages. Prompt profiles use the same card chrome with a
-domain-only active-state icon button (per-tool single activation) kept in the
-feature file.
+inside feature pages. Prompt profiles are tool-agnostic central documents:
+each card toggles per-tool global enablement with the shared
+`PlatformAssignmentButton` (at most one profile enabled per tool, enforced by
+partial unique indexes; enabling a profile replaces the tool's previous one).
 
 ```tsx
 const [layout, setLayout] = usePersistedCentralListLayout("mcp");

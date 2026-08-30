@@ -239,10 +239,9 @@ const skillPreview: PreviewPlan = {
 
 const promptProfileFixture: PromptProfileDto = {
   id: "00000000-0000-4000-8000-000000000731",
-  tool: "claude",
   name: "项目提示词",
   body: "# 项目规则",
-  isActive: false,
+  globalTools: [],
   importedFromPath: null,
   rowVersion: 2,
 };
@@ -1230,7 +1229,11 @@ describe("ProjectDetailPage", () => {
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",
       data: [
-        { ...promptProfileFixture, name: "全局生效档案", isActive: true },
+        {
+          ...promptProfileFixture,
+          name: "全局生效档案",
+          globalTools: ["claude"],
+        },
         promptProfileFixture,
       ],
     });
@@ -1263,7 +1266,7 @@ describe("ProjectDetailPage", () => {
     });
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",
-      data: [{ ...promptProfileFixture, isActive: true }],
+      data: [{ ...promptProfileFixture, globalTools: ["claude"] }],
     });
     renderPage();
     fireEvent.click(

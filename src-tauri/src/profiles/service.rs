@@ -16,9 +16,10 @@ use super::models::{
     ClaudeCredentialEnvKey, ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto,
     PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, PromptProjectAssignmentDto,
     ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput,
-    SecretUpdate, SetPromptProjectAssignmentInput, StoredProviderConfig, ToolProfileStatusDto,
-    UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
-    CODEX_BEARER_TOKEN_WARNING, NEW_SESSION_NOTICE,
+    SecretUpdate, SetGlobalPromptAssignmentInput, SetPromptProjectAssignmentInput,
+    StoredProviderConfig, ToolProfileStatusDto, UpdatePromptProfileInput,
+    UpdateProviderProfileInput, VersionedProfileInput, CODEX_BEARER_TOKEN_WARNING,
+    NEW_SESSION_NOTICE,
 };
 use crate::{
     adapters::{
@@ -237,11 +238,8 @@ pub fn delete_provider_profile(
     })
 }
 
-pub fn list_prompt_profiles(
-    database: &Database,
-    tool: Tool,
-) -> Result<Vec<PromptProfileDto>, AppError> {
-    repository::list_prompt_profiles(database, tool)?
+pub fn list_prompt_profiles(database: &Database) -> Result<Vec<PromptProfileDto>, AppError> {
+    repository::list_prompt_profiles(database)?
         .iter()
         .map(prompt_dto)
         .collect()
@@ -252,14 +250,15 @@ pub fn create_prompt_profile(
     input: PromptProfileInput,
 ) -> Result<PromptProfileDto, AppError> {
     validate_prompt_fields(&input.name, &input.body)?;
+    // 新建档案不绑定工具也不自动启用；用图标按工具启用（导入路径除外，见 confirm_prompt_import）。
     prompt_dto(&repository::insert_prompt_profile(
         database,
         &NewPromptProfileRecord {
             id: Uuid::new_v4().to_string(),
-            tool: input.tool,
             name: input.name,
             body: input.body,
-            is_active: input.activate,
+            is_active_claude: false,
+            is_active_codex: false,
             imported_from_path: None,
         },
     )?)
@@ -279,15 +278,15 @@ pub fn update_prompt_profile(
     )?)
 }
 
-pub fn set_active_prompt_profile(
+pub fn set_global_prompt_assignment(
     database: &mut Database,
-    tool: Tool,
-    input: &VersionedProfileInput,
+    input: &SetGlobalPromptAssignmentInput,
 ) -> Result<PromptProfileDto, AppError> {
-    prompt_dto(&repository::set_active_prompt_profile(
+    prompt_dto(&repository::set_global_prompt_assignment(
         database,
-        tool,
-        &input.id,
+        input.tool,
+        &input.prompt_profile_id,
+        input.assigned,
         i64::from(input.row_version),
     )?)
 }
@@ -317,19 +316,12 @@ pub fn set_prompt_project_assignment(
 ) -> Result<PromptProjectAssignmentDto, AppError> {
     let project = get_registered_project(database, &input.project_id)?;
     let tool = input.tool;
-    if let Some(profile_id) = input.prompt_profile_id.as_deref() {
+    if input.prompt_profile_id.is_some() {
         // 分配前确认目标描述符存在（工具可用、信任/策略状态在预览阶段仍会校验）。
+        // 档案存在性、「对该工具全局生效不可分配」守卫与幂等例外
+        // 在 repository 事务内统一执行。
         let project_root = canonical_project_root(&project.root_path)?;
         descriptor_for_scope(environment, tool, ArtifactKind::Prompt, Some(&project_root))?;
-        let profile = repository::get_prompt_profile(database, profile_id)?;
-        if profile.tool != tool {
-            return Err(AppError::invalid_input(
-                "promptProfileId",
-                "提示词档案与工具不匹配",
-            ));
-        }
-        // 全局生效档案不可分配到项目的守卫在 repository 事务内统一执行
-        // （含「重复写入当前分配为无操作」的幂等例外）。
     }
     repository::set_prompt_project_assignment(
         database,
@@ -537,11 +529,13 @@ pub fn discover_prompt_import(
     environment: &ExplicitEnvironment,
     tool: Tool,
 ) -> Result<Option<PromptImportPreviewDto>, AppError> {
-    if !repository::list_prompt_profiles(database, tool)?.is_empty() {
-        return Ok(None);
-    }
     let descriptor = descriptor_for(environment, tool, ArtifactKind::Prompt)?;
     ensure_tool_is_available(&descriptor)?;
+    // 该工具已有生效档案、或档案库已有同源导入（imported_from_path 相同）时不再检测。
+    let prompt_path = descriptor_path(&descriptor)?;
+    if repository::prompt_import_blocked(database, tool, &prompt_path)? {
+        return Ok(None);
+    }
     let scan = scan_target(
         tool_adapter(tool),
         &descriptor,
@@ -565,7 +559,7 @@ pub fn discover_prompt_import(
         return Ok(None);
     }
     let preview_id = Uuid::new_v4().to_string();
-    let target_path = descriptor_path(&descriptor)?;
+    let target_path = prompt_path;
     let suggested_name = "已导入提示词".to_owned();
     repository::persist_import_preview(
         database,
@@ -627,10 +621,10 @@ pub fn confirm_prompt_import(
         &preview,
         &NewPromptProfileRecord {
             id: Uuid::new_v4().to_string(),
-            tool: preview.tool,
             name: input.name,
             body: body.clone(),
-            is_active: true,
+            is_active_claude: preview.tool == Tool::Claude,
+            is_active_codex: preview.tool == Tool::Codex,
             imported_from_path: Some(preview.target_path.clone()),
         },
         &ImportedBaselineRecord {
@@ -1613,12 +1607,18 @@ fn provider_dto(record: &ProviderProfileRecord) -> Result<ProviderProfileDto, Ap
 }
 
 fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError> {
+    let mut global_tools = Vec::new();
+    if record.is_active_claude {
+        global_tools.push(Tool::Claude);
+    }
+    if record.is_active_codex {
+        global_tools.push(Tool::Codex);
+    }
     Ok(PromptProfileDto {
         id: record.id.clone(),
-        tool: record.tool,
         name: record.name.clone(),
         body: record.body.clone(),
-        is_active: record.is_active,
+        global_tools,
         imported_from_path: record.imported_from_path.clone(),
         row_version: safe_row_version(record.row_version)?,
     })
@@ -1705,10 +1705,11 @@ mod tests {
         copy_provider_profile, create_prompt_profile, create_provider_profile,
         delete_prompt_profile, discover_prompt_import, discover_provider_import,
         get_tool_profile_status, list_provider_profiles, preview_prompt_sync,
-        preview_provider_sync, set_active_provider_profile, update_prompt_profile,
-        update_provider_profile, CopyProviderProfileInput, PromptProfileInput,
-        ProviderOptionsInput, ProviderProfileInput, UpdatePromptProfileInput,
-        UpdateProviderProfileInput, CLAUDE_MODEL_KEY,
+        preview_provider_sync, set_active_provider_profile, set_global_prompt_assignment,
+        update_prompt_profile, update_provider_profile, CopyProviderProfileInput, PromptProfileDto,
+        PromptProfileInput, ProviderOptionsInput, ProviderProfileInput,
+        SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
+        CLAUDE_MODEL_KEY,
     };
     use crate::{
         adapters::{ExplicitEnvironment, PolicyState, ToolAvailability, ToolAvailabilityState},
@@ -1745,6 +1746,33 @@ mod tests {
             database,
             environment,
         }
+    }
+
+    /// 新建档案并立即对指定工具启用（替代旧 activate 入参的测试夹具）。
+    fn create_enabled_prompt(
+        fixture: &mut Fixture,
+        tool: Tool,
+        name: &str,
+        body: &str,
+    ) -> PromptProfileDto {
+        let profile = create_prompt_profile(
+            &mut fixture.database,
+            PromptProfileInput {
+                name: name.to_owned(),
+                body: body.to_owned(),
+            },
+        )
+        .unwrap();
+        set_global_prompt_assignment(
+            &mut fixture.database,
+            &SetGlobalPromptAssignmentInput {
+                tool,
+                prompt_profile_id: profile.id.clone(),
+                assigned: true,
+                row_version: profile.row_version,
+            },
+        )
+        .unwrap()
     }
 
     fn provider(tool: Tool, name: &str, key: &str, activate: bool) -> ProviderProfileInput {
@@ -2712,16 +2740,12 @@ tenant = "fixture"
     #[test]
     fn prompt_apply_is_exact_and_external_change_makes_preview_stale() {
         let mut fixture = fixture();
-        let prompt = create_prompt_profile(
-            &mut fixture.database,
-            PromptProfileInput {
-                tool: Tool::Codex,
-                name: "精确提示词".to_owned(),
-                body: "# 第一版\n\n保留末尾空格  \n".to_owned(),
-                activate: true,
-            },
-        )
-        .unwrap();
+        let prompt = create_enabled_prompt(
+            &mut fixture,
+            Tool::Codex,
+            "精确提示词",
+            "# 第一版\n\n保留末尾空格  \n",
+        );
         let redactor = SecretRedactor::default();
         let first_preview = preview_prompt_sync(
             &mut fixture.database,
@@ -2787,10 +2811,8 @@ tenant = "fixture"
             create_prompt_profile(
                 &mut fixture.database,
                 PromptProfileInput {
-                    tool: Tool::Codex,
                     name: "空提示词".to_owned(),
                     body: String::new(),
-                    activate: false,
                 },
             )
             .unwrap_err()
@@ -2893,10 +2915,8 @@ tenant = "fixture"
         let profile = create_prompt_profile(
             &mut fixture.database,
             PromptProfileInput {
-                tool: Tool::Claude,
                 name: "项目提示词".to_owned(),
                 body: "# 项目指引\n".to_owned(),
-                activate: false,
             },
         )
         .unwrap();
@@ -3043,40 +3063,26 @@ tenant = "fixture"
     }
 
     #[test]
-    fn prompt_project_assignment_rejects_cross_tool_profile_and_bumps_project_version() {
+    fn prompt_project_assignment_is_tool_agnostic_and_bumps_project_version() {
         let mut fixture = fixture();
         let project = register_demo_project(&mut fixture);
-        let claude_profile = create_prompt_profile(
+        let profile = create_prompt_profile(
             &mut fixture.database,
             PromptProfileInput {
-                tool: Tool::Claude,
-                name: "Claude 专属".to_owned(),
+                name: "共享档案".to_owned(),
                 body: "# Claude\n".to_owned(),
-                activate: false,
             },
         )
         .unwrap();
 
-        let mismatch = crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Codex,
-                prompt_profile_id: Some(claude_profile.id.clone()),
-                project_row_version: project.row_version,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(mismatch.code(), crate::error::ErrorCode::InvalidInput);
-
+        // 工具无关档案可分配到任意工具的项目记忆文件。
         crate::profiles::set_prompt_project_assignment(
             &mut fixture.database,
             &fixture.environment,
             &crate::profiles::SetPromptProjectAssignmentInput {
                 project_id: project.id.clone(),
                 tool: Tool::Claude,
-                prompt_profile_id: Some(claude_profile.id.clone()),
+                prompt_profile_id: Some(profile.id.clone()),
                 project_row_version: project.row_version,
             },
         )
@@ -3099,7 +3105,7 @@ tenant = "fixture"
             &crate::profiles::SetPromptProjectAssignmentInput {
                 project_id: project.id.clone(),
                 tool: Tool::Claude,
-                prompt_profile_id: Some(claude_profile.id.clone()),
+                prompt_profile_id: Some(profile.id.clone()),
                 project_row_version: u32::try_from(after_assign).unwrap(),
             },
         )
@@ -3120,16 +3126,7 @@ tenant = "fixture"
     fn prompt_project_assignment_rejects_globally_active_profile() {
         let mut fixture = fixture();
         let project = register_demo_project(&mut fixture);
-        let active = create_prompt_profile(
-            &mut fixture.database,
-            PromptProfileInput {
-                tool: Tool::Claude,
-                name: "全局生效".to_owned(),
-                body: "# 全局指令\n".to_owned(),
-                activate: true,
-            },
-        )
-        .unwrap();
+        let active = create_enabled_prompt(&mut fixture, Tool::Claude, "全局生效", "# 全局指令\n");
 
         // 全局生效档案不允许分配到项目，项目 row_version 不变。
         let rejected = crate::profiles::set_prompt_project_assignment(
@@ -3151,14 +3148,12 @@ tenant = "fixture"
             .unwrap_or_default();
         assert!(reason.contains("全局生效"));
 
-        // 先分配后激活的历史分配：重复写入当前分配保持无操作语义。
+        // 先分配后启用（对该工具全局生效）的历史分配：重复写入当前分配保持无操作语义。
         let inactive = create_prompt_profile(
             &mut fixture.database,
             PromptProfileInput {
-                tool: Tool::Claude,
-                name: "先分配后激活".to_owned(),
+                name: "先分配后启用".to_owned(),
                 body: "# 项目指引\n".to_owned(),
-                activate: false,
             },
         )
         .unwrap();
@@ -3173,11 +3168,12 @@ tenant = "fixture"
             },
         )
         .unwrap();
-        super::set_active_prompt_profile(
+        set_global_prompt_assignment(
             &mut fixture.database,
-            Tool::Claude,
-            &crate::profiles::VersionedProfileInput {
-                id: inactive.id.clone(),
+            &SetGlobalPromptAssignmentInput {
+                tool: Tool::Claude,
+                prompt_profile_id: inactive.id.clone(),
+                assigned: true,
                 row_version: inactive.row_version,
             },
         )

@@ -86,7 +86,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             commands.discoverProviderImport(tool).then(unwrapResult),
             commands.discoverPromptImport(tool).then(unwrapResult),
             commands.listProviderProfiles(tool).then(unwrapResult),
-            commands.listPromptProfiles(tool).then(unwrapResult),
+            commands.listPromptProfiles().then(unwrapResult),
           ]);
           const status = settledValue(
             statusResult,
@@ -107,7 +107,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             )?.some((profile) => profile.isActive) ?? false;
           const promptManaged =
             settledValue(promptsResult, errors, "中央提示词状态读取失败")?.some(
-              (profile) => profile.isActive,
+              (profile) => profile.globalTools.includes(tool),
             ) ?? false;
           return [
             tool,

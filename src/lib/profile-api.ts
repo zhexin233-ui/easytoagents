@@ -32,7 +32,7 @@ export function profileErrorText(error: unknown): string | null {
         return "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。";
       }
       if (resource === "activePromptProfile") {
-        return "尚无生效提示词档案，也没有可清理的受管基线；请先检测已有配置或创建并激活提示词。";
+        return "该工具尚无启用的提示词档案，也没有可清理的受管基线；请先在提示词页通过图标启用一份档案。";
       }
     }
     // message 是按错误码分类的通用文案；details.reason 才是后端给出的具体原因。
@@ -50,13 +50,15 @@ function errorDetailString(error: ProfileRpcError, key: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
+const profileKeyBase = ["profiles"] as const;
+
 export const profileKeys = {
-  all: ["profiles"] as const,
-  providers: (tool: Tool) => [...profileKeys.all, tool, "providers"] as const,
-  prompts: (tool: Tool) => [...profileKeys.all, tool, "prompts"] as const,
-  status: (tool: Tool) => [...profileKeys.all, tool, "status"] as const,
+  all: profileKeyBase,
+  providers: (tool: Tool) => [...profileKeyBase, tool, "providers"] as const,
+  prompts: [...profileKeyBase, "prompts"] as const,
+  status: (tool: Tool) => [...profileKeyBase, tool, "status"] as const,
   promptProject: (projectId: string, tool: Tool) =>
-    [...profileKeys.all, "projects", projectId, tool, "prompt"] as const,
+    [...profileKeyBase, "projects", projectId, tool, "prompt"] as const,
 };
 
 export function providerProfilesQueryOptions(tool: Tool) {
@@ -67,10 +69,10 @@ export function providerProfilesQueryOptions(tool: Tool) {
   });
 }
 
-export function promptProfilesQueryOptions(tool: Tool) {
+export function promptProfilesQueryOptions() {
   return queryOptions({
-    queryKey: profileKeys.prompts(tool),
-    queryFn: async () => unwrapResult(await commands.listPromptProfiles(tool)),
+    queryKey: profileKeys.prompts,
+    queryFn: async () => unwrapResult(await commands.listPromptProfiles()),
   });
 }
 

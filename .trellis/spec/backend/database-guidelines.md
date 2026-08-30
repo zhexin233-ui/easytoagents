@@ -74,6 +74,14 @@ CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
   `baseline_managed_hash` / `baseline_projection_json`（两者同 NULL），
   不删除行——快照 RESTRICT 外键引用行 id，删除会失败；NULL 基线 +
   观测内容即规范中的中性 `PROJECT_TARGET_INITIAL_UNMANAGED` 语义。
+- 同形 CHECK 字符串可能出现在多张表（如 `tool IN ('claude','codex')` 同时
+  存在于 `provider_profiles` 与 `prompt_profiles`）：`WHERE` 必须额外限定
+  `name = '<目标表>'`，否则 replace 会误伤其他表（0009 先例）。
+- 当列的语义整体作废而表无法重建时（0009：`prompt_profiles` 被以
+  RESTRICT 外键引用），保留旧列 + `ALTER TABLE ADD COLUMN` 新语义列是
+  首选：每工具启用位 `is_active_claude`/`is_active_codex` + 各自部分唯一
+  索引接替 `uq_prompt_profiles_one_active_per_tool`；旧列清零（`UPDATE`）
+  并在迁移注释里标记为遗留，代码路径不得再读。
 
 ## Naming Conventions
 

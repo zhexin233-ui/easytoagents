@@ -168,7 +168,8 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
     let active_prompt_name = database
         .connection()
         .query_row(
-            "SELECT name FROM prompt_profiles WHERE tool = ?1 AND is_active = 1",
+            "SELECT name FROM prompt_profiles
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1",
             [tool.as_str()],
             |row| row.get::<_, String>(0),
         )

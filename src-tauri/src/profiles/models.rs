@@ -116,10 +116,19 @@ pub struct ProviderOptionsDto {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptProfileInput {
-    pub tool: Tool,
     pub name: String,
     pub body: String,
-    pub activate: bool,
+}
+
+/// 全局启用/停用一份提示词档案到指定工具；每工具至多一份生效，
+/// 启用新档案会自动替换该工具的原生效档案。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetGlobalPromptAssignmentInput {
+    pub tool: Tool,
+    pub prompt_profile_id: String,
+    pub assigned: bool,
+    pub row_version: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -135,10 +144,9 @@ pub struct UpdatePromptProfileInput {
 #[serde(rename_all = "camelCase")]
 pub struct PromptProfileDto {
     pub id: String,
-    pub tool: Tool,
     pub name: String,
     pub body: String,
-    pub is_active: bool,
+    pub global_tools: Vec<Tool>,
     pub imported_from_path: Option<String>,
     pub row_version: u32,
 }

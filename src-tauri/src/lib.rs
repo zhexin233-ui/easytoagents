@@ -154,7 +154,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::profiles::list_prompt_profiles,
             commands::profiles::create_prompt_profile,
             commands::profiles::update_prompt_profile,
-            commands::profiles::set_active_prompt_profile,
+            commands::profiles::set_global_prompt_assignment,
             commands::profiles::delete_prompt_profile,
             commands::profiles::get_tool_profile_status,
             commands::profiles::discover_provider_import,

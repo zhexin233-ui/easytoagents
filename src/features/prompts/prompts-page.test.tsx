@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   commands,
   type PreviewPlan,
+  type PromptOverrideState,
   type PromptProfileDto,
   type Tool,
 } from "@/bindings/commands";
@@ -26,7 +27,7 @@ vi.mock("@/bindings/commands", () => ({
     getToolProfileStatus: vi.fn(),
     createPromptProfile: vi.fn(),
     updatePromptProfile: vi.fn(),
-    setActivePromptProfile: vi.fn(),
+    setGlobalPromptAssignment: vi.fn(),
     deletePromptProfile: vi.fn(),
     discoverPromptImport: vi.fn(),
     confirmPromptImport: vi.fn(),
@@ -38,10 +39,9 @@ vi.mock("@/bindings/commands", () => ({
 
 const promptProfile: PromptProfileDto = {
   id: "00000000-0000-4000-8000-000000000402",
-  tool: "claude",
   name: "默认提示词",
   body: "# 原始规则",
-  isActive: false,
+  globalTools: [],
   importedFromPath: null,
   rowVersion: 3,
 };
@@ -92,27 +92,23 @@ const promptPreview: PreviewPlan = {
   ],
 };
 
-function renderPromptsPage(tool: Tool = "claude") {
+function renderPromptsPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  const view = render(
+  return render(
     <QueryClientProvider client={client}>
       <PromptsPage />
     </QueryClientProvider>,
   );
-  if (tool !== "claude") {
-    fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
-  }
-  return view;
 }
 
 function promptSection(): HTMLElement {
   const section = screen
-    .getByRole("heading", { name: "全局提示词" })
+    .getByRole("heading", { name: "中央列表" })
     .closest("section");
   if (!section) {
-    throw new Error("未找到 全局提示词 区域");
+    throw new Error("未找到 中央列表 区域");
   }
   return section;
 }
@@ -134,22 +130,34 @@ function fillPromptForm(dialog: HTMLElement) {
   });
 }
 
+function toolStatus(
+  tool: Tool,
+  overrides: Partial<{ promptOverride: PromptOverrideState }> = {},
+) {
+  return {
+    tool,
+    availability: "installed" as const,
+    installationVersion: "2.1.217",
+    providerTargetPath:
+      tool === "claude"
+        ? "/isolated/home/.claude/settings.json"
+        : "/isolated/home/.codex/config.toml",
+    promptTargetPath:
+      tool === "claude"
+        ? "/isolated/home/.claude/CLAUDE.md"
+        : "/isolated/home/.codex/AGENTS.md",
+    promptOverride: overrides.promptOverride ?? "not_applicable",
+    providerPolicy: "allowed" as const,
+    newSessionNotice: "新会话生效",
+    bearerTokenWarning: null,
+  };
+}
+
 beforeEach(() => {
   window.localStorage.clear();
-  vi.mocked(commands.getToolProfileStatus).mockResolvedValue({
-    status: "ok",
-    data: {
-      tool: "claude",
-      availability: "installed",
-      installationVersion: "2.1.217",
-      providerTargetPath: "/isolated/home/.claude/settings.json",
-      promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
-      promptOverride: "not_applicable",
-      providerPolicy: "allowed",
-      newSessionNotice: "新会话生效",
-      bearerTokenWarning: null,
-    },
-  });
+  vi.mocked(commands.getToolProfileStatus).mockImplementation((tool) =>
+    Promise.resolve({ status: "ok", data: toolStatus(tool) }),
+  );
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
     data: { applyMode: "preview_confirm" },
@@ -158,7 +166,7 @@ beforeEach(() => {
     status: "ok",
     data: [],
   });
-  vi.mocked(commands.setActivePromptProfile).mockResolvedValue({
+  vi.mocked(commands.setGlobalPromptAssignment).mockResolvedValue({
     status: "ok",
     data: promptProfile,
   });
@@ -174,73 +182,67 @@ afterEach(() => {
 });
 
 describe("PromptsPage", () => {
-  it.each(["claude", "codex"] as const)(
-    "%s 提示词 默认隐藏表单，新增和编辑可关闭清理且焦点不离开弹窗",
-    async (tool) => {
-      vi.mocked(commands.listPromptProfiles).mockResolvedValue({
-        status: "ok",
-        data: [{ ...promptProfile, tool }],
-      });
-      renderPromptsPage(tool);
-      const toolName = tool === "claude" ? "Claude" : "Codex";
-      const section = promptSection();
-      const edit = await within(section).findByRole("button", {
-        name: "编辑",
-      });
-      const trigger = within(section).getByRole("button", {
-        name: "新增提示词",
-      });
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  it("默认隐藏表单，新增和编辑可关闭清理且焦点不离开弹窗", async () => {
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfile],
+    });
+    renderPromptsPage();
+    const section = promptSection();
+    const edit = await within(section).findByRole("button", {
+      name: "编辑",
+    });
+    const trigger = within(section).getByRole("button", {
+      name: "新增提示词",
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-      edit.focus();
-      fireEvent.click(edit);
-      let dialog = screen.getByRole("dialog", {
-        name: `编辑 ${toolName} 提示词`,
-      });
-      expect(within(dialog).getByLabelText("名称")).toHaveValue(
-        promptProfile.name,
-      );
-      expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue(
-        promptProfile.body,
-      );
-      fireEvent.change(within(dialog).getByLabelText("名称"), {
-        target: { value: "未保存的编辑" },
-      });
-      fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      expect(edit).toHaveFocus();
+    edit.focus();
+    fireEvent.click(edit);
+    let dialog = screen.getByRole("dialog", { name: "编辑提示词" });
+    expect(within(dialog).getByLabelText("名称")).toHaveValue(
+      promptProfile.name,
+    );
+    expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue(
+      promptProfile.body,
+    );
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "未保存的编辑" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(edit).toHaveFocus();
 
-      trigger.focus();
-      fireEvent.click(trigger);
-      dialog = screen.getByRole("dialog", { name: `新增 ${toolName} 提示词` });
-      expect(dialog).toHaveAttribute("aria-modal", "true");
-      expect(dialog).toHaveAccessibleDescription(/保存只更新中央/);
-      expect(within(dialog).getByLabelText("名称")).toHaveValue("");
-      const close = within(dialog).getByRole("button", { name: "关闭" });
-      const submit = within(dialog).getByRole("button", {
-        name: "创建提示词",
-      });
-      expect(close).toHaveFocus();
-      fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
-      expect(submit).toHaveFocus();
-      fireEvent.keyDown(submit, { key: "Tab" });
-      expect(close).toHaveFocus();
-      fillPromptForm(dialog);
-      fireEvent.keyDown(dialog, { key: "Escape" });
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      expect(trigger).toHaveFocus();
+    trigger.focus();
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "新增提示词" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toHaveAccessibleDescription(/保存只更新中央/);
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+    const close = within(dialog).getByRole("button", { name: "关闭" });
+    const submit = within(dialog).getByRole("button", {
+      name: "创建提示词",
+    });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(submit).toHaveFocus();
+    fireEvent.keyDown(submit, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fillPromptForm(dialog);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
 
-      fireEvent.click(trigger);
-      dialog = screen.getByRole("dialog", { name: `新增 ${toolName} 提示词` });
-      expect(within(dialog).getByLabelText("名称")).toHaveValue("");
-      expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue("");
-      fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      expect(trigger).toHaveFocus();
-      expect(commands.createPromptProfile).not.toHaveBeenCalled();
-      expect(commands.updatePromptProfile).not.toHaveBeenCalled();
-    },
-  );
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "新增提示词" });
+    expect(within(dialog).getByLabelText("名称")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue("");
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(commands.createPromptProfile).not.toHaveBeenCalled();
+    expect(commands.updatePromptProfile).not.toHaveBeenCalled();
+  });
 
   it("提示词 保存失败在弹窗内保留输入，关闭重开不保留错误", async () => {
     vi.mocked(commands.createPromptProfile).mockResolvedValue({
@@ -255,7 +257,7 @@ describe("PromptsPage", () => {
     renderPromptsPage();
     const trigger = screen.getByRole("button", { name: "新增提示词" });
     fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog", { name: "新增 Claude 提示词" });
+    const dialog = screen.getByRole("dialog", { name: "新增提示词" });
     fillPromptForm(dialog);
     fireEvent.submit(within(dialog).getByRole("form"));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -268,9 +270,7 @@ describe("PromptsPage", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(trigger);
-    const nextDialog = screen.getByRole("dialog", {
-      name: "新增 Claude 提示词",
-    });
+    const nextDialog = screen.getByRole("dialog", { name: "新增提示词" });
     expect(within(nextDialog).queryByRole("alert")).not.toBeInTheDocument();
     expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
@@ -295,7 +295,7 @@ describe("PromptsPage", () => {
     });
     trigger.focus();
     fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog", { name: "新增 Claude 提示词" });
+    const dialog = screen.getByRole("dialog", { name: "新增提示词" });
     fillPromptForm(dialog);
     const form = within(dialog).getByRole("form");
     act(() => {
@@ -337,9 +337,7 @@ describe("PromptsPage", () => {
     );
     expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
-    const nextDialog = screen.getByRole("dialog", {
-      name: "新增 Claude 提示词",
-    });
+    const nextDialog = screen.getByRole("dialog", { name: "新增提示词" });
     expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
     fireEvent.change(within(nextDialog).getByLabelText("名称"), {
       target: { value: "下一份草稿" },
@@ -349,15 +347,14 @@ describe("PromptsPage", () => {
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
-  it("可创建独立的提示词档案", async () => {
+  it("可创建不绑定工具的提示词档案", async () => {
     vi.mocked(commands.createPromptProfile).mockResolvedValue({
       status: "ok",
       data: {
         id: "00000000-0000-4000-8000-000000000403",
-        tool: "claude",
         name: "代码审查",
         body: "# 审查规则",
-        isActive: true,
+        globalTools: [],
         importedFromPath: null,
         rowVersion: 1,
       },
@@ -367,42 +364,37 @@ describe("PromptsPage", () => {
     await within(section).findByText(/尚无提示词档案/);
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",
-      data: [{ ...promptProfile, name: "代码审查", isActive: true }],
+      data: [{ ...promptProfile, name: "代码审查" }],
     });
     fireEvent.click(
       within(section).getByRole("button", { name: "新增提示词" }),
     );
-    fireEvent.change(within(section).getByLabelText("名称"), {
+    const createDialog = screen.getByRole("dialog", { name: "新增提示词" });
+    fireEvent.change(within(createDialog).getByLabelText("名称"), {
       target: { value: "代码审查" },
     });
-    fireEvent.change(within(section).getByLabelText("Markdown 正文"), {
+    fireEvent.change(within(createDialog).getByLabelText("Markdown 正文"), {
       target: { value: "# 审查规则" },
     });
     fireEvent.click(
-      within(section).getByRole("button", { name: "创建提示词" }),
+      within(createDialog).getByRole("button", { name: "创建提示词" }),
     );
     await waitFor(() =>
       expect(commands.createPromptProfile).toHaveBeenCalledWith({
-        tool: "claude",
         name: "代码审查",
         body: "# 审查规则",
-        activate: true,
       }),
     );
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    const activeButton = await within(section).findByRole("button", {
-      name: "代码审查 当前生效",
-    });
-    expect(activeButton).toBeDisabled();
-    expect(activeButton).toHaveAttribute("aria-pressed", "true");
-    expect(activeButton.closest("article")).toHaveTextContent("当前生效");
+    const card = within(section).getByText("代码审查").closest("article");
+    expect(card).toHaveTextContent("未启用");
     expect(commands.listPromptProfiles).toHaveBeenCalledTimes(2);
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
-  it("可编辑并切换提示词，应用时消费提示词 preview", async () => {
+  it("编辑档案并按工具图标启用，应用时消费提示词 preview", async () => {
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",
       data: [promptProfile],
@@ -417,16 +409,16 @@ describe("PromptsPage", () => {
     fireEvent.click(
       await within(section).findByRole("button", { name: "编辑" }),
     );
-    expect(
-      screen.getByRole("dialog", { name: "编辑 Claude 提示词" }),
-    ).toBeVisible();
-    fireEvent.change(within(section).getByLabelText("名称"), {
+    const editDialog = screen.getByRole("dialog", { name: "编辑提示词" });
+    fireEvent.change(within(editDialog).getByLabelText("名称"), {
       target: { value: "更新后的提示词" },
     });
-    fireEvent.change(within(section).getByLabelText("Markdown 正文"), {
+    fireEvent.change(within(editDialog).getByLabelText("Markdown 正文"), {
       target: { value: "# 新规则" },
     });
-    fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
+    fireEvent.click(
+      within(editDialog).getByRole("button", { name: "保存编辑" }),
+    );
     await waitFor(() =>
       expect(commands.updatePromptProfile).toHaveBeenCalledWith({
         id: promptProfile.id,
@@ -436,18 +428,34 @@ describe("PromptsPage", () => {
       }),
     );
 
-    const activate = await within(section).findByRole("button", {
-      name: `将 ${promptProfile.name} 设为当前生效`,
+    // 刷新后列表回读仍为原档案名（mock 未变更 name）。
+    const group = await within(section).findByRole("group", {
+      name: "默认提示词 全局启用",
     });
-    expect(activate).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(activate);
+    const codexButton = within(group).getByRole("button", {
+      name: "Codex 全局未分配",
+    });
+    expect(codexButton).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(codexButton);
     await waitFor(() =>
-      expect(commands.setActivePromptProfile).toHaveBeenCalledWith("claude", {
-        id: promptProfile.id,
+      expect(commands.setGlobalPromptAssignment).toHaveBeenCalledWith({
+        tool: "codex",
+        promptProfileId: promptProfile.id,
+        assigned: true,
         rowVersion: promptProfile.rowVersion,
       }),
     );
-    expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null);
+    // 预览确认模式下图标只更新中央配置；预览由工具卡片的同步按钮发起。
+    expect(commands.previewPromptSync).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(/全局启用已更新；这只改变中央配置/),
+    ).toBeVisible();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "预览 Codex 全局同步" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewPromptSync).toHaveBeenCalledWith("codex", null),
+    );
     expect(
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
@@ -455,79 +463,85 @@ describe("PromptsPage", () => {
     await waitFor(() =>
       expect(commands.applyProfilePreview).toHaveBeenCalledWith({
         previewId: promptPreview.previewId,
-        tool: "claude",
+        tool: "codex",
         artifactKind: "prompt",
         projectId: null,
       }),
     );
   });
 
-  it("以可访问状态展示加载、空列表与未知指令遮蔽证据", async () => {
+  it("每工具至多一份生效：已启用图标呈选中态，启用新档案走替换语义", async () => {
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [
+        { ...promptProfile, name: "生效档案", globalTools: ["claude"] },
+        {
+          ...promptProfile,
+          id: "00000000-0000-4000-8000-000000000403",
+          name: "备用档案",
+          globalTools: [],
+        },
+      ],
+    });
+    renderPromptsPage();
+    const section = promptSection();
+
+    const enabledGroup = await within(section).findByRole("group", {
+      name: "生效档案 全局启用",
+    });
+    expect(
+      within(enabledGroup).getByRole("button", { name: "Claude 全局已分配" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    // 再次点击已启用的图标即停用该工具生效。
+    fireEvent.click(
+      within(enabledGroup).getByRole("button", { name: "Claude 全局已分配" }),
+    );
+    await waitFor(() =>
+      expect(commands.setGlobalPromptAssignment).toHaveBeenCalledWith({
+        tool: "claude",
+        promptProfileId: promptProfile.id,
+        assigned: false,
+        rowVersion: promptProfile.rowVersion,
+      }),
+    );
+
+    const standbyGroup = within(section).getByRole("group", {
+      name: "备用档案 全局启用",
+    });
+    fireEvent.click(
+      within(standbyGroup).getByRole("button", { name: "Claude 全局未分配" }),
+    );
+    await waitFor(() =>
+      expect(commands.setGlobalPromptAssignment).toHaveBeenCalledWith({
+        tool: "claude",
+        promptProfileId: "00000000-0000-4000-8000-000000000403",
+        assigned: true,
+        rowVersion: promptProfile.rowVersion,
+      }),
+    );
+  });
+
+  it("以可访问状态展示加载、空列表与每工具遮蔽证据", async () => {
     vi.mocked(commands.listPromptProfiles).mockReturnValue(
       new Promise<never>(() => {}),
     );
-    vi.mocked(commands.getToolProfileStatus).mockResolvedValue({
-      status: "ok",
-      data: {
-        tool: "codex",
-        availability: "installed",
-        installationVersion: "2.1.217",
-        providerTargetPath: "/isolated/home/.codex/config.toml",
-        promptTargetPath: "/isolated/home/.codex/AGENTS.md",
-        promptOverride: "unknown",
-        providerPolicy: "allowed",
-        newSessionNotice: "新会话生效",
-        bearerTokenWarning: null,
-      },
-    });
-    renderPromptsPage("codex");
+    vi.mocked(commands.getToolProfileStatus).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok" as const,
+        data: toolStatus(tool, { promptOverride: "unknown" }),
+      }),
+    );
+    renderPromptsPage();
 
     expect(await screen.findByText("正在加载提示词档案…")).toHaveAttribute(
       "role",
       "status",
     );
-    expect(await screen.findByText(/新会话生效/)).toBeVisible();
-    expect(
-      await screen.findByText(/无法安全确认 Codex 指令遮蔽状态/),
-    ).toBeVisible();
-  });
-
-  it("图标选中生效：当前生效档案选中禁用，未生效档案点击走预览链路", async () => {
-    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
-      status: "ok",
-      data: [
-        { ...promptProfile, name: "生效档案", isActive: true },
-        {
-          ...promptProfile,
-          id: "00000000-0000-4000-8000-000000000403",
-          name: "备用档案",
-          isActive: false,
-        },
-      ],
-    });
-    renderPromptsPage();
-
-    const active = await screen.findByRole("button", {
-      name: "生效档案 当前生效",
-    });
-    expect(active).toBeDisabled();
-    expect(active).toHaveAttribute("aria-pressed", "true");
-    const standby = screen.getByRole("button", {
-      name: "将 备用档案 设为当前生效",
-    });
-    expect(standby).toBeEnabled();
-    expect(standby).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(standby);
-    await waitFor(() =>
-      expect(commands.setActivePromptProfile).toHaveBeenCalledWith("claude", {
-        id: "00000000-0000-4000-8000-000000000403",
-        rowVersion: promptProfile.rowVersion,
-      }),
-    );
-    expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null);
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
+    const notices = await screen.findAllByText(/新会话生效/);
+    expect(notices.length).toBe(2);
+    const warnings =
+      await screen.findAllByText(/无法安全确认 Codex 指令遮蔽状态/);
+    expect(warnings.length).toBe(2);
   });
 
   it("中央列表布局独立持久化并在重新挂载后恢复，非法值回退为单列", () => {

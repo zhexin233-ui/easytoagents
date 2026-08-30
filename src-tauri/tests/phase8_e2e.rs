@@ -24,8 +24,8 @@ use easytoagents_lib::{
     overview::{dashboard_summary, snapshot_restore_context},
     profiles::{
         apply_profile_preview, confirm_prompt_import, create_prompt_profile,
-        discover_prompt_import, preview_prompt_sync, set_active_prompt_profile, ConfirmImportInput,
-        PromptProfileInput, VersionedProfileInput,
+        discover_prompt_import, preview_prompt_sync, set_global_prompt_assignment,
+        ConfirmImportInput, PromptProfileInput, SetGlobalPromptAssignmentInput,
     },
     projects::{register_project, RegisterProjectInput},
     security::SecretRedactor,
@@ -608,22 +608,21 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
     let replacement_prompt = create_prompt_profile(
         &mut fixture.database,
         PromptProfileInput {
-            tool: Tool::Claude,
             name: "Phase 8 新提示词".to_owned(),
             body: REPLACEMENT_PROMPT.to_owned(),
-            activate: false,
         },
     )
     .expect("创建替换提示词失败");
-    set_active_prompt_profile(
+    set_global_prompt_assignment(
         &mut fixture.database,
-        Tool::Claude,
-        &VersionedProfileInput {
-            id: replacement_prompt.id,
+        &SetGlobalPromptAssignmentInput {
+            tool: Tool::Claude,
+            prompt_profile_id: replacement_prompt.id,
+            assigned: true,
             row_version: replacement_prompt.row_version,
         },
     )
-    .expect("切换替换提示词失败");
+    .expect("启用替换提示词失败");
 
     let mut restore_cases = Vec::new();
     let project_id = fixture.project_id.clone();

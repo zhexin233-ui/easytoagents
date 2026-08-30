@@ -1,11 +1,29 @@
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useRef, useState, type FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { PreviewPlan, Tool } from "@/bindings/commands";
+import {
+  commands,
+  type PreviewPlan,
+  type PromptImportPreviewDto,
+  type PromptProfileDto,
+  type Tool,
+} from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
-import { PromptPanel } from "@/features/prompts/prompt-panel";
+import {
+  CentralList,
+  CentralListCard,
+  CentralListCardBody,
+  CentralListCardFooter,
+  CentralListLayoutToggle,
+} from "@/components/central-list-layout";
+import { FormDialog } from "@/components/form-dialog";
+import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
+import { Button } from "@/components/ui/button";
+import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import {
   profileErrorText,
+  profileKeys,
+  promptProfilesQueryOptions,
   toolProfileStatusQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
@@ -13,13 +31,8 @@ import {
   appSettingsQueryOptions,
   canAutoApplyPreview,
 } from "@/lib/settings-api";
-import { commands } from "@/bindings/commands";
-import { cn } from "@/lib/utils";
 
-const tools = [
-  { tool: "claude", label: "Claude" },
-  { tool: "codex", label: "Codex" },
-] satisfies Array<{ tool: Tool; label: string }>;
+const tools = ["claude", "codex"] as const satisfies readonly Tool[];
 
 interface OpenPreview {
   plan: PreviewPlan;
@@ -27,12 +40,113 @@ interface OpenPreview {
 }
 
 export function PromptsPage() {
-  const [tool, setTool] = useState<Tool>("claude");
-  const statusQuery = useQuery(toolProfileStatusQueryOptions(tool));
+  const queryClient = useQueryClient();
+  const profilesQuery = useQuery(promptProfilesQueryOptions());
+  const statusQueries = {
+    claude: useQuery(toolProfileStatusQueryOptions("claude")),
+    codex: useQuery(toolProfileStatusQueryOptions("codex")),
+  };
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
+  const [listLayout, setListLayout] = usePersistedCentralListLayout("prompts");
+  const [editing, setEditing] = useState<PromptProfileDto | null>(null);
+  const [name, setName] = useState("");
+  const [body, setBody] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const saveInFlight = useRef(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [importPreview, setImportPreview] =
+    useState<PromptImportPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenPreview | null>(null);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
+
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: profileKeys.prompts });
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: async () =>
+      editing
+        ? unwrapResult(
+            await commands.updatePromptProfile({
+              id: editing.id,
+              name,
+              body,
+              rowVersion: editing.rowVersion,
+            }),
+          )
+        : unwrapResult(await commands.createPromptProfile({ name, body })),
+    onSuccess: async () => {
+      await refresh();
+      setEditing(null);
+      setName("");
+      setBody("");
+      setFormOpen(false);
+      setNotice("中央提示词档案已保存，原生文件尚未修改。");
+    },
+    onSettled: () => {
+      saveInFlight.current = false;
+    },
+  });
+
+  const openForm = (profile: PromptProfileDto | null) => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveMutation.reset();
+    setEditing(profile);
+    setName(profile?.name ?? "");
+    setBody(profile?.body ?? "");
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    if (saveInFlight.current || saveMutation.isPending) return;
+    setFormOpen(false);
+    setEditing(null);
+    setName("");
+    setBody("");
+    saveMutation.reset();
+  };
+
+  const assignmentMutation = useMutation({
+    mutationFn: async ({
+      profile,
+      tool,
+    }: {
+      profile: PromptProfileDto;
+      tool: Tool;
+    }) =>
+      unwrapResult(
+        await commands.setGlobalPromptAssignment({
+          tool,
+          promptProfileId: profile.id,
+          assigned: !profile.globalTools.includes(tool),
+          rowVersion: profile.rowVersion,
+        }),
+      ),
+    onSuccess: async (_result, { tool }) => {
+      await refresh();
+      if (!directApply) {
+        setNotice(
+          "全局启用已更新；这只改变中央配置，原生全局文件尚未写入。请在该工具卡片预览全局同步并确认应用。",
+        );
+        return;
+      }
+      previewMutation.mutate({ tool });
+    },
+  });
+
+  const previewMutation = useMutation({
+    mutationFn: async ({ tool }: { tool: Tool }) =>
+      unwrapResult(await commands.previewPromptSync(tool, null)),
+    onSuccess: (plan, { tool }) => {
+      if (directApply && canAutoApplyPreview(plan)) {
+        applyMutation.mutate({ plan, tool });
+        return;
+      }
+      setOpenPreview({ plan, tool });
+    },
+  });
+
   const applyMutation = useMutation({
     mutationFn: async (preview: OpenPreview) =>
       unwrapResult(
@@ -49,16 +163,67 @@ export function PromptsPage() {
     },
   });
 
-  const handlePreview = (plan: PreviewPlan, previewTool: Tool) => {
-    if (directApply && canAutoApplyPreview(plan)) {
-      applyMutation.mutate({ plan, tool: previewTool });
-      return;
-    }
-    setOpenPreview({ plan, tool: previewTool });
-  };
+  const deleteMutation = useMutation({
+    mutationFn: async (profile: PromptProfileDto) =>
+      unwrapResult(
+        await commands.deletePromptProfile({
+          id: profile.id,
+          rowVersion: profile.rowVersion,
+        }),
+      ),
+    onSuccess: async () => {
+      setNotice("中央提示词已删除；生成新预览后才会清理已接管文件。");
+      await refresh();
+    },
+  });
 
-  const toolLabel = tool === "claude" ? "Claude" : "Codex";
+  const discoverMutation = useMutation({
+    mutationFn: async (tool: Tool) =>
+      unwrapResult(await commands.discoverPromptImport(tool)),
+    onSuccess: (preview) => {
+      if (!preview) {
+        setNotice("未发现可导入的已有提示词。");
+        return;
+      }
+      setImportPreview(preview);
+    },
+  });
+
+  const confirmImportMutation = useMutation({
+    mutationFn: async () => {
+      if (!importPreview) {
+        throw new Error("导入预览已关闭");
+      }
+      return unwrapResult(
+        await commands.confirmPromptImport({
+          previewId: importPreview.previewId,
+          name: importPreview.suggestedName,
+        }),
+      );
+    },
+    onSuccess: async () => {
+      setImportPreview(null);
+      setNotice("已有提示词已无损导入并启用到来源工具，原生文件保持不变。");
+      await refresh();
+    },
+  });
+
+  const listMutationError = [
+    assignmentMutation.error,
+    deleteMutation.error,
+    discoverMutation.error,
+    confirmImportMutation.error,
+  ]
+    .map(profileErrorText)
+    .find(Boolean);
   const applyError = profileErrorText(applyMutation.error);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (saveInFlight.current || saveMutation.isPending) return;
+    saveInFlight.current = true;
+    saveMutation.mutate();
+  };
 
   return (
     <main className="p-6 lg:p-8">
@@ -66,35 +231,9 @@ export function PromptsPage() {
         <p className="text-muted-foreground text-sm">提示词</p>
         <h1 className="mt-1 text-2xl font-semibold">全局提示词档案</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          集中维护 Claude 与 Codex
-          的全局指令文档；档案库的修改不会直接改写原生配置，切换后先生成持久化预览，再由你确认
-          Apply。项目级的提示词分配在各项目详情页中进行。
+          集中维护提示词指令文档，并按工具通过图标启用或停用（每个工具同时只有一份生效，启用新档案会自动替换原生效档案）。中央修改不会直接改写原生配置，同步需经持久化预览确认。项目级的提示词分配在各项目详情页中进行。
         </p>
       </header>
-
-      <div
-        className="mx-auto mt-6 flex max-w-6xl gap-2"
-        role="tablist"
-        aria-label="提示词工具切换"
-      >
-        {tools.map(({ tool: tabTool, label }) => (
-          <button
-            key={tabTool}
-            type="button"
-            role="tab"
-            aria-selected={tool === tabTool}
-            onClick={() => setTool(tabTool)}
-            className={cn(
-              "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
-              tool === tabTool
-                ? "bg-primary text-primary-foreground border-transparent"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
 
       <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
         {applyMessage ? (
@@ -113,76 +252,337 @@ export function PromptsPage() {
       </div>
 
       <div className="mx-auto mt-6 max-w-6xl">
-        <PromptPanel
-          key={tool}
-          tool={tool}
-          directApply={directApply}
-          onPreview={(plan) => handlePreview(plan, tool)}
-        />
+        <section
+          className="bg-card rounded-xl border p-5"
+          aria-labelledby="prompt-list-title"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 id="prompt-list-title" className="text-xl font-semibold">
+                中央列表
+              </h2>
+              <p className="text-muted-foreground mt-1 text-sm">
+                Markdown 正文原样写入工具的全局指令文件。
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <CentralListLayoutToggle
+                value={listLayout}
+                onChange={setListLayout}
+              />
+              <Button size="sm" onClick={() => openForm(null)}>
+                新增提示词
+              </Button>
+            </div>
+          </div>
+
+          {notice ? (
+            <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">
+              {notice}
+            </p>
+          ) : null}
+          {listMutationError ? (
+            <p
+              role="alert"
+              className="mt-4 text-sm text-red-700 dark:text-red-300"
+            >
+              {listMutationError}
+            </p>
+          ) : null}
+
+          {profilesQuery.isPending ? (
+            <p role="status" className="text-muted-foreground mt-5 text-sm">
+              正在加载提示词档案…
+            </p>
+          ) : null}
+          {profilesQuery.isError ? (
+            <p
+              role="alert"
+              className="mt-5 text-sm text-red-700 dark:text-red-300"
+            >
+              {profileErrorText(profilesQuery.error)}
+            </p>
+          ) : null}
+          {profilesQuery.data?.length === 0 ? (
+            <p className="text-muted-foreground mt-5 rounded-lg border border-dashed p-4 text-sm">
+              尚无提示词档案。点击“新增提示词”创建第一份档案，或在下方工具卡片检测已有提示词。
+            </p>
+          ) : null}
+
+          <CentralList layout={listLayout}>
+            {profilesQuery.data?.map((profile) => {
+              const cardActions = (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={listLayout === "grid" ? "px-2" : undefined}
+                    onClick={() => openForm(profile)}
+                  >
+                    编辑
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={listLayout === "grid" ? "px-2" : undefined}
+                    onClick={() => {
+                      if (
+                        globalThis.confirm(
+                          "删除中央提示词档案？原生文件不会在此步骤修改。",
+                        )
+                      ) {
+                        deleteMutation.mutate(profile);
+                      }
+                    }}
+                  >
+                    删除
+                  </Button>
+                </>
+              );
+              return (
+                <CentralListCard key={profile.id} layout={listLayout}>
+                  <CentralListCardBody layout={listLayout}>
+                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="font-medium">{profile.name}</h3>
+                        <p className="text-muted-foreground mt-1 text-xs">
+                          {profile.globalTools.length > 0
+                            ? `生效中：${profile.globalTools
+                                .map((tool) =>
+                                  tool === "claude" ? "Claude" : "Codex",
+                                )
+                                .join("、")}`
+                            : "未启用"}
+                          {profile.importedFromPath
+                            ? ` · 导入自 ${profile.importedFromPath}`
+                            : null}
+                        </p>
+                      </div>
+                      {listLayout === "list" ? (
+                        <div className="flex shrink-0 gap-2">{cardActions}</div>
+                      ) : null}
+                    </div>
+                    {listLayout === "list" ? (
+                      <p className="bg-muted mt-3 line-clamp-6 rounded p-2 text-xs leading-5 whitespace-pre-wrap">
+                        {profile.body}
+                      </p>
+                    ) : (
+                      <p
+                        className="text-muted-foreground mt-4 line-clamp-3 text-sm leading-6 whitespace-pre-wrap"
+                        title={profile.body}
+                      >
+                        {profile.body}
+                      </p>
+                    )}
+                  </CentralListCardBody>
+                  <CentralListCardFooter
+                    layout={listLayout}
+                    label={`${profile.name} 提示词操作`}
+                  >
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      {listLayout === "grid" ? cardActions : null}
+                      <div
+                        className={
+                          listLayout === "grid"
+                            ? "ml-auto flex shrink-0 items-center gap-2"
+                            : "flex items-center gap-2"
+                        }
+                        role="group"
+                        aria-label={`${profile.name} 全局启用`}
+                      >
+                        {tools.map((tool) => (
+                          <PlatformAssignmentButton
+                            key={tool}
+                            tool={tool}
+                            assigned={profile.globalTools.includes(tool)}
+                            disabled={assignmentMutation.isPending}
+                            onClick={() =>
+                              assignmentMutation.mutate({ profile, tool })
+                            }
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    {listLayout === "list" ? (
+                      <p className="text-muted-foreground mt-2 text-xs leading-5">
+                        图标启用或停用只更新中央配置；原生全局文件仍需在该工具卡片预览同步后写入。
+                      </p>
+                    ) : null}
+                  </CentralListCardFooter>
+                </CentralListCard>
+              );
+            })}
+          </CentralList>
+
+          {importPreview ? (
+            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40">
+              <p className="font-medium">
+                发现已有提示词，仅生成了无写入导入预览
+              </p>
+              <p className="mt-1 text-sm break-all">
+                {importPreview.targetPath}
+              </p>
+              <pre className="bg-card mt-3 max-h-40 overflow-auto rounded p-3 text-xs dark:bg-slate-900/60">
+                {importPreview.body}
+              </pre>
+              <div className="mt-3 flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => confirmImportMutation.mutate()}
+                >
+                  确认无损导入
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setImportPreview(null)}
+                >
+                  跳过
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </section>
       </div>
 
       <section
         className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-        aria-labelledby="prompt-tool-status-title"
+        aria-labelledby="prompt-target-status-title"
       >
-        <h2 id="prompt-tool-status-title" className="text-lg font-semibold">
-          工具状态
+        <h2 id="prompt-target-status-title" className="text-lg font-semibold">
+          全局目标状态
         </h2>
-        {statusQuery.isPending ? (
-          <p role="status" className="mt-4 text-sm">
-            正在检测工具配置状态…
-          </p>
-        ) : null}
-        {statusQuery.isError ? (
-          <p
-            role="alert"
-            className="mt-4 text-sm text-red-700 dark:text-red-300"
-          >
-            {profileErrorText(statusQuery.error)}
-          </p>
-        ) : null}
-        {statusQuery.data ? (
-          <article className="mt-4 rounded-lg border p-4 text-sm">
-            {statusQuery.data.availability === "installed" ? (
-              <p className="font-medium text-emerald-800 dark:text-emerald-300">
-                已安全检测到 {toolLabel}
-                {statusQuery.data.installationVersion
-                  ? ` ${statusQuery.data.installationVersion}`
-                  : ""}
-              </p>
-            ) : null}
-            {statusQuery.data.availability === "unavailable" ? (
-              <p className="font-medium text-red-700 dark:text-red-300">
-                未在发布进程的安全搜索路径中检测到 {toolLabel}
-                ；原生目标保持不可应用。
-              </p>
-            ) : null}
-            {statusQuery.data.availability === "unsupported" ? (
-              <p className="font-medium text-amber-800 dark:text-amber-300">
-                {toolLabel}
-                安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
-              </p>
-            ) : null}
-            <p>{statusQuery.data.newSessionNotice}</p>
-            {statusQuery.data.promptOverride === "present" ? (
-              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
-                检测到更高优先级的 Codex 指令来源（如 AGENTS.override.md）；当前
-                AGENTS.md 可能被遮蔽。
-              </p>
-            ) : null}
-            {statusQuery.data.promptOverride === "unknown" ? (
-              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
-                无法安全确认 Codex 指令遮蔽状态，请检查 AGENTS.override.md
-                后再应用。
-              </p>
-            ) : null}
-          </article>
-        ) : null}
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {tools.map((tool) => {
+            const statusQuery = statusQueries[tool];
+            const toolLabel = tool === "claude" ? "Claude" : "Codex";
+            return (
+              <article key={tool} className="rounded-lg border p-4 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <strong>{toolLabel}</strong>
+                  {statusQuery.data ? (
+                    <span className="text-xs">
+                      {statusQuery.data.availability === "installed"
+                        ? "已检测到"
+                        : statusQuery.data.availability === "unavailable"
+                          ? "未检测到"
+                          : "版本未确认"}
+                    </span>
+                  ) : null}
+                </div>
+                {statusQuery.isPending ? (
+                  <p role="status" className="mt-2 text-xs">
+                    正在检测工具配置状态…
+                  </p>
+                ) : null}
+                {statusQuery.isError ? (
+                  <p
+                    role="alert"
+                    className="mt-2 text-xs text-red-700 dark:text-red-300"
+                  >
+                    {profileErrorText(statusQuery.error)}
+                  </p>
+                ) : null}
+                {statusQuery.data ? (
+                  <>
+                    <code className="mt-2 block text-xs break-all">
+                      {statusQuery.data.promptTargetPath}
+                    </code>
+                    <p className="text-muted-foreground mt-2 text-xs">
+                      {statusQuery.data.newSessionNotice}
+                    </p>
+                    {statusQuery.data.promptOverride === "present" ? (
+                      <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                        检测到更高优先级的 Codex 指令来源（如
+                        AGENTS.override.md）；当前 AGENTS.md 可能被遮蔽。
+                      </p>
+                    ) : null}
+                    {statusQuery.data.promptOverride === "unknown" ? (
+                      <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                        无法安全确认 Codex 指令遮蔽状态，请检查
+                        AGENTS.override.md 后再应用。
+                      </p>
+                    ) : null}
+                  </>
+                ) : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={discoverMutation.isPending}
+                    onClick={() => {
+                      setNotice(null);
+                      discoverMutation.mutate(tool);
+                    }}
+                  >
+                    检测并导入已有提示词
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={previewMutation.isPending}
+                    onClick={() => previewMutation.mutate({ tool })}
+                  >
+                    {previewMutation.isPending
+                      ? directApply
+                        ? "正在应用…"
+                        : "正在生成…"
+                      : directApply
+                        ? `直接应用 ${toolLabel} 全局同步`
+                        : `预览 ${toolLabel} 全局同步`}
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
       </section>
+
+      <FormDialog
+        open={formOpen}
+        title={`${editing ? "编辑" : "新增"}提示词`}
+        description="保存只更新中央提示词档案，不会修改原生文件；原生写入仍需预览后确认 Apply。"
+        submitLabel={editing ? "保存编辑" : "创建提示词"}
+        pending={saveMutation.isPending}
+        error={profileErrorText(saveMutation.error)}
+        onClose={closeForm}
+        onSubmit={submit}
+      >
+        <div>
+          <label
+            htmlFor="prompt-name"
+            className="mb-1 block text-sm font-medium"
+          >
+            名称
+          </label>
+          <input
+            id="prompt-name"
+            required
+            className="field"
+            value={name}
+            onChange={(event) => setName(event.currentTarget.value)}
+          />
+        </div>
+        <div>
+          <label
+            htmlFor="prompt-body"
+            className="mb-1 block text-sm font-medium"
+          >
+            Markdown 正文
+          </label>
+          <textarea
+            id="prompt-body"
+            required
+            className="field min-h-44 resize-y font-mono text-sm"
+            value={body}
+            onChange={(event) => setBody(event.currentTarget.value)}
+          />
+        </div>
+      </FormDialog>
 
       <ChangePreviewDialog
         preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? tool}
+        tool={openPreview?.tool ?? "claude"}
         artifactKind="prompt"
         applying={applyMutation.isPending}
         onClose={() => setOpenPreview(null)}

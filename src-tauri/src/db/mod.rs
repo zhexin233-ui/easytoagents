@@ -63,6 +63,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "prompt_project_assignments",
         sql: include_str!("migrations/0008_prompt_project_assignments.sql"),
     },
+    Migration {
+        version: 9,
+        name: "prompt_tool_active_flags",
+        sql: include_str!("migrations/0009_prompt_tool_active_flags.sql"),
+    },
 ];
 
 struct Migration {
@@ -396,7 +401,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 8);
+        assert_eq!(database.schema_version().unwrap(), 9);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -464,21 +469,30 @@ mod tests {
             )
             .is_err());
 
+        // 工具无关化后（迁移 0009）：每工具至多一份生效由 is_active_claude/codex
+        // 部分唯一索引强制；遗留 tool 列放宽后新档案可写 'central'。
         connection
             .execute(
-                "INSERT INTO prompt_profiles(id, tool, name, body, is_active) VALUES ('00000000-0000-4000-8000-000000000014', 'codex', 'One', '', 1)",
+                "INSERT INTO prompt_profiles(id, tool, name, body, is_active_codex) VALUES ('00000000-0000-4000-8000-000000000014', 'central', 'One', '', 1)",
                 [],
             )
             .unwrap();
         assert!(connection
             .execute(
-                "INSERT INTO prompt_profiles(id, tool, name, body, is_active) VALUES ('00000000-0000-4000-8000-000000000015', 'codex', 'Two', '', 1)",
+                "INSERT INTO prompt_profiles(id, tool, name, body, is_active_codex) VALUES ('00000000-0000-4000-8000-000000000015', 'central', 'Two', '', 1)",
                 [],
             )
             .is_err());
         assert!(connection
             .execute(
-                "INSERT INTO prompt_profiles(id, tool, name, body) VALUES ('not-a-uuid', 'claude', 'Invalid ID', '')",
+                "INSERT INTO prompt_profiles(id, tool, name, body) VALUES ('00000000-0000-4000-8000-000000000018', 'central', 'Three', '')",
+                [],
+            )
+            .unwrap()
+            == 1);
+        assert!(connection
+            .execute(
+                "INSERT INTO prompt_profiles(id, tool, name, body) VALUES ('not-a-uuid', 'central', 'Invalid ID', '')",
                 [],
             )
             .is_err());
@@ -924,7 +938,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 8);
+            assert_eq!(database.schema_version().unwrap(), 9);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -959,7 +973,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 8);
+            assert_eq!(database.schema_version().unwrap(), 9);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1015,7 +1029,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 8);
+            assert_eq!(database.schema_version().unwrap(), 9);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1041,6 +1055,89 @@ mod tests {
                 .execute(
                     "DELETE FROM managed_targets WHERE id = ?1",
                     [CANARY_TARGET_ID],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn prompt_tool_active_flags_migration_seeds_per_tool_actives() {
+        const CLAUDE_PROFILE_ID: &str = "00000000-0000-4000-8000-000000000210";
+        const CODEX_PROFILE_ID: &str = "00000000-0000-4000-8000-000000000211";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v8-prompt-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..8] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            // v8 状态：每个工具各一份生效档案（旧 is_active + tool 绑定语义）。
+            connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body, is_active)
+                     VALUES (?1, 'claude', 'Claude 档案', '', 1)",
+                    [CLAUDE_PROFILE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body, is_active)
+                     VALUES (?1, 'codex', 'Codex 档案', '', 1)",
+                    [CODEX_PROFILE_ID],
+                )
+                .unwrap();
+        }
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 9);
+            let connection = database.connection();
+            // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
+            let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
+                .query_row(
+                    "SELECT is_active_claude, is_active_codex, is_active
+                     FROM prompt_profiles WHERE id = ?1",
+                    [CLAUDE_PROFILE_ID],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!((claude_flag, codex_flag, legacy_active), (1, 0, 0));
+            let codex_flag: i64 = connection
+                .query_row(
+                    "SELECT is_active_codex FROM prompt_profiles WHERE id = ?1",
+                    [CODEX_PROFILE_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(codex_flag, 1);
+            // 遗留 tool CHECK 放宽：新档案可写 'central'。
+            connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body) VALUES (?1, 'central', 'Central 档案', '')",
+                    ["00000000-0000-4000-8000-000000000212"],
+                )
+                .unwrap();
+            // 每工具唯一启用仍由部分唯一索引强制。
+            assert!(connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body, is_active_claude) VALUES ('00000000-0000-4000-8000-000000000213', 'central', '冲突档案', '', 1)",
+                    [],
+                )
+                .is_err());
+            connection
+                .execute(
+                    "DELETE FROM prompt_profiles WHERE tool = 'central' AND name = 'Central 档案'",
+                    [],
                 )
                 .unwrap();
         }

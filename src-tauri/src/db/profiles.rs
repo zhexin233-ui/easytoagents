@@ -38,10 +38,10 @@ pub struct NewProviderProfileRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptProfileRecord {
     pub id: String,
-    pub tool: Tool,
     pub name: String,
     pub body: String,
-    pub is_active: bool,
+    pub is_active_claude: bool,
+    pub is_active_codex: bool,
     pub imported_from_path: Option<String>,
     pub row_version: i64,
 }
@@ -49,10 +49,10 @@ pub struct PromptProfileRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewPromptProfileRecord {
     pub id: String,
-    pub tool: Tool,
     pub name: String,
     pub body: String,
-    pub is_active: bool,
+    pub is_active_claude: bool,
+    pub is_active_codex: bool,
     pub imported_from_path: Option<String>,
 }
 
@@ -207,35 +207,33 @@ pub fn adopt_imported_prompt(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| AppError::database(&database_path, "begin_adopt_prompt_import"))?;
     validate_import_preview(&transaction, preview, ArtifactKind::Prompt, &database_path)?;
-    reject_existing_profiles(
+    reject_prompt_import_blocked(
         &transaction,
-        "prompt_profiles",
-        profile.tool,
+        preview.tool,
+        &preview.target_path,
         &database_path,
     )?;
-    reject_prompt_name_conflict(
-        &transaction,
-        profile.tool,
-        &profile.name,
-        None,
-        &database_path,
-    )?;
+    reject_prompt_name_conflict(&transaction, &profile.name, None, &database_path)?;
+    // 遗留列 tool 统一写 'central'（见迁移 0009）；启用位按导入来源工具设置，
+    // 保证导入后同步呈 in_sync 而不是清空刚接管的文件。
     transaction
         .execute(
-            "INSERT INTO prompt_profiles(id, tool, name, body, is_active, imported_from_path)
-             VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+            "INSERT INTO prompt_profiles(id, tool, name, body, is_active_claude,
+                                        is_active_codex, imported_from_path)
+             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6)",
             params![
                 profile.id,
-                profile.tool.as_str(),
                 profile.name,
                 profile.body,
+                i64::from(profile.is_active_claude),
+                i64::from(profile.is_active_codex),
                 profile.imported_from_path,
             ],
         )
         .map_err(|error| map_profile_write_error(error, &database_path, "adopt_prompt_profile"))?;
     adopt_baseline(
         &transaction,
-        profile.tool,
+        preview.tool,
         ArtifactKind::Prompt,
         baseline,
         &database_path,
@@ -447,21 +445,19 @@ pub fn delete_provider_profile(
     )
 }
 
-pub fn list_prompt_profiles(
-    database: &Database,
-    tool: Tool,
-) -> Result<Vec<PromptProfileRecord>, AppError> {
+pub fn list_prompt_profiles(database: &Database) -> Result<Vec<PromptProfileRecord>, AppError> {
     let database_path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
         .prepare(
-            "SELECT id, tool, name, body, is_active, imported_from_path, row_version
-             FROM prompt_profiles WHERE tool = ?1
-             ORDER BY is_active DESC, name COLLATE NOCASE, id",
+            "SELECT id, name, body, is_active_claude, is_active_codex, imported_from_path,
+                    row_version
+             FROM prompt_profiles
+             ORDER BY name COLLATE NOCASE, id",
         )
         .map_err(|_| AppError::database(&database_path, "prepare_list_prompt_profiles"))?;
     let rows = statement
-        .query_map([tool.as_str()], prompt_from_row)
+        .query_map([], prompt_from_row)
         .map_err(|_| AppError::database(&database_path, "query_list_prompt_profiles"))?;
     rows.map(|row| row.map_err(|_| AppError::database(&database_path, "read_prompt_profile")))
         .collect()
@@ -471,6 +467,7 @@ pub fn get_prompt_profile(database: &Database, id: &str) -> Result<PromptProfile
     find_prompt_profile(database, id)?.ok_or_else(|| AppError::not_found("promptProfile", id))
 }
 
+/// 读取对该工具全局生效的提示词档案；未启用返回 `None`。
 pub fn find_active_prompt_profile(
     database: &Database,
     tool: Tool,
@@ -479,8 +476,10 @@ pub fn find_active_prompt_profile(
     database
         .connection()
         .query_row(
-            "SELECT id, tool, name, body, is_active, imported_from_path, row_version
-             FROM prompt_profiles WHERE tool = ?1 AND is_active = 1",
+            "SELECT id, name, body, is_active_claude, is_active_codex, imported_from_path,
+                    row_version
+             FROM prompt_profiles
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1",
             [tool.as_str()],
             prompt_from_row,
         )
@@ -498,8 +497,8 @@ pub fn find_prompt_project_assignment(
     database
         .connection()
         .query_row(
-            "SELECT profile.id, profile.tool, profile.name, profile.body, profile.is_active,
-                    profile.imported_from_path, profile.row_version
+            "SELECT profile.id, profile.name, profile.body, profile.is_active_claude,
+                    profile.is_active_codex, profile.imported_from_path, profile.row_version
              FROM prompt_project_assignments AS assignment
              JOIN prompt_profiles AS profile ON profile.id = assignment.prompt_profile_id
              WHERE assignment.project_id = ?1 AND assignment.tool = ?2",
@@ -546,33 +545,30 @@ pub fn set_prompt_project_assignment(
         .optional()
         .map_err(|_| AppError::database(&database_path, "read_prompt_project_assignment"))?;
     if let Some(profile_id) = prompt_profile_id {
-        // 档案必须存在且属于同一工具；跨工具档案不允许写入项目记忆文件。
-        // 全局生效档案同样排除：同一份指令不应同时写入全局与项目记忆文件；
+        // 档案必须存在；对该工具全局生效的档案不允许写入项目记忆文件
+        // （同一份指令不应同时进入全局与项目记忆文件）；
         // 已是本项目当前分配的档案例外，重复写入保持无操作语义。
-        let profile_state: Option<(String, bool)> = transaction
+        let profile_state: Option<(bool, bool)> = transaction
             .query_row(
-                "SELECT tool, is_active FROM prompt_profiles WHERE id = ?1",
+                "SELECT is_active_claude, is_active_codex
+                 FROM prompt_profiles WHERE id = ?1",
                 [profile_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .map_err(|_| AppError::database(&database_path, "read_prompt_profile_tool"))?;
-        match profile_state {
-            Some((existing, false)) if existing == tool.as_str() => {}
-            Some((_, true)) if current.as_deref() == Some(profile_id) => {}
-            Some((_, true)) => {
-                return Err(AppError::conflict(
-                    "promptProfile",
-                    "全局生效的提示词档案不能分配到项目；请先在提示词页切换其他档案生效",
-                ));
-            }
-            Some(_) => {
-                return Err(AppError::invalid_input(
-                    "promptProfileId",
-                    "提示词档案与工具不匹配",
-                ));
-            }
+            .map_err(|_| AppError::database(&database_path, "read_prompt_profile_state"))?;
+        let globally_enabled = match profile_state {
+            Some((claude, codex)) => match tool {
+                Tool::Claude => claude,
+                Tool::Codex => codex,
+            },
             None => return Err(AppError::not_found("promptProfile", profile_id)),
+        };
+        if globally_enabled && current.as_deref() != Some(profile_id) {
+            return Err(AppError::conflict(
+                "promptProfile",
+                "对该工具全局生效的提示词档案不能分配到项目；请先在提示词页停用或更换生效档案",
+            ));
         }
     }
     let changed = match (prompt_profile_id, current) {
@@ -664,26 +660,19 @@ pub fn insert_prompt_profile(
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| AppError::database(&database_path, "begin_insert_prompt_profile"))?;
-    reject_prompt_name_conflict(
-        &transaction,
-        record.tool,
-        &record.name,
-        None,
-        &database_path,
-    )?;
-    if record.is_active {
-        deactivate_prompt_profiles(&transaction, record.tool, None, &database_path)?;
-    }
+    reject_prompt_name_conflict(&transaction, &record.name, None, &database_path)?;
+    // 遗留列 tool 统一写 'central'：档案不再绑定工具（CHECK 已由迁移 0009 放宽）。
     transaction
         .execute(
-            "INSERT INTO prompt_profiles(id, tool, name, body, is_active, imported_from_path)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO prompt_profiles(id, tool, name, body, is_active_claude,
+                                        is_active_codex, imported_from_path)
+             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6)",
             params![
                 record.id,
-                record.tool.as_str(),
                 record.name,
                 record.body,
-                record.is_active,
+                record.is_active_claude,
+                record.is_active_codex,
                 record.imported_from_path,
             ],
         )
@@ -701,13 +690,13 @@ pub fn update_prompt_profile(
     body: &str,
     expected_row_version: i64,
 ) -> Result<PromptProfileRecord, AppError> {
-    let current = get_prompt_profile(database, id)?;
+    get_prompt_profile(database, id)?;
     let database_path = database.path().to_string_lossy().into_owned();
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| AppError::database(&database_path, "begin_update_prompt_profile"))?;
-    reject_prompt_name_conflict(&transaction, current.tool, name, Some(id), &database_path)?;
+    reject_prompt_name_conflict(&transaction, name, Some(id), &database_path)?;
     let updated = transaction
         .execute(
             "UPDATE prompt_profiles SET name = ?2, body = ?3
@@ -727,38 +716,70 @@ pub fn update_prompt_profile(
     get_prompt_profile(database, id)
 }
 
-pub fn set_active_prompt_profile(
+/// 全局启用/停用一份提示词档案到指定工具（每工具至多一份生效）。
+/// 启用会自动停用该工具的原生效档案；停用仅清自身标志位，幂等。
+pub fn set_global_prompt_assignment(
     database: &mut Database,
     tool: Tool,
     id: &str,
+    assigned: bool,
     expected_row_version: i64,
 ) -> Result<PromptProfileRecord, AppError> {
     let current = get_prompt_profile(database, id)?;
-    if current.tool != tool {
-        return Err(AppError::invalid_input("tool", "提示词档案不属于目标工具"));
-    }
     if current.row_version != expected_row_version {
         return Err(AppError::conflict(
             "rowVersion",
             "提示词档案已被其他操作更新",
         ));
     }
-    if current.is_active {
+    let already_assigned = match tool {
+        Tool::Claude => current.is_active_claude,
+        Tool::Codex => current.is_active_codex,
+    };
+    if already_assigned == assigned {
         return Ok(current);
     }
     let database_path = database.path().to_string_lossy().into_owned();
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_activate_prompt_profile"))?;
-    deactivate_prompt_profiles(&transaction, tool, Some(id), &database_path)?;
-    let updated = transaction
-        .execute(
-            "UPDATE prompt_profiles SET is_active = 1
-             WHERE id = ?1 AND tool = ?2 AND row_version = ?3",
-            params![id, tool.as_str(), expected_row_version],
-        )
-        .map_err(|_| AppError::database(&database_path, "activate_prompt_profile"))?;
+        .map_err(|_| AppError::database(&database_path, "begin_set_global_prompt_assignment"))?;
+    if assigned {
+        // 同一工具至多一份生效：先清旧启用，再置目标标志。
+        deactivate_prompt_profiles(&transaction, tool, Some(id), &database_path)?;
+    }
+    let updated = match tool {
+        Tool::Claude => transaction
+            .execute(
+                "UPDATE prompt_profiles SET is_active_claude = ?4
+                 WHERE id = ?1 AND row_version = ?3 AND is_active_claude = ?5",
+                params![
+                    id,
+                    tool.as_str(),
+                    expected_row_version,
+                    i64::from(assigned),
+                    i64::from(!assigned),
+                ],
+            )
+            .map_err(|error| {
+                map_profile_write_error(error, &database_path, "set_global_prompt_assignment")
+            })?,
+        Tool::Codex => transaction
+            .execute(
+                "UPDATE prompt_profiles SET is_active_codex = ?4
+                 WHERE id = ?1 AND row_version = ?3 AND is_active_codex = ?5",
+                params![
+                    id,
+                    tool.as_str(),
+                    expected_row_version,
+                    i64::from(assigned),
+                    i64::from(!assigned),
+                ],
+            )
+            .map_err(|error| {
+                map_profile_write_error(error, &database_path, "set_global_prompt_assignment")
+            })?,
+    };
     if updated != 1 {
         return Err(AppError::conflict(
             "rowVersion",
@@ -767,7 +788,7 @@ pub fn set_active_prompt_profile(
     }
     transaction
         .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_activate_prompt_profile"))?;
+        .map_err(|_| AppError::database(&database_path, "commit_set_global_prompt_assignment"))?;
     get_prompt_profile(database, id)
 }
 
@@ -811,7 +832,8 @@ fn find_prompt_profile(
     database
         .connection()
         .query_row(
-            "SELECT id, tool, name, body, is_active, imported_from_path, row_version
+            "SELECT id, name, body, is_active_claude, is_active_codex, imported_from_path,
+                    row_version
              FROM prompt_profiles WHERE id = ?1",
             [id],
             prompt_from_row,
@@ -836,13 +858,12 @@ fn provider_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderProfil
 }
 
 fn prompt_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromptProfileRecord> {
-    let tool = tool_from_database(row.get::<_, String>(1)?)?;
     Ok(PromptProfileRecord {
         id: row.get(0)?,
-        tool,
-        name: row.get(2)?,
-        body: row.get(3)?,
-        is_active: row.get(4)?,
+        name: row.get(1)?,
+        body: row.get(2)?,
+        is_active_claude: row.get(3)?,
+        is_active_codex: row.get(4)?,
         imported_from_path: row.get(5)?,
         row_version: row.get(6)?,
     })
@@ -1014,52 +1035,83 @@ fn reject_provider_name_conflict(
     except_id: Option<&str>,
     database_path: &str,
 ) -> Result<(), AppError> {
-    reject_name_conflict(
-        transaction,
-        "provider_profiles",
-        tool,
-        name,
-        except_id,
-        database_path,
-    )
-}
-
-fn reject_prompt_name_conflict(
-    transaction: &Transaction<'_>,
-    tool: Tool,
-    name: &str,
-    except_id: Option<&str>,
-    database_path: &str,
-) -> Result<(), AppError> {
-    reject_name_conflict(
-        transaction,
-        "prompt_profiles",
-        tool,
-        name,
-        except_id,
-        database_path,
-    )
-}
-
-fn reject_name_conflict(
-    transaction: &Transaction<'_>,
-    table: &str,
-    tool: Tool,
-    name: &str,
-    except_id: Option<&str>,
-    database_path: &str,
-) -> Result<(), AppError> {
-    let query = format!(
-        "SELECT EXISTS(SELECT 1 FROM {table}
-         WHERE tool = ?1 AND name = ?2 COLLATE NOCASE AND (?3 IS NULL OR id != ?3))"
-    );
     let exists = transaction
-        .query_row(&query, params![tool.as_str(), name, except_id], |row| {
-            row.get::<_, bool>(0)
-        })
-        .map_err(|_| AppError::database(database_path, "check_profile_name_conflict"))?;
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM provider_profiles
+             WHERE tool = ?1 AND name = ?2 COLLATE NOCASE AND (?3 IS NULL OR id != ?3))",
+            params![tool.as_str(), name, except_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| AppError::database(database_path, "check_provider_name_conflict"))?;
     if exists {
         Err(AppError::conflict("name", "同一工具内的档案名称必须唯一"))
+    } else {
+        Ok(())
+    }
+}
+
+/// 提示词档案工具无关化后名称全局唯一（不再按工具分域）。
+fn reject_prompt_name_conflict(
+    transaction: &Transaction<'_>,
+    name: &str,
+    except_id: Option<&str>,
+    database_path: &str,
+) -> Result<(), AppError> {
+    let exists = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM prompt_profiles
+             WHERE name = ?1 COLLATE NOCASE AND (?2 IS NULL OR id != ?2))",
+            params![name, except_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| AppError::database(database_path, "check_prompt_name_conflict"))?;
+    if exists {
+        Err(AppError::conflict("name", "提示词档案名称必须唯一"))
+    } else {
+        Ok(())
+    }
+}
+
+/// 提示词导入前置（只读版）：该工具已有生效档案、或已有同源导入档案时不可再导入。
+pub fn prompt_import_blocked(
+    database: &Database,
+    tool: Tool,
+    target_path: &str,
+) -> Result<bool, AppError> {
+    let database_path = database.path().to_string_lossy();
+    database
+        .connection()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM prompt_profiles
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1
+                OR imported_from_path = ?2)",
+            params![tool.as_str(), target_path],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| AppError::database(&database_path, "check_prompt_import_blocked"))
+}
+
+/// 提示词导入前置：该工具已有生效档案、或已有同源导入档案时不可再导入。
+fn reject_prompt_import_blocked(
+    transaction: &Transaction<'_>,
+    tool: Tool,
+    target_path: &str,
+    database_path: &str,
+) -> Result<(), AppError> {
+    let exists = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM prompt_profiles
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1
+                OR imported_from_path = ?2)",
+            params![tool.as_str(), target_path],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| AppError::database(database_path, "check_prompt_import_blocked"))?;
+    if exists {
+        Err(AppError::conflict(
+            "import",
+            "仅在该工具尚无生效或同源导入的提示词档案时可确认导入",
+        ))
     } else {
         Ok(())
     }
@@ -1087,12 +1139,16 @@ fn deactivate_prompt_profiles(
     except_id: Option<&str>,
     database_path: &str,
 ) -> Result<(), AppError> {
+    let column = match tool {
+        Tool::Claude => "is_active_claude",
+        Tool::Codex => "is_active_codex",
+    };
+    let query = format!(
+        "UPDATE prompt_profiles SET {column} = 0
+         WHERE {column} = 1 AND (?1 IS NULL OR id != ?1)"
+    );
     transaction
-        .execute(
-            "UPDATE prompt_profiles SET is_active = 0
-             WHERE tool = ?1 AND is_active = 1 AND (?2 IS NULL OR id != ?2)",
-            params![tool.as_str(), except_id],
-        )
+        .execute(&query, params![except_id])
         .map_err(|_| AppError::database(database_path, "deactivate_prompt_profiles"))?;
     Ok(())
 }
@@ -1150,7 +1206,7 @@ mod tests {
     use super::{
         delete_prompt_profile, delete_provider_profile, insert_prompt_profile,
         insert_provider_profile, list_prompt_profiles, list_provider_profiles,
-        set_active_prompt_profile, set_active_provider_profile, update_prompt_profile,
+        set_active_provider_profile, set_global_prompt_assignment, update_prompt_profile,
         update_provider_profile, NewPromptProfileRecord, NewProviderProfileRecord,
     };
     use crate::{app::AppPaths, db::Database, domain::Tool};
@@ -1225,10 +1281,10 @@ mod tests {
             &mut database,
             &NewPromptProfileRecord {
                 id: uuid::Uuid::new_v4().to_string(),
-                tool: Tool::Codex,
                 name: "默认提示词".to_owned(),
                 body: "第一份".to_owned(),
-                is_active: true,
+                is_active_claude: false,
+                is_active_codex: false,
                 imported_from_path: None,
             },
         )
@@ -1237,28 +1293,49 @@ mod tests {
             &mut database,
             &NewPromptProfileRecord {
                 id: uuid::Uuid::new_v4().to_string(),
-                tool: Tool::Codex,
                 name: "审查提示词".to_owned(),
                 body: "第二份".to_owned(),
-                is_active: false,
+                is_active_claude: false,
+                is_active_codex: false,
                 imported_from_path: None,
             },
         )
         .unwrap();
-        set_active_prompt_profile(
+        set_global_prompt_assignment(
             &mut database,
             Tool::Codex,
             &prompt_two.id,
+            true,
             prompt_two.row_version,
         )
         .unwrap();
-        let prompts = list_prompt_profiles(&database, Tool::Codex).unwrap();
+        let prompts = list_prompt_profiles(&database).unwrap();
         assert!(prompts
             .iter()
-            .any(|item| item.id == prompt_two.id && item.is_active));
+            .any(|item| item.id == prompt_two.id && item.is_active_codex));
         assert!(prompts
             .iter()
-            .any(|item| item.id == prompt_one.id && !item.is_active));
+            .any(|item| item.id == prompt_one.id && !item.is_active_codex));
+
+        // 停用后该工具回到无生效状态；再次启用走替换语义。
+        let disabled = set_global_prompt_assignment(
+            &mut database,
+            Tool::Codex,
+            &prompt_two.id,
+            false,
+            prompt_two.row_version + 1,
+        )
+        .unwrap();
+        assert!(!disabled.is_active_codex);
+        let re_enabled = set_global_prompt_assignment(
+            &mut database,
+            Tool::Codex,
+            &prompt_two.id,
+            true,
+            disabled.row_version,
+        )
+        .unwrap();
+        assert!(re_enabled.is_active_codex);
     }
 
     #[test]
@@ -1312,10 +1389,10 @@ mod tests {
             &mut database,
             &NewPromptProfileRecord {
                 id: uuid::Uuid::new_v4().to_string(),
-                tool: Tool::Claude,
                 name: "待更新提示词".to_owned(),
                 body: "原正文".to_owned(),
-                is_active: false,
+                is_active_claude: false,
+                is_active_codex: false,
                 imported_from_path: None,
             },
         )
@@ -1329,9 +1406,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            set_active_prompt_profile(&mut database, Tool::Claude, &prompt.id, prompt.row_version,)
-                .unwrap_err()
-                .code(),
+            set_global_prompt_assignment(
+                &mut database,
+                Tool::Claude,
+                &prompt.id,
+                true,
+                prompt.row_version,
+            )
+            .unwrap_err()
+            .code(),
             crate::error::ErrorCode::Conflict
         );
         assert_eq!(

@@ -451,10 +451,9 @@ describe("OnboardingWizard", () => {
       status: "ok",
       data: {
         id: "00000000-0000-4000-8000-000000000728",
-        tool: "claude",
         name: promptImportPreview.suggestedName,
         body: promptImportPreview.body,
-        isActive: true,
+        globalTools: ["claude"],
         importedFromPath: promptImportPreview.targetPath,
         rowVersion: 1,
       },

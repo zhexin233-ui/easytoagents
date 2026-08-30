@@ -10,8 +10,9 @@ use crate::{
         self, ApplyProfilePreviewInput, ConfirmImportInput, CopyProviderProfileInput,
         DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto, PromptProfileInput,
         PromptProjectAssignmentDto, ProviderImportPreviewDto, ProviderProfileDto,
-        ProviderProfileInput, SetPromptProjectAssignmentInput, ToolProfileStatusDto,
-        UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
+        ProviderProfileInput, SetGlobalPromptAssignmentInput, SetPromptProjectAssignmentInput,
+        ToolProfileStatusDto, UpdatePromptProfileInput, UpdateProviderProfileInput,
+        VersionedProfileInput,
     },
     sync::{ApplyResult, PreviewPlan},
 };
@@ -82,12 +83,9 @@ pub fn delete_provider_profile(
 
 #[tauri::command]
 #[specta::specta]
-pub fn list_prompt_profiles(
-    state: State<'_, AppState>,
-    tool: Tool,
-) -> Result<Vec<PromptProfileDto>, AppError> {
+pub fn list_prompt_profiles(state: State<'_, AppState>) -> Result<Vec<PromptProfileDto>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
-    profiles::list_prompt_profiles(&database, tool)
+    profiles::list_prompt_profiles(&database)
 }
 
 #[tauri::command]
@@ -112,13 +110,12 @@ pub fn update_prompt_profile(
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_active_prompt_profile(
+pub fn set_global_prompt_assignment(
     state: State<'_, AppState>,
-    tool: Tool,
-    input: VersionedProfileInput,
+    input: SetGlobalPromptAssignmentInput,
 ) -> Result<PromptProfileDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    profiles::set_active_prompt_profile(&mut database, tool, &input)
+    profiles::set_global_prompt_assignment(&mut database, &input)
 }
 
 #[tauri::command]

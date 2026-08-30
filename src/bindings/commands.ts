@@ -168,9 +168,9 @@ async deleteProviderProfile(input: VersionedProfileInput) : Promise<Result<Delet
     else return { status: "error", error: e  as any };
 }
 },
-async listPromptProfiles(tool: Tool) : Promise<Result<PromptProfileDto[], AppError>> {
+async listPromptProfiles() : Promise<Result<PromptProfileDto[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_prompt_profiles", { tool }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_prompt_profiles") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -192,9 +192,9 @@ async updatePromptProfile(input: UpdatePromptProfileInput) : Promise<Result<Prom
     else return { status: "error", error: e  as any };
 }
 },
-async setActivePromptProfile(tool: Tool, input: VersionedProfileInput) : Promise<Result<PromptProfileDto, AppError>> {
+async setGlobalPromptAssignment(input: SetGlobalPromptAssignmentInput) : Promise<Result<PromptProfileDto, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_active_prompt_profile", { tool, input }) };
+    return { status: "ok", data: await TAURI_INVOKE("set_global_prompt_assignment", { input }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -613,8 +613,8 @@ export type ProjectPathStatus = "valid" | "missing" | "permission_denied" | "inv
 export type ProjectTargetStatusDto = { tool: Tool; artifactKind: ArtifactKind; targetPath: string | null; capability: CapabilityState; policy: PolicyState; trust: TargetTrustState; status: SyncStatus; diagnosticCode: string | null }
 export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; body: string }
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
-export type PromptProfileDto = { id: string; tool: Tool; name: string; body: string; isActive: boolean; importedFromPath: string | null; rowVersion: number }
-export type PromptProfileInput = { tool: Tool; name: string; body: string; activate: boolean }
+export type PromptProfileDto = { id: string; name: string; body: string; globalTools: Tool[]; importedFromPath: string | null; rowVersion: number }
+export type PromptProfileInput = { name: string; body: string }
 export type PromptProjectAssignmentDto = { projectId: string; tool: Tool; profileId: string | null }
 export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue }
 export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null }
@@ -636,6 +636,11 @@ export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: 
 export type SensitiveJsonUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: JsonValue }
 export type SensitiveMapUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: Partial<{ [key in string]: string }> }
 export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned: boolean; rowVersion: number }
+/**
+ * 全局启用/停用一份提示词档案到指定工具；每工具至多一份生效，
+ * 启用新档案会自动替换该工具的原生效档案。
+ */
+export type SetGlobalPromptAssignmentInput = { tool: Tool; promptProfileId: string; assigned: boolean; rowVersion: number }
 export type SetGlobalSkillAssignmentInput = { tool: Tool; skillId: string; assigned: boolean; rowVersion: number }
 export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
 export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
