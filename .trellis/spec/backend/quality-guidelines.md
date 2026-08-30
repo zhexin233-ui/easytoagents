@@ -94,8 +94,8 @@ run against hostile paths and configuration contents.
 ### 3. Contracts
 
 - `CLAUDE_CONFIG_DIR` affects Claude settings, prompt, and skills targets;
-  `CODEX_HOME` affects Codex config and prompt; Codex user skills always resolve
-  from explicit `HOME/.agents/skills`.
+  `CODEX_HOME` affects Codex config, prompt, and user skills targets (Codex user
+  Skills resolve from `$CODEX_HOME/skills`, following `CODEX_HOME`).
 - Non-default Claude user MCP requires version-bound capability evidence. Codex
   project MCP/skills require trusted evidence. Unknown evidence blocks.
 - A preview binds descriptor identity, full/managed hashes, managed target
@@ -498,10 +498,12 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
   central-root ownership, record hash, and quarantined hash must all match; unknown or
   changed entries are preserved.
 - Target paths are Claude user `<CLAUDE_CONFIG_DIR>/skills`, Claude project
-  `<project>/.claude/skills`, Codex user explicit `HOME/.agents/skills`, and Codex
-  project `<project>/.agents/skills`. `CODEX_HOME` never changes the Codex user Skills
-  synchronization path. `CODEX_HOME/skills` is a separate explicit import source.
-  Claude policy and Codex project trust fail closed.
+  `<project>/.claude/skills`, Codex user `$CODEX_HOME/skills`, and Codex
+  project `<project>/.codex/skills`. Codex user Skills follow `CODEX_HOME` to
+  mirror where Codex itself reads skills (its bundled `.system` tree lives in
+  `$CODEX_HOME/skills/.system`). `HOME/.agents/skills` is an import-only
+  source, never a synchronization target. Claude policy and Codex project
+  trust fail closed.
 - A projection owns only named child links. Every desired link target is the canonical
   direct central Skill directory. Ordinary directories/files, broken/external/escaping
   links, unknown siblings, and managed-item drift are never overwritten or deleted.
@@ -544,7 +546,8 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 - Cover strict frontmatter/body validation, source root replacement, stable executable
   hashing/modes, hard links, special files, escaping/broken/cyclic links, permissions,
   and all import limits and cleanup boundaries.
-- Cover the four target paths, `CODEX_HOME` independence, policy/trust, persisted-preview
+- Cover the four target paths, `CODEX_HOME` following for Codex skills (custom
+  CODEX_HOME must move the Codex user Skills target), policy/trust, persisted-preview
   stale checks, global inheritance, external same-name entries, managed-item drift and
   deletion blockers, atomic missing-parent rollback, and replaced-directory preservation.
 - Search ordinary DTOs, errors, persisted previews, and journals for fixture body and

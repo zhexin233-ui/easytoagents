@@ -39,12 +39,14 @@ commands.confirmSkillImport({ previewId, candidateIds });
 
 ### 显式来源与内置排除
 
-| 工具   | 导入来源                                                               | 正式同步目标                 |
-| ------ | ---------------------------------------------------------------------- | ---------------------------- |
-| Claude | `environment.claude_config_dir()/skills`                               | 同一 Claude 来源根           |
-| Codex  | `environment.home()/.agents/skills`、`environment.codex_home()/skills` | 始终为 `HOME/.agents/skills` |
+| 工具   | 导入来源                                                               | 正式同步目标                        |
+| ------ | ------------------------------------------------------------------------ | ------------------------------------ |
+| Claude | `environment.claude_config_dir()/skills`                                 | 同一 Claude 来源根                   |
+| Codex  | `environment.codex_home()/skills`、`environment.home()/.agents/skills`   | `$CODEX_HOME/skills`（跟随 CODEX_HOME） |
 
-默认兼容来源为 `HOME/.codex/skills`。`CLAUDE_CONFIG_DIR` / `CODEX_HOME` 由启动时的 `ExplicitEnvironment` 提供；前端不得传任意路径，服务不得重新读环境。能力不支持或策略非 Allowed 时，不读取候选内容。
+Codex 的正式同步目标是 Codex 实际读取技能的目录 `$CODEX_HOME/skills`（Codex 自带 `.system` 内置技能即位于其中）；`HOME/.agents/skills` 是跨工具通用目录，仅作导入来源（kind `codex_agents`），**不是**同步目标。`CLAUDE_CONFIG_DIR` / `CODEX_HOME` 由启动时的 `ExplicitEnvironment` 提供；前端不得传任意路径，服务不得重新读环境。能力不支持或策略非 Allowed 时，不读取候选内容。
+
+> **Warning（历史教训）**：Codex 同步目标曾被错误定为 `HOME/.agents/skills`（假设其为跨工具约定），导致"应用显示已同步、Codex 看不到技能"。教训：**同步目标必须镜像工具真实读取的路径**（以工具自身行为为准验证，如 Codex 在 `$CODEX_HOME/skills/.system` 放内置技能），不要凭目录命名约定推断；同时同步/恢复的 allowed_root 必须与目标路径同步调整（见 `prepare_skill_sync` 与 `overview::global_allowed_root` 的 (Codex, Skill) 分支）。
 
 - 只枚举来源根直属目录/目录链接，不递归搜索集合，不主动扫描插件缓存。
 - Codex 两个已知来源根的 `.system` 词法路径及可证明的真实目录树都排除。**排除不依赖当前扫描工具**：Claude 链接指向 Codex 内置树也必须排除。
@@ -69,7 +71,7 @@ commands.confirmSkillImport({ previewId, candidateIds });
 ### DTO 与选择
 
 - 预览：`previewId: string | null`、`tool`、`sources`、`candidates`、`message`。无可新增候选时没有确认令牌。
-- 来源：`kind`（`claude_global` / `codex_agents` / `codex_compatibility`）、`path`、`status`（`ready` / `missing` / `empty` / `unavailable`）、`diagnosticCode`、`message`。一个来源失败不能隐藏另一个来源结果。
+- 来源：`kind`（`claude_global` / `codex_home` / `codex_agents`）、`path`、`status`（`ready` / `missing` / `empty` / `unavailable`）、`diagnosticCode`、`message`。一个来源失败不能隐藏另一个来源结果。`codex_home` 即正式同步目标所在目录，`codex_agents` 仅导入来源。
 - 候选：`candidateId`、`name`、`description`、`sourcePaths`、`status`、`reason`、`existingSkillId`。状态为 `importable` / `already_imported` / `name_conflict` / `invalid`。
 - 确认输入仅 `previewId` 与 1–32 个非重复 `candidateIds`。路径、名称、hash、工具均从私有证据读取，不信任客户端重建值。
 - 结果仅 `tool`、`createdCount`；不返回暗示自动分配的数量。同目录或精确 name/hash 相同来源合并并保留来源路径；同名不同内容和 NOCASE 名称碰撞不可选，不覆盖或自动改名。
