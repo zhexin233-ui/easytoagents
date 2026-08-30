@@ -613,3 +613,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: 提示词模块：全局/项目级硬拷贝分配与统一收纳
+
+**Date**: 2026-08-30
+**Task**: 提示词模块：全局/项目级硬拷贝分配与统一收纳
+**Branch**: `main`
+
+### Summary
+
+新增侧边栏提示词模块（档案库/全局生效/接管导入），渠道页移除提示词面板；项目详情页新增提示词页签，分配即硬拷贝为项目根 CLAUDE.md/AGENTS.md，可自行修改、重新应用覆盖，解除分配保留文件并清空基线哈希。迁移 0008 用 writable_schema 原地放开 managed_targets 项目作用域 CHECK，run_migrations 提交后推进 schema_version 强制同连接重解析。preview/apply 命令增加 projectId 维度并新增项目分配命令，bindings 再生成。沉淀 spec：迁移原地修订模式与项目级提示词合同。pnpm check 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ac1663` | (see git log) |
+
+### Status
+
+[OK] **Completed**

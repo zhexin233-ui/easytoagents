@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-08-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~615 | Active |
+| `journal-1.md` | ~636 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-08-30 | 提示词模块：全局/项目级硬拷贝分配与统一收纳 | `5ac1663` | `main` |
 | 20 | 2026-08-30 | 项目目标初始未纳管状态中性化 | `0e21565`, `b8f665f` | `main` |
 | 19 | 2026-08-30 | 私有快照批量删除与选中删除 | `36bce6f`, `3fad27b` | `main` |
 | 18 | 2026-08-30 | 修复 Codex Skills 同步目标路径错指 .agents/skills | `91d8a17`, `70beed4` | `main` |
