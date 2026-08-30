@@ -487,3 +487,23 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 ### Status
 
 [OK] **Completed**
+
+## Session 21: 应用方式全局配置支持 MCP/Skills 直接应用
+
+**Date**: 2026-08-30
+**Task**: 应用方式全局配置：MCP/Skills 可直接应用或保持预览确认
+**Branch**: `main`
+
+### Summary
+
+用户要求给 MCP/Skills 的应用与项目追加提供全局配置：可勾选「直接应用」跳过预览确认，或保持原有预览+点击确认。实现上不新增任何后端写入路径——前端仍生成持久化预览，仅在 `canAutoApplyPreview`（与对话框 Apply 可用条件一致：无 conflict 且无 errorCode）为真时自动调用既有 apply；冲突/错误回退弹窗。后端新增迁移 0007 的 app_settings 键值表、settings 模块（未知存储值 fail closed）与 get/update 命令；前端新增设置页（/settings 导航）与 settings-api.ts，MCP/Skills/项目详情四条流程接入并切换按钮文案，Provider/提示词不接入。8 项新测试 + schema 版本断言升到 7；pnpm check 全绿（前端 147、Rust 195 测试）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a4b0f0d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
