@@ -56,6 +56,22 @@ async restoreSnapshot(input: ApplySnapshotRestoreInput) : Promise<Result<ApplyRe
     else return { status: "error", error: e  as any };
 }
 },
+async getAppSettings() : Promise<Result<AppSettingsDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_app_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateAppSettings(input: UpdateAppSettingsInput) : Promise<Result<AppSettingsDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_app_settings", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listProjects() : Promise<Result<ProjectDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_projects") };
@@ -497,7 +513,12 @@ async applySkillPreview(input: ApplySkillPreviewInput) : Promise<Result<ApplyRes
  */
 export type AppError = { code: ErrorCode; message: string; details?: Partial<{ [key in string]: JsonValue }> | null; recoverable: boolean; action?: RecoveryAction | null }
 export type AppInfoDto = { name: string; version: string }
+export type AppSettingsDto = { applyMode: ApplyMode }
 export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
+/**
+ * 原生配置写入方式：默认保持预览确认，`Direct` 在预览无冲突时跳过确认对话框。
+ */
+export type ApplyMode = "preview_confirm" | "direct"
 export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
 export type ApplySkillPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
@@ -620,6 +641,7 @@ export type Tool = "claude" | "codex"
 export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string; promptTargetPath: string; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
+export type UpdateAppSettingsInput = { applyMode: ApplyMode }
 export type UpdateMcpServerInput = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: SensitiveMapUpdate; env: SensitiveMapUpdate; extra: SensitiveJsonUpdate; enabled: boolean; rowVersion: number }
 export type UpdatePromptProfileInput = { id: string; name: string; body: string; rowVersion: number }
 export type UpdateProviderProfileInput = { id: string; name: string; apiBaseUrl: string; apiKey: SecretUpdate; defaultModel: string; options: ProviderOptionsInput; rowVersion: number }

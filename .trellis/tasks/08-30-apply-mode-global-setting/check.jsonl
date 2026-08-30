@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查显式发现、预览与集成安全约束未被直接应用路径绕过"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端禁用模式与类型安全约定"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查迁移 0007 与测试是否符合数据库指南"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查新命令错误契约与绑定同步"}

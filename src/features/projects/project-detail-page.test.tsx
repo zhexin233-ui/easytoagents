@@ -34,6 +34,8 @@ vi.mock("@/bindings/commands", () => ({
     previewSkillSync: vi.fn(),
     applyMcpPreview: vi.fn(),
     applySkillPreview: vi.fn(),
+    getAppSettings: vi.fn(),
+    updateAppSettings: vi.fn(),
   },
 }));
 
@@ -261,6 +263,10 @@ describe("ProjectDetailPage", () => {
       status: "ok",
       data: project,
     });
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "preview_confirm" },
+    });
     vi.mocked(commands.listMcpProjectOptions).mockImplementation((input) =>
       Promise.resolve({
         status: "ok",
@@ -334,6 +340,64 @@ describe("ProjectDetailPage", () => {
   });
 
   afterEach(cleanup);
+
+  it("直接应用模式下无冲突项目预览跳过对话框立即 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    renderPage();
+    // 预览自带 GIT_TRACKED 警告；警告不阻止直接应用，与对话框行为一致。
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude MCP 直接应用" }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: project.id,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "项目原生配置已通过持久化预览应用并完成写后验证。",
+      ),
+    ).toBeVisible();
+  });
+
+  it("直接应用模式下冲突项目预览回退为人工确认且 Apply 禁用", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewMcpSync).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...preview,
+        targets: [
+          {
+            ...baseTarget,
+            changeKind: "conflict",
+            status: "external_owned_change",
+          },
+        ],
+      },
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude MCP 直接应用" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "应用这份预览" })).toBeDisabled();
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
 
   it("默认选择 Claude MCP，并可通过两组按钮切换四种管理组合", async () => {
     renderPage();

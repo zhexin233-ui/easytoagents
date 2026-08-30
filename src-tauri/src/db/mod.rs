@@ -53,6 +53,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "skill_import_previews",
         sql: include_str!("migrations/0006_skill_import_previews.sql"),
     },
+    Migration {
+        version: 7,
+        name: "app_settings",
+        sql: include_str!("migrations/0007_app_settings.sql"),
+    },
 ];
 
 struct Migration {
@@ -377,7 +382,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 6);
+        assert_eq!(database.schema_version().unwrap(), 7);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -905,7 +910,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 6);
+            assert_eq!(database.schema_version().unwrap(), 7);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -940,7 +945,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 6);
+            assert_eq!(database.schema_version().unwrap(), 7);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);

@@ -27,6 +27,10 @@ import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
+  appSettingsQueryOptions,
+  canAutoApplyPreview,
+} from "@/lib/settings-api";
+import {
   globalSkillStatusesQueryOptions,
   skillKeys,
   skillsQueryOptions,
@@ -41,6 +45,8 @@ export function SkillsPage() {
   const queryClient = useQueryClient();
   const skillsQuery = useQuery(skillsQueryOptions());
   const statusesQuery = useQuery(globalSkillStatusesQueryOptions());
+  const settingsQuery = useQuery(appSettingsQueryOptions());
+  const directApply = settingsQuery.data?.applyMode === "direct";
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
   const [openDirectoryImport, setOpenDirectoryImport] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -91,7 +97,9 @@ export function SkillsPage() {
       ),
     onSuccess: async () => {
       setMessage(
-        "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
+        directApply
+          ? "全局分配已更新；这只改变中央配置，点击「直接应用全局同步」写入工具目录。"
+          : "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
       );
       await invalidateSkills();
     },
@@ -112,6 +120,14 @@ export function SkillsPage() {
       if (plan.targets.length === 0) {
         setMessage("当前工具没有需要同步的全局 Skill。");
         setOpenPreview(null);
+        return;
+      }
+      if (directApply && canAutoApplyPreview(plan)) {
+        applyMutation.mutate({
+          previewId: plan.previewId,
+          tool,
+          projectId: null,
+        });
         return;
       }
       setOpenPreview({ plan, tool });
@@ -443,7 +459,13 @@ export function SkillsPage() {
                       })
                     }
                   >
-                    预览全局同步
+                    {previewMutation.isPending
+                      ? directApply
+                        ? "正在应用…"
+                        : "正在生成…"
+                      : directApply
+                        ? "直接应用全局同步"
+                        : "预览全局同步"}
                   </Button>
                 </div>
               </article>

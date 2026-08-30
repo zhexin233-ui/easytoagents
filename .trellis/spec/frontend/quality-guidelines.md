@@ -8,7 +8,7 @@
 
 Feature pages consume generated Tauri commands through typed API helpers. Native
 configuration writes are always represented by a persisted preview and confirmed in
-the shared change dialog.
+the shared change dialog, unless the user opted into the direct-apply mode below.
 
 ## Forbidden Patterns
 
@@ -444,3 +444,45 @@ const input: SetProjectMcpAssignmentInput = {
 };
 projectAssignmentMutation.mutate(input);
 ```
+
+---
+
+## Scenario: Direct-apply mode (MCP/Skills sync)
+
+### 1. Scope / Trigger
+
+- Trigger: any change to global MCP/Skills sync buttons, project MCP/Skill
+  append buttons, `src/lib/settings-api.ts`, or the settings page apply-mode
+  toggle.
+
+### 2. Signatures
+
+- `appSettingsQueryOptions()` (`src/lib/settings-api.ts`) reads the backend
+  singleton; pages derive `directApply = settingsQuery.data?.applyMode === "direct"`.
+- `canAutoApplyPreview(plan)` mirrors the `ChangePreviewDialog` Apply-enabled
+  condition: at least one target, no `conflict` changeKind, no `errorCode`.
+
+### 3. Contracts
+
+- Direct apply still generates a persisted preview first; the preview is
+  auto-confirmed only when `canAutoApplyPreview` is true. Conflicts, errors, or
+  blocked targets fall back to opening the preview dialog with Apply disabled.
+- Warnings never block auto-apply (same as the dialog). An empty target list
+  keeps the existing no-op message and must not apply.
+- Settings are backend-owned server state: derive `directApply` from the query,
+  never copy it into local state or localStorage. Missing/unloaded settings
+  behave as `preview_confirm`.
+- The apply itself must keep calling the existing `apply*Preview` command with
+  the exact preview ID; no new write path may be introduced.
+- Provider/Prompt (tool-profiles) flows are out of scope and always require the
+  preview dialog.
+
+### 4. Tests Required
+
+- With `applyMode: "direct"`: clean preview auto-applies (exact preview ID
+  asserted) without the dialog; conflicted preview opens the dialog with Apply
+  disabled and never calls apply.
+- With `applyMode: "preview_confirm"` (default): existing preview→confirm
+  behavior is unchanged.
+- Settings page: toggle persists both directions and surfaces read failures
+  without rendering the toggle.

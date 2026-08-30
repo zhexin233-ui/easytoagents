@@ -16,6 +16,7 @@ pub mod overview;
 pub mod profiles;
 pub mod projects;
 pub mod security;
+pub mod settings;
 pub mod skills;
 pub mod sync;
 
@@ -121,6 +122,9 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<overview::SnapshotRestoreInput>()
         .typ::<overview::ApplySnapshotRestoreInput>()
         .typ::<overview::CompleteOnboardingResultDto>()
+        .typ::<settings::ApplyMode>()
+        .typ::<settings::AppSettingsDto>()
+        .typ::<settings::UpdateAppSettingsInput>()
         .commands(collect_commands![
             commands::get_app_info,
             commands::overview::get_dashboard_summary,
@@ -129,6 +133,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::overview::get_interrupted_run,
             commands::overview::preview_snapshot_restore,
             commands::overview::restore_snapshot,
+            commands::settings::get_app_settings,
+            commands::settings::update_app_settings,
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::register_project,

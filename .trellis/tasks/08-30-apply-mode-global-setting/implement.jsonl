@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增 app_settings 迁移必须遵循迁移嵌入、tempfile 测试、命名与 PRAGMA 约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "新命令与 settings 模块必须使用 AppError 稳定错误契约与静态中文消息"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新增 settings 顶层模块与 commands/settings.rs 需要遵循模块组织约定"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "设置读取走 queryOptions 工厂而非自定义 hook，页面直接 useQuery"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "applyMode 属于后端拥有的服务器状态；UI 决策派生而非复制进本地状态"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增设置页与 AssignmentCard prop 扩展需遵循组件约定"}

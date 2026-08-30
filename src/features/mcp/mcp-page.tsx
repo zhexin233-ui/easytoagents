@@ -32,6 +32,10 @@ import {
 } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import {
+  appSettingsQueryOptions,
+  canAutoApplyPreview,
+} from "@/lib/settings-api";
 import { McpImportDialog } from "@/features/mcp/mcp-import-dialog";
 
 interface McpFormState {
@@ -77,6 +81,8 @@ export function McpPage() {
   const queryClient = useQueryClient();
   const serversQuery = useQuery(mcpServersQueryOptions());
   const statusesQuery = useQuery(globalMcpStatusesQueryOptions());
+  const settingsQuery = useQuery(appSettingsQueryOptions());
+  const directApply = settingsQuery.data?.applyMode === "direct";
   const [form, setForm] = useState<McpFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const saveInFlight = useRef(false);
@@ -101,7 +107,11 @@ export function McpPage() {
     },
     onSuccess: async () => {
       await invalidateMcp();
-      setMessage("中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。");
+      setMessage(
+        directApply
+          ? "中央 MCP 已保存；原生配置尚未修改。点击「直接应用全局同步」写入。"
+          : "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+      );
       setForm(emptyForm);
       setFormError(null);
       setFormOpen(false);
@@ -147,7 +157,11 @@ export function McpPage() {
         }),
       ),
     onSuccess: async () => {
-      setMessage("中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。");
+      setMessage(
+        directApply
+          ? "中央 MCP 已删除；点击「直接应用全局同步」安全清理旧受管条目。"
+          : "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
+      );
       await invalidateMcp();
     },
   });
@@ -188,6 +202,14 @@ export function McpPage() {
           "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
         );
         setOpenPreview(null);
+        return;
+      }
+      if (directApply && canAutoApplyPreview(plan)) {
+        applyMutation.mutate({
+          previewId: plan.previewId,
+          tool,
+          projectId: null,
+        });
         return;
       }
       setOpenPreview({ plan, tool });
@@ -498,7 +520,13 @@ export function McpPage() {
                     })
                   }
                 >
-                  生成全局预览
+                  {previewMutation.isPending
+                    ? directApply
+                      ? "正在应用…"
+                      : "正在生成…"
+                    : directApply
+                      ? "直接应用全局同步"
+                      : "生成全局预览"}
                 </Button>
               </article>
             );
@@ -691,7 +719,9 @@ export function McpPage() {
           onImported={async (result) => {
             setOpenImport(null);
             setMessage(
-              `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${result.tool === "claude" ? "Claude" : "Codex"} 全局。原生配置未改写，请单独生成全局预览。`,
+              directApply
+                ? `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${result.tool === "claude" ? "Claude" : "Codex"} 全局。原生配置未改写，可点击「直接应用全局同步」写入。`
+                : `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${result.tool === "claude" ? "Claude" : "Codex"} 全局。原生配置未改写，请单独生成全局预览。`,
             );
             await invalidateMcp();
           }}

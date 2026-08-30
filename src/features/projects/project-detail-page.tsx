@@ -21,6 +21,10 @@ import { mcpKeys, mcpProjectOptionsQueryOptions } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { projectKeys, projectQueryOptions } from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
+import {
+  appSettingsQueryOptions,
+  canAutoApplyPreview,
+} from "@/lib/settings-api";
 import { cn } from "@/lib/utils";
 
 interface OpenProjectPreview {
@@ -35,6 +39,8 @@ export function ProjectDetailPage() {
   const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
   const projectQuery = useQuery(projectQueryOptions(projectId));
+  const settingsQuery = useQuery(appSettingsQueryOptions());
+  const directApply = settingsQuery.data?.applyMode === "direct";
   const [resourceView, setResourceView] = useState<ProjectResourceView>("mcp");
   const [toolView, setToolView] = useState<Tool>("claude");
   const viewKey = projectViewKey(projectId, toolView, resourceView);
@@ -76,6 +82,27 @@ export function ProjectDetailPage() {
     setOpenPreview(null);
     setMessage(null);
     applyMutation.reset();
+  };
+
+  // 直接应用模式下仍先生成持久化预览；只有与预览对话框 Apply 可用条件一致
+  // 的无冲突预览才跳过确认，冲突或错误一律回退到人工确认。
+  const handlePreview = (
+    plan: PreviewPlan,
+    tool: Tool,
+    artifactKind: ArtifactKind,
+  ) => {
+    if (directApply && canAutoApplyPreview(plan)) {
+      applyMutation.mutate(
+        { plan, tool, artifactKind },
+        {
+          onSuccess: () => {
+            setMessage("项目原生配置已通过持久化预览应用并完成写后验证。");
+          },
+        },
+      );
+      return;
+    }
+    setOpenPreview({ plan, tool, artifactKind });
   };
   const changeToolView = (nextTool: Tool) => {
     if (nextTool === toolView) return;
@@ -247,18 +274,16 @@ export function ProjectDetailPage() {
             <ProjectMcpAssignments
               project={project}
               tool={toolView}
-              onPreview={(plan) =>
-                setOpenPreview({ plan, tool: toolView, artifactKind: "mcp" })
-              }
+              directApply={directApply}
+              onPreview={(plan) => handlePreview(plan, toolView, "mcp")}
               onMessage={setMessage}
             />
           ) : (
             <ProjectSkillAssignments
               project={project}
               tool={toolView}
-              onPreview={(plan) =>
-                setOpenPreview({ plan, tool: toolView, artifactKind: "skill" })
-              }
+              directApply={directApply}
+              onPreview={(plan) => handlePreview(plan, toolView, "skill")}
               onMessage={setMessage}
             />
           )}
@@ -339,11 +364,13 @@ function ProjectToolViewButton({
 function ProjectMcpAssignments({
   project,
   tool,
+  directApply,
   onPreview,
   onMessage,
 }: {
   project: ProjectDto;
   tool: Tool;
+  directApply: boolean;
   onPreview: (preview: PreviewPlan) => void;
   onMessage: (message: string) => void;
 }) {
@@ -406,6 +433,7 @@ function ProjectMcpAssignments({
       title="MCP"
       description="全局项持续继承且只读；项目只能追加其他中央 MCP。"
       blocked={blocked}
+      directApply={directApply}
       error={profileErrorText(
         optionsQuery.error ?? assignmentMutation.error ?? previewMutation.error,
       )}
@@ -414,7 +442,11 @@ function ProjectMcpAssignments({
       excludeFromGit={excludeFromGit}
       onExcludeFromGit={setExcludeFromGit}
       previewPending={previewMutation.isPending}
-      previewLabel={`${toolLabel(tool)} MCP 同步预览`}
+      previewLabel={
+        directApply
+          ? `${toolLabel(tool)} MCP 直接应用`
+          : `${toolLabel(tool)} MCP 同步预览`
+      }
       onPreview={() => previewMutation.mutate()}
     >
       {optionsQuery.data?.map((option) => (
@@ -451,11 +483,13 @@ function ProjectMcpAssignments({
 function ProjectSkillAssignments({
   project,
   tool,
+  directApply,
   onPreview,
   onMessage,
 }: {
   project: ProjectDto;
   tool: Tool;
+  directApply: boolean;
   onPreview: (preview: PreviewPlan) => void;
   onMessage: (message: string) => void;
 }) {
@@ -518,6 +552,7 @@ function ProjectSkillAssignments({
       title="Skills"
       description="项目项始终是指向中央库的符号链接；全局项不可在项目中禁用。"
       blocked={blocked}
+      directApply={directApply}
       error={profileErrorText(
         optionsQuery.error ?? assignmentMutation.error ?? previewMutation.error,
       )}
@@ -526,7 +561,11 @@ function ProjectSkillAssignments({
       excludeFromGit={excludeFromGit}
       onExcludeFromGit={setExcludeFromGit}
       previewPending={previewMutation.isPending}
-      previewLabel={`${toolLabel(tool)} Skills 同步预览`}
+      previewLabel={
+        directApply
+          ? `${toolLabel(tool)} Skills 直接应用`
+          : `${toolLabel(tool)} Skills 同步预览`
+      }
       onPreview={() => previewMutation.mutate()}
     >
       {optionsQuery.data?.map((option) => (
@@ -577,6 +616,7 @@ function AssignmentCard({
   title,
   description,
   blocked,
+  directApply,
   error,
   pending,
   empty,
@@ -590,6 +630,7 @@ function AssignmentCard({
   title: string;
   description: string;
   blocked: string | null;
+  directApply: boolean;
   error: string | null;
   pending: boolean;
   empty: boolean;
@@ -600,6 +641,10 @@ function AssignmentCard({
   onPreview: () => void;
   children: React.ReactNode;
 }) {
+  const actionLabel = directApply
+    ? `直接应用项目 ${title} 同步`
+    : `预览项目 ${title} 同步`;
+
   return (
     <article className="bg-card rounded-xl border p-5">
       <h3 className="font-semibold">{title}</h3>
@@ -634,7 +679,7 @@ function AssignmentCard({
           onChange={(event) => onExcludeFromGit(event.target.checked)}
         />
         <span>
-          若目标是应用新建且未跟踪，在预览确认后写入本机 .git/info/exclude
+          若目标是应用新建且未跟踪，在应用时写入本机 .git/info/exclude
         </span>
       </label>
       <Button
@@ -644,7 +689,11 @@ function AssignmentCard({
         disabled={Boolean(blocked) || previewPending}
         onClick={onPreview}
       >
-        {previewPending ? "正在生成…" : `预览项目 ${title} 同步`}
+        {previewPending
+          ? directApply
+            ? "正在应用…"
+            : "正在生成…"
+          : actionLabel}
       </Button>
     </article>
   );

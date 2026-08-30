@@ -12,6 +12,7 @@ const primaryLinks = [
   { to: "/", label: "总览", end: true },
   { to: "/mcp", label: "MCP", end: false },
   { to: "/skills", label: "Skills", end: false },
+  { to: "/settings", label: "设置", end: false },
 ] as const;
 
 const toolLinks = [

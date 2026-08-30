@@ -34,6 +34,8 @@ vi.mock("@/bindings/commands", () => ({
     listMcpProjects: vi.fn(),
     listMcpProjectOptions: vi.fn(),
     listGlobalMcpTargetStatuses: vi.fn(),
+    getAppSettings: vi.fn(),
+    updateAppSettings: vi.fn(),
     previewMcpSync: vi.fn(),
     applyMcpPreview: vi.fn(),
     discoverMcpImport: vi.fn(),
@@ -229,6 +231,10 @@ beforeEach(() => {
         diagnosticCode: null,
       },
     ],
+  });
+  vi.mocked(commands.getAppSettings).mockResolvedValue({
+    status: "ok",
+    data: { applyMode: "preview_confirm" },
   });
   vi.mocked(commands.previewMcpSync).mockResolvedValue({
     status: "ok",
@@ -845,6 +851,57 @@ describe("McpPage", () => {
         projectId: null,
       }),
     );
+  });
+
+  it("直接应用模式下无冲突预览跳过对话框立即 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    renderPage();
+    const previewButton = await globalButton("直接应用全局同步");
+    fireEvent.click(previewButton);
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
+  });
+
+  it("直接应用模式下冲突预览回退为人工确认且 Apply 禁用", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewMcpSync).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...preview,
+        targets: [
+          {
+            ...baseTarget,
+            changeKind: "conflict",
+            status: "external_owned_change",
+          },
+        ],
+      },
+    });
+    renderPage();
+    const previewButton = await globalButton("直接应用全局同步");
+    fireEvent.click(previewButton);
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "应用这份预览" })).toBeDisabled();
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
   it.each([

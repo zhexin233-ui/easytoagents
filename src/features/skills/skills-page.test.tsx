@@ -39,6 +39,8 @@ vi.mock("@/bindings/commands", () => ({
     listSkillProjects: vi.fn(),
     listSkillProjectOptions: vi.fn(),
     listGlobalSkillTargetStatuses: vi.fn(),
+    getAppSettings: vi.fn(),
+    updateAppSettings: vi.fn(),
     previewSkillSync: vi.fn(),
     applySkillPreview: vi.fn(),
   },
@@ -247,6 +249,10 @@ beforeEach(() => {
         diagnosticCode: null,
       },
     ],
+  });
+  vi.mocked(commands.getAppSettings).mockResolvedValue({
+    status: "ok",
+    data: { applyMode: "preview_confirm" },
   });
   vi.mocked(commands.previewSkillSync).mockResolvedValue({
     status: "ok",
@@ -733,6 +739,37 @@ describe("SkillsPage", () => {
         projectId: null,
       }),
     );
+  });
+
+  it("直接应用模式下无冲突 Skills 预览跳过对话框立即 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    renderPage();
+    const section = screen
+      .getByRole("heading", { name: "全局目标状态" })
+      .closest("section");
+    const card = section
+      ? (await within(section).findByText("Claude")).closest("article")
+      : null;
+    if (!card) throw new Error("未找到 Claude Skills 状态卡");
+    const applyButton = within(card).getByRole("button", {
+      name: "直接应用全局同步",
+    });
+    expect(applyButton).toBeEnabled();
+    fireEvent.click(applyButton);
+    await waitFor(() =>
+      expect(commands.applySkillPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/已应用 1 个 Skills 目标/)).toBeVisible();
   });
 
   it("全局空目标预览只提示无需写入，不展示可 Apply 的对话框", async () => {

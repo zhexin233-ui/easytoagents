@@ -74,7 +74,9 @@ targets and must not replace relational constraints with unvalidated JSON.
 - Private directories are `0700`; the database, WAL/SHM, backup, journal, and
   snapshot files are `0600`.
 - The schema contains provider/prompt/MCP/skill/project entities, four explicit
-  assignment tables, managed targets/items, sync runs/items, and snapshots.
+  assignment tables, managed targets/items, sync runs/items, snapshots, and the
+  `app_settings` key-value table for singleton user preferences (no
+  `row_version`; unknown stored enum values fail closed with `DATABASE_ERROR`).
 - Every stored JSON value validates its expected top-level shape. Every stored
   hash is lowercase SHA-256. Global inheritance is not represented by duplicate
   project assignments.

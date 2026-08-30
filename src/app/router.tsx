@@ -6,6 +6,7 @@ import { McpPage } from "@/features/mcp/mcp-page";
 import { ProjectDetailPage } from "@/features/projects/project-detail-page";
 import { ProjectsPage } from "@/features/projects/projects-page";
 import { SkillsPage } from "@/features/skills/skills-page";
+import { SettingsPage } from "@/features/settings/settings-page";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 
 const router = createHashRouter([
@@ -40,6 +41,10 @@ const router = createHashRouter([
       {
         path: "projects/:projectId",
         element: <ProjectDetailPage />,
+      },
+      {
+        path: "settings",
+        element: <SettingsPage />,
       },
     ],
   },
