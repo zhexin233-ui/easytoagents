@@ -3,9 +3,10 @@
 mod apply;
 
 pub use apply::{
-    apply_persisted_preview, detect_interrupted_run, list_snapshots, preview_restore,
-    restore_snapshot, ApplyFaultDecision, ApplyFaultEvent, ApplyFaultInjector, ApplyResult,
-    ApplyTargetInput, InterruptedRunPlan, ManagedItemApply, NoApplyFault, RestorePreview,
+    apply_persisted_preview, delete_snapshots, detect_interrupted_run, list_snapshots,
+    preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent, ApplyFaultInjector,
+    ApplyResult, ApplyTargetInput, DeleteSnapshotsInput, DeleteSnapshotsResultDto,
+    InterruptedRunPlan, ManagedItemApply, NoApplyFault, RestorePreview, SnapshotDeleteFailureDto,
     SnapshotSummary,
 };
 

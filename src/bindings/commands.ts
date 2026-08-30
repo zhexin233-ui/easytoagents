@@ -32,6 +32,14 @@ async listSnapshots() : Promise<Result<SnapshotSummary[], AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async deleteSnapshots(input: DeleteSnapshotsInput) : Promise<Result<DeleteSnapshotsResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_snapshots", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getInterruptedRun() : Promise<Result<InterruptedRunPlan | null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_interrupted_run") };
@@ -553,6 +561,8 @@ export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: str
 export type DeleteMcpResultDto = { id: string; deleted: boolean }
 export type DeleteProfileResultDto = { id: string; deleted: boolean }
 export type DeleteSkillResultDto = { id: string; deleted: boolean }
+export type DeleteSnapshotsInput = { snapshotIds: string[] }
+export type DeleteSnapshotsResultDto = { deletedIds: string[]; failures: SnapshotDeleteFailureDto[] }
 /**
  * RPC、journal 和同步记录共用的稳定错误码。
  */
@@ -627,6 +637,7 @@ export type SkillProjectOptionsInput = { projectId: string; tool: Tool }
 export type SkillProjectSelectionState = "inherited" | "selected" | "available"
 export type SkillStatus = "ready" | "invalid" | "missing"
 export type SkillTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
+export type SnapshotDeleteFailureDto = { snapshotId: string; code: string; message: string }
 export type SnapshotRestoreInput = { snapshotId: string }
 export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; createdAt: string }
 export type SymlinkPolicy = "reject" | "managed_children_only"

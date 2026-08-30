@@ -6,7 +6,10 @@ use crate::{
     app::AppState,
     error::{AppError, ErrorCode},
     overview::{self, *},
-    sync::{self, ApplyResult, InterruptedRunPlan, RestorePreview, SnapshotSummary},
+    sync::{
+        self, ApplyResult, DeleteSnapshotsInput, DeleteSnapshotsResultDto, InterruptedRunPlan,
+        RestorePreview, SnapshotSummary,
+    },
 };
 
 #[tauri::command]
@@ -30,6 +33,21 @@ pub fn complete_onboarding(
 pub fn list_snapshots(state: State<'_, AppState>) -> Result<Vec<SnapshotSummary>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     sync::list_snapshots(&database)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn delete_snapshots(
+    state: State<'_, AppState>,
+    input: DeleteSnapshotsInput,
+) -> Result<DeleteSnapshotsResultDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    sync::delete_snapshots(
+        state.write_operations(),
+        &mut database,
+        state.paths(),
+        &input,
+    )
 }
 
 #[tauri::command]

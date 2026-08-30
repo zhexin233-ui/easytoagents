@@ -132,6 +132,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::overview::get_dashboard_summary,
             commands::overview::complete_onboarding,
             commands::overview::list_snapshots,
+            commands::overview::delete_snapshots,
             commands::overview::get_interrupted_run,
             commands::overview::preview_snapshot_restore,
             commands::overview::restore_snapshot,

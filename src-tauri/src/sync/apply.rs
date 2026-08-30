@@ -35,7 +35,7 @@ use crate::{
     app::AppPaths,
     db::Database,
     domain::{ArtifactKind, ChangeKind, ProjectRoot, Scope, TargetType, Tool},
-    error::{AppError, ErrorCode},
+    error::{AppError, ErrorCode, RecoveryAction},
     git::{inspect_path, render_local_exclude, resolve_local_exclude},
     security::{
         create_private_file, ensure_private_directory, ensure_private_file, PRIVATE_FILE_MODE,
@@ -116,6 +116,27 @@ pub struct SnapshotSummary {
     pub target_path: String,
     pub target_type: TargetType,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSnapshotsInput {
+    pub snapshot_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotDeleteFailureDto {
+    pub snapshot_id: String,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSnapshotsResultDto {
+    pub deleted_ids: Vec<String>,
+    pub failures: Vec<SnapshotDeleteFailureDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -2797,6 +2818,123 @@ pub fn list_snapshots(database: &Database) -> Result<Vec<SnapshotSummary>, AppEr
     Ok(snapshots)
 }
 
+fn snapshot_delete_failure(snapshot_id: &str, error: &AppError) -> SnapshotDeleteFailureDto {
+    SnapshotDeleteFailureDto {
+        snapshot_id: snapshot_id.to_owned(),
+        code: error.code().as_str().to_owned(),
+        message: error.message().to_owned(),
+    }
+}
+
+/// 批量删除私有快照：单项失败 best-effort，成功项在一个 Immediate 事务中统一删行。
+/// 命令层不做整单失败——只有基础设施级错误（锁、审计、DB）才整体 `Err`。
+pub fn delete_snapshots(
+    write_operations: &Mutex<()>,
+    database: &mut Database,
+    paths: &AppPaths,
+    input: &DeleteSnapshotsInput,
+) -> Result<DeleteSnapshotsResultDto, AppError> {
+    let _write_guard = write_operations
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "写入互斥锁不可用", false))?;
+    paths.audit_permissions()?;
+    let database_path = database.path().to_string_lossy().into_owned();
+
+    let mut ordered_ids: Vec<String> = Vec::new();
+    let mut seen = BTreeSet::new();
+    for snapshot_id in &input.snapshot_ids {
+        if seen.insert(snapshot_id.as_str()) {
+            ordered_ids.push(snapshot_id.clone());
+        }
+    }
+
+    let mut failures: Vec<SnapshotDeleteFailureDto> = Vec::new();
+    let mut removable: Vec<(String, PathBuf)> = Vec::new();
+    for snapshot_id in &ordered_ids {
+        let row = database
+            .connection()
+            .query_row(
+                "SELECT run_id, snapshot_path FROM snapshots WHERE id = ?1",
+                [snapshot_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|_| AppError::database(&database_path, "load_snapshot_for_delete"))?;
+        let Some((run_id, snapshot_path)) = row else {
+            failures.push(snapshot_delete_failure(
+                snapshot_id,
+                &AppError::not_found("snapshot", snapshot_id),
+            ));
+            continue;
+        };
+        let active = database
+            .connection()
+            .query_row(
+                "SELECT 1 FROM sync_runs WHERE id = ?1
+                 AND status IN ('applying', 'restoring', 'rollback_failed')",
+                params![&run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|_| AppError::database(&database_path, "check_snapshot_run_active"))?;
+        if active.is_some() {
+            failures.push(snapshot_delete_failure(
+                snapshot_id,
+                &AppError::new(
+                    ErrorCode::Conflict,
+                    "快照仍被活动 run 引用，需等待恢复完成后删除",
+                    true,
+                )
+                .with_action(RecoveryAction::ReviewConflict),
+            ));
+            continue;
+        }
+        let snapshot_path = PathBuf::from(snapshot_path);
+        if let Err(error) =
+            validate_snapshot_storage_path(paths, &run_id, snapshot_id, &snapshot_path)
+        {
+            failures.push(snapshot_delete_failure(snapshot_id, &error));
+            continue;
+        }
+        removable.push((snapshot_id.clone(), snapshot_path));
+    }
+
+    let mut deleted_ids: Vec<String> = Vec::with_capacity(removable.len());
+    for (snapshot_id, snapshot_path) in &removable {
+        match fs::remove_file(snapshot_path) {
+            Ok(()) => deleted_ids.push(snapshot_id.clone()),
+            // 文件已不存在视为已删除，属自愈。
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                deleted_ids.push(snapshot_id.clone())
+            }
+            Err(_) => failures.push(snapshot_delete_failure(
+                snapshot_id,
+                &AppError::atomic_write(&snapshot_path.to_string_lossy(), "remove_snapshot"),
+            )),
+        }
+    }
+
+    if !deleted_ids.is_empty() {
+        let transaction = database
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AppError::database(&database_path, "begin_delete_snapshots"))?;
+        for snapshot_id in &deleted_ids {
+            transaction
+                .execute("DELETE FROM snapshots WHERE id = ?1", [snapshot_id])
+                .map_err(|_| AppError::database(&database_path, "delete_snapshot_row"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|_| AppError::database(&database_path, "commit_delete_snapshots"))?;
+    }
+
+    Ok(DeleteSnapshotsResultDto {
+        deleted_ids,
+        failures,
+    })
+}
+
 pub fn detect_interrupted_run(
     database: &Database,
     paths: &AppPaths,
@@ -3718,6 +3856,37 @@ fn finish_restore_success(
         .map_err(|_| AppError::database(&database_path, "commit_finish_restore"))
 }
 
+/// 快照文件必须位于 `snapshots_root/<run_id>/<snapshot_id>.snapshot`，
+/// 且父目录 canonicalize 后仍在快照根内；恢复与删除共用这条越权边界。
+fn validate_snapshot_storage_path(
+    paths: &AppPaths,
+    run_id: &str,
+    snapshot_id: &str,
+    snapshot_path: &Path,
+) -> Result<(), AppError> {
+    validate_normal_absolute(snapshot_path, "snapshotPath")?;
+    let expected_snapshot_path = paths
+        .snapshots()
+        .join(run_id)
+        .join(format!("{snapshot_id}.snapshot"));
+    if snapshot_path != expected_snapshot_path {
+        return Err(AppError::conflict(
+            "snapshotPath",
+            "快照路径与 run/snapshot 身份不一致",
+        ));
+    }
+    let snapshot_parent = snapshot_path
+        .parent()
+        .ok_or_else(|| AppError::invalid_input("snapshotPath", "快照缺少父目录"))?;
+    let canonical_parent = fs::canonicalize(snapshot_parent).map_err(|_| {
+        AppError::not_found("snapshotDirectory", &snapshot_parent.to_string_lossy())
+    })?;
+    if canonical_parent != snapshot_parent || !canonical_parent.starts_with(paths.snapshots()) {
+        return Err(AppError::conflict("snapshotPath", "快照父目录包含未知链接"));
+    }
+    Ok(())
+}
+
 fn load_snapshot_record(
     database: &Database,
     paths: &AppPaths,
@@ -3753,26 +3922,7 @@ fn load_snapshot_record(
     let target_path = PathBuf::from(&row.2);
     validate_allowed_path(&target_path, allowed_root, false)?;
     let snapshot_path = PathBuf::from(&row.3);
-    validate_normal_absolute(&snapshot_path, "snapshotPath")?;
-    let expected_snapshot_path = paths
-        .snapshots()
-        .join(&row.0)
-        .join(format!("{snapshot_id}.snapshot"));
-    if snapshot_path != expected_snapshot_path {
-        return Err(AppError::conflict(
-            "snapshotPath",
-            "快照路径与 run/snapshot 身份不一致",
-        ));
-    }
-    let snapshot_parent = snapshot_path
-        .parent()
-        .ok_or_else(|| AppError::invalid_input("snapshotPath", "快照缺少父目录"))?;
-    let canonical_parent = fs::canonicalize(snapshot_parent).map_err(|_| {
-        AppError::not_found("snapshotDirectory", &snapshot_parent.to_string_lossy())
-    })?;
-    if canonical_parent != snapshot_parent || !canonical_parent.starts_with(paths.snapshots()) {
-        return Err(AppError::conflict("snapshotPath", "快照父目录包含未知链接"));
-    }
+    validate_snapshot_storage_path(paths, &row.0, snapshot_id, &snapshot_path)?;
     ensure_private_file(&snapshot_path)?;
     let state = match row.6.as_str() {
         "missing" => PathState::Missing,
@@ -3858,9 +4008,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_persisted_preview, claim_preview, detect_interrupted_run, list_snapshots,
-        preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent, ApplyFaultInjector,
-        ApplyTargetInput, ManagedItemApply, NoApplyFault,
+        apply_persisted_preview, claim_preview, delete_snapshots, detect_interrupted_run,
+        list_snapshots, preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent,
+        ApplyFaultInjector, ApplyTargetInput, DeleteSnapshotsInput, ManagedItemApply, NoApplyFault,
     };
     use crate::{
         adapters::{
@@ -5139,6 +5289,280 @@ mod tests {
             .unwrap()
             .snapshot_id;
         (fixture, target, snapshot_id)
+    }
+
+    /// 通过真实 apply 产生一个已完成 run 下的私有快照，供删除用例使用。
+    fn apply_snapshot_for_delete(
+        fixture: &mut Fixture,
+        file_name: &str,
+    ) -> (PathBuf, String, String) {
+        let target = fixture.targets.join(file_name);
+        let descriptor = file_descriptor(&target, Scope::Global, None);
+        let request = insert_target_and_request(
+            &fixture.database,
+            &Uuid::new_v4().to_string(),
+            descriptor.clone(),
+            json!("created"),
+            None,
+            false,
+            None,
+        );
+        let preview_id =
+            persist_requests(&mut fixture.database, Scope::Global, None, vec![request]);
+        let applied = apply_persisted_preview(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &preview_id,
+            &[input(descriptor, json!("created"), &fixture.targets)],
+            &NoApplyFault,
+        )
+        .unwrap();
+        let snapshot_id = list_snapshots(&fixture.database)
+            .unwrap()
+            .into_iter()
+            .find(|snapshot| snapshot.run_id == applied.run_id)
+            .unwrap()
+            .snapshot_id;
+        (target, snapshot_id, applied.run_id)
+    }
+
+    fn snapshot_file(fixture: &Fixture, run_id: &str, snapshot_id: &str) -> PathBuf {
+        fixture
+            .paths
+            .snapshots()
+            .join(run_id)
+            .join(format!("{snapshot_id}.snapshot"))
+    }
+
+    #[test]
+    fn delete_snapshots_removes_rows_and_files_in_one_batch() {
+        let mut fixture = Fixture::new();
+        let (first_target, first_snapshot, first_run) =
+            apply_snapshot_for_delete(&mut fixture, "delete-a.md");
+        let (second_target, second_snapshot, second_run) =
+            apply_snapshot_for_delete(&mut fixture, "delete-b.md");
+        let first_file = snapshot_file(&fixture, &first_run, &first_snapshot);
+        let second_file = snapshot_file(&fixture, &second_run, &second_snapshot);
+        assert!(first_file.is_file());
+        assert!(second_file.is_file());
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![first_snapshot.clone(), second_snapshot.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result.deleted_ids,
+            vec![first_snapshot.clone(), second_snapshot.clone()]
+        );
+        assert!(result.failures.is_empty());
+        assert!(list_snapshots(&fixture.database).unwrap().is_empty());
+        assert!(!first_file.exists());
+        assert!(!second_file.exists());
+        // 删除只针对快照文件，原生目标保持不变。
+        assert!(first_target.is_file());
+        assert!(second_target.is_file());
+    }
+
+    #[test]
+    fn delete_snapshots_removes_a_single_selected_snapshot() {
+        let mut fixture = Fixture::new();
+        let (_kept_target, kept_snapshot, _kept_run) =
+            apply_snapshot_for_delete(&mut fixture, "keep.md");
+        let (removed_target, removed_snapshot, removed_run) =
+            apply_snapshot_for_delete(&mut fixture, "remove.md");
+        let removed_file = snapshot_file(&fixture, &removed_run, &removed_snapshot);
+        assert!(removed_file.is_file());
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![removed_snapshot.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.deleted_ids, vec![removed_snapshot.clone()]);
+        assert!(result.failures.is_empty());
+        let remaining = list_snapshots(&fixture.database).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].snapshot_id, kept_snapshot);
+        assert!(!removed_file.exists());
+        assert!(removed_target.is_file());
+    }
+
+    #[test]
+    fn delete_snapshots_rejects_snapshots_referenced_by_active_runs() {
+        for status in ["applying", "restoring", "rollback_failed"] {
+            let mut fixture = Fixture::new();
+            let (_blocked_target, blocked_snapshot, blocked_run) =
+                apply_snapshot_for_delete(&mut fixture, "blocked.md");
+            let (_free_target, free_snapshot, _free_run) =
+                apply_snapshot_for_delete(&mut fixture, "free.md");
+            fixture
+                .database
+                .connection()
+                .execute(
+                    "UPDATE sync_runs SET status = ?1 WHERE id = ?2",
+                    params![status, blocked_run],
+                )
+                .unwrap();
+            let blocked_file = snapshot_file(&fixture, &blocked_run, &blocked_snapshot);
+            assert!(blocked_file.is_file());
+
+            let result = delete_snapshots(
+                &fixture.write_lock,
+                &mut fixture.database,
+                &fixture.paths,
+                &DeleteSnapshotsInput {
+                    snapshot_ids: vec![blocked_snapshot.clone(), free_snapshot.clone()],
+                },
+            )
+            .unwrap();
+            assert_eq!(result.deleted_ids, vec![free_snapshot.clone()]);
+            assert_eq!(result.failures.len(), 1);
+            assert_eq!(result.failures[0].snapshot_id, blocked_snapshot);
+            assert_eq!(result.failures[0].code, ErrorCode::Conflict.as_str());
+            // 活动引用的快照保持原状：文件与 DB 行都必须保留。
+            assert!(blocked_file.is_file());
+            assert!(list_snapshots(&fixture.database)
+                .unwrap()
+                .iter()
+                .any(|snapshot| snapshot.snapshot_id == blocked_snapshot));
+        }
+    }
+
+    #[test]
+    fn delete_snapshots_reports_missing_ids_without_blocking_the_batch() {
+        let mut fixture = Fixture::new();
+        let (_target, snapshot_id, run_id) = apply_snapshot_for_delete(&mut fixture, "survivor.md");
+        let missing = "00000000-0000-4000-8000-0000000000ab";
+        let file = snapshot_file(&fixture, &run_id, &snapshot_id);
+        assert!(file.is_file());
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![missing.to_owned(), snapshot_id.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.deleted_ids, vec![snapshot_id.clone()]);
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].snapshot_id, missing);
+        assert_eq!(result.failures[0].code, ErrorCode::NotFound.as_str());
+        assert!(list_snapshots(&fixture.database).unwrap().is_empty());
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn delete_snapshots_treats_an_already_missing_file_as_deleted() {
+        let mut fixture = Fixture::new();
+        let (_target, snapshot_id, run_id) = apply_snapshot_for_delete(&mut fixture, "gone.md");
+        let file = snapshot_file(&fixture, &run_id, &snapshot_id);
+        assert!(file.is_file());
+        // 文件已被外部清走：DB 行仍存在，删除应自愈成功而非报错。
+        fs::remove_file(&file).unwrap();
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![snapshot_id.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.deleted_ids, vec![snapshot_id.clone()]);
+        assert!(result.failures.is_empty());
+        assert!(list_snapshots(&fixture.database).unwrap().is_empty());
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn delete_snapshots_fails_closed_on_mismatched_storage_path() {
+        let mut fixture = Fixture::new();
+        let (target, snapshot_id, run_id) = apply_snapshot_for_delete(&mut fixture, "guard.md");
+        let stored_file = snapshot_file(&fixture, &run_id, &snapshot_id);
+        assert!(stored_file.is_file());
+        // 模拟越权记录：DB 的 snapshot_path 指向快照根之外的目标文件。
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE snapshots SET snapshot_path = ?1 WHERE id = ?2",
+                params![target.to_string_lossy(), snapshot_id],
+            )
+            .unwrap();
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![snapshot_id.clone()],
+            },
+        )
+        .unwrap();
+        assert!(result.deleted_ids.is_empty());
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].snapshot_id, snapshot_id);
+        assert_eq!(result.failures[0].code, ErrorCode::Conflict.as_str());
+        // 冒充路径与真实快照文件都未被删除，DB 行保留。
+        assert!(target.is_file());
+        assert!(stored_file.is_file());
+        assert_eq!(list_snapshots(&fixture.database).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_snapshots_deduplicates_repeated_ids() {
+        let mut fixture = Fixture::new();
+        let (_target, snapshot_id, run_id) = apply_snapshot_for_delete(&mut fixture, "dup.md");
+        let file = snapshot_file(&fixture, &run_id, &snapshot_id);
+        assert!(file.is_file());
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![snapshot_id.clone(), snapshot_id.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.deleted_ids, vec![snapshot_id.clone()]);
+        assert!(result.failures.is_empty());
+        assert!(list_snapshots(&fixture.database).unwrap().is_empty());
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn delete_snapshots_accepts_an_empty_input() {
+        let mut fixture = Fixture::new();
+        let (_target, snapshot_id, _run_id) = apply_snapshot_for_delete(&mut fixture, "idle.md");
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(result.deleted_ids.is_empty());
+        assert!(result.failures.is_empty());
+        let remaining = list_snapshots(&fixture.database).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].snapshot_id, snapshot_id);
     }
 
     #[test]
