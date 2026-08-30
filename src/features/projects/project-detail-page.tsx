@@ -486,31 +486,27 @@ function ProjectMcpAssignments({
       onPreview={() => previewMutation.mutate()}
     >
       {optionsQuery.data?.map((option) => (
-        <label
+        <ProjectOptionRow
           key={option.mcpId}
-          className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+          name={option.name}
+          state={option.state}
+          actionLabel={`${option.name} MCP 项目追加`}
+          actionDisabled={
+            option.state === "inherited" ||
+            (option.state === "available" && !option.selectable) ||
+            assignmentMutation.isPending
+          }
+          onToggle={() =>
+            assignmentMutation.mutate({
+              option,
+              assigned: option.state === "available",
+            })
+          }
         >
-          <span>
-            {option.name} · {selectionLabel(option.state)}
-            {!option.enabled ? " · 已停用" : ""}
-          </span>
-          <input
-            aria-label={`${option.name} MCP 项目追加`}
-            type="checkbox"
-            checked={option.state !== "available"}
-            disabled={
-              option.state === "inherited" ||
-              (option.state === "available" && !option.selectable) ||
-              assignmentMutation.isPending
-            }
-            onChange={(event) =>
-              assignmentMutation.mutate({
-                option,
-                assigned: event.target.checked,
-              })
-            }
-          />
-        </label>
+          {!option.enabled ? (
+            <OptionTag tone="warning">已停用</OptionTag>
+          ) : null}
+        </ProjectOptionRow>
       ))}
     </AssignmentCard>
   );
@@ -608,31 +604,27 @@ function ProjectSkillAssignments({
       onPreview={() => previewMutation.mutate()}
     >
       {optionsQuery.data?.map((option) => (
-        <label
+        <ProjectOptionRow
           key={option.skillId}
-          className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+          name={option.name}
+          state={option.state}
+          actionLabel={`${option.name} Skill 项目追加`}
+          actionDisabled={
+            option.state === "inherited" ||
+            (option.state === "available" && !option.selectable) ||
+            assignmentMutation.isPending
+          }
+          onToggle={() =>
+            assignmentMutation.mutate({
+              option,
+              assigned: option.state === "available",
+            })
+          }
         >
-          <span>
-            {option.name} · {selectionLabel(option.state)}
-            {option.status !== "ready" ? ` · ${option.status}` : ""}
-          </span>
-          <input
-            aria-label={`${option.name} Skill 项目追加`}
-            type="checkbox"
-            checked={option.state !== "available"}
-            disabled={
-              option.state === "inherited" ||
-              (option.state === "available" && !option.selectable) ||
-              assignmentMutation.isPending
-            }
-            onChange={(event) =>
-              assignmentMutation.mutate({
-                option,
-                assigned: event.target.checked,
-              })
-            }
-          />
-        </label>
+          {option.status !== "ready" ? (
+            <OptionTag tone="warning">{option.status}</OptionTag>
+          ) : null}
+        </ProjectOptionRow>
       ))}
     </AssignmentCard>
   );
@@ -751,15 +743,87 @@ function projectBlocked(project: ProjectDto, tool: Tool): string | null {
   return null;
 }
 
-function selectionLabel(state: "inherited" | "selected" | "available") {
+type ProjectSelectionState = "inherited" | "selected" | "available";
+
+function ProjectOptionRow({
+  name,
+  state,
+  actionLabel,
+  actionDisabled,
+  onToggle,
+  children,
+}: {
+  name: string;
+  state: ProjectSelectionState;
+  actionLabel: string;
+  actionDisabled: boolean;
+  onToggle: () => void;
+  children?: React.ReactNode;
+}) {
+  const assigned = state !== "available";
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="shrink-0">{name}</span>
+        <StateTags state={state} />
+        {children}
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="shrink-0 shadow-none"
+        aria-label={actionLabel}
+        aria-pressed={assigned}
+        disabled={actionDisabled}
+        onClick={onToggle}
+      >
+        {assigned ? "禁用" : "启用"}
+      </Button>
+    </div>
+  );
+}
+
+function StateTags({ state }: { state: ProjectSelectionState }) {
   switch (state) {
     case "inherited":
-      return "全局继承（只读）";
+      return (
+        <>
+          <OptionTag tone="info">全局继承</OptionTag>
+          <OptionTag tone="muted">只读</OptionTag>
+        </>
+      );
     case "selected":
-      return "项目追加";
+      return <OptionTag tone="success">项目追加</OptionTag>;
     case "available":
-      return "可追加";
+      return <OptionTag tone="muted">可追加</OptionTag>;
   }
+}
+
+function OptionTag({
+  tone,
+  children,
+}: {
+  tone: "muted" | "info" | "success" | "warning";
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+        tone === "muted" && "bg-muted text-muted-foreground border-transparent",
+        tone === "info" &&
+          "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300",
+        tone === "success" &&
+          "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
+        tone === "warning" &&
+          "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300",
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
 function toolLabel(tool: Tool) {

@@ -373,14 +373,16 @@ describe("ProjectDetailPage", () => {
     ).toBeVisible();
   });
 
-  it("直接应用模式下勾选项目追加自动同步并 Apply", async () => {
+  it("直接应用模式下启用项目追加自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct" },
     });
     renderPage();
 
-    fireEvent.click(await screen.findByLabelText("项目 MCP MCP 项目追加"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "项目 MCP MCP 项目追加" }),
+    );
     await waitFor(() =>
       expect(commands.setProjectMcpAssignment).toHaveBeenCalledWith({
         projectId: project.id,
@@ -839,11 +841,21 @@ describe("ProjectDetailPage", () => {
       });
     const { client } = renderPage();
     const invalidateQueries = vi.spyOn(client, "invalidateQueries");
-    const inherited = await screen.findByLabelText("全局 MCP MCP 项目追加");
-    const available = screen.getByLabelText("项目 MCP MCP 项目追加");
-    expect(inherited).toBeChecked();
+    const inherited = await screen.findByRole("button", {
+      name: "全局 MCP MCP 项目追加",
+    });
+    const available = screen.getByRole("button", {
+      name: "项目 MCP MCP 项目追加",
+    });
     expect(inherited).toBeDisabled();
-    expect(available).not.toBeChecked();
+    expect(inherited).toHaveAttribute("aria-pressed", "true");
+    expect(inherited).toHaveTextContent("禁用");
+    expect(available).toBeEnabled();
+    expect(available).toHaveAttribute("aria-pressed", "false");
+    expect(available).toHaveTextContent("启用");
+    expect(screen.getByText("全局继承")).toBeVisible();
+    expect(screen.getByText("只读")).toBeVisible();
+    expect(screen.getByText("可追加")).toBeVisible();
 
     fireEvent.click(available);
     await waitFor(() =>
@@ -873,7 +885,9 @@ describe("ProjectDetailPage", () => {
     );
 
     vi.mocked(commands.setProjectMcpAssignment).mockClear();
-    fireEvent.click(screen.getByLabelText("项目 MCP MCP 项目追加"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "项目 MCP MCP 项目追加" }),
+    );
     await waitFor(() =>
       expect(commands.setProjectMcpAssignment).toHaveBeenCalledWith({
         projectId: project.id,
@@ -922,11 +936,21 @@ describe("ProjectDetailPage", () => {
       await screen.findByRole("button", { name: "管理项目 Skill" }),
     );
 
-    const inherited = await screen.findByLabelText("全局 Skill Skill 项目追加");
-    const available = screen.getByLabelText("项目 Skill Skill 项目追加");
-    expect(inherited).toBeChecked();
+    const inherited = await screen.findByRole("button", {
+      name: "全局 Skill Skill 项目追加",
+    });
+    const available = screen.getByRole("button", {
+      name: "项目 Skill Skill 项目追加",
+    });
     expect(inherited).toBeDisabled();
-    expect(available).not.toBeChecked();
+    expect(inherited).toHaveAttribute("aria-pressed", "true");
+    expect(inherited).toHaveTextContent("禁用");
+    expect(available).toBeEnabled();
+    expect(available).toHaveAttribute("aria-pressed", "false");
+    expect(available).toHaveTextContent("启用");
+    expect(screen.getByText("全局继承")).toBeVisible();
+    expect(screen.getByText("只读")).toBeVisible();
+    expect(screen.getByText("可追加")).toBeVisible();
 
     fireEvent.click(available);
     await waitFor(() =>
@@ -956,7 +980,9 @@ describe("ProjectDetailPage", () => {
     );
 
     vi.mocked(commands.setProjectSkillAssignment).mockClear();
-    fireEvent.click(screen.getByLabelText("项目 Skill Skill 项目追加"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "项目 Skill Skill 项目追加" }),
+    );
     await waitFor(() =>
       expect(commands.setProjectSkillAssignment).toHaveBeenCalledWith({
         projectId: project.id,
@@ -1001,6 +1027,54 @@ describe("ProjectDetailPage", () => {
         projectId: project.id,
       }),
     );
+  });
+
+  it("已追加与异常状态以 tag 展示且按钮显示禁用", async () => {
+    vi.mocked(commands.listMcpProjectOptions).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          mcpId: "00000000-0000-4000-8000-000000000722",
+          name: "已追加 MCP",
+          enabled: false,
+          state: "selected",
+          selectable: true,
+          rowVersion: 9,
+        },
+      ],
+    });
+    vi.mocked(commands.listSkillProjectOptions).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          skillId: "00000000-0000-4000-8000-000000000723",
+          name: "异常 Skill",
+          status: "invalid",
+          state: "selected",
+          selectable: true,
+          rowVersion: 10,
+        },
+      ],
+    });
+    renderPage();
+
+    const mcpButton = await screen.findByRole("button", {
+      name: "已追加 MCP MCP 项目追加",
+    });
+    expect(mcpButton).toBeEnabled();
+    expect(mcpButton).toHaveAttribute("aria-pressed", "true");
+    expect(mcpButton).toHaveTextContent("禁用");
+    expect(screen.getByText("项目追加")).toBeVisible();
+    expect(screen.getByText("已停用")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
+    const skillButton = await screen.findByRole("button", {
+      name: "异常 Skill Skill 项目追加",
+    });
+    expect(skillButton).toHaveAttribute("aria-pressed", "true");
+    expect(skillButton).toHaveTextContent("禁用");
+    expect(screen.getByText("项目追加")).toBeVisible();
+    expect(screen.getByText("invalid")).toBeVisible();
   });
 
   it("MCP 与 Skill 空目标预览只解释无需写入且不开放 Apply", async () => {
