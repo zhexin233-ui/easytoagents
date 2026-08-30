@@ -676,3 +676,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: 美化 GitHub 仓库展示
+
+**Date**: 2026-08-30
+**Task**: 美化 GitHub 仓库展示
+**Branch**: `main`
+
+### Summary
+
+重构 README 信息层级，新增隔离空数据应用截图，更新 GitHub Description 与 Topics，并记录 Social Preview 人工交接步骤。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `88d8283` | (see git log) |
+
+### Status
+
+[OK] **Completed**
