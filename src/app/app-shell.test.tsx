@@ -1,6 +1,12 @@
 /* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -46,6 +52,17 @@ describe("AppShell 侧边栏设置入口", () => {
   });
 
   afterEach(cleanup);
+
+  it("按总览、提示词、MCP、Skills、项目的顺序渲染一级导航", () => {
+    renderShell();
+
+    const navigation = screen.getByRole("navigation", { name: "一级导航" });
+    expect(
+      within(navigation)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["总览", "提示词", "MCP", "Skills", "项目"]);
+  });
 
   it("设置不再是一级导航链接，而是左下角的图标按钮", () => {
     renderShell();
