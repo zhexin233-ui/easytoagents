@@ -739,3 +739,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: 全局同步三秒通知
+
+**Date**: 2026-09-01
+**Task**: 全局同步三秒通知
+**Branch**: `codex/cursor-ide-support`
+
+### Summary
+
+新增共享三秒通知机制，统一 MCP、Skills、Prompts 全局直接应用的成功与失败反馈；补齐计时、可访问性和页面回归测试，并更新前端 direct-apply 规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0036a94` | (see git log) |
+
+### Status
+
+[OK] **Completed**
