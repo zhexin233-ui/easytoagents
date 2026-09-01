@@ -697,3 +697,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: 完成 Cursor IDE 支持
+
+**Date**: 2026-09-01
+**Task**: 完成 Cursor IDE 支持
+**Branch**: `codex/cursor-ide-support`
+
+### Summary
+
+实现 Cursor 全局/项目 MCP 与 Skills，保持 Provider、Prompt 和项目 Rules 不支持；补齐安全迁移、桌面探测、维护者接入文档、实机 Skills 符号链接验证及完整测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `10ee524` | (see git log) |
+
+### Status
+
+[OK] **Completed**
