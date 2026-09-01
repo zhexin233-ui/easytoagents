@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import type { ArtifactKind, PreviewPlan, Tool } from "@/bindings/commands";
+import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { ProviderPanel } from "@/features/tool-profiles/provider-panel";
 import {
@@ -13,6 +14,7 @@ import {
   appSettingsQueryOptions,
   canAutoApplyPreview,
 } from "@/lib/settings-api";
+import { toolMetadata } from "@/lib/tool-metadata";
 import { commands } from "@/bindings/commands";
 
 interface ToolProfilesPageProps {
@@ -56,8 +58,23 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
     setOpenPreview({ plan, artifactKind });
   };
 
-  const title = tool === "claude" ? "Claude" : "Codex";
+  const metadata = toolMetadata(tool);
+  const title = metadata.label;
   const applyError = profileErrorText(applyMutation.error);
+
+  if (!metadata.capabilities.provider) {
+    return (
+      <main className="p-6 lg:p-8">
+        <div className="mx-auto max-w-6xl">
+          <BlockingState
+            title={`${title} 渠道不受支持`}
+            description={`${title} 仅支持 MCP 与 Skills；Provider、API Key 和模型设置不会被读取、创建、预览或应用。`}
+            code="CURSOR_PROVIDER_UNSUPPORTED"
+          />
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="p-6 lg:p-8">

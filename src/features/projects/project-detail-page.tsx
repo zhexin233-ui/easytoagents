@@ -11,8 +11,6 @@ import {
   type SkillProjectOptionDto,
   type Tool,
 } from "@/bindings/commands";
-import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
-import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
@@ -27,6 +25,7 @@ import {
 } from "@/lib/profile-api";
 import { projectKeys, projectQueryOptions } from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
+import { MCP_TOOLS, toolMetadata } from "@/lib/tool-metadata";
 import {
   appSettingsQueryOptions,
   canAutoApplyPreview,
@@ -145,6 +144,12 @@ export function ProjectDetailPage() {
   const changeToolView = (nextTool: Tool) => {
     if (nextTool === toolView) return;
     setToolView(nextTool);
+    if (
+      resourceView === "prompt" &&
+      !toolMetadata(nextTool).capabilities.promptProject
+    ) {
+      setResourceView("mcp");
+    }
     setOpenPreview(null);
     setMessage(null);
     applyMutation.reset();
@@ -219,7 +224,7 @@ export function ProjectDetailPage() {
         aria-labelledby="project-status-title"
       >
         <h2 id="project-status-title" className="text-lg font-semibold">
-          双工具配置状态
+          工具配置状态
         </h2>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {project.targets.map((target) => {
@@ -303,32 +308,32 @@ export function ProjectDetailPage() {
               >
                 Skill
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={resourceView === "prompt" ? "default" : "outline"}
-                aria-label="管理项目提示词"
-                aria-pressed={resourceView === "prompt"}
-                onClick={() => changeResourceView("prompt")}
-              >
-                提示词
-              </Button>
+              {toolMetadata(toolView).capabilities.promptProject ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={resourceView === "prompt" ? "default" : "outline"}
+                  aria-label="管理项目提示词"
+                  aria-pressed={resourceView === "prompt"}
+                  onClick={() => changeResourceView("prompt")}
+                >
+                  提示词
+                </Button>
+              ) : null}
             </div>
             <div
               className="flex items-center gap-2"
               role="group"
               aria-label="项目平台管理视图"
             >
-              <ProjectToolViewButton
-                tool="claude"
-                selected={toolView === "claude"}
-                onClick={() => changeToolView("claude")}
-              />
-              <ProjectToolViewButton
-                tool="codex"
-                selected={toolView === "codex"}
-                onClick={() => changeToolView("codex")}
-              />
+              {MCP_TOOLS.map((tool) => (
+                <ProjectToolViewButton
+                  key={tool}
+                  tool={tool}
+                  selected={toolView === tool}
+                  onClick={() => changeToolView(tool)}
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -361,13 +366,19 @@ export function ProjectDetailPage() {
               onPreview={(plan) => handlePreview(plan, toolView, "skill")}
               onMessage={setMessage}
             />
-          ) : (
+          ) : toolMetadata(toolView).capabilities.promptProject ? (
             <ProjectPromptAssignments
               project={project}
               tool={toolView}
               directApply={directApply}
               onPreview={(plan) => handlePreview(plan, toolView, "prompt")}
               onMessage={setMessage}
+            />
+          ) : (
+            <BlockingState
+              title={`${toolLabel(toolView)} 项目提示词不受支持`}
+              description={`${toolLabel(toolView)} 项目视图只支持 MCP 与 Skills，不会读取或写入 Rules、Prompt 或 AGENTS.md。`}
+              code="CURSOR_PROMPT_UNSUPPORTED"
             />
           )}
         </section>
@@ -418,7 +429,8 @@ function ProjectToolViewButton({
   selected,
   onClick,
 }: ProjectToolViewButtonProps) {
-  const label = `管理 ${toolLabel(tool)} 项目资源`;
+  const metadata = toolMetadata(tool);
+  const label = `管理 ${metadata.label} 项目资源`;
 
   return (
     <Button
@@ -437,7 +449,7 @@ function ProjectToolViewButton({
       onClick={onClick}
     >
       <img
-        src={tool === "claude" ? claudeIconUrl : codexIconUrl}
+        src={metadata.icon}
         alt=""
         aria-hidden="true"
         draggable={false}
@@ -765,6 +777,15 @@ function ProjectPromptAssignments({
       assignmentMutation.error ??
       previewMutation.error,
   );
+  if (!toolMetadata(tool).capabilities.promptProject) {
+    return (
+      <BlockingState
+        title={`${toolLabel(tool)} 项目提示词不受支持`}
+        description={`${toolLabel(tool)} 不会读取或写入项目 Rules、Prompt 或 AGENTS.md。`}
+        code="CURSOR_PROMPT_UNSUPPORTED"
+      />
+    );
+  }
   const targetFile = tool === "claude" ? "CLAUDE.md" : "AGENTS.md";
 
   return (
@@ -1073,7 +1094,7 @@ function OptionTag({
 }
 
 function toolLabel(tool: Tool) {
-  return tool === "claude" ? "Claude" : "Codex";
+  return toolMetadata(tool).label;
 }
 
 function artifactLabel(kind: ArtifactKind) {

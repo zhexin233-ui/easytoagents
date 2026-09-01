@@ -67,6 +67,16 @@ fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKin
                 environment.home().join(".agents/skills"),
             ),
         ],
+        Tool::Cursor => vec![
+            (
+                SourceKind::CursorHome,
+                environment.home().join(".cursor/skills"),
+            ),
+            (
+                SourceKind::CursorAgents,
+                environment.home().join(".agents/skills"),
+            ),
+        ],
     }
 }
 
@@ -892,6 +902,29 @@ mod tests {
     }
 
     #[test]
+    fn cursor_uses_dedicated_and_agents_import_sources_without_assigning() {
+        let mut fixture = Fixture::new();
+        let cursor_source = fixture.environment.home().join(".cursor/skills/cursor-one");
+        let agents_source = fixture.environment.home().join(".agents/skills/agents-one");
+        fixture.skill(&cursor_source, "cursor-one");
+        fixture.skill(&agents_source, "agents-one");
+        let metadata = fixture.metadata_counts();
+
+        let preview = fixture.preview(Tool::Cursor);
+        assert_eq!(preview.sources.len(), 2);
+        assert_eq!(preview.sources[0].kind, SourceKind::CursorHome);
+        assert_eq!(preview.sources[1].kind, SourceKind::CursorAgents);
+        assert_eq!(preview.candidates.len(), 2);
+        let input = Fixture::input(&preview);
+        let result = fixture.confirm(&input).unwrap();
+        assert_eq!(result.tool, Tool::Cursor);
+        assert_eq!(result.created_count, 2);
+        assert_eq!(fixture.metadata_counts(), metadata);
+        assert!(cursor_source.join("SKILL.md").is_file());
+        assert!(agents_source.join("SKILL.md").is_file());
+    }
+
+    #[test]
     fn builtin_collections_aliases_and_symlinked_collection_aliases_are_never_read() {
         for tool in [Tool::Codex, Tool::Claude] {
             let fixture = Fixture::new();
@@ -899,6 +932,7 @@ mod tests {
             let source = match tool {
                 Tool::Codex => compat.clone(),
                 Tool::Claude => fixture.environment.claude_config_dir().join("skills"),
+                Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
             };
             fixture.skill(&compat.join(".system/builtin"), "builtin");
             fs::create_dir_all(&source).unwrap();
@@ -934,6 +968,7 @@ mod tests {
                 let source = match tool {
                     Tool::Codex => compat.clone(),
                     Tool::Claude => fixture.environment.claude_config_dir().join("skills"),
+                    Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
                 };
                 let actual = fixture.root.join("external");
                 fixture.skill(&actual.join("one"), "one");

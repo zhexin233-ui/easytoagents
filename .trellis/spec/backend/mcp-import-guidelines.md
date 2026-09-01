@@ -47,6 +47,10 @@ enter the central library only after an explicit selection and confirmation.
 - Claude/Codex 均接受结构一致的显式 `type=stdio/http/streamable_http`，省略 type
   时按 command/url 推断。已知协议与字段不匹配为 invalid，未知协议为 unsupported。
   显式 type 映射到中央 transport；其规范化差异只在后续同步预览展示。
+- Cursor 从全局 `$HOME/.cursor/mcp.json` 或项目 `<root>/.cursor/mcp.json` 的
+  `mcpServers` object 显式导入。支持 stdio（`command`/`args`/`env`）与 HTTP
+  （`url`/`headers`）；`headers`、`env`、`auth` 及嵌套凭据必须登记脱敏，不能
+  落入普通 extensions、预览、错误、日志或快照索引明文。
 - Disabled entries, SSE, `env_http_headers`, mixed transports, and unsafe ordinary
   fields remain unselectable and unmanaged. Do not relax central validation.
   Central `enabled=false` removes an item from the desired set: adopting a native
@@ -136,8 +140,8 @@ enter the central library only after an explicit selection and confirmation.
 - Good: select one native stdio entry, confirm without modifying file bytes, then
   scan again to select another entry; the next sync preview has proven ownership
   and Apply preserves all unselected entries.
-- Base: matching configurations from two tools reuse one central row with two
-  explicit source assignments; a disabled neighbor stays external.
+- Base: matching configurations from Claude/Codex/Cursor reuse one central row with
+  three explicit source assignments; a disabled neighbor stays external.
 - Good: node_repl 命令包含已识别的运行路径时可导入；同路径若同时作为 API key 使用，
   仍按凭据拒绝。重扫与新 redactor 扫描必须得到相同资格判断。
 - Bad: create central records alone and treat a matching native name as ownership,
@@ -153,7 +157,7 @@ enter the central library only after an explicit selection and confirmation.
 - Audit nonempty serialized RPC, import context/display storage, errors, sync items,
   and journal carriers for fixture secrets; also prove allowed private values survive.
 - Extend `db::tests` to upgrade a v4 fixture, preserve existing rows, and reopen v5.
-- Extend `mcp-page.test.tsx`: both tools, exact selection payload, no default checks,
+- Extend `mcp-page.test.tsx`: all MCP-capable tools, exact selection payload, no default checks,
   unselectable status, loading/error/empty feedback, stale/rescan, pending close,
   late response isolation, focus, invalidation, and no create/Apply calls.
 - Regenerate/check bindings; run `pnpm check`. A jsdom test is not a real desktop

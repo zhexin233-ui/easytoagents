@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层工具枚举、模板和生成合同一致性"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLite 前向迁移与数据兼容约束"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Adapter、显式发现、预览与恢复安全合同"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "MCP 显式导入、格式和凭据处理"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "Skills 导入、中央副本和首次状态合同"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 Preview/Apply 与能力状态规范"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "生成 DTO 与 Tool 类型唯一来源"}
+{"file": ".trellis/tasks/08-31-cursor-ide-support/research/cursor-official-config.md", "reason": "Cursor 官方路径、格式和不支持边界"}
+{"file": ".trellis/tasks/08-31-cursor-ide-support/research/repository-impact.md", "reason": "跨层影响面与维护文档入口"}

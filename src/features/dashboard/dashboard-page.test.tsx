@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,6 +29,13 @@ const summary: DashboardSummaryDto = {
       activePromptName: null,
       globalMcpCount: 1,
       globalSkillCount: 0,
+    },
+    {
+      tool: "cursor",
+      activeProviderName: null,
+      activePromptName: null,
+      globalMcpCount: 4,
+      globalSkillCount: 5,
     },
   ],
   projectCount: 4,
@@ -71,7 +78,7 @@ describe("DashboardPage", () => {
     vi.mocked(commands.listSnapshots).mockReset();
   });
 
-  it("展示双工具、项目、冲突、快照与最近同步聚合", async () => {
+  it("展示全部工具、Cursor 不支持能力、项目、冲突、快照与最近同步聚合", async () => {
     vi.mocked(commands.getDashboardSummary).mockResolvedValue({
       status: "ok",
       data: summary,
@@ -80,6 +87,13 @@ describe("DashboardPage", () => {
 
     expect(await screen.findByText("Claude 主渠道")).toBeInTheDocument();
     expect(screen.getByText("Codex 主渠道")).toBeInTheDocument();
+    const cursorHeading = screen.getByRole("heading", { name: "Cursor" });
+    const cursorCard = cursorHeading.closest("article");
+    if (!cursorCard) throw new Error("未找到 Cursor 总览卡片");
+    expect(within(cursorCard).getAllByText("不支持")).toHaveLength(2);
+    expect(
+      within(cursorCard).getByRole("link", { name: "管理 MCP/Skills" }),
+    ).toHaveAttribute("href", "/mcp");
     expect(screen.getByText("最近同步")).toBeInTheDocument();
     expect(screen.getByText("apply · global")).toBeInTheDocument();
     expect(screen.getByText("待处理冲突")).toBeInTheDocument();

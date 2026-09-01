@@ -76,7 +76,7 @@ pub fn dashboard_summary(
     database: &Database,
     paths: &AppPaths,
 ) -> Result<DashboardSummaryDto, AppError> {
-    let tools = [Tool::Claude, Tool::Codex]
+    let tools = crate::adapters::ASSIGNABLE_MCP_TOOLS
         .into_iter()
         .map(|tool| tool_summary(database, tool))
         .collect::<Result<Vec<_>, _>>()?;
@@ -156,25 +156,32 @@ fn onboarding_completed(database: &Database) -> Result<bool, AppError> {
 
 fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryDto, AppError> {
     let database_path = database.path().to_string_lossy();
-    let active_provider_name = database
-        .connection()
-        .query_row(
-            "SELECT name FROM provider_profiles WHERE tool = ?1 AND is_active = 1",
-            [tool.as_str()],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|_| AppError::database(&database_path, "read_dashboard_provider"))?;
-    let active_prompt_name = database
-        .connection()
-        .query_row(
-            "SELECT name FROM prompt_profiles
-             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1",
-            [tool.as_str()],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|_| AppError::database(&database_path, "read_dashboard_prompt"))?;
+    let active_provider_name = if tool == Tool::Cursor {
+        None
+    } else {
+        database
+            .connection()
+            .query_row(
+                "SELECT name FROM provider_profiles WHERE tool = ?1 AND is_active = 1",
+                [tool.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|_| AppError::database(&database_path, "read_dashboard_provider"))?
+    };
+    let active_prompt_name = match tool {
+        Tool::Claude | Tool::Codex => database
+            .connection()
+            .query_row(
+                "SELECT name FROM prompt_profiles
+                 WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1",
+                [tool.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|_| AppError::database(&database_path, "read_dashboard_prompt"))?,
+        Tool::Cursor => None,
+    };
     let global_mcp_count = database
         .connection()
         .query_row(
@@ -329,6 +336,7 @@ fn global_allowed_root(
     let tool = match tool {
         "claude" => Tool::Claude,
         "codex" => Tool::Codex,
+        "cursor" => Tool::Cursor,
         _ => {
             return Err(AppError::conflict("snapshot", "快照包含未知工具身份"));
         }
@@ -347,6 +355,15 @@ fn global_allowed_root(
         (Tool::Claude, _) => environment.claude_config_dir().to_path_buf(),
         // Codex 全局 Skills 目标位于 CODEX_HOME/skills，恢复根与同步写入根一致。
         (Tool::Codex, _) => environment.codex_home().to_path_buf(),
+        (Tool::Cursor, ArtifactKind::Mcp | ArtifactKind::Skill) => {
+            environment.home().join(".cursor")
+        }
+        (Tool::Cursor, ArtifactKind::Provider | ArtifactKind::Prompt) => {
+            return Err(AppError::invalid_input(
+                "capability",
+                "Cursor 不支持 Provider/Prompt 快照恢复",
+            ));
+        }
     })
 }
 

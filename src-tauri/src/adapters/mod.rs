@@ -21,6 +21,13 @@ use crate::{
 
 pub mod claude;
 pub mod codex;
+pub mod cursor;
+
+/// Provider/Prompt 页面与引导仍只服务有正式文件合同的工具。
+pub const PROFILE_TOOLS: [Tool; 2] = [Tool::Claude, Tool::Codex];
+/// MCP 与 Skills 是 Cursor MVP 唯一可分配、可同步的资源。
+pub const ASSIGNABLE_MCP_TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::Cursor];
+pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::Cursor];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -182,6 +189,7 @@ impl ToolAvailabilityState {
 pub struct ToolAvailability {
     pub claude: ToolAvailabilityState,
     pub codex: ToolAvailabilityState,
+    pub cursor: ToolAvailabilityState,
 }
 
 impl ToolAvailability {
@@ -189,6 +197,7 @@ impl ToolAvailability {
         Self {
             claude: ToolAvailabilityState::Installed,
             codex: ToolAvailabilityState::Installed,
+            cursor: ToolAvailabilityState::Installed,
         }
     }
 
@@ -196,6 +205,7 @@ impl ToolAvailability {
         Self {
             claude: ToolAvailabilityState::Unavailable,
             codex: ToolAvailabilityState::Unavailable,
+            cursor: ToolAvailabilityState::Unavailable,
         }
     }
 }
@@ -209,6 +219,7 @@ pub struct ExplicitEnvironment {
     uses_default_claude_config_dir: bool,
     claude_installation_version: Option<String>,
     codex_installation_version: Option<String>,
+    cursor_installation_version: Option<String>,
     claude_provider_policy: PolicyState,
     availability: ToolAvailability,
     claude_user_mcp_evidence: Option<VerifiedClaudeUserMcpEvidence>,
@@ -237,6 +248,7 @@ impl ExplicitEnvironment {
             uses_default_claude_config_dir,
             claude_installation_version: None,
             codex_installation_version: None,
+            cursor_installation_version: None,
             claude_provider_policy: PolicyState::Unknown,
             availability,
             claude_user_mcp_evidence: None,
@@ -271,6 +283,21 @@ impl ExplicitEnvironment {
             ));
         }
         self.codex_installation_version = Some(version);
+        Ok(self)
+    }
+
+    pub fn with_cursor_installation_version(
+        mut self,
+        version: impl Into<String>,
+    ) -> Result<Self, AppError> {
+        let version = version.into();
+        if version.trim().is_empty() {
+            return Err(AppError::invalid_input(
+                "installationVersion",
+                "Cursor 安装版本不能为空",
+            ));
+        }
+        self.cursor_installation_version = Some(version);
         Ok(self)
     }
 
@@ -316,6 +343,7 @@ impl ExplicitEnvironment {
         match tool {
             Tool::Claude => self.availability.claude,
             Tool::Codex => self.availability.codex,
+            Tool::Cursor => self.availability.cursor,
         }
     }
 
@@ -327,10 +355,15 @@ impl ExplicitEnvironment {
         self.codex_installation_version.as_deref()
     }
 
+    pub fn cursor_installation_version(&self) -> Option<&str> {
+        self.cursor_installation_version.as_deref()
+    }
+
     pub fn installation_version(&self, tool: Tool) -> Option<&str> {
         match tool {
             Tool::Claude => self.claude_installation_version(),
             Tool::Codex => self.codex_installation_version(),
+            Tool::Cursor => self.cursor_installation_version(),
         }
     }
 
@@ -1453,6 +1486,7 @@ mod tests {
             ToolAvailability {
                 claude: ToolAvailabilityState::Unavailable,
                 codex: ToolAvailabilityState::Unavailable,
+                cursor: ToolAvailabilityState::Unavailable,
             },
         )
         .unwrap();

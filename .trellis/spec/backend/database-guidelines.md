@@ -7,7 +7,7 @@
 ## Overview
 
 The desktop backend uses bundled SQLite through `rusqlite`. The database is the
-structured source of truth; native Claude/Codex files are synchronization
+structured source of truth; native Claude/Codex/Cursor files are synchronization
 targets and must not replace relational constraints with unvalidated JSON.
 
 ## Query Patterns
@@ -77,6 +77,11 @@ CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
 - 同形 CHECK 字符串可能出现在多张表（如 `tool IN ('claude','codex')` 同时
   存在于 `provider_profiles` 与 `prompt_profiles`）：`WHERE` 必须额外限定
   `name = '<目标表>'`，否则 replace 会误伤其他表（0009 先例）。
+- 0010 只把 Cursor 放进 MCP/Skill 的全局/项目分配、导入预览，以及
+  `managed_targets` 的 `mcp`/`skill` 组合；Provider、Prompt、项目 Rules 与
+  Cursor 的任意其他 artifact 组合必须继续由表级 CHECK 拒绝。执行
+  `writable_schema` 文本改写前，运行时代码必须验证每张目标表的精确旧锚点；
+  缺失或重复锚点应让迁移事务失败，不能静默推进版本。
 - 当列的语义整体作废而表无法重建时（0009：`prompt_profiles` 被以
   RESTRICT 外键引用），保留旧列 + `ALTER TABLE ADD COLUMN` 新语义列是
   首选：每工具启用位 `is_active_claude`/`is_active_codex` + 各自部分唯一

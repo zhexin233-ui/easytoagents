@@ -656,7 +656,7 @@ export type SkillImportCandidateStatus = "importable" | "already_imported" | "na
 export type SkillImportPreviewDto = { previewId: string | null; tool: Tool; sources: SkillImportSourceDto[]; candidates: SkillImportCandidateDto[]; message: string | null }
 export type SkillImportResultDto = { tool: Tool; createdCount: number }
 export type SkillImportSourceDto = { kind: SkillImportSourceKind; path: string; status: SkillImportSourceStatus; diagnosticCode: string | null; message: string | null }
-export type SkillImportSourceKind = "claude_global" | "codex_home" | "codex_agents"
+export type SkillImportSourceKind = "claude_global" | "codex_home" | "codex_agents" | "cursor_home" | "cursor_agents"
 export type SkillImportSourceStatus = "ready" | "missing" | "empty" | "unavailable"
 export type SkillProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
 export type SkillProjectOptionDto = { skillId: string; name: string; status: SkillStatus; state: SkillProjectSelectionState; selectable: boolean; rowVersion: number }
@@ -685,9 +685,9 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
 /**
  * 正式支持的原生工具。
  */
-export type Tool = "claude" | "codex"
+export type Tool = "claude" | "codex" | "cursor"
 export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
-export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string; promptTargetPath: string; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
+export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
 export type UpdateAppSettingsInput = { applyMode: ApplyMode }
 export type UpdateMcpServerInput = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: SensitiveMapUpdate; env: SensitiveMapUpdate; extra: SensitiveJsonUpdate; enabled: boolean; rowVersion: number }

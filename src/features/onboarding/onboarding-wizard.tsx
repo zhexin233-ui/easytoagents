@@ -16,9 +16,11 @@ import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { profileErrorText, profileKeys, unwrapResult } from "@/lib/profile-api";
+import { PROFILE_TOOLS, toolMetadata } from "@/lib/tool-metadata";
 
 const storageKey = "easytoagents.onboarding.selections.v1";
-const tools: Tool[] = ["claude", "codex"];
+const tools = PROFILE_TOOLS;
+type ProfileTool = (typeof PROFILE_TOOLS)[number];
 
 interface ToolDiscovery {
   availability: ToolAvailabilityState;
@@ -62,7 +64,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
     "detect",
   );
   const [discovery, setDiscovery] = useState<Record<
-    Tool,
+    ProfileTool,
     ToolDiscovery
   > | null>(null);
   const [choices, setChoices] = useState<Choices>(() => readChoices());
@@ -73,7 +75,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   const detectMutation = useMutation({
     mutationFn: async () => {
       const entries = await Promise.all(
-        tools.map(async (tool): Promise<[Tool, ToolDiscovery]> => {
+        tools.map(async (tool): Promise<[ProfileTool, ToolDiscovery]> => {
           const errors: string[] = [];
           const [
             statusResult,
@@ -123,7 +125,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
           ];
         }),
       );
-      const result: Record<Tool, ToolDiscovery> = {
+      const result: Record<ProfileTool, ToolDiscovery> = {
         claude: {
           availability: "unsupported",
           installationVersion: null,
@@ -605,7 +607,7 @@ function readToolChoice(value: unknown) {
 
 function updateChoice(
   setChoices: React.Dispatch<React.SetStateAction<Choices>>,
-  tool: Tool,
+  tool: ProfileTool,
   field: "provider" | "prompt",
   value: boolean,
 ) {
@@ -663,7 +665,7 @@ function settledValue<T>(
 }
 
 function toolLabel(tool: Tool) {
-  return tool === "claude" ? "Claude" : "Codex";
+  return toolMetadata(tool).label;
 }
 
 function providerImportCredentialText(

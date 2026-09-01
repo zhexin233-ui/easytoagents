@@ -31,8 +31,9 @@ import {
   appSettingsQueryOptions,
   canAutoApplyPreview,
 } from "@/lib/settings-api";
+import { PROFILE_TOOLS, toolMetadata } from "@/lib/tool-metadata";
 
-const tools = ["claude", "codex"] as const satisfies readonly Tool[];
+const tools = PROFILE_TOOLS;
 
 interface OpenPreview {
   plan: PreviewPlan;
@@ -348,9 +349,7 @@ export function PromptsPage() {
                         <p className="text-muted-foreground mt-1 text-xs">
                           {profile.globalTools.length > 0
                             ? `生效中：${profile.globalTools
-                                .map((tool) =>
-                                  tool === "claude" ? "Claude" : "Codex",
-                                )
+                                .map((tool) => toolMetadata(tool).label)
                                 .join("、")}`
                             : "未启用"}
                           {profile.importedFromPath
@@ -455,7 +454,7 @@ export function PromptsPage() {
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {tools.map((tool) => {
             const statusQuery = statusQueries[tool];
-            const toolLabel = tool === "claude" ? "Claude" : "Codex";
+            const toolLabel = toolMetadata(tool).label;
             return (
               <article key={tool} className="rounded-lg border p-4 text-sm">
                 <div className="flex items-center justify-between gap-2">

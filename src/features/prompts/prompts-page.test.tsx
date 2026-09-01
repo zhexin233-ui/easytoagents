@@ -138,6 +138,8 @@ function toolStatus(
     tool,
     availability: "installed" as const,
     installationVersion: "2.1.217",
+    providerCapability: { state: "supported" as const, diagnosticCode: null },
+    promptCapability: { state: "supported" as const, diagnosticCode: null },
     providerTargetPath:
       tool === "claude"
         ? "/isolated/home/.claude/settings.json"

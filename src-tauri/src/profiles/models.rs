@@ -7,7 +7,7 @@ use serde_json::Value;
 use specta::Type;
 
 use crate::{
-    adapters::{PolicyState, PromptOverrideState, ToolAvailabilityState},
+    adapters::{PolicyState, PromptOverrideState, TargetCapability, ToolAvailabilityState},
     domain::{ArtifactKind, ArtifactName, Tool},
     error::AppError,
     security::contains_detectable_secret,
@@ -214,8 +214,10 @@ pub struct ToolProfileStatusDto {
     pub tool: Tool,
     pub availability: ToolAvailabilityState,
     pub installation_version: Option<String>,
-    pub provider_target_path: String,
-    pub prompt_target_path: String,
+    pub provider_target_path: Option<String>,
+    pub prompt_target_path: Option<String>,
+    pub provider_capability: TargetCapability,
+    pub prompt_capability: TargetCapability,
     pub prompt_override: PromptOverrideState,
     pub provider_policy: PolicyState,
     pub new_session_notice: String,
@@ -295,6 +297,10 @@ impl StoredProviderConfig {
                     extra_provider_fields,
                 })
             }
+            Tool::Cursor => Err(AppError::invalid_input(
+                "tool",
+                "CURSOR_PROVIDER_UNSUPPORTED",
+            )),
         }
     }
 

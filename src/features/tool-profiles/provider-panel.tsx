@@ -17,6 +17,7 @@ import {
   providerProfilesQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
+import { toolMetadata } from "@/lib/tool-metadata";
 
 interface ProviderPanelProps {
   tool: Tool;
@@ -369,7 +370,7 @@ export function ProviderPanel({
 
       <FormDialog
         open={formOpen}
-        title={`${editing ? "编辑" : "新增"} ${tool === "claude" ? "Claude" : "Codex"} 渠道`}
+        title={`${editing ? "编辑" : "新增"} ${toolMetadata(tool).label} 渠道`}
         description="保存只更新中央渠道档案，不会修改原生配置；原生写入仍需预览后确认 Apply。"
         submitLabel={editing ? "保存编辑" : "创建渠道"}
         pending={saveMutation.isPending}

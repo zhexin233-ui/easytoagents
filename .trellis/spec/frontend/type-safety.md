@@ -69,6 +69,10 @@ export function unwrapResult<T>(result: Result<T, AppError>): T {
 - No plain `string` substitute for generated `Tool`, `ArtifactKind`, status,
   error-code, or input unions.
 - No locally reconstructed RPC payload or DTO cast in a component.
+- Capability-aware tool metadata must preserve the exact key-specific return type so a
+  caller cannot require `profileRoute!` or another assertion for Cursor. Profile routes
+  are only present for the compile-time `PROFILE_TOOLS` subset; MCP/Skill selectors use
+  their own capability subsets.
 - No unhandled promise. Await it, return it, or deliberately handle rejection.
 - Do not edit generated bindings to silence a type error; fix the Rust contract,
   generator, or handwritten caller.

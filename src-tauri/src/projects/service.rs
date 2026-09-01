@@ -5,8 +5,9 @@ use rusqlite::OptionalExtension;
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        ClaudeCustomizationPolicyProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
-        PolicyState, TargetDescriptor, TargetTrustState, ToolAdapter,
+        cursor::CursorAdapter, ClaudeCustomizationPolicyProbe, DiscoveryContext,
+        ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor, TargetTrustState,
+        ToolAdapter, ASSIGNABLE_MCP_TOOLS,
     },
     db::{mcp as mcp_repository, projects as repository, skills as skill_repository, Database},
     domain::{ArtifactKind, ArtifactName, EntityId, SyncStatus, Tool, TrustStatus},
@@ -308,8 +309,10 @@ fn observe_project(
     };
     let claude_targets = ClaudeAdapter.discover(&context)?;
     let codex_targets = CodexAdapter.discover(&context)?;
+    let cursor_targets = CursorAdapter.discover(&context)?;
     let claude_project_targets = project_targets(claude_targets);
     let codex_project_targets = project_targets(codex_targets);
+    let cursor_project_targets = project_targets(cursor_targets);
     let claude_policy_status = claude_project_targets
         .iter()
         .map(|target| target.policy)
@@ -327,6 +330,7 @@ fn observe_project(
     let targets = claude_project_targets
         .into_iter()
         .chain(codex_project_targets)
+        .chain(cursor_project_targets)
         .map(|descriptor| target_status(database, project_root.as_str(), descriptor))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ProjectObservation {
@@ -624,6 +628,7 @@ fn native_mcp_container(tool: Tool) -> &'static str {
     match tool {
         Tool::Claude => "mcpServers",
         Tool::Codex => "mcp_servers",
+        Tool::Cursor => "mcpServers",
     }
 }
 
@@ -670,11 +675,12 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     match tool {
         Tool::Claude => &ClaudeAdapter,
         Tool::Codex => &CodexAdapter,
+        Tool::Cursor => &CursorAdapter,
     }
 }
 
 fn blocked_project_targets(diagnostic_code: &str) -> Vec<ProjectTargetStatusDto> {
-    [Tool::Claude, Tool::Codex]
+    ASSIGNABLE_MCP_TOOLS
         .into_iter()
         .flat_map(|tool| {
             [ArtifactKind::Mcp, ArtifactKind::Skill]

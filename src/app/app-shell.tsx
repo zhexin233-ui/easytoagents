@@ -2,11 +2,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
-import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
-import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import { useTheme } from "@/components/use-theme";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { projectsQueryOptions } from "@/lib/projects-api";
+import { PROFILE_TOOLS, toolMetadata } from "@/lib/tool-metadata";
 import { cn } from "@/lib/utils";
 
 const primaryLinks = [
@@ -16,10 +15,14 @@ const primaryLinks = [
   { to: "/skills", label: "Skills", end: false },
 ] as const;
 
-const toolLinks = [
-  { to: "/claude", label: "Claude", icon: claudeIconUrl },
-  { to: "/codex", label: "Codex", icon: codexIconUrl },
-] as const;
+const toolLinks = PROFILE_TOOLS.map((tool) => {
+  const metadata = toolMetadata(tool);
+  return {
+    to: metadata.profileRoute,
+    label: metadata.label,
+    icon: metadata.icon,
+  };
+});
 
 const primaryLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
@@ -119,9 +122,7 @@ function TopBar() {
         </span>
         <div className="leading-tight">
           <p className="text-sm font-semibold">EasyToAgents</p>
-          <p className="text-muted-foreground text-[11px]">
-            Claude · Codex 配置中枢
-          </p>
+          <p className="text-muted-foreground text-[11px]">多工具配置中枢</p>
         </div>
       </div>
       <div className="flex items-center gap-2.5">

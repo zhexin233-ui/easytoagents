@@ -20,6 +20,7 @@ import {
 } from "@/bindings/commands";
 import { centralListLayoutStorageKeys } from "@/components/use-persisted-central-list-layout";
 import { McpPage } from "@/features/mcp/mcp-page";
+import { toolMetadata } from "@/lib/tool-metadata";
 
 vi.mock("@/bindings/commands", () => ({
   commands: {
@@ -195,7 +196,7 @@ async function globalButton(name: string, tool: Tool = "claude") {
     .closest("section");
   if (!section) throw new Error("未找到全局目标状态");
   const card = (
-    await within(section).findByText(tool === "claude" ? "Claude" : "Codex")
+    await within(section).findByText(toolMetadata(tool).label)
   ).closest("article");
   if (!card) throw new Error("未找到工具状态卡");
   return within(card).getByRole("button", { name });
@@ -233,6 +234,13 @@ beforeEach(() => {
         status: "missing",
         diagnosticCode: null,
       },
+      {
+        tool: "cursor",
+        projectId: null,
+        targetPath: "/isolated/home/.cursor/mcp.json",
+        status: "missing",
+        diagnosticCode: null,
+      },
     ],
   });
   vi.mocked(commands.getAppSettings).mockResolvedValue({
@@ -261,7 +269,9 @@ beforeEach(() => {
         targetPath:
           tool === "claude"
             ? "/isolated/home/.claude.json"
-            : "/isolated/home/.codex/config.toml",
+            : tool === "codex"
+              ? "/isolated/home/.codex/config.toml"
+              : "/isolated/home/.cursor/mcp.json",
       },
     }),
   );
@@ -448,17 +458,26 @@ describe("McpPage", () => {
     const codexButton = screen.getByRole("button", {
       name: "Codex 全局未分配",
     });
+    const cursorButton = screen.getByRole("button", {
+      name: "Cursor 全局未分配",
+    });
     expect(claudeButton).toHaveAttribute("aria-pressed", "true");
     expect(claudeButton).toHaveAttribute("title", "Claude 全局已分配");
     expect(codexButton).toHaveAttribute("aria-pressed", "false");
     expect(codexButton).toHaveAttribute("title", "Codex 全局未分配");
+    expect(cursorButton).toHaveAttribute("aria-pressed", "false");
+    expect(cursorButton).toHaveAttribute("title", "Cursor 全局未分配");
     const claudeIcon = claudeButton.querySelector("img");
     const codexIcon = codexButton.querySelector("img");
+    const cursorIcon = cursorButton.querySelector("img");
     expect(claudeIcon?.getAttribute("src")).toMatch(
       /^(data:image\/svg\+xml|.*claude-icon-square\.svg$)/,
     );
     expect(codexIcon?.getAttribute("src")).toMatch(
       /^(data:image\/png|.*codex-icon-light\.png$)/,
+    );
+    expect(cursorIcon?.getAttribute("src")).toMatch(
+      /^(data:image\/svg\+xml|.*cursor-icon\.svg$)/,
     );
     expect(claudeButton.querySelector("svg")).toBeNull();
     expect(codexButton.querySelector("svg")).toBeNull();
@@ -1134,7 +1153,7 @@ describe("McpPage", () => {
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
-  it.each(["claude", "codex"] as const)(
+  it.each(["claude", "codex", "cursor"] as const)(
     "按 %s 扫描且只导入明确勾选项，成功后独立生成同步预览",
     async (tool) => {
       vi.mocked(commands.confirmMcpImport).mockResolvedValue({
@@ -1146,7 +1165,7 @@ describe("McpPage", () => {
       expect(commands.discoverMcpImport).not.toHaveBeenCalled();
       fireEvent.click(button);
       const dialog = await screen.findByRole("dialog", {
-        name: `导入 ${tool === "claude" ? "Claude" : "Codex"} 全局 MCP`,
+        name: `导入 ${toolMetadata(tool).label} 全局 MCP`,
       });
       const checkbox = await within(dialog).findByRole("checkbox", {
         name: "导入 native-new",

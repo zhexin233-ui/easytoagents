@@ -145,6 +145,14 @@ describe("OnboardingWizard", () => {
           tool,
           availability: "installed",
           installationVersion: tool === "claude" ? "2.1.217" : "0.114.0",
+          providerCapability: {
+            state: "supported" as const,
+            diagnosticCode: null,
+          },
+          promptCapability: {
+            state: "supported" as const,
+            diagnosticCode: null,
+          },
           providerTargetPath:
             tool === "claude"
               ? "/isolated/home/.claude/settings.json"
@@ -326,6 +334,14 @@ describe("OnboardingWizard", () => {
           tool,
           availability: tool === "claude" ? "unavailable" : "installed",
           installationVersion: tool === "claude" ? null : "0.114.0",
+          providerCapability: {
+            state: "supported" as const,
+            diagnosticCode: null,
+          },
+          promptCapability: {
+            state: "supported" as const,
+            diagnosticCode: null,
+          },
           providerTargetPath:
             tool === "claude"
               ? "/isolated/home/.claude/settings.json"

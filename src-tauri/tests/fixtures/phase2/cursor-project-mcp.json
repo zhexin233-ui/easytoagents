@@ -1,0 +1,15 @@
+{
+  "unknownProject": {
+    "preserve": true
+  },
+  "mcpServers": {
+    "fixture-project": {
+      "type": "stdio",
+      "command": "cursor-fixture-server",
+      "args": ["--project"],
+      "env": {
+        "CURSOR_FIXTURE_TOKEN": "fixture-cursor-env-secret"
+      }
+    }
+  }
+}

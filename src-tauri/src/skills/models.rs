@@ -150,6 +150,8 @@ pub enum SkillImportSourceKind {
     ClaudeGlobal,
     CodexHome,
     CodexAgents,
+    CursorHome,
+    CursorAgents,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]

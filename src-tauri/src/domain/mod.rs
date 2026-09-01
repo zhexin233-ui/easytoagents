@@ -49,6 +49,7 @@ string_enum! {
     pub enum Tool {
         Claude => "claude",
         Codex => "codex",
+        Cursor => "cursor",
     }
 }
 
@@ -410,6 +411,7 @@ mod tests {
         let values = [
             serde_json::to_value(Tool::Claude).unwrap(),
             serde_json::to_value(Tool::Codex).unwrap(),
+            serde_json::to_value(Tool::Cursor).unwrap(),
             serde_json::to_value(Scope::Global).unwrap(),
             serde_json::to_value(Scope::Project).unwrap(),
             serde_json::to_value(ArtifactKind::Provider).unwrap(),
@@ -459,6 +461,7 @@ mod tests {
         let expected = [
             "claude",
             "codex",
+            "cursor",
             "global",
             "project",
             "provider",

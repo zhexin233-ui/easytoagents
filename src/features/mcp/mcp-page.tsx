@@ -31,6 +31,7 @@ import {
   mcpServersQueryOptions,
 } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import { MCP_TOOLS, toolMetadata } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
   appSettingsQueryOptions,
@@ -370,7 +371,7 @@ export function McpPage() {
                   role="group"
                   aria-label={`${server.name} 全局平台分配`}
                 >
-                  {(["claude", "codex"] as const).map((tool) => (
+                  {MCP_TOOLS.map((tool) => (
                     <PlatformAssignmentButton
                       key={tool}
                       tool={tool}
@@ -495,9 +496,7 @@ export function McpPage() {
                 key={status.tool}
                 className="rounded-lg border p-4 text-sm"
               >
-                <p className="font-medium">
-                  {status.tool === "claude" ? "Claude" : "Codex"}
-                </p>
+                <p className="font-medium">{toolMetadata(status.tool).label}</p>
                 <code className="mt-2 block text-xs break-all">
                   {status.targetPath ?? "目标位置未经 capability probe 证明"}
                 </code>
@@ -746,8 +745,8 @@ export function McpPage() {
             setOpenImport(null);
             setMessage(
               directApply
-                ? `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${result.tool === "claude" ? "Claude" : "Codex"} 全局。原生配置未改写，可点击「直接应用全局同步」写入。`
-                : `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${result.tool === "claude" ? "Claude" : "Codex"} 全局。原生配置未改写，请单独生成全局预览。`,
+                ? `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。原生配置未改写，可点击「直接应用全局同步」写入。`
+                : `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。原生配置未改写，请单独生成全局预览。`,
             );
             await invalidateMcp();
           }}

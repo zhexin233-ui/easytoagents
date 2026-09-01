@@ -22,6 +22,7 @@ import {
 } from "@/bindings/commands";
 import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
 import codexIconUrl from "@/assets/brand/codex-icon-light.png";
+import cursorIconUrl from "@/assets/brand/cursor-icon.svg";
 import { ProjectDetailPage } from "@/features/projects/project-detail-page";
 
 vi.mock("@/bindings/commands", () => ({
@@ -82,6 +83,26 @@ const project: ProjectDto = {
       capability: "supported",
       policy: "allowed",
       trust: "trusted",
+      status: "missing",
+      diagnosticCode: null,
+    },
+    {
+      tool: "cursor",
+      artifactKind: "mcp",
+      targetPath: "/isolated/projects/detail/.cursor/mcp.json",
+      capability: "supported",
+      policy: "allowed",
+      trust: "not_required",
+      status: "missing",
+      diagnosticCode: null,
+    },
+    {
+      tool: "cursor",
+      artifactKind: "skill",
+      targetPath: "/isolated/projects/detail/.cursor/skills",
+      capability: "supported",
+      policy: "allowed",
+      trust: "not_required",
       status: "missing",
       diagnosticCode: null,
     },
@@ -586,7 +607,7 @@ describe("ProjectDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("默认选择 Claude MCP，并可通过两组按钮切换四种管理组合", async () => {
+  it("默认选择 Claude MCP，可切换 Cursor MCP/Skills 且 Cursor 不渲染提示词", async () => {
     renderPage();
 
     const resourceGroup = await screen.findByRole("group", {
@@ -598,6 +619,9 @@ describe("ProjectDetailPage", () => {
     const skillButton = within(resourceGroup).getByRole("button", {
       name: "管理项目 Skill",
     });
+    const promptButton = within(resourceGroup).getByRole("button", {
+      name: "管理项目提示词",
+    });
     const platformGroup = screen.getByRole("group", {
       name: "项目平台管理视图",
     });
@@ -607,12 +631,17 @@ describe("ProjectDetailPage", () => {
     const codexButton = within(platformGroup).getByRole("button", {
       name: "管理 Codex 项目资源",
     });
+    const cursorButton = within(platformGroup).getByRole("button", {
+      name: "管理 Cursor 项目资源",
+    });
     expect(mcpButton).toHaveAttribute("aria-pressed", "true");
     expect(skillButton).toHaveAttribute("aria-pressed", "false");
     expect(claudeButton).toHaveAttribute("aria-pressed", "true");
     expect(claudeButton).toHaveAttribute("title", "管理 Claude 项目资源");
     expect(codexButton).toHaveAttribute("aria-pressed", "false");
     expect(codexButton).toHaveAttribute("title", "管理 Codex 项目资源");
+    expect(cursorButton).toHaveAttribute("aria-pressed", "false");
+    expect(cursorButton).toHaveAttribute("title", "管理 Cursor 项目资源");
     expect(claudeButton.querySelector("img")).toHaveAttribute(
       "src",
       claudeIconUrl,
@@ -620,6 +649,10 @@ describe("ProjectDetailPage", () => {
     expect(codexButton.querySelector("img")).toHaveAttribute(
       "src",
       codexIconUrl,
+    );
+    expect(cursorButton.querySelector("img")).toHaveAttribute(
+      "src",
+      cursorIconUrl,
     );
     expect(claudeButton.querySelector("img")).toHaveAttribute("alt", "");
     expect(claudeButton.querySelector("img")).toHaveAttribute(
@@ -715,6 +748,28 @@ describe("ProjectDetailPage", () => {
       projectId: project.id,
       tool: "claude",
     });
+
+    fireEvent.click(promptButton);
+    expect(
+      await screen.findByRole("heading", { name: "Claude 提示词 项目追加" }),
+    ).toBeVisible();
+    fireEvent.click(cursorButton);
+    expect(
+      await screen.findByRole("heading", { name: "Cursor MCP 项目追加" }),
+    ).toBeVisible();
+    expect(
+      within(resourceGroup).queryByRole("button", { name: "管理项目提示词" }),
+    ).not.toBeInTheDocument();
+    expect(commands.getPromptProjectAssignment).not.toHaveBeenCalledWith(
+      project.id,
+      "cursor",
+    );
+    await waitFor(() =>
+      expect(commands.listMcpProjectOptions).toHaveBeenLastCalledWith({
+        projectId: project.id,
+        tool: "cursor",
+      }),
+    );
   });
 
   it("切换资源或平台会重置尚未提交的 Git exclude 选择", async () => {

@@ -1,0 +1,19 @@
+{
+  "theme": "dark",
+  "unknownTop": {
+    "preserve": true
+  },
+  "mcpServers": {
+    "fixture-user": {
+      "type": "streamable-http",
+      "url": "https://cursor.example.test/mcp",
+      "headers": {
+        "Authorization": "Bearer fixture-cursor-header-secret"
+      },
+      "auth": {
+        "token": "fixture-cursor-auth-secret"
+      },
+      "unknown": "preserve"
+    }
+  }
+}

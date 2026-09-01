@@ -45,6 +45,7 @@ pub(crate) fn get_preview(
                     tool: match tool.as_str() {
                         "claude" => Tool::Claude,
                         "codex" => Tool::Codex,
+                        "cursor" => Tool::Cursor,
                         _ => return Err(rusqlite::Error::InvalidQuery),
                     },
                     context_json: row.get(1)?,

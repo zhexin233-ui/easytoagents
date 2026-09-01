@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 
 use crate::{
     app::AppPaths,
@@ -67,6 +67,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 9,
         name: "prompt_tool_active_flags",
         sql: include_str!("migrations/0009_prompt_tool_active_flags.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "cursor_tool_support",
+        sql: include_str!("migrations/0010_cursor_tool_support.sql"),
     },
 ];
 
@@ -218,6 +223,7 @@ fn run_migrations(connection: &mut Connection, path: &Path) -> Result<(), AppErr
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+        validate_migration_preconditions(&transaction, migration, path)?;
         transaction
             .execute_batch(migration.sql)
             .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
@@ -239,6 +245,60 @@ fn run_migrations(connection: &mut Connection, path: &Path) -> Result<(), AppErr
         connection
             .pragma_update(None, "schema_version", schema_version + 1)
             .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+    }
+    Ok(())
+}
+
+/// writable_schema 迁移必须在改写前证明每个精确旧锚点都存在；否则 replace
+/// 会静默更新 0 行，却仍可能把 schema version 推进到新版本。
+fn validate_migration_preconditions(
+    transaction: &Transaction<'_>,
+    migration: &Migration,
+    path: &Path,
+) -> Result<(), AppError> {
+    if migration.version != 10 {
+        return Ok(());
+    }
+
+    const SHARED_TOOL_ANCHOR: &str = "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex'))";
+    const MANAGED_TARGET_ANCHOR: &str = "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex')),";
+    for table in [
+        "mcp_global_assignments",
+        "skill_global_assignments",
+        "mcp_project_assignments",
+        "skill_project_assignments",
+        "mcp_import_previews",
+        "skill_import_previews",
+    ] {
+        let matched: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = ?1 AND instr(sql, ?2) > 0",
+                params![table, SHARED_TOOL_ANCHOR],
+                |row| row.get(0),
+            )
+            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+        if matched != 1 {
+            return Err(AppError::migration(
+                &path.to_string_lossy(),
+                migration.version,
+            ));
+        }
+    }
+
+    let managed_target_matched: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'managed_targets' AND instr(sql, ?1) > 0",
+            [MANAGED_TARGET_ANCHOR],
+            |row| row.get(0),
+        )
+        .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+    if managed_target_matched != 1 {
+        return Err(AppError::migration(
+            &path.to_string_lossy(),
+            migration.version,
+        ));
     }
     Ok(())
 }
@@ -334,6 +394,7 @@ mod tests {
     use super::Database;
     use crate::{
         app::AppPaths,
+        error::ErrorCode,
         security::{mode, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE},
     };
 
@@ -401,7 +462,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 9);
+        assert_eq!(database.schema_version().unwrap(), 10);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -938,7 +999,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 9);
+            assert_eq!(database.schema_version().unwrap(), 10);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -973,7 +1034,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 9);
+            assert_eq!(database.schema_version().unwrap(), 10);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1029,7 +1090,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 9);
+            assert_eq!(database.schema_version().unwrap(), 10);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1100,7 +1161,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 9);
+            assert_eq!(database.schema_version().unwrap(), 10);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1141,6 +1202,202 @@ mod tests {
                 )
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn cursor_tool_support_migration_only_opens_mcp_and_skill_storage() {
+        const CURSOR_TARGET_ID: &str = "00000000-0000-4000-8000-000000000220";
+        const CURSOR_MCP_IMPORT_ID: &str = "00000000-0000-4000-8000-000000000221";
+        const CURSOR_SKILL_IMPORT_ID: &str = "00000000-0000-4000-8000-000000000222";
+        const CLAUDE_PROMPT_ID: &str = "00000000-0000-4000-8000-000000000227";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v9-cursor-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..9] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/cursor-project");
+            insert_mcp(&connection, MCP_ID, "Cursor MCP");
+            insert_skill(&connection, SKILL_ID, "cursor-skill");
+            connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body)
+                     VALUES (?1, 'claude', '可供外键验证的提示词', 'fixture')",
+                    [CLAUDE_PROMPT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO mcp_global_assignments(tool, mcp_id) VALUES ('claude', ?1)",
+                    [MCP_ID],
+                )
+                .unwrap();
+        }
+
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 10);
+            let connection = database.connection();
+            let preserved: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM mcp_global_assignments WHERE tool = 'claude' AND mcp_id = ?1",
+                    [MCP_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(preserved, 1);
+            let preserved_indexes: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'index' AND name IN (
+                         'idx_mcp_project_assignments_tool_mcp',
+                         'idx_skill_project_assignments_tool_skill',
+                         'uq_managed_targets_identity',
+                         'idx_managed_targets_project',
+                         'idx_managed_targets_status',
+                         'idx_mcp_import_previews_status',
+                         'idx_skill_import_previews_status'
+                     )",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(preserved_indexes, 7);
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+
+            connection
+                .execute(
+                    "INSERT INTO mcp_global_assignments(tool, mcp_id) VALUES ('cursor', ?1)",
+                    [MCP_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO skill_global_assignments(tool, skill_id) VALUES ('cursor', ?1)",
+                    [SKILL_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM mcp_global_assignments WHERE tool = 'cursor'",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM skill_global_assignments WHERE tool = 'cursor'",
+                    [],
+                )
+                .unwrap();
+            connection.execute("INSERT INTO mcp_project_assignments(project_id, tool, mcp_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, MCP_ID]).unwrap();
+            connection.execute("INSERT INTO skill_project_assignments(project_id, tool, skill_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, SKILL_ID]).unwrap();
+            connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'cursor', 'mcp', 'global', '/fixture/home/.cursor/mcp.json')", [CURSOR_TARGET_ID]).unwrap();
+            connection.execute("INSERT INTO mcp_import_previews(id, tool, target_path, observed_full_hash, context_json, redacted_preview_json) VALUES (?1, 'cursor', '/fixture/home/.cursor/mcp.json', ?2, '{}', '{}')", params![CURSOR_MCP_IMPORT_ID, "a".repeat(64)]).unwrap();
+            connection.execute("INSERT INTO skill_import_previews(id, tool, context_json, redacted_preview_json) VALUES (?1, 'cursor', '{}', '{}')", [CURSOR_SKILL_IMPORT_ID]).unwrap();
+
+            assert!(connection.execute("INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000223', 'cursor', 'Cursor Provider')", []).is_err());
+            assert!(connection.execute("INSERT INTO prompt_profiles(id, tool, name, body) VALUES ('00000000-0000-4000-8000-000000000224', 'cursor', 'Cursor Prompt', '')", []).is_err());
+            assert!(connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000225', 'cursor', 'provider', '/fixture/provider.json', ?1, 'Cursor', '{}')", ["b".repeat(64)]).is_err());
+            assert!(connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, CLAUDE_PROMPT_ID]).is_err());
+            assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000226', 'cursor', 'provider', 'global', '/fixture/provider.json')", []).is_err());
+            assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000228', 'cursor', 'prompt', 'global', '/fixture/prompt.md')", []).is_err());
+
+            connection
+                .execute(
+                    "DELETE FROM skill_import_previews WHERE id = ?1",
+                    [CURSOR_SKILL_IMPORT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM mcp_import_previews WHERE id = ?1",
+                    [CURSOR_MCP_IMPORT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM managed_targets WHERE id = ?1",
+                    [CURSOR_TARGET_ID],
+                )
+                .unwrap();
+            connection.execute("DELETE FROM skill_project_assignments WHERE project_id = ?1 AND tool = 'cursor'", [PROJECT_ONE_ID]).unwrap();
+            connection
+                .execute(
+                    "DELETE FROM mcp_project_assignments WHERE project_id = ?1 AND tool = 'cursor'",
+                    [PROJECT_ONE_ID],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn cursor_tool_support_migration_rejects_a_missing_exact_anchor() {
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v9-anchor-mismatch-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..9] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute_batch(
+                    "PRAGMA writable_schema = ON;
+                     UPDATE sqlite_master
+                     SET sql = replace(
+                         sql,
+                         'tool TEXT NOT NULL CHECK(tool IN (''claude'', ''codex''))',
+                         'tool TEXT NOT NULL CHECK(tool IN (''codex'', ''claude''))'
+                     )
+                     WHERE type = 'table' AND name = 'mcp_global_assignments';
+                     PRAGMA writable_schema = OFF;",
+                )
+                .unwrap();
+        }
+
+        let error = match Database::open(&paths) {
+            Ok(_) => panic!("精确旧锚点缺失时迁移不得成功"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), ErrorCode::MigrationFailed);
+        let connection = Connection::open(paths.database()).unwrap();
+        let version: i64 = connection
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 9, "失败迁移不得推进 schema version");
     }
 
     #[test]

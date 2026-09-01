@@ -8,3 +8,6 @@ redraw, optimize, recolor, or replace them with runtime CDN resources.
 - `codex-icon-light.png`: official Codex application resource,
   `ChatGPT.app/Contents/Resources/icon-codex-light.png`.
   SHA-256: `de7d43f3386105ab20952958c2c25beb0d903e2aeb6e1aef57c49a648c0d1c07`.
+- `cursor-icon.svg`: official Cursor website favicon,
+  `https://www.cursor.com/favicon.svg`, retrieved 2026-08-31 and copied
+  unchanged.

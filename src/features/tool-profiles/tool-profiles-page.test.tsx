@@ -174,6 +174,8 @@ beforeEach(() => {
       tool: "claude",
       availability: "installed",
       installationVersion: "2.1.217",
+      providerCapability: { state: "supported", diagnosticCode: null },
+      promptCapability: { state: "supported", diagnosticCode: null },
       providerTargetPath: "/isolated/home/.claude/settings.json",
       promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
       promptOverride: "not_applicable",
@@ -210,6 +212,19 @@ afterEach(() => {
 });
 
 describe("ToolProfilesPage", () => {
+  it("Cursor 渠道组件边界 fail closed，且不读取或写入 Provider", () => {
+    renderPage("cursor");
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Cursor 仅支持 MCP 与 Skills",
+    );
+    expect(screen.getByText("CURSOR_PROVIDER_UNSUPPORTED")).toBeVisible();
+    expect(commands.listProviderProfiles).not.toHaveBeenCalled();
+    expect(commands.createProviderProfile).not.toHaveBeenCalled();
+    expect(commands.previewProviderSync).not.toHaveBeenCalled();
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
+
   it.each(["claude", "codex"] as const)(
     "%s 渠道 默认隐藏表单，新增和编辑可关闭清理且焦点不离开弹窗",
     async (tool) => {
@@ -820,6 +835,8 @@ describe("ToolProfilesPage", () => {
         tool: "claude",
         availability: "unsupported",
         installationVersion: null,
+        providerCapability: { state: "supported", diagnosticCode: null },
+        promptCapability: { state: "supported", diagnosticCode: null },
         providerTargetPath: "/isolated/home/.claude/settings.json",
         promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
         promptOverride: "not_applicable",

@@ -66,6 +66,7 @@ pub(crate) fn get_preview(
                 tool: match tool.as_str() {
                     "claude" => Tool::Claude,
                     "codex" => Tool::Codex,
+                    "cursor" => Tool::Cursor,
                     _ => return Err(rusqlite::Error::InvalidQuery),
                 },
                 target_path: row.get(2)?, observed_full_hash: row.get(3)?,

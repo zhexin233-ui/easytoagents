@@ -1,4 +1,4 @@
-//! Release 启动边界的只读 Claude/Codex 安装与 Claude 策略探针。
+//! Release 启动边界的只读 Claude/Codex/Cursor 安装与 Claude 策略探针。
 
 use std::{
     ffi::{CString, OsStr, OsString},
@@ -29,9 +29,11 @@ pub const CLAUDE_MANAGED_SETTINGS_PATH: &str =
     "/Library/Application Support/ClaudeCode/managed-settings.json";
 pub const CLAUDE_MANAGED_SETTINGS_DIRECTORY: &str =
     "/Library/Application Support/ClaudeCode/managed-settings.d";
+pub const CURSOR_BUNDLE_ID: &str = "com.todesktop.230313mzl4w4u92";
 
 const MAX_PROCESS_OUTPUT_BYTES: u64 = 1024;
 const MAX_POLICY_BYTES: u64 = 64 * 1024;
+const MAX_PLIST_BYTES: u64 = 1024 * 1024;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +45,7 @@ pub struct ReleaseToolProbeInput {
     timeout: Duration,
     claude_managed_settings_path: PathBuf,
     claude_managed_settings_directory: PathBuf,
+    cursor_app_paths: Vec<PathBuf>,
 }
 
 impl ReleaseToolProbeInput {
@@ -53,6 +56,10 @@ impl ReleaseToolProbeInput {
         search_path: OsString,
     ) -> Self {
         let search_path = macos_release_search_path(&home, search_path);
+        let cursor_app_paths = vec![
+            PathBuf::from("/Applications/Cursor.app"),
+            home.join("Applications/Cursor.app"),
+        ];
         Self {
             home,
             claude_config_dir,
@@ -61,6 +68,7 @@ impl ReleaseToolProbeInput {
             timeout: DEFAULT_TOOL_PROBE_TIMEOUT,
             claude_managed_settings_path: PathBuf::from(CLAUDE_MANAGED_SETTINGS_PATH),
             claude_managed_settings_directory: PathBuf::from(CLAUDE_MANAGED_SETTINGS_DIRECTORY),
+            cursor_app_paths,
         }
     }
 }
@@ -99,6 +107,7 @@ pub struct ReleaseToolProbeResult {
     pub environment: ExplicitEnvironment,
     pub claude: ToolProbeOutcome,
     pub codex: ToolProbeOutcome,
+    pub cursor: ToolProbeOutcome,
 }
 
 pub fn probe_release_environment(
@@ -112,9 +121,11 @@ pub fn probe_release_environment(
     )?;
     let claude = probe_tool(ToolBinary::Claude, &path_environment, input);
     let codex = probe_tool(ToolBinary::Codex, &path_environment, input);
+    let cursor = probe_cursor(&path_environment, input);
     let availability = ToolAvailability {
         claude: claude.state,
         codex: codex.state,
+        cursor: cursor.state,
     };
     let mut environment = ExplicitEnvironment::new(
         path_environment.home(),
@@ -145,11 +156,15 @@ pub fn probe_release_environment(
     if let Some(version) = codex.version.as_deref() {
         environment = environment.with_codex_installation_version(version)?;
     }
+    if let Some(version) = cursor.version.as_deref() {
+        environment = environment.with_cursor_installation_version(version)?;
+    }
 
     Ok(ReleaseToolProbeResult {
         environment,
         claude,
         codex,
+        cursor,
     })
 }
 
@@ -157,6 +172,7 @@ pub fn probe_release_environment(
 enum ToolBinary {
     Claude,
     Codex,
+    CursorAgent,
 }
 
 impl ToolBinary {
@@ -164,6 +180,7 @@ impl ToolBinary {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::CursorAgent => "agent",
         }
     }
 
@@ -182,9 +199,95 @@ impl ToolBinary {
         let version = match self {
             Self::Claude => output.strip_suffix(" (Claude Code)")?,
             Self::Codex => output.strip_prefix("codex-cli ")?,
+            Self::CursorAgent => output
+                .strip_prefix("Cursor Agent ")
+                .or_else(|| output.strip_prefix("cursor-agent "))
+                .or_else(|| output.strip_prefix("agent "))
+                .unwrap_or(output),
         };
-        valid_semantic_version(version).then(|| version.to_owned())
+        match self {
+            Self::Claude | Self::Codex => valid_semantic_version(version),
+            Self::CursorAgent => valid_cursor_version(version),
+        }
+        .then(|| version.to_owned())
     }
+}
+
+fn probe_cursor(
+    environment: &ExplicitEnvironment,
+    input: &ReleaseToolProbeInput,
+) -> ToolProbeOutcome {
+    let desktop = probe_cursor_desktop(&input.cursor_app_paths);
+    if desktop.state == ToolAvailabilityState::Installed {
+        return desktop;
+    }
+    let cli = probe_tool(ToolBinary::CursorAgent, environment, input);
+    match (desktop, cli) {
+        (_, outcome) if outcome.state == ToolAvailabilityState::Installed => outcome,
+        (outcome, _) if outcome.state == ToolAvailabilityState::Unsupported => outcome,
+        (_, outcome) if outcome.state == ToolAvailabilityState::Unsupported => outcome,
+        _ => ToolProbeOutcome::unavailable(),
+    }
+}
+
+fn probe_cursor_desktop(candidates: &[PathBuf]) -> ToolProbeOutcome {
+    let mut found_unsafe = false;
+    for app_path in candidates {
+        match read_cursor_bundle_version(app_path) {
+            Ok(Some(version)) => return ToolProbeOutcome::installed(version),
+            Ok(None) => {}
+            Err(()) => found_unsafe = true,
+        }
+    }
+    if found_unsafe {
+        ToolProbeOutcome::unsupported()
+    } else {
+        ToolProbeOutcome::unavailable()
+    }
+}
+
+fn read_cursor_bundle_version(app_path: &Path) -> Result<Option<String>, ()> {
+    match open_absolute_nofollow(app_path, true) {
+        SecureOpen::Missing => return Ok(None),
+        SecureOpen::Unsafe => return Err(()),
+        SecureOpen::Open(_) => {}
+    }
+    let plist_path = app_path.join("Contents/Info.plist");
+    let file = match open_absolute_nofollow(&plist_path, false) {
+        SecureOpen::Open(file) => file,
+        SecureOpen::Missing | SecureOpen::Unsafe => return Err(()),
+    };
+    let metadata = file.metadata().map_err(|_| ())?;
+    if !metadata.is_file() || metadata.len() > MAX_PLIST_BYTES {
+        return Err(());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_PLIST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    if bytes.len() as u64 > MAX_PLIST_BYTES {
+        return Err(());
+    }
+    let value = plist::Value::from_reader(io::Cursor::new(bytes)).map_err(|_| ())?;
+    let dictionary = value.as_dictionary().ok_or(())?;
+    if dictionary
+        .get("CFBundleIdentifier")
+        .and_then(plist::Value::as_string)
+        != Some(CURSOR_BUNDLE_ID)
+    {
+        return Err(());
+    }
+    let version = dictionary
+        .get("CFBundleShortVersionString")
+        .and_then(plist::Value::as_string)
+        .or_else(|| {
+            dictionary
+                .get("CFBundleVersion")
+                .and_then(plist::Value::as_string)
+        })
+        .filter(|value| valid_cursor_version(value))
+        .ok_or(())?;
+    Ok(Some(version.to_owned()))
 }
 
 fn probe_tool(
@@ -428,6 +531,10 @@ fn valid_semantic_version(version: &str) -> bool {
         && parts
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn valid_cursor_version(version: &str) -> bool {
+    version.len() <= 64 && valid_semantic_version(version)
 }
 
 fn probe_claude_policy(
@@ -699,6 +806,14 @@ mod tests {
             super::ToolBinary::Codex.parse_version(b"codex-cli 0.114.0", b""),
             Some("0.114.0".to_owned())
         );
+        assert_eq!(
+            super::ToolBinary::CursorAgent.parse_version(b"Cursor Agent 1.7.54", b""),
+            Some("1.7.54".to_owned())
+        );
+        assert_eq!(
+            super::ToolBinary::CursorAgent.parse_version(b"Cursor Agent 1.preview", b""),
+            None
+        );
     }
 
     struct Fixture {
@@ -753,6 +868,24 @@ mod tests {
             write_executable(&self.bin.join(name), body);
         }
 
+        fn write_cursor_app(&self, bundle_id: &str, version: &str) -> PathBuf {
+            let app = self.home.join("Applications/Cursor.app");
+            fs::create_dir_all(app.join("Contents")).unwrap();
+            fs::write(
+                app.join("Contents/Info.plist"),
+                format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>{bundle_id}</string>
+<key>CFBundleShortVersionString</key><string>{version}</string>
+</dict></plist>"#
+                ),
+            )
+            .unwrap();
+            app
+        }
+
         fn input(&self) -> ReleaseToolProbeInput {
             ReleaseToolProbeInput {
                 home: self.home.clone(),
@@ -762,6 +895,7 @@ mod tests {
                 timeout: Duration::from_secs(3),
                 claude_managed_settings_path: self.policy.clone(),
                 claude_managed_settings_directory: self.policy_directory.clone(),
+                cursor_app_paths: vec![self.home.join("Applications/Cursor.app")],
             }
         }
 
@@ -902,6 +1036,73 @@ mod tests {
                 }),
             ClaudeCustomizationPolicy::unknown()
         );
+    }
+
+    #[test]
+    fn cursor_desktop_bundle_is_primary_and_does_not_require_agent_cli() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        fixture.write_cursor_app(super::CURSOR_BUNDLE_ID, "1.7.54");
+        let marker = fixture.home.join("agent-was-executed");
+        let marker_text = marker.to_str().unwrap();
+        assert!(!marker_text.contains('\''));
+        fixture.write_tool(
+            "agent",
+            &format!("touch '{marker_text}'\nprintf 'Cursor Agent 9.9.9'"),
+        );
+
+        let result = probe_release_environment(&fixture.input()).unwrap();
+        assert_eq!(result.cursor.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.cursor.version.as_deref(), Some("1.7.54"));
+        assert!(!marker.exists(), "Desktop 已确认时不应再执行补充 CLI");
+        assert_eq!(
+            result.environment.cursor_installation_version(),
+            Some("1.7.54")
+        );
+    }
+
+    #[test]
+    fn cursor_agent_is_only_a_fallback_and_invalid_bundle_fails_closed() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        fixture.write_tool("agent", "printf 'Cursor Agent 2.3.4'");
+        let result = probe_release_environment(&fixture.input()).unwrap();
+        assert_eq!(result.cursor.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.cursor.version.as_deref(), Some("2.3.4"));
+
+        let invalid = Fixture::new();
+        invalid.write_cursor_app("com.example.not-cursor", "1.7.54");
+        let result = probe_release_environment(&invalid.input()).unwrap();
+        assert_eq!(result.cursor.state, ToolAvailabilityState::Unsupported);
+        assert!(result.cursor.version.is_none());
+    }
+
+    #[test]
+    fn cursor_desktop_rejects_malformed_versions_symlinked_apps_and_oversized_plists() {
+        let _process_fixture = isolate_process_fixture();
+
+        let malformed = Fixture::new();
+        malformed.write_cursor_app(super::CURSOR_BUNDLE_ID, "1.preview");
+        let result = probe_release_environment(&malformed.input()).unwrap();
+        assert_eq!(result.cursor.state, ToolAvailabilityState::Unsupported);
+
+        let linked = Fixture::new();
+        let app = linked.write_cursor_app(super::CURSOR_BUNDLE_ID, "1.7.54");
+        let real_app = linked.home.join("Applications/Cursor-real.app");
+        fs::rename(&app, &real_app).unwrap();
+        symlink(&real_app, &app).unwrap();
+        let result = probe_release_environment(&linked.input()).unwrap();
+        assert_eq!(result.cursor.state, ToolAvailabilityState::Unsupported);
+
+        let oversized = Fixture::new();
+        let app = oversized.write_cursor_app(super::CURSOR_BUNDLE_ID, "1.7.54");
+        fs::write(
+            app.join("Contents/Info.plist"),
+            vec![b'x'; super::MAX_PLIST_BYTES as usize + 1],
+        )
+        .unwrap();
+        let result = probe_release_environment(&oversized.input()).unwrap();
+        assert_eq!(result.cursor.state, ToolAvailabilityState::Unsupported);
     }
 
     #[test]
@@ -1126,6 +1327,7 @@ esac"#,
         let fixture = Fixture::new();
         fixture.write_tool("claude", &fixture.pipe_holding_descendant("wait"));
         fixture.write_tool("codex", "printf 'codex-cli 0.114.0\\nforged'");
+        fixture.write_tool("agent", &fixture.pipe_holding_descendant("wait"));
         let mut input = fixture.input();
         input.timeout = Duration::from_millis(100);
         let started = std::time::Instant::now();
@@ -1133,8 +1335,10 @@ esac"#,
         assert!(started.elapsed() < Duration::from_millis(800));
         assert_eq!(result.claude.state, ToolAvailabilityState::Unsupported);
         assert_eq!(result.codex.state, ToolAvailabilityState::Unsupported);
+        assert_eq!(result.cursor.state, ToolAvailabilityState::Unsupported);
         assert_eq!(result.environment.claude_installation_version(), None);
         assert_eq!(result.environment.codex_installation_version(), None);
+        assert_eq!(result.environment.cursor_installation_version(), None);
     }
 
     #[test]

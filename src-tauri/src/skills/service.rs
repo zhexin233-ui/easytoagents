@@ -28,8 +28,8 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        ClaudeCustomizationPolicyProbe, DiscoveryContext, ManagedOwnership, TargetDescriptor,
-        ToolAdapter,
+        cursor::CursorAdapter, ClaudeCustomizationPolicyProbe, DiscoveryContext, ManagedOwnership,
+        TargetDescriptor, ToolAdapter, ASSIGNABLE_SKILL_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -372,7 +372,7 @@ pub fn list_global_skill_target_statuses_with_policy_probe(
     environment: &crate::adapters::ExplicitEnvironment,
     policy_probe: &dyn ClaudeCustomizationPolicyProbe,
 ) -> Result<Vec<SkillTargetStatusDto>, AppError> {
-    [Tool::Claude, Tool::Codex]
+    ASSIGNABLE_SKILL_TOOLS
         .into_iter()
         .map(|tool| {
             let descriptor = descriptor_for(environment, tool, None, policy_probe)?;
@@ -581,6 +581,7 @@ fn prepare_skill_sync(
             Tool::Claude => environment.claude_config_dir().to_path_buf(),
             // Codex 全局 Skills 目标位于 CODEX_HOME/skills，写入根必须跟随。
             Tool::Codex => environment.codex_home().to_path_buf(),
+            Tool::Cursor => environment.home().join(".cursor"),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -632,9 +633,11 @@ pub(super) fn descriptor_for(
 fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
+    static CURSOR: CursorAdapter = CursorAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
+        Tool::Cursor => &CURSOR,
     }
 }
 
@@ -1126,6 +1129,7 @@ fn list_skill_managed_targets(database: &Database) -> Result<Vec<SkillManagedTar
             let tool = match row.get::<_, String>(1)?.as_str() {
                 "claude" => Tool::Claude,
                 "codex" => Tool::Codex,
+                "cursor" => Tool::Cursor,
                 _ => return Err(rusqlite::Error::InvalidQuery),
             };
             Ok((
@@ -1328,6 +1332,9 @@ mod tests {
             fs::create_dir(&project).unwrap();
             fs::create_dir(home.join(".claude")).unwrap();
             fs::create_dir(home.join(".codex")).unwrap();
+            // Cursor 的写入根保持为窄边界 ~/.cursor；fixture 显式模拟已安装
+            // Cursor 创建过配置根，但仍让同步管线自行创建 skills 子目录。
+            fs::create_dir(home.join(".cursor")).unwrap();
             let home = fs::canonicalize(home).unwrap();
             let project = fs::canonicalize(project).unwrap();
             fs::write(
@@ -1653,7 +1660,7 @@ mod tests {
     }
 
     #[test]
-    fn first_global_sync_is_pending_then_preserves_existing_entries_for_both_tools() {
+    fn first_global_sync_is_pending_then_preserves_existing_entries_for_all_tools() {
         let mut fixture = Fixture::new();
         let claude_target = fixture.home.join(".claude/skills");
         fs::create_dir_all(claude_target.join("external-untouched")).unwrap();
@@ -1670,11 +1677,22 @@ mod tests {
             },
         )
         .unwrap();
-        set_global_skill_assignment(
+        let assigned = set_global_skill_assignment(
             &mut fixture.database,
             &fixture.paths,
             &SetGlobalSkillAssignmentInput {
                 tool: Tool::Codex,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: assigned.row_version,
+            },
+        )
+        .unwrap();
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Cursor,
                 skill_id: skill.id.clone(),
                 assigned: true,
                 row_version: assigned.row_version,
@@ -1698,14 +1716,23 @@ mod tests {
             .iter()
             .find(|status| status.tool == Tool::Codex)
             .unwrap();
+        let cursor = statuses
+            .iter()
+            .find(|status| status.tool == Tool::Cursor)
+            .unwrap();
         assert_eq!(claude.status, SyncStatus::ExternalNonOwnedChange);
         assert_eq!(codex.status, SyncStatus::Missing);
+        assert_eq!(cursor.status, SyncStatus::Missing);
         assert_eq!(
             claude.diagnostic_code.as_deref(),
             Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
         );
         assert_eq!(
             codex.diagnostic_code.as_deref(),
+            Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
+        );
+        assert_eq!(
+            cursor.diagnostic_code.as_deref(),
             Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
         );
 
@@ -1736,6 +1763,19 @@ mod tests {
             &policy,
         )
         .unwrap();
+        let cursor_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Cursor,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
         let previewed_statuses = super::list_global_skill_target_statuses_with_policy_probe(
             &fixture.database,
             &fixture.paths,
@@ -1747,7 +1787,11 @@ mod tests {
             status.diagnostic_code.as_deref() == Some("SKILL_TARGET_INITIAL_SYNC_PENDING")
         }));
 
-        for (tool, preview) in [(Tool::Claude, claude_preview), (Tool::Codex, codex_preview)] {
+        for (tool, preview) in [
+            (Tool::Claude, claude_preview),
+            (Tool::Codex, codex_preview),
+            (Tool::Cursor, cursor_preview),
+        ] {
             apply_skill_preview_with_policy_probe(
                 &Mutex::new(()),
                 &mut fixture.database,
@@ -1775,6 +1819,7 @@ mod tests {
                 .environment
                 .codex_home()
                 .join("skills/first-sync-skill"),
+            fixture.home.join(".cursor/skills/first-sync-skill"),
         ] {
             assert!(link.is_symlink());
             assert_eq!(
@@ -2487,6 +2532,49 @@ mod tests {
                     .unwrap()
             )
         );
+        let cursor_global =
+            super::descriptor_for(&fixture.environment, Tool::Cursor, None, &policy).unwrap();
+        assert_eq!(
+            cursor_global.path.as_deref(),
+            fixture.home.join(".cursor/skills").to_str()
+        );
+        let project_root = crate::domain::ProjectRoot::parse(&fixture.project).unwrap();
+        let cursor_project = super::descriptor_for(
+            &fixture.environment,
+            Tool::Cursor,
+            Some(&project_root),
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(
+            cursor_project.path.as_deref(),
+            fixture.project.join(".cursor/skills").to_str()
+        );
+    }
+
+    #[test]
+    fn startup_reconciliation_decodes_cursor_managed_skill_targets() {
+        let fixture = Fixture::new();
+        let target_id = "00000000-0000-4000-8000-000000000391";
+        let target_path = fixture.home.join(".cursor/skills");
+        fixture
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO managed_targets(
+                    id, tool, artifact_kind, scope, target_path
+                 ) VALUES (?1, 'cursor', 'skill', 'global', ?2)",
+                rusqlite::params![target_id, target_path.to_string_lossy()],
+            )
+            .unwrap();
+
+        let targets = super::list_skill_managed_targets(&fixture.database).unwrap();
+        assert!(targets.iter().any(|(id, tool, project_id, path)| {
+            id == target_id
+                && *tool == Tool::Cursor
+                && project_id.is_none()
+                && path == target_path.to_str().unwrap()
+        }));
     }
 
     #[test]

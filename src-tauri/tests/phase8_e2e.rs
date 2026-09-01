@@ -54,6 +54,7 @@ struct Fixture {
     home: PathBuf,
     claude_config: PathBuf,
     codex_home: PathBuf,
+    cursor_home: PathBuf,
     project: PathBuf,
     sources: PathBuf,
     external_skill: PathBuf,
@@ -80,6 +81,7 @@ impl Fixture {
         let home = root.join("home");
         let claude_config = root.join("claude-config");
         let codex_home = root.join("codex-home");
+        let cursor_home = home.join(".cursor");
         let project = root.join("project");
         let sources = root.join("sources");
         let external_skill = root.join("external-skill");
@@ -87,6 +89,7 @@ impl Fixture {
             &home,
             &claude_config,
             &codex_home,
+            &cursor_home,
             &project,
             &sources,
             &external_skill,
@@ -96,8 +99,10 @@ impl Fixture {
         for directory in [
             claude_config.join("skills"),
             codex_home.join("skills"),
+            cursor_home.join("skills"),
             project.join(".claude/skills"),
             project.join(".codex/skills"),
+            project.join(".cursor/skills"),
         ] {
             fs::create_dir_all(directory).expect("创建隔离原生目标目录失败");
         }
@@ -174,6 +179,27 @@ unknown = "preserve"
         )
         .expect("写入 Codex 项目配置 fixture 失败");
         fs::write(
+            cursor_home.join("mcp.json"),
+            br#"{
+  "theme": "dark",
+  "unknownTop": {"preserve": true},
+  "mcpServers": {
+    "external-global": {"command": "keep", "unknown": {"value": 1}}
+  }
+}
+"#,
+        )
+        .expect("写入 Cursor 用户 MCP fixture 失败");
+        fs::write(
+            project.join(".cursor/mcp.json"),
+            br#"{
+  "unknownProject": {"preserve": true},
+  "mcpServers": {"external-project": {"command": "keep"}}
+}
+"#,
+        )
+        .expect("写入 Cursor 项目 MCP fixture 失败");
+        fs::write(
             claude_config.join("CLAUDE.md"),
             "# 原始提示词\n\n保留末尾空格  \n最后一行无换行",
         )
@@ -212,6 +238,7 @@ unknown = "preserve"
             home,
             claude_config,
             codex_home,
+            cursor_home,
             project,
             sources,
             external_skill,
@@ -293,10 +320,12 @@ unknown = "preserve"
         assert_eq!(result.applied_targets, 1);
         let allowed_root = if project_id.is_some() {
             self.project.clone()
-        } else if tool == Tool::Claude {
-            self.home.clone()
         } else {
-            self.codex_home.clone()
+            match tool {
+                Tool::Claude => self.home.clone(),
+                Tool::Codex => self.codex_home.clone(),
+                Tool::Cursor => self.cursor_home.clone(),
+            }
         };
         self.restore_case(&result.run_id, &target_path, allowed_root)
     }
@@ -348,10 +377,12 @@ unknown = "preserve"
         assert_eq!(result.applied_targets, 1);
         let allowed_root = if project_id.is_some() {
             self.project.clone()
-        } else if tool == Tool::Claude {
-            self.claude_config.clone()
         } else {
-            self.codex_home.clone()
+            match tool {
+                Tool::Claude => self.claude_config.clone(),
+                Tool::Codex => self.codex_home.clone(),
+                Tool::Cursor => self.cursor_home.clone(),
+            }
         };
         self.restore_case(
             &result.run_id,
@@ -459,7 +490,7 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
     )
     .expect("分配 Claude 全局 MCP 失败");
     assert_serialized_secrets_absent("分配 MCP RPC DTO", &global_mcp);
-    set_global_mcp_assignment(
+    let global_mcp = set_global_mcp_assignment(
         &mut fixture.database,
         &fixture.redactor,
         &SetGlobalMcpAssignmentInput {
@@ -470,6 +501,17 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
         },
     )
     .expect("分配 Codex 全局 MCP 失败");
+    set_global_mcp_assignment(
+        &mut fixture.database,
+        &fixture.redactor,
+        &SetGlobalMcpAssignmentInput {
+            tool: Tool::Cursor,
+            mcp_id: global_mcp.id,
+            assigned: true,
+            row_version: global_mcp.row_version,
+        },
+    )
+    .expect("分配 Cursor 全局 MCP 失败");
 
     let project_mcp = create_mcp_server(
         &mut fixture.database,
@@ -504,7 +546,7 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
     .expect("分配 Claude 项目 MCP 失败");
     assert_serialized_secrets_absent("分配项目 MCP RPC DTO", &project_mcp);
     let project_version = fixture.project_row_version();
-    set_project_mcp_assignment(
+    let project_mcp = set_project_mcp_assignment(
         &mut fixture.database,
         &fixture.redactor,
         &SetProjectMcpAssignmentInput {
@@ -517,6 +559,20 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
         },
     )
     .expect("分配 Codex 项目 MCP 失败");
+    let project_version = fixture.project_row_version();
+    set_project_mcp_assignment(
+        &mut fixture.database,
+        &fixture.redactor,
+        &SetProjectMcpAssignmentInput {
+            project_id: fixture.project_id.clone(),
+            tool: Tool::Cursor,
+            mcp_id: project_mcp.id,
+            assigned: true,
+            mcp_row_version: project_mcp.row_version,
+            project_row_version: project_version,
+        },
+    )
+    .expect("分配 Cursor 项目 MCP 失败");
 
     let global_skill = import_skill(
         &mut fixture.database,
@@ -539,7 +595,7 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
     )
     .expect("分配 Claude 全局 Skill 失败");
     assert_serialized_secrets_absent("分配 Skill RPC DTO", &global_skill);
-    set_global_skill_assignment(
+    let global_skill = set_global_skill_assignment(
         &mut fixture.database,
         &fixture.paths,
         &SetGlobalSkillAssignmentInput {
@@ -550,6 +606,17 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
         },
     )
     .expect("分配 Codex 全局 Skill 失败");
+    set_global_skill_assignment(
+        &mut fixture.database,
+        &fixture.paths,
+        &SetGlobalSkillAssignmentInput {
+            tool: Tool::Cursor,
+            skill_id: global_skill.id,
+            assigned: true,
+            row_version: global_skill.row_version,
+        },
+    )
+    .expect("分配 Cursor 全局 Skill 失败");
 
     let project_skill = import_skill(
         &mut fixture.database,
@@ -576,7 +643,7 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
     .expect("分配 Claude 项目 Skill 失败");
     assert_serialized_secrets_absent("分配项目 Skill RPC DTO", &project_skill);
     let project_version = fixture.project_row_version();
-    set_project_skill_assignment(
+    let project_skill = set_project_skill_assignment(
         &mut fixture.database,
         &fixture.paths,
         &SetProjectSkillAssignmentInput {
@@ -589,6 +656,20 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
         },
     )
     .expect("分配 Codex 项目 Skill 失败");
+    let project_version = fixture.project_row_version();
+    set_project_skill_assignment(
+        &mut fixture.database,
+        &fixture.paths,
+        &SetProjectSkillAssignmentInput {
+            project_id: fixture.project_id.clone(),
+            tool: Tool::Cursor,
+            skill_id: project_skill.id,
+            assigned: true,
+            skill_row_version: project_skill.row_version,
+            project_row_version: project_version,
+        },
+    )
+    .expect("分配 Cursor 项目 Skill 失败");
 
     let imported_prompt =
         discover_prompt_import(&mut fixture.database, &fixture.environment, Tool::Claude)
@@ -628,16 +709,24 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
     let project_id = fixture.project_id.clone();
     restore_cases.push(fixture.apply_mcp(Tool::Claude, None));
     restore_cases.push(fixture.apply_mcp(Tool::Codex, None));
+    restore_cases.push(fixture.apply_mcp(Tool::Cursor, None));
     restore_cases.push(fixture.apply_mcp(Tool::Claude, Some(project_id.clone())));
     restore_cases.push(fixture.apply_mcp(Tool::Codex, Some(project_id.clone())));
+    restore_cases.push(fixture.apply_mcp(Tool::Cursor, Some(project_id.clone())));
     restore_cases.push(fixture.apply_skill(Tool::Claude, None, "phase8-global-skill"));
     restore_cases.push(fixture.apply_skill(Tool::Codex, None, "phase8-global-skill"));
+    restore_cases.push(fixture.apply_skill(Tool::Cursor, None, "phase8-global-skill"));
     restore_cases.push(fixture.apply_skill(
         Tool::Claude,
         Some(project_id.clone()),
         "phase8-project-skill",
     ));
-    restore_cases.push(fixture.apply_skill(Tool::Codex, Some(project_id), "phase8-project-skill"));
+    restore_cases.push(fixture.apply_skill(
+        Tool::Codex,
+        Some(project_id.clone()),
+        "phase8-project-skill",
+    ));
+    restore_cases.push(fixture.apply_skill(Tool::Cursor, Some(project_id), "phase8-project-skill"));
 
     let prompt_preview = preview_prompt_sync(
         &mut fixture.database,
@@ -846,6 +935,33 @@ fn assert_native_round_trip(fixture: &Fixture) {
     assert!(codex_project.contains("[mcp_servers.external_project]"));
     assert!(codex_project.contains(ENV_SECRET));
 
+    let cursor_global: Value =
+        serde_json::from_slice(&fs::read(fixture.cursor_home.join("mcp.json")).unwrap()).unwrap();
+    assert_eq!(cursor_global["theme"], "dark");
+    assert_eq!(cursor_global["unknownTop"]["preserve"], true);
+    assert_eq!(
+        cursor_global["mcpServers"]["external-global"]["unknown"]["value"],
+        1
+    );
+    assert_eq!(
+        cursor_global["mcpServers"]["phase8-global-http"]["headers"]["Authorization"],
+        format!("Bearer {HEADER_SECRET}")
+    );
+    let cursor_project: Value = serde_json::from_slice(
+        &fs::read(fixture.project.join(".cursor/mcp.json")).expect("读取 Cursor 项目 MCP 失败"),
+    )
+    .unwrap();
+    assert_eq!(cursor_project["unknownProject"]["preserve"], true);
+    assert!(cursor_project["mcpServers"]
+        .get("external-project")
+        .is_some());
+    assert!(cursor_project["mcpServers"]
+        .get("phase8-project-stdio")
+        .is_some());
+    assert!(cursor_project["mcpServers"]
+        .get("phase8-global-http")
+        .is_none());
+
     let links = [
         (
             fixture.claude_config.join("skills/phase8-global-skill"),
@@ -856,11 +972,19 @@ fn assert_native_round_trip(fixture: &Fixture) {
             "phase8-global-skill",
         ),
         (
+            fixture.cursor_home.join("skills/phase8-global-skill"),
+            "phase8-global-skill",
+        ),
+        (
             fixture.project.join(".claude/skills/phase8-project-skill"),
             "phase8-project-skill",
         ),
         (
             fixture.project.join(".codex/skills/phase8-project-skill"),
+            "phase8-project-skill",
+        ),
+        (
+            fixture.project.join(".cursor/skills/phase8-project-skill"),
             "phase8-project-skill",
         ),
     ];

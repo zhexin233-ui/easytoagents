@@ -20,8 +20,9 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        ClaudeCustomizationPolicyProbe, ClaudeUserMcpCapabilityProbe, DiscoveryContext,
-        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
+        cursor::CursorAdapter, ClaudeCustomizationPolicyProbe, ClaudeUserMcpCapabilityProbe,
+        DiscoveryContext, ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
+        ASSIGNABLE_MCP_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -493,7 +494,7 @@ pub fn list_global_mcp_target_statuses(
     database: &Database,
     environment: &crate::adapters::ExplicitEnvironment,
 ) -> Result<Vec<McpTargetStatusDto>, AppError> {
-    [Tool::Claude, Tool::Codex]
+    ASSIGNABLE_MCP_TOOLS
         .into_iter()
         .map(|tool| {
             let descriptor = descriptor_for(
@@ -688,6 +689,7 @@ fn prepare_mcp_sync(
         || match input.tool {
             Tool::Claude => environment.home().to_path_buf(),
             Tool::Codex => environment.codex_home().to_path_buf(),
+            Tool::Cursor => environment.home().join(".cursor"),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -762,9 +764,11 @@ pub(super) fn descriptor_for(
 pub(super) fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
+    static CURSOR: CursorAdapter = CursorAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
+        Tool::Cursor => &CURSOR,
     }
 }
 
@@ -772,6 +776,7 @@ pub(super) fn native_container(tool: Tool) -> &'static str {
     match tool {
         Tool::Claude => "mcpServers",
         Tool::Codex => "mcp_servers",
+        Tool::Cursor => "mcpServers",
     }
 }
 
@@ -804,7 +809,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
         .cloned()
         .ok_or_else(|| AppError::invalid_input("extra", "MCP 扩展字段必须是对象"))?;
     match (tool, value.transport) {
-        (Tool::Claude, McpTransport::Stdio) => {
+        (Tool::Claude | Tool::Cursor, McpTransport::Stdio) => {
             object.insert("type".to_owned(), Value::String("stdio".to_owned()));
             object.insert(
                 "command".to_owned(),
@@ -820,7 +825,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
                 object.insert("env".to_owned(), serde_json::to_value(&value.env).unwrap());
             }
         }
-        (Tool::Claude, McpTransport::StreamableHttp) => {
+        (Tool::Claude | Tool::Cursor, McpTransport::StreamableHttp) => {
             object.insert("type".to_owned(), Value::String("http".to_owned()));
             object.insert(
                 "url".to_owned(),
@@ -1331,7 +1336,9 @@ mod tests {
             fs::create_dir(&project).unwrap();
             fs::create_dir(home.join(".claude")).unwrap();
             fs::create_dir(home.join(".codex")).unwrap();
+            fs::create_dir(home.join(".cursor")).unwrap();
             fs::create_dir(project.join(".codex")).unwrap();
+            fs::create_dir(project.join(".cursor")).unwrap();
             let home = fs::canonicalize(home).unwrap();
             let project = fs::canonicalize(project).unwrap();
             let environment =
@@ -1616,6 +1623,7 @@ mod tests {
         let mut fixture = Fixture::new();
         let claude_path = fixture.home.join(".claude.json");
         let codex_path = fixture.home.join(".codex/config.toml");
+        let cursor_path = fixture.home.join(".cursor/mcp.json");
         fs::write(
             &claude_path,
             br#"{
@@ -1640,6 +1648,11 @@ unknown = "preserve"
 [plugins.fixture]
 enabled = true
 "#,
+        )
+        .unwrap();
+        fs::write(
+            &cursor_path,
+            r#"{"mcpServers":{"external":{"command":"keep","unknown":"preserve"}},"theme":"dark"}"#,
         )
         .unwrap();
         let mut redactor = SecretRedactor::default();
@@ -1671,11 +1684,22 @@ enabled = true
             },
         )
         .unwrap();
+        let cursor = set_global_mcp_assignment(
+            &mut fixture.database,
+            &redactor,
+            &SetGlobalMcpAssignmentInput {
+                tool: Tool::Cursor,
+                mcp_id: created.id.clone(),
+                assigned: true,
+                row_version: codex.row_version,
+            },
+        )
+        .unwrap();
         let user_probe = ConservativeClaudeUserMcpProbe;
         let policy = fixture.allowed_policy();
         let write_operations = std::sync::Mutex::new(());
 
-        for tool in [Tool::Claude, Tool::Codex] {
+        for tool in [Tool::Claude, Tool::Codex, Tool::Cursor] {
             let input = PreviewMcpSyncInput {
                 tool,
                 project_id: None,
@@ -1724,6 +1748,17 @@ enabled = true
         assert!(codex_native.contains("[plugins.fixture]"));
         assert!(codex_native.contains("[mcp_servers.external]"));
         assert!(codex_native.contains(HEADER_SECRET));
+        let cursor_native: Value =
+            serde_json::from_slice(&fs::read(&cursor_path).unwrap()).unwrap();
+        assert_eq!(cursor_native["theme"], "dark");
+        assert_eq!(
+            cursor_native["mcpServers"]["external"]["unknown"],
+            "preserve"
+        );
+        assert_eq!(
+            cursor_native["mcpServers"]["managed-http"]["headers"]["Authorization"],
+            HEADER_SECRET
+        );
 
         let updated = update_mcp_server(
             &mut fixture.database,
@@ -1739,7 +1774,7 @@ enabled = true
                 env: SensitiveMapUpdate::Keep,
                 extra: SensitiveJsonUpdate::Keep,
                 enabled: true,
-                row_version: codex.row_version,
+                row_version: cursor.row_version,
             },
         )
         .unwrap();
@@ -2293,12 +2328,14 @@ enabled = true
         let path = match tool {
             Tool::Claude => fixture.home.join(".claude.json"),
             Tool::Codex => fixture.home.join(".codex/config.toml"),
+            Tool::Cursor => fixture.home.join(".cursor/mcp.json"),
         };
         let document =
             json!({super::native_container(tool): items, "unrelated": {"keep": "outside"}});
         let text = match tool {
             Tool::Claude => serde_json::to_string_pretty(&document).unwrap(),
             Tool::Codex => toml_edit::ser::to_string(&document).unwrap(),
+            Tool::Cursor => serde_json::to_string_pretty(&document).unwrap(),
         };
         fs::write(&path, text).unwrap();
         path
@@ -2340,13 +2377,13 @@ enabled = true
     #[test]
     fn mcp_import_selects_extends_and_syncs_without_touching_unselected_entries() {
         use crate::mcp::{confirm_mcp_import, discover_mcp_import, McpImportCandidateStatus};
-        for tool in [Tool::Claude, Tool::Codex] {
+        for tool in [Tool::Claude, Tool::Codex, Tool::Cursor] {
             let mut fixture = Fixture::new();
             let mut redactor = SecretRedactor::default();
             let disabled = json!({"command": "external", "enabled": false});
             let mut stdio = import_item(tool, &stdio_input("stdio"));
             let mut http = import_item(tool, &http_input("http"));
-            if tool == Tool::Codex {
+            if matches!(tool, Tool::Codex | Tool::Cursor) {
                 // 保留真实来源常见的显式 type，不能让 helper 抹掉兼容性边界。
                 stdio["type"] = json!("stdio");
                 http["type"] = json!("http");
@@ -2460,6 +2497,7 @@ enabled = true
             let after: Value = match tool {
                 Tool::Claude => serde_json::from_str(&contents).unwrap(),
                 Tool::Codex => toml_edit::de::from_str(&contents).unwrap(),
+                Tool::Cursor => serde_json::from_str(&contents).unwrap(),
             };
             assert_eq!(after[super::native_container(tool)]["disabled"], disabled);
             assert_eq!(after["unrelated"]["keep"], "outside");
@@ -2515,7 +2553,7 @@ enabled = true
         };
         let mut fixture = Fixture::new();
         let mut redactor = SecretRedactor::default();
-        for tool in [Tool::Claude, Tool::Codex] {
+        for tool in [Tool::Claude, Tool::Codex, Tool::Cursor] {
             let mut native = import_item(tool, &stdio_input("shared"));
             if tool == Tool::Codex {
                 native["type"] = json!("stdio");
@@ -2540,9 +2578,12 @@ enabled = true
             )
             .unwrap();
         }
-        assert_eq!(import_counts(&fixture.database), (1, 2, 2, 2));
+        assert_eq!(import_counts(&fixture.database), (1, 3, 3, 3));
         let central = super::list_mcp_servers(&fixture.database, &redactor).unwrap();
-        assert_eq!(central[0].global_tools, vec![Tool::Claude, Tool::Codex]);
+        assert_eq!(
+            central[0].global_tools,
+            vec![Tool::Claude, Tool::Codex, Tool::Cursor]
+        );
         let mut conflict_fixture = Fixture::new();
         super::create_mcp_server(
             &mut conflict_fixture.database,

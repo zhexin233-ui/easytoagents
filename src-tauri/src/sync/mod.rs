@@ -1071,9 +1071,9 @@ mod tests {
     use crate::{
         adapters::{
             canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-            ConservativeClaudeCustomizationPolicyProbe, ConservativeClaudeUserMcpProbe,
-            DiscoveryContext, ExplicitEnvironment, ManagedOwnership, PolicyState, TargetTrustState,
-            ToolAdapter, ToolAvailability,
+            cursor::CursorAdapter, ConservativeClaudeCustomizationPolicyProbe,
+            ConservativeClaudeUserMcpProbe, DiscoveryContext, ExplicitEnvironment,
+            ManagedOwnership, PolicyState, TargetTrustState, ToolAdapter, ToolAvailability,
         },
         app::AppPaths,
         db::Database,
@@ -1117,7 +1117,9 @@ mod tests {
         let environment = isolated_environment(&home);
         fs::create_dir_all(environment.claude_config_dir()).unwrap();
         fs::create_dir_all(environment.codex_home()).unwrap();
+        fs::create_dir_all(home.join(".cursor")).unwrap();
         fs::create_dir_all(project_path.join(".codex")).unwrap();
+        fs::create_dir_all(project_path.join(".cursor")).unwrap();
         fs::copy(
             fixture("claude-settings.json"),
             environment.claude_config_dir().join("settings.json"),
@@ -1148,6 +1150,16 @@ mod tests {
             environment.codex_home().join("AGENTS.md"),
         )
         .unwrap();
+        fs::copy(
+            fixture("cursor-user-mcp.json"),
+            home.join(".cursor/mcp.json"),
+        )
+        .unwrap();
+        fs::copy(
+            fixture("cursor-project-mcp.json"),
+            project_path.join(".cursor/mcp.json"),
+        )
+        .unwrap();
 
         let probe = ConservativeClaudeUserMcpProbe;
         let context = DiscoveryContext {
@@ -1158,6 +1170,7 @@ mod tests {
         };
         let claude = ClaudeAdapter.discover(&context).unwrap();
         let codex = CodexAdapter.discover(&context).unwrap();
+        let cursor = CursorAdapter.discover(&context).unwrap();
         let cases: Vec<(
             &dyn ToolAdapter,
             &crate::adapters::TargetDescriptor,
@@ -1226,6 +1239,26 @@ mod tests {
                     .find(|target| target.artifact_kind == ArtifactKind::Prompt)
                     .unwrap(),
                 ManagedOwnership::WholeDocument,
+            ),
+            (
+                &CursorAdapter,
+                cursor
+                    .iter()
+                    .find(|target| {
+                        target.artifact_kind == ArtifactKind::Mcp && target.scope == Scope::Global
+                    })
+                    .unwrap(),
+                ManagedOwnership::selectors([vec!["mcpServers", "fixture-user"]]),
+            ),
+            (
+                &CursorAdapter,
+                cursor
+                    .iter()
+                    .find(|target| {
+                        target.artifact_kind == ArtifactKind::Mcp && target.scope == Scope::Project
+                    })
+                    .unwrap(),
+                ManagedOwnership::selectors([vec!["mcpServers", "fixture-project"]]),
             ),
         ];
         for (adapter, target, ownership) in cases {

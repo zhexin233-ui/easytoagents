@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { mcpImportQueryOptions } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import { toolMetadata } from "@/lib/tool-metadata";
 
 interface McpImportDialogProps {
   tool: Tool;
@@ -59,7 +60,7 @@ export function McpImportDialog(props: McpImportDialogProps) {
       >
         <div className="flex items-start justify-between gap-4">
           <h2 id="mcp-import-title" className="text-xl font-semibold">
-            导入 {props.tool === "claude" ? "Claude" : "Codex"} 全局 MCP
+            导入 {toolMetadata(props.tool).label} 全局 MCP
           </h2>
           <Button
             variant="outline"

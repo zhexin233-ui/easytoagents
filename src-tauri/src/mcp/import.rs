@@ -480,7 +480,7 @@ fn parse_native_item(
         env: take_optional(&mut object, "env")?.unwrap_or_default(),
         headers: take_optional(
             &mut object,
-            if tool == Tool::Claude {
+            if matches!(tool, Tool::Claude | Tool::Cursor) {
                 "headers"
             } else {
                 "http_headers"
@@ -538,7 +538,7 @@ fn take_optional<T: DeserializeOwned>(
 
 fn register_native_secrets(redactor: &mut SecretRedactor, items: &Map<String, Value>) {
     for raw in items.values() {
-        for key in ["headers", "http_headers", "env_http_headers", "env"] {
+        for key in ["headers", "http_headers", "env_http_headers", "env", "auth"] {
             if let Some(values) = raw.get(key).and_then(Value::as_object) {
                 for (name, value) in values {
                     if let Some(value) = value.as_str() {

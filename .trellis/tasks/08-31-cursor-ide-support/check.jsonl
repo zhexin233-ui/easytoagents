@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核验所有工具分支、生成合同与跨层一致性"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核验 v10 迁移、约束和旧数据保留"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核验 Adapter、Preview/Apply、恢复与路径安全"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "核验 Cursor MCP 导入与敏感字段"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "核验 Cursor Skills 导入、链接和状态"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核验 UI 状态、错误和无隐式 Apply"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "核验生成绑定和类型边界"}
+{"file": ".trellis/tasks/08-31-cursor-ide-support/research/cursor-official-config.md", "reason": "核验实现与 Cursor 官方合同一致"}
+{"file": ".trellis/tasks/08-31-cursor-ide-support/research/repository-impact.md", "reason": "核验影响面、文档与回归范围"}

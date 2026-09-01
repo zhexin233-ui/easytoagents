@@ -142,8 +142,8 @@ export function SettingsDialog({
                     直接应用（跳过预览确认对话框）
                   </span>
                   <span className="text-muted-foreground mt-1 block leading-6">
-                    开启后，MCP 与 Skills 的全局同步和项目追加、Claude/Codex 的
-                    Provider
+                    开启后，各受支持工具的 MCP 与 Skills
+                    全局同步和项目追加，以及 Claude/Codex 的 Provider
                     与提示词同步仍会照常生成持久化预览，但在没有冲突或错误时直接应用，不再弹出确认对话框；中央列表的分配与启停操作也会自动同步到目标。每次应用仍会先创建快照并可回滚。存在冲突、错误或目标受阻时仍会打开预览对话框并阻止应用。
                   </span>
                 </span>

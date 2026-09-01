@@ -596,6 +596,7 @@ fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
     match value.as_str() {
         "claude" => Ok(Tool::Claude),
         "codex" => Ok(Tool::Codex),
+        "cursor" => Ok(Tool::Cursor),
         _ => Err(rusqlite::Error::InvalidQuery),
     }
 }

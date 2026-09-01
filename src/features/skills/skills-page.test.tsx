@@ -23,6 +23,7 @@ import {
 import { centralListLayoutStorageKeys } from "@/components/use-persisted-central-list-layout";
 import { SkillsPage } from "@/features/skills/skills-page";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import { toolMetadata } from "@/lib/tool-metadata";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("@/bindings/commands", () => ({
@@ -109,7 +110,9 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
   const root =
     tool === "claude"
       ? "/isolated/custom-claude/skills"
-      : "/isolated/custom-codex/skills";
+      : tool === "codex"
+        ? "/isolated/custom-codex/skills"
+        : "/isolated/custom-cursor/skills";
   return {
     previewId: `native-${tool}-preview`,
     tool,
@@ -124,22 +127,39 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
               message: null,
             },
           ]
-        : [
-            {
-              kind: "codex_home",
-              path: root,
-              status: "ready",
-              diagnosticCode: "SKILL_IMPORT_BUILTIN_EXCLUDED",
-              message: "已排除内置技能集合。",
-            },
-            {
-              kind: "codex_agents",
-              path: "/isolated/home/.agents/skills",
-              status: "missing",
-              diagnosticCode: "SKILL_IMPORT_SOURCE_MISSING",
-              message: null,
-            },
-          ],
+        : tool === "codex"
+          ? [
+              {
+                kind: "codex_home",
+                path: root,
+                status: "ready",
+                diagnosticCode: "SKILL_IMPORT_BUILTIN_EXCLUDED",
+                message: "已排除内置技能集合。",
+              },
+              {
+                kind: "codex_agents",
+                path: "/isolated/home/.agents/skills",
+                status: "missing",
+                diagnosticCode: "SKILL_IMPORT_SOURCE_MISSING",
+                message: null,
+              },
+            ]
+          : [
+              {
+                kind: "cursor_home",
+                path: root,
+                status: "ready",
+                diagnosticCode: null,
+                message: null,
+              },
+              {
+                kind: "cursor_agents",
+                path: "/isolated/home/.agents/skills",
+                status: "missing",
+                diagnosticCode: "SKILL_IMPORT_SOURCE_MISSING",
+                message: null,
+              },
+            ],
     candidates: [
       {
         candidateId: "new",
@@ -247,6 +267,13 @@ beforeEach(() => {
         tool: "codex",
         projectId: null,
         targetPath: "/isolated/home/.codex/skills",
+        status: "missing",
+        diagnosticCode: null,
+      },
+      {
+        tool: "cursor",
+        projectId: null,
+        targetPath: "/isolated/home/.cursor/skills",
         status: "missing",
         diagnosticCode: null,
       },
@@ -801,6 +828,7 @@ describe("SkillsPage", () => {
   it.each([
     ["Claude", "claude", false, []],
     ["Codex", "codex", true, ["claude", "codex"]],
+    ["Cursor", "cursor", true, ["claude", "cursor"]],
   ] as const)(
     "%s 全局分配更新中央配置并刷新列表与目标，不隐式预览或 Apply",
     async (toolLabel, tool, assigned, updatedTools) => {
@@ -1029,7 +1057,7 @@ describe("全局 Skills 检测与复制导入", () => {
     expect(commands.confirmSkillImport).not.toHaveBeenCalled();
   });
 
-  it.each(["claude", "codex"] as const)(
+  it.each(["claude", "codex", "cursor"] as const)(
     "%s 中央空列表可显式检测，仅提交勾选项并刷新 Skills，不隐式分配或同步",
     async (tool) => {
       vi.mocked(commands.listSkills).mockResolvedValue({
@@ -1046,13 +1074,13 @@ describe("全局 Skills 检测与复制导入", () => {
       ).toBeVisible();
       expect(commands.discoverSkillImport).not.toHaveBeenCalled();
       const trigger = await screen.findByRole("button", {
-        name: `检测并导入 ${tool === "claude" ? "Claude" : "Codex"} 全局 Skills`,
+        name: `检测并导入 ${toolMetadata(tool).label} 全局 Skills`,
       });
       expect(trigger).toBeEnabled();
       trigger.focus();
       fireEvent.click(trigger);
       const dialog = await screen.findByRole("dialog", {
-        name: `导入 ${tool === "claude" ? "Claude" : "Codex"} 全局 Skills`,
+        name: `导入 ${toolMetadata(tool).label} 全局 Skills`,
       });
       const newSkill = await within(dialog).findByRole("checkbox", {
         name: "导入 new-skill",
@@ -1101,6 +1129,17 @@ describe("全局 Skills 检测与复制导入", () => {
         expect(
           within(dialog).queryByRole("checkbox", { name: /\.system|imagegen/ }),
         ).not.toBeInTheDocument();
+      }
+      if (tool === "cursor") {
+        expect(
+          within(dialog).getByText("Cursor 官方目录（正式同步目标）"),
+        ).toBeVisible();
+        expect(
+          within(dialog).getByText("Cursor Agents 通用目录（仅导入来源）"),
+        ).toBeVisible();
+        expect(
+          within(dialog).getByText("/isolated/custom-cursor/skills"),
+        ).toBeVisible();
       }
       fireEvent.click(newSkill);
       vi.mocked(commands.listSkills).mockResolvedValue({

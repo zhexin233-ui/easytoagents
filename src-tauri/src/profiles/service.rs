@@ -23,8 +23,9 @@ use super::models::{
 };
 use crate::{
     adapters::{
-        canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter, DiscoveryContext,
-        ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
+        canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
+        cursor::CursorAdapter, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
+        PolicyState, TargetDescriptor, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -66,6 +67,7 @@ pub fn list_provider_profiles(
     database: &Database,
     tool: Tool,
 ) -> Result<Vec<ProviderProfileDto>, AppError> {
+    ensure_profile_capability(tool, ArtifactKind::Provider)?;
     repository::list_provider_profiles(database, tool)?
         .iter()
         .map(provider_dto)
@@ -77,6 +79,7 @@ pub fn create_provider_profile(
     redactor: &mut SecretRedactor,
     input: ProviderProfileInput,
 ) -> Result<ProviderProfileDto, AppError> {
+    ensure_profile_capability(input.tool, ArtifactKind::Provider)?;
     validate_provider_fields(
         &input.name,
         &input.api_base_url,
@@ -118,6 +121,7 @@ pub fn update_provider_profile(
         Tool::Codex => current_config.provider_id.clone().ok_or_else(|| {
             AppError::invalid_input("providerOptions", "Codex Provider 缺少稳定 provider id")
         })?,
+        Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     let allow_missing_api_key =
         codex_provider_allows_missing_api_key(current.tool, current_config.provider_id.as_deref());
@@ -169,6 +173,7 @@ pub fn copy_provider_profile(
     redactor: &mut SecretRedactor,
     input: CopyProviderProfileInput,
 ) -> Result<ProviderProfileDto, AppError> {
+    ensure_profile_capability(input.target_tool, ArtifactKind::Provider)?;
     let source = repository::get_provider_profile(database, &input.source_id)?;
     if source.tool == input.target_tool {
         return Err(AppError::invalid_input(
@@ -188,6 +193,7 @@ pub fn copy_provider_profile(
             wire_api: None,
         },
         Tool::Codex => ProviderOptionsInput::default(),
+        Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     let config = StoredProviderConfig::from_input(
         input.target_tool,
@@ -219,6 +225,7 @@ pub fn set_active_provider_profile(
     tool: Tool,
     input: &VersionedProfileInput,
 ) -> Result<ProviderProfileDto, AppError> {
+    ensure_profile_capability(tool, ArtifactKind::Provider)?;
     provider_dto(&repository::set_active_provider_profile(
         database,
         tool,
@@ -282,6 +289,7 @@ pub fn set_global_prompt_assignment(
     database: &mut Database,
     input: &SetGlobalPromptAssignmentInput,
 ) -> Result<PromptProfileDto, AppError> {
+    ensure_profile_capability(input.tool, ArtifactKind::Prompt)?;
     prompt_dto(&repository::set_global_prompt_assignment(
         database,
         input.tool,
@@ -314,6 +322,7 @@ pub fn set_prompt_project_assignment(
     environment: &ExplicitEnvironment,
     input: &SetPromptProjectAssignmentInput,
 ) -> Result<PromptProjectAssignmentDto, AppError> {
+    ensure_profile_capability(input.tool, ArtifactKind::Prompt)?;
     let project = get_registered_project(database, &input.project_id)?;
     let tool = input.tool;
     if input.prompt_profile_id.is_some() {
@@ -338,6 +347,7 @@ pub fn get_prompt_project_assignment(
     project_id: &str,
     tool: Tool,
 ) -> Result<PromptProjectAssignmentDto, AppError> {
+    ensure_profile_capability(tool, ArtifactKind::Prompt)?;
     let assignment = repository::find_prompt_project_assignment(database, project_id, tool)?;
     Ok(PromptProjectAssignmentDto {
         project_id: project_id.to_owned(),
@@ -368,8 +378,10 @@ pub fn get_tool_profile_status(
         tool,
         availability: environment.tool_availability(tool),
         installation_version: environment.installation_version(tool).map(str::to_owned),
-        provider_target_path: descriptor_path(&provider)?,
-        prompt_target_path: descriptor_path(&prompt)?,
+        provider_target_path: provider.path.clone(),
+        prompt_target_path: prompt.path.clone(),
+        provider_capability: provider.capability,
+        prompt_capability: prompt.capability,
         prompt_override: prompt.prompt_override,
         provider_policy: provider.policy,
         new_session_notice: NEW_SESSION_NOTICE.to_owned(),
@@ -383,6 +395,7 @@ pub fn discover_provider_import(
     redactor: &SecretRedactor,
     tool: Tool,
 ) -> Result<Option<ProviderImportPreviewDto>, AppError> {
+    ensure_profile_capability(tool, ArtifactKind::Provider)?;
     if !repository::list_provider_profiles(database, tool)?.is_empty() {
         return Ok(None);
     }
@@ -486,6 +499,7 @@ pub fn confirm_provider_import(
             extra_env: BTreeMap::new(),
             wire_api: discovered.wire_api,
         },
+        Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     let config = StoredProviderConfig::from_input(
         preview.tool,
@@ -529,6 +543,7 @@ pub fn discover_prompt_import(
     environment: &ExplicitEnvironment,
     tool: Tool,
 ) -> Result<Option<PromptImportPreviewDto>, AppError> {
+    ensure_profile_capability(tool, ArtifactKind::Prompt)?;
     let descriptor = descriptor_for(environment, tool, ArtifactKind::Prompt)?;
     ensure_tool_is_available(&descriptor)?;
     // 该工具已有生效档案、或档案库已有同源导入（imported_from_path 相同）时不再检测。
@@ -645,6 +660,7 @@ pub fn preview_provider_sync(
     redactor: &mut SecretRedactor,
     tool: Tool,
 ) -> Result<PreviewPlan, AppError> {
+    ensure_profile_capability(tool, ArtifactKind::Provider)?;
     let prepared = prepare_provider_sync(database, environment, redactor, tool)?;
     persist_prepared_preview(database, prepared, redactor)
 }
@@ -656,6 +672,7 @@ pub fn preview_prompt_sync(
     tool: Tool,
     project_id: Option<String>,
 ) -> Result<PreviewPlan, AppError> {
+    ensure_profile_capability(tool, ArtifactKind::Prompt)?;
     let prepared = prepare_prompt_sync(database, environment, tool, project_id.as_deref())?;
     persist_prepared_preview(database, prepared, redactor)
 }
@@ -672,6 +689,7 @@ pub fn apply_profile_preview(
     artifact_kind: ArtifactKind,
     project_id: Option<&str>,
 ) -> Result<ApplyResult, AppError> {
+    ensure_profile_capability(tool, artifact_kind)?;
     if !matches!(artifact_kind, ArtifactKind::Provider | ArtifactKind::Prompt) {
         return Err(AppError::invalid_input(
             "artifactKind",
@@ -737,6 +755,7 @@ fn prepare_provider_sync(
 ) -> Result<PreparedProfileSync, AppError> {
     let mut descriptor = descriptor_for(environment, tool, ArtifactKind::Provider)?;
     refine_claude_provider_policy(&mut descriptor);
+    ensure_tool_is_available(&descriptor)?;
     let target = ensure_profile_target(database, &descriptor, None)?;
     let active = repository::find_active_provider_profile(database, tool)?;
     if active.is_none() && target.baseline.full_hash.is_none() {
@@ -791,6 +810,7 @@ fn prepare_prompt_sync(
         ArtifactKind::Prompt,
         project_root.as_ref(),
     )?;
+    ensure_tool_is_available(&descriptor)?;
     let target = ensure_profile_target(
         database,
         &descriptor,
@@ -1026,6 +1046,7 @@ fn validate_discovered_provider_config(
             extra_env: BTreeMap::new(),
             wire_api: discovered.wire_api.clone(),
         },
+        Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     StoredProviderConfig::from_input(
         tool,
@@ -1061,6 +1082,7 @@ fn discover_native_provider(
             vec!["model_provider"],
             vec!["model_providers"],
         ]),
+        Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     let scan = scan_target(tool_adapter(tool), &descriptor, &broad_ownership);
     let observed = match scan {
@@ -1072,6 +1094,7 @@ fn discover_native_provider(
                 match tool {
                     Tool::Claude => "json",
                     Tool::Codex => "toml",
+                    Tool::Cursor => "json",
                 },
             ));
         }
@@ -1080,6 +1103,7 @@ fn discover_native_provider(
     match tool {
         Tool::Claude => discover_claude_provider(&descriptor, &observed),
         Tool::Codex => discover_codex_provider(&descriptor, &observed),
+        Tool::Cursor => Err(cursor_unsupported(ArtifactKind::Provider)),
     }
 }
 
@@ -1091,8 +1115,12 @@ fn ensure_tool_is_available(descriptor: &TargetDescriptor) -> Result<(), AppErro
             descriptor.tool.as_str(),
         )),
         crate::adapters::CapabilityState::Unsupported => Err(AppError::invalid_input(
-            "toolInstallation",
-            "工具安装探针未能安全确认版本",
+            "capability",
+            match descriptor.capability.diagnostic_code.as_deref() {
+                Some("CURSOR_PROVIDER_UNSUPPORTED") => "CURSOR_PROVIDER_UNSUPPORTED",
+                Some("CURSOR_PROMPT_UNSUPPORTED") => "CURSOR_PROMPT_UNSUPPORTED",
+                _ => "工具安装探针未能安全确认版本",
+            },
         )),
     }
 }
@@ -1429,6 +1457,7 @@ fn provider_projection(profile: &ProviderProfileRecord) -> Result<Value, AppErro
             );
             Ok(Value::Object(root))
         }
+        Tool::Cursor => Err(cursor_unsupported(ArtifactKind::Provider)),
     }
 }
 
@@ -1465,6 +1494,7 @@ fn provider_ownership(
                 }
             }
         }
+        Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     }
     if selectors.is_empty() {
         return Err(AppError::invalid_input(
@@ -1550,9 +1580,11 @@ fn refine_claude_provider_policy(descriptor: &mut TargetDescriptor) {
 fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
+    static CURSOR: CursorAdapter = CursorAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
+        Tool::Cursor => &CURSOR,
     }
 }
 
@@ -1560,7 +1592,28 @@ fn allowed_root(environment: &ExplicitEnvironment, tool: Tool) -> PathBuf {
     match tool {
         Tool::Claude => environment.claude_config_dir().to_owned(),
         Tool::Codex => environment.codex_home().to_owned(),
+        Tool::Cursor => environment.home().join(".cursor"),
     }
+}
+
+fn ensure_profile_capability(tool: Tool, artifact_kind: ArtifactKind) -> Result<(), AppError> {
+    if tool == Tool::Cursor
+        && matches!(artifact_kind, ArtifactKind::Provider | ArtifactKind::Prompt)
+    {
+        return Err(cursor_unsupported(artifact_kind));
+    }
+    Ok(())
+}
+
+fn cursor_unsupported(artifact_kind: ArtifactKind) -> AppError {
+    AppError::invalid_input(
+        "capability",
+        match artifact_kind {
+            ArtifactKind::Provider => "CURSOR_PROVIDER_UNSUPPORTED",
+            ArtifactKind::Prompt => "CURSOR_PROMPT_UNSUPPORTED",
+            ArtifactKind::Mcp | ArtifactKind::Skill => "Cursor 仅在 MCP/Skills 中受支持",
+        },
+    )
 }
 
 fn descriptor_path(descriptor: &TargetDescriptor) -> Result<String, AppError> {
@@ -1712,7 +1765,10 @@ mod tests {
         CLAUDE_MODEL_KEY,
     };
     use crate::{
-        adapters::{ExplicitEnvironment, PolicyState, ToolAvailability, ToolAvailabilityState},
+        adapters::{
+            CapabilityState, ExplicitEnvironment, PolicyState, ToolAvailability,
+            ToolAvailabilityState,
+        },
         app::AppPaths,
         db::Database,
         domain::{ArtifactKind, Tool},
@@ -2353,6 +2409,74 @@ base_url = "https://external.example.com/v1"
     }
 
     #[test]
+    fn cursor_profile_and_prompt_capabilities_fail_closed_before_storage() {
+        let mut fixture = fixture();
+        let status = get_tool_profile_status(&fixture.environment, Tool::Cursor).unwrap();
+        assert_eq!(
+            status.provider_capability.state,
+            CapabilityState::Unsupported
+        );
+        assert_eq!(status.prompt_capability.state, CapabilityState::Unsupported);
+        assert_eq!(
+            status.provider_capability.diagnostic_code.as_deref(),
+            Some("CURSOR_PROVIDER_UNSUPPORTED")
+        );
+        assert_eq!(
+            status.prompt_capability.diagnostic_code.as_deref(),
+            Some("CURSOR_PROMPT_UNSUPPORTED")
+        );
+        assert!(status.provider_target_path.is_none());
+        assert!(status.prompt_target_path.is_none());
+
+        assert_eq!(
+            list_provider_profiles(&fixture.database, Tool::Cursor)
+                .unwrap_err()
+                .code(),
+            crate::error::ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            discover_provider_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &SecretRedactor::default(),
+                Tool::Cursor,
+            )
+            .unwrap_err()
+            .code(),
+            crate::error::ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            discover_prompt_import(&mut fixture.database, &fixture.environment, Tool::Cursor)
+                .unwrap_err()
+                .code(),
+            crate::error::ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            preview_provider_sync(
+                &mut fixture.database,
+                &fixture.environment,
+                &mut SecretRedactor::default(),
+                Tool::Cursor,
+            )
+            .unwrap_err()
+            .code(),
+            crate::error::ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_targets WHERE tool = 'cursor'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn tool_status_serializes_release_availability_and_imports_fail_before_native_reads() {
         let mut fixture = fixture();
         fs::write(
@@ -2368,6 +2492,7 @@ base_url = "https://external.example.com/v1"
             ToolAvailability {
                 claude: ToolAvailabilityState::Unavailable,
                 codex: ToolAvailabilityState::Unsupported,
+                cursor: ToolAvailabilityState::Unavailable,
             },
         )
         .unwrap()

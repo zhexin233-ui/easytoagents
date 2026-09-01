@@ -27,7 +27,7 @@ commands.confirmSkillImport({ previewId, candidateIds });
 | 列                           | 约束 / 用途                                                                                        |
 | ---------------------------- | -------------------------------------------------------------------------------------------------- |
 | `id`                         | 小写 UUID 文本主键                                                                                 |
-| `tool`                       | `claude` / `codex`                                                                                 |
+| `tool`                       | `claude` / `codex` / `cursor`                                                                      |
 | `context_json`               | 合法 object JSON；版本、来源环境指纹、全部中央 Skill ID/row_version 指纹、候选来源链/目录身份/hash |
 | `redacted_preview_json`      | 合法 object JSON；安全的展示 DTO                                                                   |
 | `status`                     | `previewed` / `consumed`，默认 `previewed`                                                         |
@@ -43,8 +43,16 @@ commands.confirmSkillImport({ previewId, candidateIds });
 | ------ | ------------------------------------------------------------------------ | ------------------------------------ |
 | Claude | `environment.claude_config_dir()/skills`                                 | 同一 Claude 来源根                   |
 | Codex  | `environment.codex_home()/skills`、`environment.home()/.agents/skills`   | `$CODEX_HOME/skills`（跟随 CODEX_HOME） |
+| Cursor | `environment.home()/.cursor/skills`、`environment.home()/.agents/skills` | `$HOME/.cursor/skills`               |
 
 Codex 的正式同步目标是 Codex 实际读取技能的目录 `$CODEX_HOME/skills`（Codex 自带 `.system` 内置技能即位于其中）；`HOME/.agents/skills` 是跨工具通用目录，仅作导入来源（kind `codex_agents`），**不是**同步目标。`CLAUDE_CONFIG_DIR` / `CODEX_HOME` 由启动时的 `ExplicitEnvironment` 提供；前端不得传任意路径，服务不得重新读环境。能力不支持或策略非 Allowed 时，不读取候选内容。
+
+Cursor 的同步目标只允许 `$HOME/.cursor/skills` 或登记项目的
+`<root>/.cursor/skills`；`$HOME/.agents/skills` 对 Cursor 也仅是导入来源（kind
+`cursor_agents`），不得作为受管目标。来源 kind 使用 `cursor_home` /
+`cursor_agents`，写入根固定收窄到 `$HOME/.cursor` 或规范化项目根。真实 Cursor
+Desktop smoke 已验证指向中央 Skill 目录的符号链接可被发现；保留该证据，不能
+用目录命名猜测替代产品行为验证。
 
 > **Warning（历史教训）**：Codex 同步目标曾被错误定为 `HOME/.agents/skills`（假设其为跨工具约定），导致"应用显示已同步、Codex 看不到技能"。教训：**同步目标必须镜像工具真实读取的路径**（以工具自身行为为准验证，如 Codex 在 `$CODEX_HOME/skills/.system` 放内置技能），不要凭目录命名约定推断；同时同步/恢复的 allowed_root 必须与目标路径同步调整（见 `prepare_skill_sync` 与 `overview::global_allowed_root` 的 (Codex, Skill) 分支）。
 
@@ -71,7 +79,11 @@ Codex 的正式同步目标是 Codex 实际读取技能的目录 `$CODEX_HOME/sk
 ### DTO 与选择
 
 - 预览：`previewId: string | null`、`tool`、`sources`、`candidates`、`message`。无可新增候选时没有确认令牌。
-- 来源：`kind`（`claude_global` / `codex_home` / `codex_agents`）、`path`、`status`（`ready` / `missing` / `empty` / `unavailable`）、`diagnosticCode`、`message`。一个来源失败不能隐藏另一个来源结果。`codex_home` 即正式同步目标所在目录，`codex_agents` 仅导入来源。
+- 来源：`kind`（`claude_global` / `codex_home` / `codex_agents` /
+  `cursor_home` / `cursor_agents`）、`path`、`status`（`ready` / `missing` /
+  `empty` / `unavailable`）、`diagnosticCode`、`message`。一个来源失败不能隐藏
+  另一个来源结果。`codex_home`、`cursor_home` 分别是正式同步目标所在目录；
+  `codex_agents`、`cursor_agents` 仅作导入来源。
 - 候选：`candidateId`、`name`、`description`、`sourcePaths`、`status`、`reason`、`existingSkillId`。状态为 `importable` / `already_imported` / `name_conflict` / `invalid`。
 - 确认输入仅 `previewId` 与 1–32 个非重复 `candidateIds`。路径、名称、hash、工具均从私有证据读取，不信任客户端重建值。
 - 结果仅 `tool`、`createdCount`；不返回暗示自动分配的数量。同目录或精确 name/hash 相同来源合并并保留来源路径；同名不同内容和 NOCASE 名称碰撞不可选，不覆盖或自动改名。
@@ -126,7 +138,9 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 - Good：只有 `.codex/skills` 中一个管理器链接，检测出用户技能；勾选后中央新增一项，原链接/文件/权限及所有分配、管理基线不变。
 - Base：只有 `.system` 或候选均已导入，显示原因，没有可确认令牌，不复制、不分配。
 - Bad：Claude 链接绕到 Codex `.system`、来源在确认中变化或第二项 SQL 失败，不能导入内置或留下可见半批次。
-- Good：中央 Skill 已分配、Claude 目录只有 `.DS_Store`、Codex 目标缺失时，两卡片显示“已分配，待同步”；用户显式 Preview/Apply 后创建两个受管链接并保留 `.DS_Store`。
+- Good：中央 Skill 已分配、Claude 目录只有 `.DS_Store`、Codex/Cursor 目标缺失时，
+  三张工具卡片显示“已分配，待同步”；用户显式 Preview/Apply 后分别创建受管链接
+  并保留 `.DS_Store`。
 - Bad：仅看到 desired assignment 就覆盖半基线、同名外部目录或中央副本损坏的真实诊断，或分配成功后自动 Apply。
 
 ## 6. 必需测试与断言
@@ -134,11 +148,11 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 使用临时 home/config/data 和 fixture 技能；不向真实用户目录确认导入或 Apply。
 
 - `skills::import`：默认/自定义来源、缺失正式目标、绝对/相对链接、去重/冲突、中央复用、非法路径与限额；检测无 staging，普通 DTO/持久化证据不含 fixture 正文和私有 frontmatter。
-- 内置回归同时遍历 Claude/Codex：真实 `.system`、集合链接和真实目标别名；集合无 `SKILL.md` 仍排除；确认前、copy、SQL 阶段新建内置别名时整批拒绝且 token 未消费。
+- 内置回归同时遍历 Claude/Codex/Cursor：真实 `.system`、集合链接和真实目标别名；集合无 `SKILL.md` 仍排除；确认前、copy、SQL 阶段新建内置别名时整批拒绝且 token 未消费。
 - 确认回归：选择子集、空/重复/未知 ID、来源/中央 stale、活动 writer、两个独立 DB 连接竞争、第二项故障、提交不确定与回滚；原文件 inode/权限/链接文本及全部 assignment/managed/sync 表不变。
 - library：排他 rename 不覆盖既有目录；清理保留被替换/更改的目录；原单目录根链接仍拒绝。
 - DB：v5→v6 保留已有数据，重复打开幂等，绑定生成检查通过。
-- service + UI：初始/空/仅元文件/缺失目标/无基线 target 行/半基线/desired/managed item 漂移/同名普通目录与外部或断裂链接/中央损坏/策略权限类型错误/完整基线后真实非受管变化矩阵；首次双工具 Apply 后 InSync 且原兄弟保留，MCP 回归不变。
+- service + UI：初始/空/仅元文件/缺失目标/无基线 target 行/半基线/desired/managed item 漂移/同名普通目录与外部或断裂链接/中央损坏/策略权限类型错误/完整基线后真实非受管变化矩阵；首次三工具 Apply 后 InSync 且原兄弟保留，MCP 回归不变。
 - `skills-page.test.tsx`：选择和精确 payload、局部失败、失效重扫、晚到响应、双提交与关闭锁、Tab/Escape/焦点、复制后刷新失败，断言没有 assignment/Apply。
 - 分配 UI：断言中央列表与目标状态一起刷新，成功文案说明仍需显式同步；仅 `missing` 或 `external_non_owned_change` 与 pending 诊断组合覆盖徽标，其它组合不覆盖；分配/取消分配均不调用 Preview/Apply。
 - 浏览器 fixture 只证明实际组件的交互/布局；不能替代真实 Tauri 或真实安装验收。真实桌面未跑必须明确记载。
@@ -153,7 +167,8 @@ if tool == Tool::Codex {
 }
 ```
 
-正确：同一排除边界服务两工具，在各确认检查点重新解析内置目录身份。
+正确：同一排除边界服务 Claude/Codex/Cursor 三工具，在各确认检查点重新解析内置
+目录身份。
 
 ```rust
 let excluded = builtin_exclusions(environment);

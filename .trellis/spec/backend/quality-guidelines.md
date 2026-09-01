@@ -16,6 +16,9 @@ run against hostile paths and configuration contents.
 
 - Reading `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or equivalent process state from
   adapters. Resolve every target from an explicit discovery context.
+- Treating a tool enum as capability evidence. Cursor currently supports only global
+  and project MCP/Skills; Provider, Prompt, API Key/model, and project Rules must return
+  explicit unsupported descriptors with no path and must never reach native reads.
 - Guessing Claude MCP targets for a non-default config root, or treating stale policy
   and trust evidence as allowed.
 - Following a symlinked target or a symlink introduced in an ancestor after discovery.
@@ -52,7 +55,7 @@ run against hostile paths and configuration contents.
 ## Testing Requirements
 
 - Use isolated temporary homes, config roots, and project roots. Tests must never access
-  real Claude or Codex configuration.
+  real Claude, Codex, or Cursor configuration.
 - Cover missing, empty, malformed, permission-denied, symlink, target-type-change, and
   scalar-at-managed-path cases for every supported format.
 - Audit serialized preview/RPC/error/journal output against fixture secrets.
@@ -66,8 +69,10 @@ run against hostile paths and configuration contents.
 
 ## Code Review Checklist
 
-- The Claude/Codex × global/project × provider/prompt/MCP/skill descriptor matrix is
+- The Claude/Codex/Cursor × global/project × provider/prompt/MCP/skill descriptor matrix is
   complete and reports capability, policy, trust, and prompt-override state accurately.
+  Cursor Provider/Prompt/project Rules entries are always unsupported and pathless;
+  only its MCP/Skill entries are assignable.
 - Sensitive selectors match the current native field names and are document-relative.
 - JSON/TOML rendering preserves unmanaged fields, tables, and comments; Markdown and
   skill-link handling do not follow unmanaged links.
@@ -96,6 +101,9 @@ run against hostile paths and configuration contents.
 - `CLAUDE_CONFIG_DIR` affects Claude settings, prompt, and skills targets;
   `CODEX_HOME` affects Codex config, prompt, and user skills targets (Codex user
   Skills resolve from `$CODEX_HOME/skills`, following `CODEX_HOME`).
+- Cursor targets are resolved only from explicit HOME/project roots: user/project MCP
+  use `.cursor/mcp.json`, and user/project Skills use `.cursor/skills`. Cursor has no
+  Provider or Prompt target and no project Rules target.
 - Non-default Claude user MCP requires version-bound capability evidence. Codex
   project MCP/skills require trusted evidence. Unknown evidence blocks.
 - A preview binds descriptor identity, full/managed hashes, managed target
@@ -112,6 +120,7 @@ run against hostile paths and configuration contents.
 | Only full hash changes | `external_non_owned_change`; deterministic merge allowed |
 | Managed hash changes or hash pair is incomplete | conflict; block |
 | Unknown Claude policy/capability or Codex trust | policy/untrusted/unsupported; block |
+| Cursor Provider, Prompt, API Key/model, or project Rules | unsupported and pathless; zero native reads/writes |
 | Duplicate target or contradictory row version | `INVALID_INPUT`; persist nothing |
 
 ### 5. Good/Base/Bad Cases
@@ -124,7 +133,8 @@ run against hostile paths and configuration contents.
 
 ### 6. Tests Required
 
-- Cover the complete Claude/Codex × global/project × artifact descriptor matrix.
+- Cover the complete Claude/Codex/Cursor × global/project × artifact descriptor matrix,
+  including fail-closed Cursor Provider/Prompt cases.
 - Use isolated homes/config roots/projects for missing, empty, malformed,
   permission, symlink, trust, policy, override, and drift fixtures.
 - Search serialized preview rows, RPC DTOs, errors, and journals for every fixture
@@ -569,7 +579,8 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
   changed entries are preserved.
 - Target paths are Claude user `<CLAUDE_CONFIG_DIR>/skills`, Claude project
   `<project>/.claude/skills`, Codex user `$CODEX_HOME/skills`, and Codex
-  project `<project>/.codex/skills`. Codex user Skills follow `CODEX_HOME` to
+  project `<project>/.codex/skills`, Cursor user `$HOME/.cursor/skills`, and Cursor
+  project `<project>/.cursor/skills`. Codex user Skills follow `CODEX_HOME` to
   mirror where Codex itself reads skills (its bundled `.system` tree lives in
   `$CODEX_HOME/skills/.system`). `HOME/.agents/skills` is an import-only
   source, never a synchronization target. Claude policy and Codex project
@@ -616,7 +627,7 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 - Cover strict frontmatter/body validation, source root replacement, stable executable
   hashing/modes, hard links, special files, escaping/broken/cyclic links, permissions,
   and all import limits and cleanup boundaries.
-- Cover the four target paths, `CODEX_HOME` following for Codex skills (custom
+- Cover all six target paths, `CODEX_HOME` following for Codex skills (custom
   CODEX_HOME must move the Codex user Skills target), policy/trust, persisted-preview
   stale checks, global inheritance, external same-name entries, managed-item drift and
   deletion blockers, atomic missing-parent rollback, and replaced-directory preservation.
@@ -692,8 +703,10 @@ let inspection = inspect_central_skill(paths, id, central_path, expected_hash, s
   wizard can regenerate previews from active central profiles. Explicit all-skip is
   persisted so the app does not loop forever while both tools remain unmanaged.
 - A global snapshot restore derives its allowed root from the exact tool/artifact
-  matrix (`HOME`, `CLAUDE_CONFIG_DIR`, or `CODEX_HOME`). A removed-project snapshot is
-  not restorable until the project identity is active again.
+  matrix (`HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or Cursor's
+  `$HOME/.cursor`). Cursor accepts only MCP/Skill snapshots; Provider/Prompt restore
+  remains rejected. A removed-project snapshot is not restorable until the project
+  identity is active again.
 
 ### 4. Validation & Error Matrix
 
@@ -766,8 +779,10 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 
 - `probe_release_environment(&ReleaseToolProbeInput) -> Result<ReleaseToolProbeResult, AppError>`
   is the only release-native probe entry. Its input contains explicit HOME, Claude/Codex
-  roots, PATH, timeout, and official Claude managed-settings paths.
-- `ExplicitEnvironment` owns the resulting availability states, exact Claude/Codex
+  roots, PATH, timeout, official Claude managed-settings paths, and the bounded Cursor
+  Desktop candidate list (`/Applications/Cursor.app` then
+  `$HOME/Applications/Cursor.app`).
+- `ExplicitEnvironment` owns the resulting availability states, exact Claude/Codex/Cursor
   versions, optional `VerifiedClaudeUserMcpEvidence`, and optional
   `VerifiedClaudeCustomizationPolicyEvidence` for the lifetime of `AppState`.
 - Public MCP/Skill/Project/Profile services consume
@@ -777,8 +792,12 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 
 ### 3. Contracts
 
-- Resolve `claude` and `codex` only from an explicit absolute PATH. The macOS release
-  input may append the default `HOME/.volta/bin` shim directory after the inherited
+- Resolve `claude` and `codex` only from an explicit absolute PATH. Probe Cursor Desktop
+  first from the explicit application candidate list: use no-follow opens and bounded
+  `Contents/Info.plist` parsing, require a strict semantic version, and accept only a
+  regular non-symlink bundle. Only when Desktop is absent may the probe fall back to
+  an explicit-PATH `agent --version`; a valid Desktop result is authoritative.
+  The macOS release input may append the default `HOME/.volta/bin` shim directory after the inherited
   PATH because GUI launches often miss shell PATH setup; preserve inherited precedence,
   deduplicate the appended entry, and keep rejecting any unsafe inherited PATH segment.
   Validate a discovered PATH candidate by checking its symlink metadata and executable
@@ -817,6 +836,9 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 | Volta-style symlink shim resolves to shared `volta-shim` | Execute the PATH candidate, not the canonical target, so argv0 remains the requested tool |
 | Unsafe PATH, non-executable, timeout, non-zero exit, or malformed output | `unsupported`; zero native writes |
 | Valid Claude/Codex version output | `installed`; exact parsed version stored once |
+| Valid Cursor Desktop bundle/version | `installed`; do not execute Cursor Agent fallback |
+| Cursor Desktop absent and exact Cursor Agent version output | `installed`; exact parsed version stored once |
+| Cursor bundle symlink, oversized/malformed plist, or malformed agent output without another trustworthy probe | `unsupported`; zero native reads/writes |
 | Claude version/config root differs from evidence | evidence stale; MCP/Skill policy/capability fail closed |
 | Default Claude config root | user MCP remains exact `$HOME/.claude.json` |
 | Non-default Claude root without verified target evidence | unsupported; never guess a user MCP path |

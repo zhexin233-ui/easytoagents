@@ -561,6 +561,9 @@ pub fn set_prompt_project_assignment(
             Some((claude, codex)) => match tool {
                 Tool::Claude => claude,
                 Tool::Codex => codex,
+                Tool::Cursor => {
+                    return Err(AppError::invalid_input("tool", "CURSOR_PROMPT_UNSUPPORTED"))
+                }
             },
             None => return Err(AppError::not_found("promptProfile", profile_id)),
         };
@@ -735,6 +738,7 @@ pub fn set_global_prompt_assignment(
     let already_assigned = match tool {
         Tool::Claude => current.is_active_claude,
         Tool::Codex => current.is_active_codex,
+        Tool::Cursor => return Err(AppError::invalid_input("tool", "CURSOR_PROMPT_UNSUPPORTED")),
     };
     if already_assigned == assigned {
         return Ok(current);
@@ -779,6 +783,7 @@ pub fn set_global_prompt_assignment(
             .map_err(|error| {
                 map_profile_write_error(error, &database_path, "set_global_prompt_assignment")
             })?,
+        Tool::Cursor => return Err(AppError::invalid_input("tool", "CURSOR_PROMPT_UNSUPPORTED")),
     };
     if updated != 1 {
         return Err(AppError::conflict(
@@ -1142,6 +1147,7 @@ fn deactivate_prompt_profiles(
     let column = match tool {
         Tool::Claude => "is_active_claude",
         Tool::Codex => "is_active_codex",
+        Tool::Cursor => return Err(AppError::invalid_input("tool", "CURSOR_PROMPT_UNSUPPORTED")),
     };
     let query = format!(
         "UPDATE prompt_profiles SET {column} = 0

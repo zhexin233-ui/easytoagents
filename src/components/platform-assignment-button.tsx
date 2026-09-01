@@ -1,7 +1,6 @@
 import type { Tool } from "@/bindings/commands";
-import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
-import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import { Button } from "@/components/ui/button";
+import { toolMetadata } from "@/lib/tool-metadata";
 import { cn } from "@/lib/utils";
 
 interface PlatformAssignmentButtonProps {
@@ -17,8 +16,8 @@ export function PlatformAssignmentButton({
   disabled = false,
   onClick,
 }: PlatformAssignmentButtonProps) {
-  const platform = tool === "claude" ? "Claude" : "Codex";
-  const label = `${platform} 全局${assigned ? "已分配" : "未分配"}`;
+  const metadata = toolMetadata(tool);
+  const label = `${metadata.label} 全局${assigned ? "已分配" : "未分配"}`;
 
   return (
     <Button
@@ -38,7 +37,7 @@ export function PlatformAssignmentButton({
       onClick={onClick}
     >
       <img
-        src={tool === "claude" ? claudeIconUrl : codexIconUrl}
+        src={metadata.icon}
         alt=""
         aria-hidden="true"
         draggable={false}

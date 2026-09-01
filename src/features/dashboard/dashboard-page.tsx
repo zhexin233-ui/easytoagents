@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
+import type { DashboardToolSummaryDto } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { SnapshotRestoreDialog } from "@/components/snapshot-restore-dialog";
 import { Button } from "@/components/ui/button";
 import { OnboardingWizard } from "@/features/onboarding/onboarding-wizard";
 import { dashboardSummaryQueryOptions } from "@/lib/dashboard-api";
 import { profileErrorText } from "@/lib/profile-api";
+import { toolMetadata } from "@/lib/tool-metadata";
 
 export function DashboardPage() {
   const dashboardQuery = useQuery(dashboardSummaryQueryOptions());
@@ -19,9 +21,7 @@ export function DashboardPage() {
       <header className="mx-auto flex max-w-6xl flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-muted-foreground text-sm font-medium">总览</p>
-          <h1 className="mt-1 text-2xl font-semibold">
-            Claude 与 Codex 配置总览
-          </h1>
+          <h1 className="mt-1 text-2xl font-semibold">工具配置总览</h1>
           <p className="text-muted-foreground mt-2 text-sm">
             中央意图、原生目标状态、同步历史与私有恢复点集中在这里。
           </p>
@@ -80,37 +80,7 @@ export function DashboardPage() {
             aria-label="工具配置卡片"
           >
             {dashboardQuery.data.tools.map((tool) => (
-              <article
-                key={tool.tool}
-                className="bg-card rounded-xl border p-5"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold">
-                    {tool.tool === "claude" ? "Claude" : "Codex"}
-                  </h2>
-                  <Link className="text-sm underline" to={`/${tool.tool}`}>
-                    管理
-                  </Link>
-                </div>
-                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <SummaryItem
-                    label="当前渠道"
-                    value={tool.activeProviderName ?? "未接管"}
-                  />
-                  <SummaryItem
-                    label="当前提示词"
-                    value={tool.activePromptName ?? "未接管"}
-                  />
-                  <SummaryItem
-                    label="全局 MCP"
-                    value={`${tool.globalMcpCount}`}
-                  />
-                  <SummaryItem
-                    label="全局 Skills"
-                    value={`${tool.globalSkillCount}`}
-                  />
-                </dl>
-              </article>
+              <ToolSummaryCard key={tool.tool} tool={tool} />
             ))}
           </section>
 
@@ -190,6 +160,50 @@ export function DashboardPage() {
         }
       />
     </main>
+  );
+}
+
+function ToolSummaryCard({ tool }: { tool: DashboardToolSummaryDto }) {
+  const metadata = toolMetadata(tool.tool);
+  const resourceRoute = metadata.profileRoute ?? "/mcp";
+
+  return (
+    <article className="bg-card rounded-xl border p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <img
+            src={metadata.icon}
+            alt=""
+            aria-hidden="true"
+            className="size-5 rounded object-contain"
+          />
+          {metadata.label}
+        </h2>
+        <Link className="text-sm underline" to={resourceRoute}>
+          {metadata.profileRoute ? "管理" : "管理 MCP/Skills"}
+        </Link>
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <SummaryItem
+          label="当前渠道"
+          value={
+            metadata.capabilities.provider
+              ? (tool.activeProviderName ?? "未接管")
+              : "不支持"
+          }
+        />
+        <SummaryItem
+          label="当前提示词"
+          value={
+            metadata.capabilities.promptGlobal
+              ? (tool.activePromptName ?? "未接管")
+              : "不支持"
+          }
+        />
+        <SummaryItem label="全局 MCP" value={`${tool.globalMcpCount}`} />
+        <SummaryItem label="全局 Skills" value={`${tool.globalSkillCount}`} />
+      </dl>
+    </article>
   );
 }
 

@@ -82,6 +82,9 @@ the shared change dialog, unless the user opted into the direct-apply mode below
   `NOT_FOUND` with `details.resource` equal to `activeProviderProfile` or
   `activePromptProfile`, render an actionable empty state instead of the generic error
   code text.
+- Provider/Prompt surfaces are restricted to the shared `PROFILE_TOOLS` set
+  (`claude`/`codex`). Cursor has no profile route, tab, query, form, onboarding option,
+  or command payload; a stale/manual Cursor profile request must remain backend-rejected.
 
 ### 4. Validation & Error Matrix
 
@@ -157,6 +160,9 @@ const result = unwrapResult(
   preview/apply only. Project option queries, project assignment, and project-scoped
   preview/apply belong to `ProjectDetailPage`; do not reintroduce a project selector on
   the central MCP page.
+- MCP global/project tool selectors use the shared capability metadata and include
+  Claude, Codex, and Cursor. Cursor selection must use the same persisted
+  preview/apply flow and never unlock Provider/Prompt UI.
 - Header/env inputs are password fields. Editing starts with `keep`; secret values are
   never reconstructed from header/env names or redacted extension values.
 - Global inheritance is visibly read-only and cannot call the project-assignment
@@ -245,6 +251,9 @@ const update: UpdateMcpServerInput = {
   status, and global preview/apply only. Project option queries, project assignment,
   and project-scoped preview/apply belong to `ProjectDetailPage`; do not reintroduce a
   project selector on the central Skills page.
+- Skill global/project tool selectors include Claude, Codex, and Cursor. Cursor native
+  import is an explicit user action, and its preview/apply payload preserves the exact
+  current tool and project identity.
 - The ordinary list renders only the safe description and status diagnostics, never an
   arbitrary frontmatter object or Skill body. Full `SKILL.md` appears only after the
   explicit content-preview command in a closable, Escape-aware dialog.
@@ -331,9 +340,10 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 - Project pages consume generated `ProjectDto` and option DTOs. Global inheritance is
   checked and read-only; there is no project-level global-disable mutation.
 - `ProjectDetailPage` is the single UI owner for project MCP/Skill assignment. It uses
-  independent local resource (`"mcp" | "skill"`) and tool (`"claude" | "codex"`)
+  independent local resource (`"mcp" | "skill"`) and tool
+  (`"claude" | "codex" | "cursor"`)
   view state, defaults to MCP + Claude, and exposes both switches as accessible
-  pressed-button groups. Claude/Codex selection uses the unchanged bundled brand
+  pressed-button groups. Claude/Codex/Cursor selection uses the bundled brand
   assets with an accessible button name, `title`, and `aria-pressed`; the decorative
   image stays hidden from assistive technology. Mount only the active tool/resource
   assignment view and key that subtree by project, tool, and resource so unsubmitted
@@ -404,7 +414,7 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 - Assert inherited controls cannot mutate, assignment payloads use the displayed row
   versions, and project/MCP/Skill active queries all refetch after either assignment.
 - Assert MCP + Claude is the default project view; both directions of the MCP/Skill and
-  Claude/Codex switches update `aria-pressed`; only the active combination query runs;
+  Claude/Codex/Cursor switches update `aria-pressed`; only the active combination query runs;
   and remounting a combination resets unsubmitted preview-only state such as the local
   Git-exclude checkbox.
 - Resolve deferred preview, assignment, and Apply mutations after switching combinations

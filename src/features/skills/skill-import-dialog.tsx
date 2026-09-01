@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { skillImportQueryOptions } from "@/lib/skills-api";
+import { toolMetadata } from "@/lib/tool-metadata";
 
 interface SkillImportDialogProps {
   tool: Tool;
@@ -33,6 +34,8 @@ const sourceLabels: Record<SkillImportSourceDto["kind"], string> = {
   claude_global: "Claude 全局目录",
   codex_home: "Codex 官方目录（正式同步目标）",
   codex_agents: "Codex Agents 通用目录（仅导入来源）",
+  cursor_home: "Cursor 官方目录（正式同步目标）",
+  cursor_agents: "Cursor Agents 通用目录（仅导入来源）",
 };
 
 const sourceStatusLabels: Record<SkillImportSourceDto["status"], string> = {
@@ -97,7 +100,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
         <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
           <div className="min-w-0">
             <h2 id={titleId} className="text-xl font-semibold">
-              导入 {props.tool === "claude" ? "Claude" : "Codex"} 全局 Skills
+              导入 {toolMetadata(props.tool).label} 全局 Skills
             </h2>
             <p
               id={descriptionId}
