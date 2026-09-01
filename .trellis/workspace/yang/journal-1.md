@@ -718,3 +718,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: 完成全局 Skills 显式接管
+
+**Date**: 2026-09-01
+**Task**: 完成全局 Skills 显式接管
+**Branch**: `codex/cursor-ide-support`
+
+### Summary
+
+为 Claude、Codex、Cursor 全局 Skills 增加显式首次接管，完成原子准备事务、takeover-aware Apply、目录树快照恢复、前端确认流程与规范测试闭环。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7e17e86` | (see git log) |
+
+### Status
+
+[OK] **Completed**
