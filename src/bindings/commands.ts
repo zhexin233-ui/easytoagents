@@ -456,6 +456,14 @@ async confirmSkillImport(input: ConfirmSkillImportInput) : Promise<Result<SkillI
     else return { status: "error", error: e  as any };
 }
 },
+async prepareSkillTakeover(input: PrepareSkillTakeoverInput) : Promise<Result<SkillTakeoverPreviewResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_skill_takeover", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewSkillContent(id: string) : Promise<Result<SkillContentPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_skill_content", { id }) };
@@ -604,6 +612,7 @@ export type McpServerInput = { name: string; transport: McpTransport; command: s
 export type McpTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type McpTransport = "stdio" | "streamable_http"
 export type PolicyState = "allowed" | "blocked" | "unknown"
+export type PrepareSkillTakeoverInput = { previewId: string; candidateIds: string[] }
 export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
 export type PreviewSkillSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
@@ -627,7 +636,7 @@ export type RecentSyncRunDto = { id: string; kind: SyncRunKind; status: SyncRunS
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
 export type RegisterProjectInput = { displayName: string; rootPath: string }
 export type RemoveProjectResultDto = { id: string; removed: boolean; nativeConfigurationLeftUnmanaged: boolean }
-export type RestorePreview = { previewId: string; snapshotId: string; targetPath: string; currentType: TargetType; snapshotType: TargetType }
+export type RestorePreview = { previewId: string; snapshotId: string; targetPath: string; currentType: TargetType; snapshotType: TargetType; storageKind: SnapshotStorageKind }
 /**
  * 资源应用范围。
  */
@@ -651,7 +660,7 @@ export type SetPromptProjectAssignmentInput = { projectId: string; tool: Tool;
 promptProfileId: string | null; projectRowVersion: number }
 export type SkillContentPreviewDto = { id: string; name: string; skillMd: string; files: string[]; contentHash: string; rowVersion: number }
 export type SkillDto = { id: string; name: string; sourcePath: string; centralPath: string; contentHash: string; description: string; status: SkillStatus; diagnosticCode: string | null; globalTools: Tool[]; rowVersion: number }
-export type SkillImportCandidateDto = { candidateId: string; name: string; description: string; sourcePaths: string[]; status: SkillImportCandidateStatus; reason: string | null; existingSkillId: string | null }
+export type SkillImportCandidateDto = { candidateId: string; name: string; description: string; sourcePaths: string[]; status: SkillImportCandidateStatus; reason: string | null; existingSkillId: string | null; takeoverEligible: boolean; takeoverEntryType: SkillTakeoverEntryType | null }
 export type SkillImportCandidateStatus = "importable" | "already_imported" | "name_conflict" | "invalid"
 export type SkillImportPreviewDto = { previewId: string | null; tool: Tool; sources: SkillImportSourceDto[]; candidates: SkillImportCandidateDto[]; message: string | null }
 export type SkillImportResultDto = { tool: Tool; createdCount: number }
@@ -663,10 +672,13 @@ export type SkillProjectOptionDto = { skillId: string; name: string; status: Ski
 export type SkillProjectOptionsInput = { projectId: string; tool: Tool }
 export type SkillProjectSelectionState = "inherited" | "selected" | "available"
 export type SkillStatus = "ready" | "invalid" | "missing"
+export type SkillTakeoverEntryType = "external_symlink" | "directory"
+export type SkillTakeoverPreviewResultDto = { tool: Tool; assignedCount: number; reusedCount: number; plan: PreviewPlan }
 export type SkillTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type SnapshotDeleteFailureDto = { snapshotId: string; code: string; message: string }
 export type SnapshotRestoreInput = { snapshotId: string }
-export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; createdAt: string }
+export type SnapshotStorageKind = "payload_file" | "metadata_only" | "directory_tree"
+export type SnapshotSummary = { snapshotId: string; runId: string; targetId: string | null; targetPath: string; targetType: TargetType; storageKind: SnapshotStorageKind; restorable: boolean; createdAt: string }
 export type SymlinkPolicy = "reject" | "managed_children_only"
 export type SyncRunKind = "preview" | "apply" | "restore"
 export type SyncRunStatus = "previewed" | "applying" | "restoring" | "succeeded" | "failed" | "stale" | "rolled_back" | "rollback_failed"

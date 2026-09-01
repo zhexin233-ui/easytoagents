@@ -4,9 +4,11 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   commands,
   type ConfirmSkillImportInput,
+  type PrepareSkillTakeoverInput,
   type SkillImportCandidateDto,
   type SkillImportResultDto,
   type SkillImportSourceDto,
+  type SkillTakeoverPreviewResultDto,
   type Tool,
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ interface SkillImportDialogProps {
   onClose: () => void;
   onRescan: () => void;
   onImported: (result: SkillImportResultDto) => Promise<void>;
+  onTakeoverPrepared: (result: SkillTakeoverPreviewResultDto) => Promise<void>;
 }
 
 const candidateLabels: Record<SkillImportCandidateDto["status"], string> = {
@@ -49,10 +52,12 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
   const titleId = useId();
   const descriptionId = useId();
   const query = useQuery(skillImportQueryOptions(props.tool, props.requestId));
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedImportIds, setSelectedImportIds] = useState<string[]>([]);
+  const [selectedTakeoverIds, setSelectedTakeoverIds] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
-  const confirmInFlight = useRef(false);
+  const operationInFlight = useRef(false);
   const confirmAttempted = useRef(false);
+  const takeoverAttempted = useRef(false);
   const confirm = useMutation({
     mutationFn: async (input: ConfirmSkillImportInput) =>
       unwrapResult(await commands.confirmSkillImport(input)),
@@ -62,28 +67,125 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
       await props.onImported(result);
     },
     onSettled: () => {
-      confirmInFlight.current = false;
+      operationInFlight.current = false;
+    },
+  });
+  const takeover = useMutation({
+    mutationFn: async (input: PrepareSkillTakeoverInput) =>
+      unwrapResult(await commands.prepareSkillTakeover(input)),
+    retry: false,
+    onSuccess: props.onTakeoverPrepared,
+    onSettled: () => {
+      operationInFlight.current = false;
     },
   });
   const close = () => {
-    if (!confirmInFlight.current) props.onClose();
+    if (!operationInFlight.current) props.onClose();
   };
   const { dialogRef, onKeyDown } = useDialogFocus(true, close);
   const preview = query.data;
-  const error = profileErrorText(query.error ?? confirm.error);
-  const selectable = preview?.candidates.filter(
+  const error = profileErrorText(
+    query.error ?? confirm.error ?? takeover.error,
+  );
+  const importable = preview?.candidates.filter(
     (candidate) => candidate.status === "importable",
   );
-  const selectedCandidateIds =
-    selectable
-      ?.filter((candidate) => selectedIds.includes(candidate.candidateId))
+  const takeoverCandidates = preview?.candidates.filter(
+    (candidate) => candidate.takeoverEligible,
+  );
+  const copyCandidates = preview?.candidates.filter(
+    (candidate) => !candidate.takeoverEligible,
+  );
+  const selectedImportCandidateIds =
+    importable
+      ?.filter((candidate) => selectedImportIds.includes(candidate.candidateId))
       .map((candidate) => candidate.candidateId) ?? [];
+  const selectedTakeoverCandidateIds =
+    takeoverCandidates
+      ?.filter((candidate) =>
+        selectedTakeoverIds.includes(candidate.candidateId),
+      )
+      .map((candidate) => candidate.candidateId) ?? [];
+  const busy = confirm.isPending || takeover.isPending;
   const canConfirm =
     Boolean(preview?.previewId) &&
-    selectedCandidateIds.length > 0 &&
-    !confirm.isPending &&
+    selectedImportCandidateIds.length > 0 &&
+    !busy &&
     !confirm.isError &&
     !query.isPending;
+  const canTakeover =
+    Boolean(preview?.previewId) &&
+    selectedTakeoverCandidateIds.length > 0 &&
+    !busy &&
+    !takeover.isError &&
+    !query.isPending;
+
+  const candidateCard = (
+    candidate: SkillImportCandidateDto,
+    mode: "copy" | "takeover",
+  ) => {
+    const selectedIds =
+      mode === "copy" ? selectedImportIds : selectedTakeoverIds;
+    const setSelectedIds =
+      mode === "copy" ? setSelectedImportIds : setSelectedTakeoverIds;
+    const selectable =
+      mode === "copy"
+        ? candidate.status === "importable"
+        : candidate.takeoverEligible;
+    return (
+      <article
+        key={candidate.candidateId}
+        className="rounded-lg border p-4 text-sm"
+      >
+        <label className="flex items-center gap-2 font-medium">
+          <input
+            type="checkbox"
+            aria-label={`${mode === "copy" ? "导入" : "接管"} ${candidate.name}`}
+            checked={selectedIds.includes(candidate.candidateId)}
+            disabled={
+              !selectable ||
+              !preview?.previewId ||
+              busy ||
+              (mode === "copy" ? confirm.isError : takeover.isError)
+            }
+            onChange={(event) => {
+              if (operationInFlight.current) return;
+              const checked = event.target.checked;
+              setSelectedIds((current) =>
+                checked
+                  ? [...current, candidate.candidateId]
+                  : current.filter((id) => id !== candidate.candidateId),
+              );
+            }}
+          />
+          {candidate.name}
+        </label>
+        <p className="text-muted-foreground mt-2 text-xs">
+          {candidateLabels[candidate.status]}
+        </p>
+        <p className="mt-2">{candidate.description}</p>
+        <ul className="mt-2 space-y-1 text-xs">
+          {candidate.sourcePaths.map((path) => (
+            <li key={path}>
+              <code className="break-all">{path}</code>
+            </li>
+          ))}
+        </ul>
+        {candidate.status === "already_imported" ? (
+          <p className="mt-2 text-xs">
+            {mode === "takeover"
+              ? "中央已有相同内容；接管会复用该副本并建立当前工具的全局分配。"
+              : "中央已有相同内容，不会新增副本或分配。"}
+          </p>
+        ) : null}
+        {candidate.reason ? (
+          <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+            {candidate.reason}
+          </p>
+        ) : null}
+      </article>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
@@ -106,15 +208,14 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               id={descriptionId}
               className="text-muted-foreground mt-2 text-sm"
             >
-              仅将勾选的用户技能复制到中央库；原有文件和链接保持不变，不会自动分配或同步。
-              中央副本不会随原安装自动更新；以后同步遇到同名外部安装时仍会报告冲突。
+              “复制”只新增中央副本，不修改来源；“接管”只适用于正式目录中与中央副本完全一致的外链或目录，并且一定先进入持久化预览，不会直接应用。
             </p>
           </div>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            disabled={confirm.isPending}
+            disabled={busy}
             onClick={close}
             aria-label="关闭 Skills 导入"
           >
@@ -134,12 +235,12 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               return;
             }
             confirmAttempted.current = true;
-            confirmInFlight.current = true;
+            operationInFlight.current = true;
             // 禁用全部控件前保留容器焦点，覆盖提交与列表刷新阶段。
             dialogRef.current?.focus();
             confirm.mutate({
               previewId: preview.previewId,
-              candidateIds: selectedCandidateIds,
+              candidateIds: selectedImportCandidateIds,
             });
           }}
         >
@@ -166,6 +267,11 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                 {copied
                   ? "已复制到中央库，正在刷新列表…"
                   : "正在安全导入所选 Skills…"}
+              </p>
+            ) : null}
+            {takeover.isPending ? (
+              <p role="status" className="text-sm">
+                正在校验接管证据并生成持久化预览…
               </p>
             ) : null}
             {preview ? (
@@ -206,70 +312,52 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                     {preview.message}
                   </p>
                 ) : null}
-                {!selectable?.length ? (
+                {!importable?.length && !takeoverCandidates?.length ? (
                   <p role="status" className="text-sm">
-                    没有可导入的用户技能，请查看来源和候选的状态；处理后可重新检测。
+                    没有可复制或接管的用户技能，请查看来源和候选状态；处理后可重新检测。
                   </p>
                 ) : !preview.previewId ? (
                   <p role="status" className="text-sm">
                     当前检测结果不能确认导入，请处理来源诊断后重新检测。
                   </p>
                 ) : null}
-                <div className="space-y-3">
-                  {preview.candidates.map((candidate) => (
-                    <article
-                      key={candidate.candidateId}
-                      className="rounded-lg border p-4 text-sm"
-                    >
-                      <label className="flex items-center gap-2 font-medium">
-                        <input
-                          type="checkbox"
-                          aria-label={`导入 ${candidate.name}`}
-                          checked={selectedIds.includes(candidate.candidateId)}
-                          disabled={
-                            candidate.status !== "importable" ||
-                            !preview.previewId ||
-                            confirm.isPending ||
-                            confirm.isError
-                          }
-                          onChange={(event) => {
-                            if (confirmInFlight.current) return;
-                            const checked = event.target.checked;
-                            setSelectedIds((current) =>
-                              checked
-                                ? [...current, candidate.candidateId]
-                                : current.filter(
-                                    (id) => id !== candidate.candidateId,
-                                  ),
-                            );
-                          }}
-                        />
-                        {candidate.name}
-                      </label>
-                      <p className="text-muted-foreground mt-2 text-xs">
-                        {candidateLabels[candidate.status]}
+                {copyCandidates?.length ? (
+                  <section
+                    className="space-y-3"
+                    aria-labelledby="copy-skills-title"
+                  >
+                    <div>
+                      <h3 id="copy-skills-title" className="font-semibold">
+                        复制到中央库
+                      </h3>
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        只复制勾选项；原安装、分配和原生目标均保持不变。
                       </p>
-                      <p className="mt-2">{candidate.description}</p>
-                      <ul className="mt-2 space-y-1 text-xs">
-                        {candidate.sourcePaths.map((path) => (
-                          <li key={path}>
-                            <code className="break-all">{path}</code>
-                          </li>
-                        ))}
-                      </ul>
-                      {candidate.status === "already_imported" ? (
-                        <p className="mt-2 text-xs">
-                          中央已有相同内容，不会新增副本或分配。
-                        </p>
-                      ) : null}
-                      {candidate.reason ? (
-                        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
-                          {candidate.reason}
-                        </p>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
+                    </div>
+                    {copyCandidates.map((candidate) =>
+                      candidateCard(candidate, "copy"),
+                    )}
+                  </section>
+                ) : null}
+                {takeoverCandidates?.length ? (
+                  <section
+                    className="space-y-3 rounded-lg border border-amber-200 p-4 dark:border-amber-900/60"
+                    aria-labelledby="takeover-skills-title"
+                  >
+                    <div>
+                      <h3 id="takeover-skills-title" className="font-semibold">
+                        接管正式目录
+                      </h3>
+                      <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+                        继续后只生成变更预览。确认 Apply
+                        时，入口才会替换为中央链接；外链源不变，目录原件会先保存为完整树快照。
+                      </p>
+                    </div>
+                    {takeoverCandidates.map((candidate) =>
+                      candidateCard(candidate, "takeover"),
+                    )}
+                  </section>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -277,7 +365,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
             <Button
               type="button"
               variant="outline"
-              disabled={confirm.isPending}
+              disabled={busy}
               onClick={close}
             >
               取消
@@ -285,15 +373,18 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
             <Button
               type="button"
               variant="outline"
-              disabled={confirm.isPending || query.isPending}
+              disabled={busy || query.isPending}
               onClick={() => {
-                if (confirmInFlight.current || query.isPending) return;
+                if (operationInFlight.current || query.isPending) return;
                 // 保留同一个弹窗与原始触发焦点，只更换扫描证据和选择状态。
                 dialogRef.current?.focus();
-                setSelectedIds([]);
+                setSelectedImportIds([]);
+                setSelectedTakeoverIds([]);
                 setCopied(false);
                 confirmAttempted.current = false;
+                takeoverAttempted.current = false;
                 confirm.reset();
+                takeover.reset();
                 props.onRescan();
               }}
             >
@@ -302,7 +393,31 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
             <Button type="submit" disabled={!canConfirm}>
               {confirm.isPending
                 ? "正在导入…"
-                : `确认导入所选项（${selectedCandidateIds.length}）`}
+                : `复制所选项（${selectedImportCandidateIds.length}）`}
+            </Button>
+            <Button
+              type="button"
+              disabled={!canTakeover}
+              onClick={() => {
+                if (
+                  takeoverAttempted.current ||
+                  !canTakeover ||
+                  !preview?.previewId
+                ) {
+                  return;
+                }
+                takeoverAttempted.current = true;
+                operationInFlight.current = true;
+                dialogRef.current?.focus();
+                takeover.mutate({
+                  previewId: preview.previewId,
+                  candidateIds: selectedTakeoverCandidateIds,
+                });
+              }}
+            >
+              {takeover.isPending
+                ? "正在生成预览…"
+                : `预览接管所选项（${selectedTakeoverCandidateIds.length}）`}
             </Button>
           </div>
         </form>

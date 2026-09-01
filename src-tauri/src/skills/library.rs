@@ -25,6 +25,7 @@ use crate::{
     app::AppPaths,
     domain::{ArtifactName, SkillStatus},
     error::AppError,
+    sync::hash_json,
 };
 
 const MAX_FILES: usize = 4_096;
@@ -53,6 +54,20 @@ pub(crate) struct CentralSkillInspection {
     pub diagnostic_code: Option<&'static str>,
     pub files: Vec<String>,
     pub skill_md: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkillTakeoverEntryKind {
+    ExternalSymlink,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SkillTakeoverInspection {
+    pub entry_type: SkillTakeoverEntryKind,
+    pub fingerprint: String,
+    pub content_hash: String,
+    pub resolved: PathBuf,
 }
 
 #[derive(Debug)]
@@ -1716,6 +1731,109 @@ pub(super) fn inspect_skill_source(
             .to_owned(),
         hash: digest.hash,
     })
+}
+
+/// 复核正式 Skills 根的直属入口，并返回接管所需的入口身份与完整树 hash。
+pub(crate) fn inspect_skill_takeover_entry(
+    entry: &Path,
+) -> Result<SkillTakeoverInspection, AppError> {
+    let root = entry
+        .parent()
+        .ok_or_else(|| AppError::invalid_input("sourcePath", "Skill 入口缺少父目录"))?;
+    let evidence = resolve_skill_source(root, entry)?;
+    let budget = Cell::new(MAX_TOTAL_BYTES.saturating_add(MAX_FILES as u64));
+    let inspection = inspect_skill_source(&evidence, &budget)?;
+    let entry_metadata = fs::symlink_metadata(entry)
+        .map_err(|error| map_read_error(error, entry, "stat_takeover_entry"))?;
+    let identity = FileIdentity::from_metadata(&entry_metadata);
+    let (entry_type, fingerprint) = if entry_metadata.file_type().is_symlink() {
+        let link_target = fs::read_link(entry)
+            .map_err(|error| map_read_error(error, entry, "read_takeover_link"))?;
+        (
+            SkillTakeoverEntryKind::ExternalSymlink,
+            hash_json(&serde_json::json!({
+                "type": "external_symlink",
+                "linkTarget": link_target,
+                "device": identity.device,
+                "inode": identity.inode,
+                "mode": identity.mode,
+            })),
+        )
+    } else if entry_metadata.is_dir() {
+        (
+            SkillTakeoverEntryKind::Directory,
+            hash_json(&serde_json::json!({
+                "type": "directory",
+                "device": identity.device,
+                "inode": identity.inode,
+                "mode": identity.mode,
+                "hash": inspection.hash,
+            })),
+        )
+    } else {
+        return Err(AppError::invalid_input(
+            "sourcePath",
+            "接管入口必须是目录或目录符号链接",
+        ));
+    };
+    Ok(SkillTakeoverInspection {
+        entry_type,
+        fingerprint,
+        content_hash: inspection.hash,
+        resolved: evidence.resolved,
+    })
+}
+
+/// 安全复制一个已经通过 Skill 树合同的目录，并复核源/副本完整 hash。
+pub(crate) fn copy_skill_tree(
+    source: &Path,
+    destination: &Path,
+    expected_hash: &str,
+) -> Result<(), AppError> {
+    let owner = destination
+        .parent()
+        .ok_or_else(|| AppError::invalid_input("snapshotPath", "目录快照缺少父目录"))?;
+    if fs::symlink_metadata(destination).is_ok() {
+        return Err(AppError::conflict("snapshotPath", "目录快照目标已经存在"));
+    }
+    create_private_directory(destination)?;
+    let copied = (|| {
+        let source_digest = digest_tree(source, Some(destination))?;
+        sync_directory(destination)?;
+        let source_after = digest_tree(source, None)?;
+        let destination_after = digest_tree(destination, None)?;
+        if source_digest.hash != expected_hash
+            || source_after.hash != expected_hash
+            || destination_after.hash != expected_hash
+        {
+            return Err(AppError::conflict(
+                "skillTree",
+                "Skill 目录树在复制过程中发生变化",
+            ));
+        }
+        Ok(())
+    })();
+    if copied.is_err() {
+        remove_owned_directory(destination, owner)?;
+    }
+    copied
+}
+
+pub(crate) fn verify_skill_tree(path: &Path, expected_hash: &str) -> Result<(), AppError> {
+    let digest = digest_tree(path, None)?;
+    if digest.hash != expected_hash {
+        return Err(AppError::conflict("skillTree", "Skill 目录树 hash 已变化"));
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_skill_tree(
+    path: &Path,
+    owner: &Path,
+    expected_hash: &str,
+) -> Result<(), AppError> {
+    verify_skill_tree(path, expected_hash)?;
+    remove_owned_directory(path, owner)
 }
 
 #[cfg(test)]

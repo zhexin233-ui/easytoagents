@@ -233,6 +233,7 @@ pub fn preview_mcp_sync_with_probes(
                 row_versions: target.row_versions,
                 git: target.git,
                 exclude_from_git: input.exclude_from_git,
+                skill_takeover_entries: Vec::new(),
             }]
         })
         .unwrap_or_default();
@@ -311,6 +312,7 @@ pub fn apply_mcp_preview_with_probes(
                 delete_target: false,
                 managed_items: target.managed_items,
                 remove_managed_item_ids: target.remove_managed_item_ids,
+                skill_takeover_entries: Vec::new(),
             }]
         })
         .unwrap_or_default();

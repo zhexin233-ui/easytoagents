@@ -7,7 +7,7 @@ pub use apply::{
     preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent, ApplyFaultInjector,
     ApplyResult, ApplyTargetInput, DeleteSnapshotsInput, DeleteSnapshotsResultDto,
     InterruptedRunPlan, ManagedItemApply, NoApplyFault, RestorePreview, SnapshotDeleteFailureDto,
-    SnapshotSummary,
+    SnapshotStorageKind, SnapshotSummary,
 };
 
 use std::{
@@ -16,7 +16,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -47,6 +47,25 @@ pub const ERROR_CODEX_TRUST_UNKNOWN: &str = "CODEX_TRUST_UNKNOWN";
 pub const ERROR_INCOMPLETE_BASELINE: &str = "INCOMPLETE_MANAGED_BASELINE";
 pub const WARNING_CODEX_PROMPT_OVERRIDE: &str = "CODEX_PROMPT_OVERRIDE_DETECTED";
 pub const WARNING_CODEX_PROMPT_OVERRIDE_UNKNOWN: &str = "CODEX_PROMPT_OVERRIDE_UNKNOWN";
+pub const WARNING_SKILL_TAKEOVER_CONFIRMATION: &str = "SKILL_TAKEOVER_REQUIRES_CONFIRMATION";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillTakeoverEntryType {
+    ExternalSymlink,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillTakeoverEntry {
+    pub name: String,
+    pub entry_path: String,
+    pub entry_type: SkillTakeoverEntryType,
+    pub expected_fingerprint: String,
+    pub content_hash: String,
+    pub central_path: String,
+}
 
 pub struct ObservedTarget {
     pub target_type: TargetType,
@@ -511,6 +530,8 @@ pub struct PreviewTargetRequest {
     pub git: Option<GitPathStatus>,
     /// 只有预览界面显式确认后才能置为 true；tracked 目标会被强制忽略。
     pub exclude_from_git: bool,
+    /// 仅首次全局 Skills 接管使用；普通 Preview 必须保持空集合。
+    pub skill_takeover_entries: Vec<SkillTakeoverEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -533,6 +554,8 @@ pub struct PreviewTargetPlan {
     pub error_code: Option<ErrorCode>,
     pub git: Option<GitPathStatus>,
     pub exclude_from_git: bool,
+    #[specta(skip)]
+    pub skill_takeover_entries: Vec<SkillTakeoverEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -594,7 +617,13 @@ pub fn build_preview_plan(
         let desired_hash = hash_json(&desired_projection);
         let current_matches_desired = current_managed_hash.as_ref() == Some(&desired_hash);
 
-        let (mut change_kind, error_code) = if !assessment.can_merge {
+        let takeover_allows_merge = takeover_entries_cover_projection(
+            &request.skill_takeover_entries,
+            &before_projection,
+            &desired_projection,
+            request.baseline.full_hash.is_none() && request.baseline.managed_hash.is_none(),
+        );
+        let (mut change_kind, error_code) = if !assessment.can_merge && !takeover_allows_merge {
             (
                 ChangeKind::Conflict,
                 Some(error_code_for_status(assessment.status)),
@@ -614,6 +643,9 @@ pub fn build_preview_plan(
         };
 
         let mut warning_codes = assessment.diagnostic_codes;
+        if takeover_allows_merge {
+            warning_codes.push(WARNING_SKILL_TAKEOVER_CONFIRMATION.to_owned());
+        }
         match request.descriptor.prompt_override {
             PromptOverrideState::Present => {
                 warning_codes.push(WARNING_CODEX_PROMPT_OVERRIDE.to_owned());
@@ -685,6 +717,7 @@ pub fn build_preview_plan(
             error_code,
             git: request.git,
             exclude_from_git,
+            skill_takeover_entries: request.skill_takeover_entries,
         });
     }
 
@@ -695,6 +728,36 @@ pub fn build_preview_plan(
         db_version: fingerprint_row_versions(&all_row_versions),
         targets,
         warning_codes: all_warning_codes.into_iter().collect(),
+    })
+}
+
+fn takeover_entries_cover_projection(
+    entries: &[SkillTakeoverEntry],
+    before: &Value,
+    desired: &Value,
+    initial_baseline: bool,
+) -> bool {
+    if entries.is_empty() || !initial_baseline {
+        return false;
+    }
+    let (Some(before), Some(desired)) = (before.as_object(), desired.as_object()) else {
+        return false;
+    };
+    let names = entries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect::<BTreeSet<_>>();
+    entries.iter().all(|entry| {
+        before.contains_key(&entry.name)
+            && desired
+                .get(&entry.name)
+                .and_then(|value| value.get("linkTarget"))
+                .and_then(Value::as_str)
+                == Some(entry.central_path.as_str())
+    }) && before.iter().all(|(name, value)| {
+        desired.get(name).map_or(true, |expected| {
+            expected == value || names.contains(name.as_str())
+        })
     })
 }
 
@@ -767,6 +830,8 @@ pub struct PersistedPreviewEnvelope {
     pub restore_target_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_takeover_entries: Vec<SkillTakeoverEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -796,8 +861,19 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| AppError::database(&database_path, "begin_preview"))?;
-    verify_preview_row_versions(&transaction, plan, &database_path)?;
+    persist_preview_in_connection(&transaction, plan, &database_path)?;
     transaction
+        .commit()
+        .map_err(|_| AppError::database(&database_path, "commit_preview"))
+}
+
+pub(crate) fn persist_preview_in_connection(
+    connection: &rusqlite::Connection,
+    plan: &PreviewPlan,
+    database_path: &str,
+) -> Result<(), AppError> {
+    verify_preview_row_versions(connection, plan, database_path)?;
+    connection
         .execute(
             "INSERT INTO sync_runs(id, kind, status, scope, project_id, db_version)
              VALUES (?1, 'preview', 'previewed', ?2, ?3, ?4)",
@@ -808,7 +884,7 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
                 plan.db_version
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "insert_preview_run"))?;
+        .map_err(|_| AppError::database(database_path, "insert_preview_run"))?;
 
     for (target_order, target) in plan.targets.iter().enumerate() {
         let envelope = PersistedPreviewEnvelope {
@@ -827,12 +903,13 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
             restore_current_fingerprint: None,
             restore_target_path: None,
             allowed_root: None,
+            skill_takeover_entries: target.skill_takeover_entries.clone(),
         };
         let envelope_json = serde_json::to_string(&envelope)
-            .map_err(|_| AppError::database(&database_path, "serialize_preview_item"))?;
+            .map_err(|_| AppError::database(database_path, "serialize_preview_item"))?;
         let warning_codes_json = serde_json::to_string(&target.warning_codes)
-            .map_err(|_| AppError::database(&database_path, "serialize_warning_codes"))?;
-        transaction
+            .map_err(|_| AppError::database(database_path, "serialize_warning_codes"))?;
+        connection
             .execute(
                 "INSERT INTO sync_items(
                     id, run_id, target_id, change_kind, status,
@@ -850,15 +927,13 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
                     target_order,
                 ],
             )
-            .map_err(|_| AppError::database(&database_path, "insert_preview_item"))?;
+            .map_err(|_| AppError::database(database_path, "insert_preview_item"))?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_preview"))
+    Ok(())
 }
 
 fn verify_preview_row_versions(
-    transaction: &Transaction<'_>,
+    transaction: &rusqlite::Connection,
     plan: &PreviewPlan,
     database_path: &str,
 ) -> Result<(), AppError> {
@@ -1618,6 +1693,7 @@ mod tests {
                 row_versions: Vec::new(),
                 git: None,
                 exclude_from_git: false,
+                skill_takeover_entries: Vec::new(),
             }],
             &SecretRedactor::default(),
         )
@@ -1661,6 +1737,7 @@ mod tests {
                 }],
                 git: None,
                 exclude_from_git: false,
+                skill_takeover_entries: Vec::new(),
             }],
             &SecretRedactor::default(),
         )
@@ -1716,6 +1793,7 @@ mod tests {
                 row_versions: Vec::new(),
                 git: None,
                 exclude_from_git: false,
+                skill_takeover_entries: Vec::new(),
             }],
             &SecretRedactor::default(),
         )
@@ -1799,6 +1877,7 @@ mod tests {
                 }],
                 git: None,
                 exclude_from_git: false,
+                skill_takeover_entries: Vec::new(),
             }],
             &redactor,
         )
@@ -1910,6 +1989,7 @@ mod tests {
                 row_versions: Vec::new(),
                 git: None,
                 exclude_from_git: false,
+                skill_takeover_entries: Vec::new(),
             }],
             &SecretRedactor::default(),
         )

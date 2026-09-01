@@ -240,6 +240,10 @@ const update: UpdateMcpServerInput = {
 - Directory import calls `commands.importSkill({ sourcePath })` after an explicit native
   directory selection. Preview/apply calls `commands.previewSkillSync(...)` and then
   consumes the returned ID with `commands.applySkillPreview(...)`.
+- Native discovery copy uses `commands.confirmSkillImport({ previewId, candidateIds })`;
+  exact formal-root takeover uses the separate
+  `commands.prepareSkillTakeover({ previewId, candidateIds })` and consumes only the
+  returned `SkillTakeoverPreviewResultDto.plan` through the normal Apply command.
 
 ### 3. Contracts
 
@@ -264,6 +268,15 @@ const update: UpdateMcpServerInput = {
   authoritative. A zero-target inheritance preview shows a no-write explanation and
   never opens Apply. Non-empty plans use `ChangePreviewDialog`, which blocks conflicts
   and applies the exact persisted preview/tool/project identity.
+- `SkillImportDialog` renders “复制到中央库” and “接管正式目录” as separate groups
+  with independent, initially empty selection sets. Copy candidates and takeover
+  candidates never share a submit payload. Takeover preparation locks the modal like
+  copy confirmation, invalidates the Skills family, closes the import dialog, and opens
+  exactly the returned persisted plan; it never calls Apply itself.
+- Takeover copy must explain that an external symlink target is untouched and a real
+  directory receives a complete private tree snapshot before replacement. A successful
+  preparation message says review/apply is still required, not that native takeover
+  already succeeded.
 
 ### 4. Validation & Error Matrix
 
@@ -276,6 +289,8 @@ const update: UpdateMcpServerInput = {
 | Codex project untrusted | Trust alert and disabled project preview |
 | Empty persisted preview | No-write message; no Apply dialog |
 | Conflict target | Exact diagnostic/redacted plan; Apply disabled |
+| Exact takeover candidate | Select only in takeover group; prepare exact candidate IDs; always open returned preview |
+| Takeover preparation stale/error | Keep dialog and structured alert locked against token reuse until explicit rescan |
 
 ### 5. Good/Base/Bad Cases
 
@@ -300,6 +315,9 @@ const update: UpdateMcpServerInput = {
   trust, zero-target preview, and exact persisted preview ID/tool/project consumption.
 - Assert that fixture Skill bodies and private frontmatter markers are absent from the
   ordinary rendered page and appear only in the explicit content preview when requested.
+- Assert copy/takeover grouping, independent selections and exact payloads. Under both
+  apply modes, takeover preparation must leave `applySkillPreview` uncalled until the
+  user activates `ChangePreviewDialog` Apply.
 
 ### 7. Wrong vs Correct
 
@@ -380,6 +398,10 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 - Dashboard counts, recent runs, conflicts, interrupted-run recovery, and snapshots
   come only from generated DTOs; components never parse SQLite/native payloads or show
   snapshot content.
+- Snapshot rows render generated `storageKind` and `restorable`. A legacy
+  `metadata_only` directory keeps delete selection available but disables restore with
+  an explanation. A `directory_tree` restore preview warns that restoring the original
+  directory removes the central link and will intentionally surface as external drift.
 
 ### 4. Validation & Error Matrix
 
@@ -396,6 +418,8 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
 | All tools skipped | Call typed completion only; no preview/apply command |
 | Empty or blocked persisted preview | Explain no-write/block; do not expose enabled Apply |
 | Dialog close/Escape/reopen | Trap and restore focus; clear stale preview/mutation state |
+| Non-restorable metadata-only directory snapshot | Disabled restore action; deletion remains explicit and available |
+| Directory-tree restore preview | Show storage type and post-restore drift warning before executing restore |
 
 ### 5. Good/Base/Bad Cases
 
@@ -426,6 +450,9 @@ await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId })
   that submits only remaining preview IDs, and no implicit native write command.
 - Cover dialog label/modal attributes, Tab containment, Escape, focus restoration,
   blocked Apply, and snapshot-list restoration after closing a preview and reopening.
+- Cover payload-file, metadata-only, and directory-tree labels; disabled legacy
+  directory restore; directory-tree drift warning; deletion of both restorable and
+  non-restorable rows.
 - Cover same-status diagnostic variants with visible text, tone semantics, disabled
   actions, and an assertion that blocked actions invoke no preview command.
 
@@ -478,6 +505,10 @@ projectAssignmentMutation.mutate(input);
 - Direct apply still generates a persisted preview first; the preview is
   auto-confirmed only when `canAutoApplyPreview` is true. Conflicts, errors, or
   blocked targets fall back to opening the preview dialog with Apply disabled.
+- Explicit Skill takeover is a hard exception to auto-confirmation: the plan returned by
+  `prepareSkillTakeover` always opens `ChangePreviewDialog`, even when direct mode is
+  enabled and `canAutoApplyPreview(plan)` is true. This exception applies only to the
+  takeover preparation path; ordinary Skills sync retains normal direct-mode behavior.
 - Warnings never block auto-apply (same as the dialog). An empty target list
   keeps the existing no-op message and must not apply.
 - Settings are backend-owned server state: derive `directApply` from the query,
@@ -503,6 +534,8 @@ projectAssignmentMutation.mutate(input);
   behavior is unchanged and central toggles never trigger an implicit sync.
 - Assignment/enable toggles under direct mode assert both the preview command
   payload and the auto-applied preview ID.
+- A clean takeover plan under direct mode opens the dialog and asserts zero Apply calls
+  until the user explicitly confirms it.
 - Settings page: toggle persists both directions and surfaces read failures
   without rendering the toggle.
 

@@ -25,7 +25,7 @@ use uuid::Uuid;
 use super::{
     canonical_json, hash_bytes, hash_json, load_persisted_preview, scan_target, DatabaseEntityType,
     DatabaseRowVersion, PersistedPreview, PersistedPreviewEnvelope, PersistedPreviewItem,
-    TargetScan,
+    SkillTakeoverEntryType, TargetScan,
 };
 use crate::{
     adapters::{
@@ -40,6 +40,7 @@ use crate::{
     security::{
         create_private_file, ensure_private_directory, ensure_private_file, PRIVATE_FILE_MODE,
     },
+    skills::library::{self as skill_library, SkillTakeoverEntryKind},
 };
 
 #[derive(Debug, Clone)]
@@ -57,6 +58,8 @@ pub struct ApplyTargetInput {
     pub managed_items: Vec<ManagedItemApply>,
     /// 只有 Preview 绑定了对应 ManagedItem row_version 时才允许删除。
     pub remove_managed_item_ids: Vec<String>,
+    /// 只接受持久化 Preview 中绑定的首次 Skills 接管证据。
+    pub skill_takeover_entries: Vec<super::SkillTakeoverEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,7 +118,27 @@ pub struct SnapshotSummary {
     pub target_id: Option<String>,
     pub target_path: String,
     pub target_type: TargetType,
+    pub storage_kind: SnapshotStorageKind,
+    pub restorable: bool,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotStorageKind {
+    PayloadFile,
+    MetadataOnly,
+    DirectoryTree,
+}
+
+impl SnapshotStorageKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::PayloadFile => "payload_file",
+            Self::MetadataOnly => "metadata_only",
+            Self::DirectoryTree => "directory_tree",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -168,6 +191,7 @@ pub struct RestorePreview {
     pub target_path: String,
     pub current_type: TargetType,
     pub snapshot_type: TargetType,
+    pub storage_kind: SnapshotStorageKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +217,16 @@ struct JournalTarget {
     temporary_path: Option<String>,
     #[serde(default)]
     temporary_fingerprint: Option<String>,
+    #[serde(default)]
+    quarantine_path: Option<String>,
+    #[serde(default)]
+    quarantine_fingerprint: Option<String>,
+    #[serde(default)]
+    takeover_entry_type: Option<SkillTakeoverEntryType>,
+    #[serde(default)]
+    directory_tree_hash: Option<String>,
+    #[serde(default)]
+    snapshot_storage_kind: Option<SnapshotStorageKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -206,6 +240,8 @@ struct SnapshotRecord {
     central_root: Option<PathBuf>,
     row_version: u32,
     state: PathState,
+    storage_kind: SnapshotStorageKind,
+    directory_tree_hash: Option<String>,
 }
 
 struct SnapshotRequest<'a> {
@@ -215,6 +251,7 @@ struct SnapshotRequest<'a> {
     allowed_root: &'a Path,
     central_root: Option<&'a Path>,
     expected_before_fingerprint: &'a str,
+    directory_tree_hash: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +331,18 @@ enum Mutation {
     ReplaceSymlink {
         link_target: PathBuf,
         central_root: PathBuf,
+        allow_external_target: bool,
+    },
+    TakeoverSymlink {
+        link_target: PathBuf,
+        central_root: PathBuf,
+        entry_type: SkillTakeoverEntryType,
+        content_hash: String,
+        evidence_fingerprint: String,
+    },
+    RestoreDirectoryTree {
+        snapshot_path: PathBuf,
+        content_hash: String,
     },
 }
 
@@ -441,6 +490,14 @@ fn apply_claimed_preview(
                 allowed_root: &mutation.allowed_root,
                 central_root: mutation.central_root.as_deref(),
                 expected_before_fingerprint: &mutation.expected_before_fingerprint,
+                directory_tree_hash: match &mutation.mutation {
+                    Mutation::TakeoverSymlink {
+                        entry_type: SkillTakeoverEntryType::Directory,
+                        content_hash,
+                        ..
+                    } => Some(content_hash.as_str()),
+                    _ => None,
+                },
             },
         ) {
             Ok(snapshot) => snapshot,
@@ -466,6 +523,21 @@ fn apply_claimed_preview(
             after_fingerprint: None,
             temporary_path: None,
             temporary_fingerprint: None,
+            quarantine_path: None,
+            quarantine_fingerprint: None,
+            takeover_entry_type: match &mutation.mutation {
+                Mutation::TakeoverSymlink { entry_type, .. } => Some(*entry_type),
+                _ => None,
+            },
+            directory_tree_hash: match &mutation.mutation {
+                Mutation::TakeoverSymlink {
+                    entry_type: SkillTakeoverEntryType::Directory,
+                    content_hash,
+                    ..
+                } => Some(content_hash.clone()),
+                _ => None,
+            },
+            snapshot_storage_kind: Some(snapshot.storage_kind),
         });
         snapshots.push(snapshot);
         persist_journal(paths, &journal)?;
@@ -624,6 +696,7 @@ fn apply_claimed_preview(
             "simulated_crash_after_database_finalize",
         ));
     }
+    let _ = cleanup_takeover_quarantines(&mut journal);
     journal.phase = "succeeded".to_owned();
     // DB 已经原子 finalize 后，journal 的最终装饰性状态失败不能触发外部回滚，
     // 否则会把已提交基线与文件内容拆成两个真相。ready_to_finalize 仍是 durable 证据。
@@ -649,6 +722,11 @@ fn mutation_may_have_changed_target(target: &JournalTarget) -> bool {
                 | "written"
                 | "crashed_after_rename"
                 | "crashed_after_target"
+                | "takeover_quarantined"
+                | "takeover_linked"
+                | "crashed_after_takeover"
+                | "directory_restored"
+                | "crashed_after_restore_tree"
         )
 }
 
@@ -806,6 +884,7 @@ fn validate_preview_inputs(
             &preview.preview_id,
             &database_path,
         )?;
+        validate_skill_takeover_inputs(item, input)?;
         record_expected_versions(item, &mut expected_versions)?;
         validate_allowed_path(
             Path::new(&item.target_path),
@@ -820,6 +899,74 @@ fn validate_preview_inputs(
         &preview.preview_id,
         &database_path,
     )
+}
+
+fn validate_skill_takeover_inputs(
+    item: &PersistedPreviewItem,
+    input: &ApplyTargetInput,
+) -> Result<(), AppError> {
+    if input.skill_takeover_entries != item.envelope.skill_takeover_entries {
+        return Err(AppError::stale_preview("persisted", &item.target_id));
+    }
+    if input.skill_takeover_entries.is_empty() {
+        return Ok(());
+    }
+    if input.descriptor.artifact_kind != ArtifactKind::Skill
+        || input.descriptor.scope != Scope::Global
+        || input.descriptor.format != TargetFormat::SymlinkDirectory
+    {
+        return Err(AppError::invalid_input(
+            "skillTakeover",
+            "只有全局 Skills 符号链接目录可以接管",
+        ));
+    }
+    let central_root = input
+        .central_skills_root
+        .as_deref()
+        .ok_or_else(|| AppError::invalid_input("centralSkillsRoot", "接管缺少中央 Skills 根"))?;
+    let desired = input
+        .desired_projection
+        .as_object()
+        .ok_or_else(|| AppError::invalid_input("desiredProjection", "Skills 投影必须是对象"))?;
+    let target_root = Path::new(&item.target_path);
+    let mut names = BTreeSet::new();
+    for entry in &input.skill_takeover_entries {
+        validate_child_name(&entry.name)?;
+        if !names.insert(entry.name.as_str())
+            || entry.entry_path != target_root.join(&entry.name).to_string_lossy()
+            || !is_sha256(&entry.content_hash)
+            || !is_sha256(&entry.expected_fingerprint)
+            || desired
+                .get(&entry.name)
+                .and_then(|value| value.get("linkTarget"))
+                .and_then(Value::as_str)
+                != Some(entry.central_path.as_str())
+        {
+            return Err(AppError::invalid_input(
+                "skillTakeover",
+                "接管名称、入口、hash 或中央投影无效",
+            ));
+        }
+        validate_central_link_target(
+            Path::new(&entry.entry_path),
+            Path::new(&entry.central_path),
+            central_root,
+        )?;
+        let current = skill_library::inspect_skill_takeover_entry(Path::new(&entry.entry_path))
+            .map_err(|_| AppError::stale_preview("persisted", &item.target_id))?;
+        let current_type = match current.entry_type {
+            SkillTakeoverEntryKind::ExternalSymlink => SkillTakeoverEntryType::ExternalSymlink,
+            SkillTakeoverEntryKind::Directory => SkillTakeoverEntryType::Directory,
+        };
+        if current_type != entry.entry_type
+            || current.fingerprint != entry.expected_fingerprint
+            || current.content_hash != entry.content_hash
+            || current.resolved.starts_with(central_root)
+        {
+            return Err(AppError::stale_preview("persisted", &item.target_id));
+        }
+    }
+    Ok(())
 }
 
 fn validate_managed_item_inputs(
@@ -1269,6 +1416,11 @@ fn build_symlink_mutations(
         .as_object()
         .ok_or_else(|| AppError::invalid_input("desiredProjection", "Skills 投影必须是对象"))?;
     let directory = Path::new(&item.target_path);
+    let takeover_entries = input
+        .skill_takeover_entries
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
     let mut mutations = if desired.is_empty() {
         Vec::new()
     } else {
@@ -1297,6 +1449,56 @@ fn build_symlink_mutations(
                         })?;
                 let canonical_link_target =
                     validate_central_link_target(&child, Path::new(link_target), central_root)?;
+                if let Some(takeover) = takeover_entries.get(name.as_str()) {
+                    let current_inspection = skill_library::inspect_skill_takeover_entry(&child)
+                        .map_err(|_| AppError::stale_preview("persisted", &item.target_id))?;
+                    let current_type = match current_inspection.entry_type {
+                        SkillTakeoverEntryKind::ExternalSymlink => {
+                            SkillTakeoverEntryType::ExternalSymlink
+                        }
+                        SkillTakeoverEntryKind::Directory => SkillTakeoverEntryType::Directory,
+                    };
+                    if current_type != takeover.entry_type
+                        || current_inspection.fingerprint != takeover.expected_fingerprint
+                        || current_inspection.content_hash != takeover.content_hash
+                        || takeover.central_path != link_target
+                    {
+                        return Err(AppError::stale_preview("persisted", &item.target_id));
+                    }
+                    let current = capture_path_state(&child)?;
+                    if !matches!(
+                        (&current, takeover.entry_type),
+                        (
+                            PathState::Symlink { .. },
+                            SkillTakeoverEntryType::ExternalSymlink
+                        ) | (
+                            PathState::Directory { .. },
+                            SkillTakeoverEntryType::Directory
+                        )
+                    ) {
+                        return Err(AppError::stale_preview("persisted", &item.target_id));
+                    }
+                    mutations.push(PendingMutation {
+                        target_id: item.target_id.clone(),
+                        target_index,
+                        path: child,
+                        allowed_root: input.allowed_root.clone(),
+                        central_root: Some(central_root.clone()),
+                        expected_before_fingerprint: current.fingerprint(),
+                        expected_after_fingerprint: PathState::Symlink {
+                            link_target: canonical_link_target.clone(),
+                        }
+                        .fingerprint(),
+                        mutation: Mutation::TakeoverSymlink {
+                            link_target: canonical_link_target,
+                            central_root: central_root.clone(),
+                            entry_type: takeover.entry_type,
+                            content_hash: takeover.content_hash.clone(),
+                            evidence_fingerprint: takeover.expected_fingerprint.clone(),
+                        },
+                    });
+                    continue;
+                }
                 let current = validate_existing_managed_link(&child, central_root, false)?;
                 mutations.push(PendingMutation {
                     target_id: item.target_id.clone(),
@@ -1312,6 +1514,7 @@ fn build_symlink_mutations(
                     mutation: Mutation::ReplaceSymlink {
                         link_target: canonical_link_target,
                         central_root: central_root.clone(),
+                        allow_external_target: false,
                     },
                 });
             }
@@ -1755,6 +1958,7 @@ fn create_snapshot(
         allowed_root,
         central_root,
         expected_before_fingerprint,
+        directory_tree_hash,
     } = request;
     validate_allowed_path(target_path, allowed_root, false)?;
     let state = capture_path_state(target_path)?;
@@ -1769,42 +1973,70 @@ fn create_snapshot(
     ensure_private_directory(&run_directory)?;
     // run 目录本身也必须在快照根中 durable，不能只 fsync 其内部文件。
     sync_directory(paths.snapshots())?;
-    let snapshot_path = run_directory.join(format!("{snapshot_id}.snapshot"));
-    let mut snapshot_file = create_private_file(&snapshot_path)?;
-    if let PathState::File { bytes, .. } = &state {
-        snapshot_file.write_all(bytes).map_err(|_| {
-            AppError::atomic_write(&snapshot_path.to_string_lossy(), "write_snapshot")
-        })?;
+    let storage_kind = match (&state, directory_tree_hash) {
+        (PathState::File { .. }, _) => SnapshotStorageKind::PayloadFile,
+        (PathState::Directory { .. }, Some(_)) => SnapshotStorageKind::DirectoryTree,
+        _ => SnapshotStorageKind::MetadataOnly,
+    };
+    let snapshot_path = run_directory.join(match storage_kind {
+        SnapshotStorageKind::DirectoryTree => format!("{snapshot_id}.snapshot.d"),
+        SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
+            format!("{snapshot_id}.snapshot")
+        }
+    });
+    match storage_kind {
+        SnapshotStorageKind::DirectoryTree => {
+            let expected_hash = directory_tree_hash.expect("目录树快照必须绑定 hash");
+            skill_library::copy_skill_tree(target_path, &snapshot_path, expected_hash)?;
+        }
+        SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
+            let mut snapshot_file = create_private_file(&snapshot_path)?;
+            if let PathState::File { bytes, .. } = &state {
+                snapshot_file.write_all(bytes).map_err(|_| {
+                    AppError::atomic_write(&snapshot_path.to_string_lossy(), "write_snapshot")
+                })?;
+            }
+            snapshot_file.flush().map_err(|_| {
+                AppError::atomic_write(&snapshot_path.to_string_lossy(), "flush_snapshot")
+            })?;
+            snapshot_file.sync_all().map_err(|_| {
+                AppError::atomic_write(&snapshot_path.to_string_lossy(), "sync_snapshot")
+            })?;
+            ensure_private_file(&snapshot_path)?;
+        }
     }
-    snapshot_file
-        .flush()
-        .map_err(|_| AppError::atomic_write(&snapshot_path.to_string_lossy(), "flush_snapshot"))?;
-    snapshot_file
-        .sync_all()
-        .map_err(|_| AppError::atomic_write(&snapshot_path.to_string_lossy(), "sync_snapshot"))?;
-    ensure_private_file(&snapshot_path)?;
     sync_directory(&run_directory)?;
 
     let database_path = database.path().to_string_lossy().into_owned();
     let insert = database.connection_mut().execute(
         "INSERT INTO snapshots(
             id, run_id, target_id, target_path, snapshot_path, content_hash,
-            file_mode, target_type, link_target
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            file_mode, target_type, link_target, storage_kind
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             snapshot_id,
             run_id,
             target_id,
             target_path.to_string_lossy(),
             snapshot_path.to_string_lossy(),
-            state.content_hash(),
+            directory_tree_hash.or_else(|| state.content_hash()),
             state.mode().map(i64::from),
             state.target_type().as_str(),
             state.link_target().map(|target| target.to_string_lossy()),
+            storage_kind.as_str(),
         ],
     );
     if insert.is_err() {
-        let _ = fs::remove_file(&snapshot_path);
+        match storage_kind {
+            SnapshotStorageKind::DirectoryTree => {
+                if let Some(hash) = directory_tree_hash {
+                    let _ = skill_library::remove_skill_tree(&snapshot_path, &run_directory, hash);
+                }
+            }
+            SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
+                let _ = fs::remove_file(&snapshot_path);
+            }
+        }
         return Err(AppError::database(&database_path, "insert_snapshot"));
     }
     Ok(SnapshotRecord {
@@ -1817,6 +2049,8 @@ fn create_snapshot(
         central_root: central_root.map(Path::to_path_buf),
         row_version: 1,
         state,
+        storage_kind,
+        directory_tree_hash: directory_tree_hash.map(str::to_owned),
     })
 }
 
@@ -1930,6 +2164,7 @@ fn apply_mutation(
         Mutation::ReplaceSymlink {
             link_target,
             central_root,
+            allow_external_target,
         } => atomic_replace_symlink(
             &mutation.path,
             link_target,
@@ -1941,10 +2176,51 @@ fn apply_mutation(
             paths,
             journal,
             journal_index,
+            *allow_external_target,
+        )?,
+        Mutation::TakeoverSymlink {
+            link_target,
+            central_root,
+            entry_type,
+            content_hash,
+            evidence_fingerprint,
+        } => atomic_takeover_symlink(
+            &mutation.path,
+            link_target,
+            central_root,
+            &mutation.allowed_root,
+            expected,
+            *entry_type,
+            content_hash,
+            evidence_fingerprint,
+            mutation.target_index,
+            fault,
+            paths,
+            journal,
+            journal_index,
+        )?,
+        Mutation::RestoreDirectoryTree {
+            snapshot_path,
+            content_hash,
+        } => atomic_restore_directory_tree(
+            &mutation.path,
+            snapshot_path,
+            content_hash,
+            mutation.central_root.as_deref(),
+            &mutation.allowed_root,
+            expected,
+            mutation.target_index,
+            fault,
+            paths,
+            journal,
+            journal_index,
         )?,
     }
     let state = capture_path_state(&mutation.path)?;
-    let expected_after_fingerprint = if matches!(&mutation.mutation, Mutation::CreateDirectory) {
+    let expected_after_fingerprint = if matches!(
+        &mutation.mutation,
+        Mutation::CreateDirectory | Mutation::RestoreDirectoryTree { .. }
+    ) {
         if !matches!(state, PathState::Directory { .. }) {
             journal.targets[journal_index].phase = "external_change_after_write".to_owned();
             persist_journal(paths, journal)?;
@@ -1952,6 +2228,9 @@ fn apply_mutation(
                 &expected_run_id,
                 &expected_target_id,
             )));
+        }
+        if let Mutation::RestoreDirectoryTree { content_hash, .. } = &mutation.mutation {
+            skill_library::verify_skill_tree(&mutation.path, content_hash)?;
         }
         state.fingerprint()
     } else {
@@ -2145,9 +2424,14 @@ fn atomic_replace_symlink(
     paths: &AppPaths,
     journal: &mut RunJournal,
     journal_index: usize,
+    allow_external_target: bool,
 ) -> Result<(), MutationFailure> {
     validate_allowed_path(path, allowed_root, false)?;
-    let canonical_target = validate_central_link_target(path, link_target, central_root)?;
+    let canonical_target = if allow_external_target {
+        link_target.to_path_buf()
+    } else {
+        validate_central_link_target(path, link_target, central_root)?
+    };
     match verify_expected_path_state(path, expected_current)? {
         PathState::Missing => {}
         PathState::Symlink {
@@ -2245,6 +2529,259 @@ fn atomic_replace_symlink(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn atomic_takeover_symlink(
+    path: &Path,
+    link_target: &Path,
+    central_root: &Path,
+    allowed_root: &Path,
+    expected_current: ExpectedPathFingerprint<'_>,
+    entry_type: SkillTakeoverEntryType,
+    content_hash: &str,
+    evidence_fingerprint: &str,
+    index: usize,
+    fault: &dyn ApplyFaultInjector,
+    paths: &AppPaths,
+    journal: &mut RunJournal,
+    journal_index: usize,
+) -> Result<(), MutationFailure> {
+    validate_allowed_path(path, allowed_root, false)?;
+    let canonical_target = validate_central_link_target(path, link_target, central_root)?;
+    let current_state = verify_expected_path_state(path, expected_current)?;
+    if !matches!(
+        (&current_state, entry_type),
+        (
+            PathState::Symlink { .. },
+            SkillTakeoverEntryType::ExternalSymlink
+        ) | (
+            PathState::Directory { .. },
+            SkillTakeoverEntryType::Directory
+        )
+    ) {
+        return Err(
+            AppError::stale_preview(expected_current.run_id, expected_current.target_id).into(),
+        );
+    }
+    verify_takeover_inspection(path, entry_type, content_hash, evidence_fingerprint)?;
+    let parent = path.parent().expect("接管入口必须有父目录");
+    let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
+    let quarantine = parent.join(format!(".easytoagents-{}.takeover", Uuid::new_v4()));
+    symlink(&canonical_target, &temporary)
+        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_takeover_link"))?;
+    journal.targets[journal_index].phase = "takeover_rename_pending".to_owned();
+    journal.targets[journal_index].temporary_path = Some(temporary.to_string_lossy().into_owned());
+    journal.targets[journal_index].temporary_fingerprint =
+        Some(capture_path_state(&temporary)?.fingerprint());
+    persist_journal(paths, journal)?;
+    match fault.decide(&ApplyFaultEvent::BeforeRename {
+        index,
+        path: path.to_path_buf(),
+    }) {
+        ApplyFaultDecision::Continue => {}
+        ApplyFaultDecision::Fail => {
+            let _ = fs::remove_file(&temporary);
+            journal.targets[journal_index].phase = "takeover_rename_failed".to_owned();
+            journal.targets[journal_index].temporary_path = None;
+            journal.targets[journal_index].temporary_fingerprint = None;
+            let _ = persist_journal(paths, journal);
+            return Err(
+                AppError::atomic_write(&path.to_string_lossy(), "fault_before_takeover").into(),
+            );
+        }
+        ApplyFaultDecision::Crash => {
+            journal.targets[journal_index].phase = "crashed_before_takeover".to_owned();
+            persist_journal(paths, journal)?;
+            return Err(MutationFailure::Crash(AppError::atomic_write(
+                &path.to_string_lossy(),
+                "simulated_crash_before_takeover",
+            )));
+        }
+    }
+    validate_allowed_path(path, allowed_root, false)?;
+    verify_expected_path_state(path, expected_current)?;
+    verify_takeover_inspection(path, entry_type, content_hash, evidence_fingerprint)?;
+    fs::rename(path, &quarantine).map_err(|_| {
+        AppError::atomic_write(&path.to_string_lossy(), "quarantine_takeover_entry")
+    })?;
+    sync_directory(parent)?;
+    journal.targets[journal_index].phase = "takeover_quarantined".to_owned();
+    journal.targets[journal_index].quarantine_path =
+        Some(quarantine.to_string_lossy().into_owned());
+    journal.targets[journal_index].quarantine_fingerprint =
+        Some(capture_path_state(&quarantine)?.fingerprint());
+    persist_journal(paths, journal)?;
+    if fs::rename(&temporary, path).is_err() {
+        let _ = fs::rename(&quarantine, path);
+        let _ = fs::remove_file(&temporary);
+        let _ = sync_directory(parent);
+        journal.targets[journal_index].phase = "takeover_link_failed".to_owned();
+        journal.targets[journal_index].temporary_path = None;
+        journal.targets[journal_index].temporary_fingerprint = None;
+        journal.targets[journal_index].quarantine_path = None;
+        journal.targets[journal_index].quarantine_fingerprint = None;
+        let _ = persist_journal(paths, journal);
+        return Err(
+            AppError::atomic_write(&path.to_string_lossy(), "install_takeover_link").into(),
+        );
+    }
+    sync_directory(parent)?;
+    journal.targets[journal_index].phase = "takeover_linked".to_owned();
+    journal.targets[journal_index].temporary_path = None;
+    journal.targets[journal_index].temporary_fingerprint = None;
+    persist_journal(paths, journal)?;
+    match fault.decide(&ApplyFaultEvent::AfterRename {
+        index,
+        path: path.to_path_buf(),
+    }) {
+        ApplyFaultDecision::Continue => Ok(()),
+        ApplyFaultDecision::Fail => {
+            Err(AppError::atomic_write(&path.to_string_lossy(), "fault_after_takeover").into())
+        }
+        ApplyFaultDecision::Crash => {
+            journal.targets[journal_index].phase = "crashed_after_takeover".to_owned();
+            persist_journal(paths, journal)?;
+            Err(MutationFailure::Crash(AppError::atomic_write(
+                &path.to_string_lossy(),
+                "simulated_crash_after_takeover",
+            )))
+        }
+    }
+}
+
+fn verify_takeover_inspection(
+    path: &Path,
+    entry_type: SkillTakeoverEntryType,
+    content_hash: &str,
+    evidence_fingerprint: &str,
+) -> Result<(), AppError> {
+    let inspection = skill_library::inspect_skill_takeover_entry(path)?;
+    let actual_type = match inspection.entry_type {
+        SkillTakeoverEntryKind::ExternalSymlink => SkillTakeoverEntryType::ExternalSymlink,
+        SkillTakeoverEntryKind::Directory => SkillTakeoverEntryType::Directory,
+    };
+    if actual_type != entry_type
+        || inspection.content_hash != content_hash
+        || inspection.fingerprint != evidence_fingerprint
+    {
+        return Err(AppError::conflict(
+            "skillTakeover",
+            "Skill 接管入口在确认前发生变化",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn atomic_restore_directory_tree(
+    path: &Path,
+    snapshot_path: &Path,
+    content_hash: &str,
+    central_root: Option<&Path>,
+    allowed_root: &Path,
+    expected_current: ExpectedPathFingerprint<'_>,
+    index: usize,
+    fault: &dyn ApplyFaultInjector,
+    paths: &AppPaths,
+    journal: &mut RunJournal,
+    journal_index: usize,
+) -> Result<(), MutationFailure> {
+    validate_allowed_path(path, allowed_root, false)?;
+    skill_library::verify_skill_tree(snapshot_path, content_hash)?;
+    match verify_expected_path_state(path, expected_current)? {
+        PathState::Missing => {}
+        PathState::Symlink { link_target } => {
+            let central_root = central_root.ok_or_else(|| {
+                AppError::conflict("restoreTarget", "没有中央库证据时拒绝替换链接")
+            })?;
+            validate_central_link_target(path, &link_target, central_root)?;
+        }
+        PathState::File { .. } | PathState::Directory { .. } => {
+            return Err(
+                AppError::conflict("restoreTarget", "目录树恢复拒绝覆盖普通文件或目录").into(),
+            );
+        }
+    }
+    let parent = path.parent().expect("恢复目标必须有父目录");
+    let temporary = parent.join(format!(".easytoagents-{}.restore.d", Uuid::new_v4()));
+    let quarantine = parent.join(format!(".easytoagents-{}.takeover", Uuid::new_v4()));
+    skill_library::copy_skill_tree(snapshot_path, &temporary, content_hash)?;
+    journal.targets[journal_index].phase = "directory_restore_pending".to_owned();
+    journal.targets[journal_index].temporary_path = Some(temporary.to_string_lossy().into_owned());
+    journal.targets[journal_index].temporary_fingerprint =
+        Some(capture_path_state(&temporary)?.fingerprint());
+    persist_journal(paths, journal)?;
+    match fault.decide(&ApplyFaultEvent::BeforeRename {
+        index,
+        path: path.to_path_buf(),
+    }) {
+        ApplyFaultDecision::Continue => {}
+        ApplyFaultDecision::Fail => {
+            let _ = skill_library::remove_skill_tree(&temporary, parent, content_hash);
+            return Err(AppError::atomic_write(
+                &path.to_string_lossy(),
+                "fault_before_restore_tree",
+            )
+            .into());
+        }
+        ApplyFaultDecision::Crash => {
+            journal.targets[journal_index].phase = "crashed_before_restore_tree".to_owned();
+            persist_journal(paths, journal)?;
+            return Err(MutationFailure::Crash(AppError::atomic_write(
+                &path.to_string_lossy(),
+                "simulated_crash_before_restore_tree",
+            )));
+        }
+    }
+    validate_allowed_path(path, allowed_root, false)?;
+    let current = verify_expected_path_state(path, expected_current)?;
+    if let PathState::Symlink { link_target } = &current {
+        let central_root = central_root
+            .ok_or_else(|| AppError::conflict("restoreTarget", "没有中央库证据时拒绝替换链接"))?;
+        validate_central_link_target(path, link_target, central_root)?;
+        fs::rename(path, &quarantine).map_err(|_| {
+            AppError::atomic_write(&path.to_string_lossy(), "quarantine_restore_link")
+        })?;
+        journal.targets[journal_index].quarantine_path =
+            Some(quarantine.to_string_lossy().into_owned());
+        journal.targets[journal_index].quarantine_fingerprint =
+            Some(capture_path_state(&quarantine)?.fingerprint());
+        sync_directory(parent)?;
+        persist_journal(paths, journal)?;
+    }
+    if fs::rename(&temporary, path).is_err() {
+        if !matches!(current, PathState::Missing) {
+            let _ = fs::rename(&quarantine, path);
+        }
+        let _ = skill_library::remove_skill_tree(&temporary, parent, content_hash);
+        let _ = sync_directory(parent);
+        return Err(
+            AppError::atomic_write(&path.to_string_lossy(), "install_restored_tree").into(),
+        );
+    }
+    sync_directory(parent)?;
+    journal.targets[journal_index].phase = "directory_restored".to_owned();
+    journal.targets[journal_index].temporary_path = None;
+    journal.targets[journal_index].temporary_fingerprint = None;
+    persist_journal(paths, journal)?;
+    match fault.decide(&ApplyFaultEvent::AfterRename {
+        index,
+        path: path.to_path_buf(),
+    }) {
+        ApplyFaultDecision::Continue => Ok(()),
+        ApplyFaultDecision::Fail => {
+            Err(AppError::atomic_write(&path.to_string_lossy(), "fault_after_restore_tree").into())
+        }
+        ApplyFaultDecision::Crash => {
+            journal.targets[journal_index].phase = "crashed_after_restore_tree".to_owned();
+            persist_journal(paths, journal)?;
+            Err(MutationFailure::Crash(AppError::atomic_write(
+                &path.to_string_lossy(),
+                "simulated_crash_after_restore_tree",
+            )))
+        }
+    }
 }
 
 fn validate_central_link_target(
@@ -2588,6 +3125,21 @@ fn finish_failed_apply(
         journal.targets[*snapshot_index].phase = "rolled_back".to_owned();
         persist_journal(paths, journal)?;
     }
+    if cleanup_takeover_quarantines(journal).is_err() {
+        journal.phase = "rollback_failed".to_owned();
+        persist_journal(paths, journal)?;
+        update_failed_run(
+            database,
+            run_id,
+            "rollback_failed",
+            ErrorCode::RollbackFailed,
+        )?;
+        return Err(AppError::rollback_failed(
+            run_id,
+            "takeoverQuarantine",
+            "cleanup",
+        ));
+    }
     journal.phase = "rolled_back".to_owned();
     persist_journal(paths, journal)?;
     let status = if original_error.code() == ErrorCode::StalePreview {
@@ -2597,6 +3149,74 @@ fn finish_failed_apply(
     };
     update_failed_run(database, run_id, status, original_error.code())?;
     Err(original_error)
+}
+
+fn cleanup_takeover_quarantines(journal: &mut RunJournal) -> Result<(), AppError> {
+    for target in &mut journal.targets {
+        cleanup_takeover_quarantine(target)?;
+    }
+    Ok(())
+}
+
+fn cleanup_takeover_quarantine(target: &mut JournalTarget) -> Result<(), AppError> {
+    let Some(quarantine_text) = target.quarantine_path.clone() else {
+        return Ok(());
+    };
+    let quarantine = PathBuf::from(&quarantine_text);
+    let target_path = Path::new(&target.target_path);
+    if quarantine.parent() != target_path.parent() {
+        return Err(AppError::conflict(
+            "takeoverQuarantine",
+            "接管隔离项不在目标同目录",
+        ));
+    }
+    let owned = quarantine
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix(".easytoagents-"))
+        .and_then(|name| name.strip_suffix(".takeover"))
+        .is_some_and(|id| Uuid::parse_str(id).is_ok());
+    if !owned {
+        return Err(AppError::conflict(
+            "takeoverQuarantine",
+            "接管隔离项名称不属于应用",
+        ));
+    }
+    let state = capture_path_state(&quarantine)?;
+    if matches!(&state, PathState::Missing) {
+        target.quarantine_path = None;
+        target.quarantine_fingerprint = None;
+        return Ok(());
+    }
+    if target.quarantine_fingerprint.as_deref() != Some(&state.fingerprint()) {
+        return Err(AppError::conflict(
+            "takeoverQuarantine",
+            "接管隔离项身份已经变化",
+        ));
+    }
+    match state {
+        PathState::Symlink { .. } | PathState::File { .. } => {
+            fs::remove_file(&quarantine).map_err(|_| {
+                AppError::atomic_write(&quarantine.to_string_lossy(), "cleanup_takeover")
+            })?;
+        }
+        PathState::Directory { .. } => {
+            let hash = target
+                .directory_tree_hash
+                .as_deref()
+                .ok_or_else(|| AppError::conflict("takeoverQuarantine", "目录隔离项缺少树 hash"))?;
+            skill_library::remove_skill_tree(
+                &quarantine,
+                quarantine.parent().expect("隔离项必须有父目录"),
+                hash,
+            )?;
+        }
+        PathState::Missing => {}
+    }
+    sync_directory(quarantine.parent().expect("隔离项必须有父目录"))?;
+    target.quarantine_path = None;
+    target.quarantine_fingerprint = None;
+    Ok(())
 }
 
 fn update_failed_run(
@@ -2734,11 +3354,78 @@ fn restore_snapshot_record(
                 },
             )
         }
+        PathState::Directory { .. }
+            if snapshot.storage_kind == SnapshotStorageKind::DirectoryTree =>
+        {
+            replace_directory_tree_without_journal(
+                &snapshot.target_path,
+                &snapshot.snapshot_path,
+                snapshot
+                    .directory_tree_hash
+                    .as_deref()
+                    .ok_or_else(|| AppError::invalid_input("snapshot", "目录树快照缺少 hash"))?,
+                central_root,
+                allowed_root,
+                ExpectedPathFingerprint {
+                    run_id: &snapshot.run_id,
+                    target_id: snapshot.target_id.as_deref().unwrap_or("snapshot"),
+                    fingerprint: &current_fingerprint,
+                },
+            )
+        }
         PathState::Directory { .. } => Err(AppError::conflict(
             "rollbackTarget",
-            "目录快照只记录占位信息，不能递归恢复",
+            "旧目录占位快照不能递归恢复",
         )),
     }
+}
+
+fn replace_directory_tree_without_journal(
+    path: &Path,
+    snapshot_path: &Path,
+    content_hash: &str,
+    central_root: Option<&Path>,
+    allowed_root: &Path,
+    expected_current: ExpectedPathFingerprint<'_>,
+) -> Result<(), AppError> {
+    validate_allowed_path(path, allowed_root, false)?;
+    skill_library::verify_skill_tree(snapshot_path, content_hash)?;
+    let current = verify_expected_path_state(path, expected_current)?;
+    let current_missing = matches!(&current, PathState::Missing);
+    if let PathState::Symlink { link_target } = &current {
+        let central_root = central_root
+            .ok_or_else(|| AppError::conflict("rollbackTarget", "没有中央库证据时拒绝替换链接"))?;
+        validate_central_link_target(path, link_target, central_root)?;
+    } else if !current_missing {
+        return Err(AppError::conflict(
+            "rollbackTarget",
+            "目录树恢复拒绝覆盖外部文件或目录",
+        ));
+    }
+    let parent = path.parent().expect("目录恢复目标必须有父目录");
+    let temporary = parent.join(format!(".easytoagents-{}.restore.d", Uuid::new_v4()));
+    let quarantine = parent.join(format!(".easytoagents-{}.rollback", Uuid::new_v4()));
+    skill_library::copy_skill_tree(snapshot_path, &temporary, content_hash)?;
+    if !current_missing {
+        fs::rename(path, &quarantine)
+            .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "quarantine_rollback"))?;
+    }
+    if fs::rename(&temporary, path).is_err() {
+        if !current_missing {
+            let _ = fs::rename(&quarantine, path);
+        }
+        let _ = skill_library::remove_skill_tree(&temporary, parent, content_hash);
+        return Err(AppError::atomic_write(
+            &path.to_string_lossy(),
+            "restore_directory_tree",
+        ));
+    }
+    if !current_missing {
+        fs::remove_file(&quarantine).map_err(|_| {
+            AppError::atomic_write(&quarantine.to_string_lossy(), "cleanup_rollback_link")
+        })?;
+    }
+    sync_directory(parent)
 }
 
 fn replace_symlink_without_journal(
@@ -2749,7 +3436,6 @@ fn replace_symlink_without_journal(
     expected_current: ExpectedPathFingerprint<'_>,
 ) -> Result<(), AppError> {
     validate_allowed_path(path, allowed_root, false)?;
-    let canonical_target = validate_central_link_target(path, link_target, central_root)?;
     match verify_expected_path_state(path, expected_current)? {
         PathState::Missing => {}
         PathState::Symlink { link_target } => {
@@ -2764,7 +3450,7 @@ fn replace_symlink_without_journal(
     }
     let parent = path.parent().expect("链接目标必须有父目录");
     let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
-    symlink(canonical_target, &temporary)
+    symlink(link_target, &temporary)
         .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_restore_symlink"))?;
     validate_allowed_path(path, allowed_root, false)?;
     if let Err(error) = verify_expected_path_state(path, expected_current) {
@@ -2788,7 +3474,7 @@ pub fn list_snapshots(database: &Database) -> Result<Vec<SnapshotSummary>, AppEr
     let mut statement = database
         .connection()
         .prepare(
-            "SELECT id, run_id, target_id, target_path, target_type, created_at
+            "SELECT id, run_id, target_id, target_path, target_type, storage_kind, created_at
              FROM snapshots ORDER BY created_at DESC, id DESC",
         )
         .map_err(|_| AppError::database(&database_path, "prepare_list_snapshots"))?;
@@ -2801,19 +3487,25 @@ pub fn list_snapshots(database: &Database) -> Result<Vec<SnapshotSummary>, AppEr
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
             ))
         })
         .map_err(|_| AppError::database(&database_path, "query_list_snapshots"))?;
     let mut snapshots = Vec::new();
     for row in rows {
-        let (snapshot_id, run_id, target_id, target_path, target_type, created_at) =
+        let (snapshot_id, run_id, target_id, target_path, target_type, storage_kind, created_at) =
             row.map_err(|_| AppError::database(&database_path, "read_snapshot_summary"))?;
+        let target_type = parse_target_type(&target_type)?;
+        let storage_kind = parse_snapshot_storage_kind(&storage_kind)?;
         snapshots.push(SnapshotSummary {
             snapshot_id,
             run_id,
             target_id,
             target_path,
-            target_type: parse_target_type(&target_type)?,
+            target_type,
+            storage_kind,
+            restorable: storage_kind != SnapshotStorageKind::MetadataOnly
+                || target_type != TargetType::Directory,
             created_at,
         });
     }
@@ -2851,18 +3543,26 @@ pub fn delete_snapshots(
     }
 
     let mut failures: Vec<SnapshotDeleteFailureDto> = Vec::new();
-    let mut removable: Vec<(String, PathBuf)> = Vec::new();
+    let mut removable: Vec<(String, PathBuf, SnapshotStorageKind, Option<String>)> = Vec::new();
     for snapshot_id in &ordered_ids {
         let row = database
             .connection()
             .query_row(
-                "SELECT run_id, snapshot_path FROM snapshots WHERE id = ?1",
+                "SELECT run_id, snapshot_path, storage_kind, content_hash
+                 FROM snapshots WHERE id = ?1",
                 [snapshot_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|_| AppError::database(&database_path, "load_snapshot_for_delete"))?;
-        let Some((run_id, snapshot_path)) = row else {
+        let Some((run_id, snapshot_path, storage_kind, content_hash)) = row else {
             failures.push(snapshot_delete_failure(
                 snapshot_id,
                 &AppError::not_found("snapshot", snapshot_id),
@@ -2892,27 +3592,62 @@ pub fn delete_snapshots(
             continue;
         }
         let snapshot_path = PathBuf::from(snapshot_path);
-        if let Err(error) =
-            validate_snapshot_storage_path(paths, &run_id, snapshot_id, &snapshot_path)
-        {
+        let storage_kind = match parse_snapshot_storage_kind(&storage_kind) {
+            Ok(value) => value,
+            Err(error) => {
+                failures.push(snapshot_delete_failure(snapshot_id, &error));
+                continue;
+            }
+        };
+        if let Err(error) = validate_snapshot_storage_path(
+            paths,
+            &run_id,
+            snapshot_id,
+            &snapshot_path,
+            storage_kind,
+        ) {
             failures.push(snapshot_delete_failure(snapshot_id, &error));
             continue;
         }
-        removable.push((snapshot_id.clone(), snapshot_path));
+        removable.push((
+            snapshot_id.clone(),
+            snapshot_path,
+            storage_kind,
+            content_hash,
+        ));
     }
 
     let mut deleted_ids: Vec<String> = Vec::with_capacity(removable.len());
-    for (snapshot_id, snapshot_path) in &removable {
-        match fs::remove_file(snapshot_path) {
+    for (snapshot_id, snapshot_path, storage_kind, content_hash) in &removable {
+        if fs::symlink_metadata(snapshot_path)
+            .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+        {
+            deleted_ids.push(snapshot_id.clone());
+            continue;
+        }
+        let removal = match storage_kind {
+            SnapshotStorageKind::DirectoryTree => content_hash
+                .as_deref()
+                .ok_or_else(|| AppError::conflict("snapshot", "目录树快照缺少 hash"))
+                .and_then(|hash| {
+                    skill_library::remove_skill_tree(
+                        snapshot_path,
+                        snapshot_path.parent().expect("快照必须有父目录"),
+                        hash,
+                    )
+                }),
+            SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
+                fs::remove_file(snapshot_path).map_err(|_| {
+                    AppError::atomic_write(&snapshot_path.to_string_lossy(), "remove_snapshot")
+                })
+            }
+        };
+        match removal {
             Ok(()) => deleted_ids.push(snapshot_id.clone()),
-            // 文件已不存在视为已删除，属自愈。
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(error) if error.code() == ErrorCode::NotFound => {
                 deleted_ids.push(snapshot_id.clone())
             }
-            Err(_) => failures.push(snapshot_delete_failure(
-                snapshot_id,
-                &AppError::atomic_write(&snapshot_path.to_string_lossy(), "remove_snapshot"),
-            )),
+            Err(error) => failures.push(snapshot_delete_failure(snapshot_id, &error)),
         }
     }
 
@@ -3043,6 +3778,14 @@ pub fn preview_restore(
 ) -> Result<RestorePreview, AppError> {
     paths.audit_permissions()?;
     let snapshot = load_snapshot_record(database, paths, snapshot_id, allowed_root, None)?;
+    if matches!(&snapshot.state, PathState::Directory { .. })
+        && snapshot.storage_kind != SnapshotStorageKind::DirectoryTree
+    {
+        return Err(AppError::conflict(
+            "snapshot",
+            "旧目录占位快照没有目录树内容，不能恢复",
+        ));
+    }
     let target_id = snapshot.target_id.as_deref().ok_or_else(|| {
         AppError::invalid_input("snapshotId", "旧快照缺少受管目标身份，不能自动恢复")
     })?;
@@ -3157,6 +3900,7 @@ pub fn preview_restore(
         target_path: snapshot.target_path.to_string_lossy().into_owned(),
         current_type: current.target_type(),
         snapshot_type: snapshot.state.target_type(),
+        storage_kind: snapshot.storage_kind,
     })
 }
 
@@ -3343,6 +4087,7 @@ fn restore_claimed_snapshot(
             allowed_root,
             central_root,
             expected_before_fingerprint: &current_fingerprint,
+            directory_tree_hash: None,
         },
     )?;
     journal.targets.push(JournalTarget {
@@ -3355,6 +4100,11 @@ fn restore_claimed_snapshot(
         after_fingerprint: None,
         temporary_path: None,
         temporary_fingerprint: None,
+        quarantine_path: None,
+        quarantine_fingerprint: None,
+        takeover_entry_type: None,
+        directory_tree_hash: None,
+        snapshot_storage_kind: Some(second_snapshot.storage_kind),
     });
     persist_journal(paths, &journal)?;
     if let Err(error) = validate_restore_identity(
@@ -3446,22 +4196,15 @@ fn restore_claimed_snapshot(
             );
         }
     };
-    match capture_path_state(&snapshot.target_path) {
-        Ok(current) if current.fingerprint() == snapshot.state.fingerprint() => {}
-        Ok(_) => {
-            return finish_failed_apply(
-                database,
-                paths,
-                restore_preview_id,
-                &mut journal,
-                &[second_snapshot],
-                &applied,
-                AppError::atomic_write(
-                    &snapshot.target_path.to_string_lossy(),
-                    "verify_restored_snapshot",
-                ),
-            );
+    let restored_matches_snapshot = match capture_path_state(&snapshot.target_path) {
+        Ok(PathState::Directory { .. })
+            if snapshot.storage_kind == SnapshotStorageKind::DirectoryTree =>
+        {
+            snapshot.directory_tree_hash.as_deref().is_some_and(|hash| {
+                skill_library::verify_skill_tree(&snapshot.target_path, hash).is_ok()
+            })
         }
+        Ok(current) => current.fingerprint() == snapshot.state.fingerprint(),
         Err(error) => {
             return finish_failed_apply(
                 database,
@@ -3473,6 +4216,20 @@ fn restore_claimed_snapshot(
                 error,
             );
         }
+    };
+    if !restored_matches_snapshot {
+        return finish_failed_apply(
+            database,
+            paths,
+            restore_preview_id,
+            &mut journal,
+            &[second_snapshot],
+            &applied,
+            AppError::atomic_write(
+                &snapshot.target_path.to_string_lossy(),
+                "verify_restored_snapshot",
+            ),
+        );
     }
     journal.phase = "ready_to_finalize_database".to_owned();
     journal.targets[0].phase = "verified".to_owned();
@@ -3537,64 +4294,76 @@ fn cleanup_interrupted_temporaries(
     let Ok(bytes) = fs::read(&journal_path) else {
         return Ok(());
     };
-    let journal: RunJournal = serde_json::from_slice(&bytes)
+    let mut journal: RunJournal = serde_json::from_slice(&bytes)
         .map_err(|_| AppError::parse(&journal_path.to_string_lossy(), "journal"))?;
-    for target in journal.targets {
+    let mut changed = false;
+    for target in &mut journal.targets {
         if Path::new(&target.target_path) != restored_target_path {
             continue;
         }
-        let Some(temporary) = target.temporary_path else {
-            continue;
-        };
-        let expected_fingerprint = target.temporary_fingerprint.ok_or_else(|| {
-            AppError::conflict("temporaryPath", "旧 journal 缺少临时路径所有权指纹")
-        })?;
-        let temporary = PathBuf::from(temporary);
-        validate_allowed_path(&temporary, allowed_root, false)?;
-        if temporary.parent() != restored_target_path.parent() {
-            return Err(AppError::conflict(
-                "temporaryPath",
-                "journal 临时路径不在对应目标同目录",
-            ));
-        }
-        let name = temporary
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        let owned_name = name
-            .strip_prefix(".easytoagents-")
-            .and_then(|name| {
-                name.strip_suffix(".tmp")
-                    .or_else(|| name.strip_suffix(".link"))
-            })
-            .is_some_and(|id| Uuid::parse_str(id).is_ok());
-        if !owned_name {
-            return Err(AppError::conflict(
-                "temporaryPath",
-                "journal 中的临时路径不属于应用",
-            ));
-        }
-        match capture_path_state(&temporary)? {
-            PathState::Missing => {}
-            state @ (PathState::File { .. } | PathState::Symlink { .. }) => {
-                if state.fingerprint() != expected_fingerprint {
-                    return Err(AppError::conflict(
-                        "temporaryPath",
-                        "临时路径内容已变化，拒绝删除未知内容",
-                    ));
-                }
-                fs::remove_file(&temporary).map_err(|_| {
-                    AppError::atomic_write(&temporary.to_string_lossy(), "cleanup_temporary")
+        if let Some(temporary_text) = target.temporary_path.clone() {
+            let expected_fingerprint =
+                target.temporary_fingerprint.as_deref().ok_or_else(|| {
+                    AppError::conflict("temporaryPath", "旧 journal 缺少临时路径所有权指纹")
                 })?;
-                sync_directory(temporary.parent().expect("临时路径必须有父目录"))?;
-            }
-            PathState::Directory { .. } => {
+            let temporary = PathBuf::from(temporary_text);
+            validate_allowed_path(&temporary, allowed_root, false)?;
+            if temporary.parent() != restored_target_path.parent() {
                 return Err(AppError::conflict(
                     "temporaryPath",
-                    "拒绝删除占用临时路径的目录",
+                    "journal 临时路径不在对应目标同目录",
                 ));
             }
+            let name = temporary
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let owned_name = name
+                .strip_prefix(".easytoagents-")
+                .and_then(|name| {
+                    name.strip_suffix(".tmp")
+                        .or_else(|| name.strip_suffix(".link"))
+                })
+                .is_some_and(|id| Uuid::parse_str(id).is_ok());
+            if !owned_name {
+                return Err(AppError::conflict(
+                    "temporaryPath",
+                    "journal 中的临时路径不属于应用",
+                ));
+            }
+            match capture_path_state(&temporary)? {
+                PathState::Missing => {}
+                state @ (PathState::File { .. } | PathState::Symlink { .. }) => {
+                    if state.fingerprint() != expected_fingerprint {
+                        return Err(AppError::conflict(
+                            "temporaryPath",
+                            "临时路径内容已变化，拒绝删除未知内容",
+                        ));
+                    }
+                    fs::remove_file(&temporary).map_err(|_| {
+                        AppError::atomic_write(&temporary.to_string_lossy(), "cleanup_temporary")
+                    })?;
+                    sync_directory(temporary.parent().expect("临时路径必须有父目录"))?;
+                }
+                PathState::Directory { .. } => {
+                    return Err(AppError::conflict(
+                        "temporaryPath",
+                        "拒绝删除占用临时路径的目录",
+                    ));
+                }
+            }
+            target.temporary_path = None;
+            target.temporary_fingerprint = None;
+            changed = true;
         }
+        if let Some(quarantine) = target.quarantine_path.as_deref() {
+            validate_allowed_path(Path::new(quarantine), allowed_root, false)?;
+            cleanup_takeover_quarantine(target)?;
+            changed = true;
+        }
+    }
+    if changed {
+        persist_journal(paths, &journal)?;
     }
     Ok(())
 }
@@ -3778,9 +4547,21 @@ fn mutation_from_snapshot(
                     AppError::invalid_input("centralSkillsRoot", "恢复链接必须提供中央库边界")
                 })?
                 .to_path_buf(),
+            allow_external_target: true,
         },
+        PathState::Directory { .. }
+            if snapshot.storage_kind == SnapshotStorageKind::DirectoryTree =>
+        {
+            Mutation::RestoreDirectoryTree {
+                snapshot_path: snapshot.snapshot_path.clone(),
+                content_hash: snapshot
+                    .directory_tree_hash
+                    .clone()
+                    .ok_or_else(|| AppError::invalid_input("snapshot", "目录树快照缺少 hash"))?,
+            }
+        }
         PathState::Directory { .. } => {
-            return Err(AppError::conflict("snapshot", "普通目录快照不能递归恢复"));
+            return Err(AppError::conflict("snapshot", "旧目录占位快照不能递归恢复"));
         }
     };
     Ok(PendingMutation {
@@ -3790,7 +4571,11 @@ fn mutation_from_snapshot(
         allowed_root: allowed_root.to_path_buf(),
         central_root: central_root.map(Path::to_path_buf),
         expected_before_fingerprint: capture_path_state(&snapshot.target_path)?.fingerprint(),
-        expected_after_fingerprint: snapshot.state.fingerprint(),
+        expected_after_fingerprint: if snapshot.storage_kind == SnapshotStorageKind::DirectoryTree {
+            String::new()
+        } else {
+            snapshot.state.fingerprint()
+        },
         mutation,
     })
 }
@@ -3858,19 +4643,22 @@ fn finish_restore_success(
         .map_err(|_| AppError::database(&database_path, "commit_finish_restore"))
 }
 
-/// 快照文件必须位于 `snapshots_root/<run_id>/<snapshot_id>.snapshot`，
+/// 快照必须位于 `snapshots_root/<run_id>/<snapshot_id>.snapshot[.d]`，
 /// 且父目录 canonicalize 后仍在快照根内；恢复与删除共用这条越权边界。
 fn validate_snapshot_storage_path(
     paths: &AppPaths,
     run_id: &str,
     snapshot_id: &str,
     snapshot_path: &Path,
+    storage_kind: SnapshotStorageKind,
 ) -> Result<(), AppError> {
     validate_normal_absolute(snapshot_path, "snapshotPath")?;
-    let expected_snapshot_path = paths
-        .snapshots()
-        .join(run_id)
-        .join(format!("{snapshot_id}.snapshot"));
+    let expected_snapshot_path = paths.snapshots().join(run_id).join(match storage_kind {
+        SnapshotStorageKind::DirectoryTree => format!("{snapshot_id}.snapshot.d"),
+        SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
+            format!("{snapshot_id}.snapshot")
+        }
+    });
     if snapshot_path != expected_snapshot_path {
         return Err(AppError::conflict(
             "snapshotPath",
@@ -3901,7 +4689,7 @@ fn load_snapshot_record(
         .connection()
         .query_row(
             "SELECT run_id, target_id, target_path, snapshot_path, content_hash,
-                    file_mode, target_type, link_target, row_version
+                    file_mode, target_type, link_target, row_version, storage_kind
              FROM snapshots WHERE id = ?1",
             [snapshot_id],
             |row| {
@@ -3915,6 +4703,7 @@ fn load_snapshot_record(
                     row.get::<_, String>(6)?,
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, i64>(8)?,
+                    row.get::<_, String>(9)?,
                 ))
             },
         )
@@ -3924,45 +4713,63 @@ fn load_snapshot_record(
     let target_path = PathBuf::from(&row.2);
     validate_allowed_path(&target_path, allowed_root, false)?;
     let snapshot_path = PathBuf::from(&row.3);
-    validate_snapshot_storage_path(paths, &row.0, snapshot_id, &snapshot_path)?;
-    ensure_private_file(&snapshot_path)?;
-    let state = match row.6.as_str() {
-        "missing" => PathState::Missing,
-        "file" => {
-            let bytes = fs::read(&snapshot_path).map_err(|_| {
-                AppError::permission(&snapshot_path.to_string_lossy(), "read_snapshot")
+    let storage_kind = parse_snapshot_storage_kind(&row.9)?;
+    validate_snapshot_storage_path(paths, &row.0, snapshot_id, &snapshot_path, storage_kind)?;
+    match storage_kind {
+        SnapshotStorageKind::DirectoryTree => {
+            let metadata = fs::symlink_metadata(&snapshot_path).map_err(|_| {
+                AppError::not_found("snapshotTree", &snapshot_path.to_string_lossy())
             })?;
-            let hash = hash_bytes(&bytes);
-            if row.4.as_deref() != Some(&hash) {
-                return Err(AppError::conflict("snapshot", "快照内容 hash 不匹配"));
-            }
-            PathState::File {
-                bytes,
-                hash,
-                mode: row
-                    .5
-                    .and_then(|mode| u32::try_from(mode).ok())
-                    .ok_or_else(|| AppError::invalid_input("snapshot", "文件快照缺少 mode"))?,
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(AppError::conflict("snapshot", "目录树快照类型无效"));
             }
         }
-        "symlink" => {
-            let link_target =
-                PathBuf::from(row.7.ok_or_else(|| {
+        SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
+            ensure_private_file(&snapshot_path)?;
+        }
+    }
+    let state =
+        match row.6.as_str() {
+            "missing" => PathState::Missing,
+            "file" => {
+                let bytes = fs::read(&snapshot_path).map_err(|_| {
+                    AppError::permission(&snapshot_path.to_string_lossy(), "read_snapshot")
+                })?;
+                let hash = hash_bytes(&bytes);
+                if row.4.as_deref() != Some(&hash) {
+                    return Err(AppError::conflict("snapshot", "快照内容 hash 不匹配"));
+                }
+                PathState::File {
+                    bytes,
+                    hash,
+                    mode: row
+                        .5
+                        .and_then(|mode| u32::try_from(mode).ok())
+                        .ok_or_else(|| AppError::invalid_input("snapshot", "文件快照缺少 mode"))?,
+                }
+            }
+            "symlink" => {
+                let link_target = PathBuf::from(row.7.ok_or_else(|| {
                     AppError::invalid_input("snapshot", "链接快照缺少 linkTarget")
                 })?);
-            if let Some(central_root) = central_root {
-                validate_central_link_target(&target_path, &link_target, central_root)?;
+                PathState::Symlink { link_target }
             }
-            PathState::Symlink { link_target }
-        }
-        // 目录快照不包含目录树，恢复路径会保守拒绝这种记录；零身份不能
-        // 与任何真实目录 fingerprint 匹配。
-        "directory" => PathState::Directory {
-            device: 0,
-            inode: 0,
-        },
-        _ => return Err(AppError::invalid_input("snapshot", "未知快照目标类型")),
-    };
+            "directory" => {
+                if storage_kind == SnapshotStorageKind::DirectoryTree {
+                    let hash = row.4.as_deref().ok_or_else(|| {
+                        AppError::invalid_input("snapshot", "目录树快照缺少 hash")
+                    })?;
+                    skill_library::verify_skill_tree(&snapshot_path, hash)?;
+                }
+                // 原始目录身份只用于旧 metadata-only 记录的保守不可恢复语义；
+                // directory_tree 的恢复结果会按完整树 hash 验证。
+                PathState::Directory {
+                    device: 0,
+                    inode: 0,
+                }
+            }
+            _ => return Err(AppError::invalid_input("snapshot", "未知快照目标类型")),
+        };
     Ok(SnapshotRecord {
         id: snapshot_id.to_owned(),
         run_id: row.0,
@@ -3974,7 +4781,25 @@ fn load_snapshot_record(
         row_version: u32::try_from(row.8)
             .map_err(|_| AppError::invalid_input("snapshot", "快照 row_version 超出安全范围"))?,
         state,
+        storage_kind,
+        directory_tree_hash: if storage_kind == SnapshotStorageKind::DirectoryTree {
+            row.4
+        } else {
+            None
+        },
     })
+}
+
+fn parse_snapshot_storage_kind(value: &str) -> Result<SnapshotStorageKind, AppError> {
+    match value {
+        "payload_file" => Ok(SnapshotStorageKind::PayloadFile),
+        "metadata_only" => Ok(SnapshotStorageKind::MetadataOnly),
+        "directory_tree" => Ok(SnapshotStorageKind::DirectoryTree),
+        _ => Err(AppError::invalid_input(
+            "snapshotStorageKind",
+            "数据库包含未知快照存储类型",
+        )),
+    }
 }
 
 fn parse_target_type(value: &str) -> Result<TargetType, AppError> {
@@ -3994,7 +4819,7 @@ fn parse_target_type(value: &str) -> Result<TargetType, AppError> {
 mod tests {
     use std::{
         fs,
-        os::unix::fs::symlink,
+        os::unix::fs::{symlink, MetadataExt},
         path::{Path, PathBuf},
         process::Command,
         sync::{
@@ -4013,6 +4838,7 @@ mod tests {
         apply_persisted_preview, claim_preview, delete_snapshots, detect_interrupted_run,
         list_snapshots, preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent,
         ApplyFaultInjector, ApplyTargetInput, DeleteSnapshotsInput, ManagedItemApply, NoApplyFault,
+        SnapshotStorageKind,
     };
     use crate::{
         adapters::{
@@ -4025,9 +4851,11 @@ mod tests {
         error::ErrorCode,
         git::inspect_path,
         security::{mode, SecretRedactor, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE},
+        skills::library as skill_library,
         sync::{
             build_preview_plan, load_managed_target_baseline, persist_preview, scan_target,
-            ManagedTargetBaseline, PreviewTargetRequest, TargetScan,
+            ManagedTargetBaseline, PreviewTargetRequest, SkillTakeoverEntry,
+            SkillTakeoverEntryType, TargetScan, WARNING_SKILL_TAKEOVER_CONFIRMATION,
         },
     };
 
@@ -4139,6 +4967,7 @@ mod tests {
             row_versions: Vec::new(),
             git,
             exclude_from_git,
+            skill_takeover_entries: Vec::new(),
         }
     }
 
@@ -4169,6 +4998,7 @@ mod tests {
             delete_target: false,
             managed_items: Vec::new(),
             remove_managed_item_ids: Vec::new(),
+            skill_takeover_entries: Vec::new(),
         }
     }
 
@@ -4687,6 +5517,7 @@ mod tests {
                 allowed_root: &fixture.targets,
                 central_root: None,
                 expected_before_fingerprint: &expected,
+                directory_tree_hash: None,
             },
         )
         .unwrap_err();
@@ -4819,6 +5650,7 @@ mod tests {
                 row_versions: Vec::new(),
                 git: None,
                 exclude_from_git: false,
+                skill_takeover_entries: Vec::new(),
             }],
         );
         let mut apply_input = input(descriptor, json!({}), &fixture.targets);
@@ -5841,6 +6673,7 @@ mod tests {
             row_versions: Vec::new(),
             git: None,
             exclude_from_git: false,
+            skill_takeover_entries: Vec::new(),
         }
     }
 
@@ -5884,6 +6717,7 @@ mod tests {
                 delete_target: false,
                 managed_items: Vec::new(),
                 remove_managed_item_ids: Vec::new(),
+                skill_takeover_entries: Vec::new(),
             }],
             &InjectFault {
                 target_index: 0,
@@ -5943,6 +6777,7 @@ mod tests {
                 delete_target: false,
                 managed_items: Vec::new(),
                 remove_managed_item_ids: Vec::new(),
+                skill_takeover_entries: Vec::new(),
             }],
             &NoApplyFault,
         )
@@ -6024,6 +6859,7 @@ mod tests {
                     delete_target: false,
                     managed_items: Vec::new(),
                     remove_managed_item_ids: Vec::new(),
+                    skill_takeover_entries: Vec::new(),
                 }],
                 &NoApplyFault,
             )
@@ -6034,6 +6870,195 @@ mod tests {
             } else {
                 assert_eq!(fs::read_link(child).unwrap(), outside);
             }
+        }
+    }
+
+    #[test]
+    fn explicit_skill_takeover_preserves_external_source_and_restores_directory_tree() {
+        for entry_type in [
+            SkillTakeoverEntryType::ExternalSymlink,
+            SkillTakeoverEntryType::Directory,
+        ] {
+            let mut fixture = Fixture::new();
+            let skills = fixture.targets.join("skills");
+            let child = skills.join("owned-skill");
+            let external = fixture.root.join("external-skill");
+            let central = fixture.root.join("central-skills");
+            let central_skill = central.join("owned-skill");
+            fs::create_dir(&skills).unwrap();
+            fs::create_dir(&central).unwrap();
+            fs::create_dir(&external).unwrap();
+            fs::write(
+                external.join("SKILL.md"),
+                "---\nname: owned-skill\ndescription: 接管测试\n---\n正文\n",
+            )
+            .unwrap();
+            fs::write(external.join("asset.txt"), "外部内容").unwrap();
+            match entry_type {
+                SkillTakeoverEntryType::ExternalSymlink => symlink(&external, &child).unwrap(),
+                SkillTakeoverEntryType::Directory => {
+                    let source_hash = skill_library::inspect_skill_takeover_entry(&external)
+                        .unwrap()
+                        .content_hash;
+                    skill_library::copy_skill_tree(&external, &child, &source_hash).unwrap();
+                }
+            }
+            let inspection = skill_library::inspect_skill_takeover_entry(&child).unwrap();
+            skill_library::copy_skill_tree(&external, &central_skill, &inspection.content_hash)
+                .unwrap();
+            let external_before = fs::metadata(external.join("SKILL.md")).unwrap();
+            let descriptor = skill_descriptor(&skills);
+            let ownership = ManagedOwnership::SymlinkNames(vec!["owned-skill".to_owned()]);
+            let desired = json!({
+                "owned-skill": {
+                    "targetType": "symlink",
+                    "linkTarget": central_skill.to_string_lossy(),
+                }
+            });
+            let target_id = Uuid::new_v4().to_string();
+            fixture
+                .database
+                .connection()
+                .execute(
+                    "INSERT INTO managed_targets(
+                        id, tool, artifact_kind, scope, target_path,
+                        baseline_full_hash, baseline_managed_hash, baseline_projection_json
+                     ) VALUES (?1, 'claude', 'skill', 'global', ?2, NULL, NULL, 'null')",
+                    params![&target_id, descriptor.path.as_deref().unwrap()],
+                )
+                .unwrap();
+            let scan = scan_target(
+                &crate::adapters::claude::ClaudeAdapter,
+                &descriptor,
+                &ownership,
+            );
+            let takeover = SkillTakeoverEntry {
+                name: "owned-skill".to_owned(),
+                entry_path: child.to_string_lossy().into_owned(),
+                entry_type,
+                expected_fingerprint: inspection.fingerprint,
+                content_hash: inspection.content_hash.clone(),
+                central_path: central_skill.to_string_lossy().into_owned(),
+            };
+            let plan = build_preview_plan(
+                Scope::Global,
+                None,
+                vec![PreviewTargetRequest {
+                    descriptor: descriptor.clone(),
+                    ownership: ownership.clone(),
+                    baseline: ManagedTargetBaseline {
+                        target_id,
+                        target_row_version: 1,
+                        full_hash: None,
+                        managed_hash: None,
+                    },
+                    scan,
+                    baseline_mismatched_items: Vec::new(),
+                    readopt_available: false,
+                    desired_projection: desired.clone(),
+                    row_versions: Vec::new(),
+                    git: None,
+                    exclude_from_git: false,
+                    skill_takeover_entries: vec![takeover.clone()],
+                }],
+                &SecretRedactor::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                plan.targets[0].change_kind,
+                crate::domain::ChangeKind::Update
+            );
+            assert!(plan
+                .warning_codes
+                .iter()
+                .any(|code| code == WARNING_SKILL_TAKEOVER_CONFIRMATION));
+            let preview_id = plan.preview_id.clone();
+            persist_preview(&mut fixture.database, &plan).unwrap();
+            apply_persisted_preview(
+                &fixture.write_lock,
+                &mut fixture.database,
+                &fixture.paths,
+                &preview_id,
+                &[ApplyTargetInput {
+                    descriptor,
+                    ownership,
+                    desired_projection: desired,
+                    allowed_root: fixture.targets.clone(),
+                    central_skills_root: Some(central.clone()),
+                    delete_target: false,
+                    managed_items: Vec::new(),
+                    remove_managed_item_ids: Vec::new(),
+                    skill_takeover_entries: vec![takeover],
+                }],
+                &NoApplyFault,
+            )
+            .unwrap();
+
+            assert_eq!(fs::canonicalize(&child).unwrap(), central_skill);
+            assert_eq!(
+                fs::read_to_string(external.join("asset.txt")).unwrap(),
+                "外部内容"
+            );
+            let external_after = fs::metadata(external.join("SKILL.md")).unwrap();
+            assert_eq!(external_before.ino(), external_after.ino());
+            assert!(fs::read_dir(&skills).unwrap().all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".easytoagents-")
+            }));
+
+            let snapshot = list_snapshots(&fixture.database)
+                .unwrap()
+                .into_iter()
+                .find(|snapshot| {
+                    snapshot.run_id == preview_id && snapshot.target_path == child.to_string_lossy()
+                })
+                .unwrap();
+            let expected_storage = match entry_type {
+                SkillTakeoverEntryType::ExternalSymlink => SnapshotStorageKind::MetadataOnly,
+                SkillTakeoverEntryType::Directory => SnapshotStorageKind::DirectoryTree,
+            };
+            assert_eq!(snapshot.storage_kind, expected_storage);
+            assert!(snapshot.restorable);
+            let restore = preview_restore(
+                &mut fixture.database,
+                &fixture.paths,
+                &snapshot.snapshot_id,
+                &fixture.targets,
+            )
+            .unwrap();
+            assert_eq!(restore.storage_kind, expected_storage);
+            restore_snapshot(
+                &fixture.write_lock,
+                &mut fixture.database,
+                &fixture.paths,
+                &restore.preview_id,
+                &fixture.targets,
+                Some(&central),
+            )
+            .unwrap();
+            match entry_type {
+                SkillTakeoverEntryType::ExternalSymlink => {
+                    assert_eq!(fs::read_link(&child).unwrap(), external);
+                }
+                SkillTakeoverEntryType::Directory => {
+                    assert!(fs::symlink_metadata(&child).unwrap().is_dir());
+                    skill_library::verify_skill_tree(&child, &inspection.content_hash).unwrap();
+                }
+            }
+            let deletion = delete_snapshots(
+                &fixture.write_lock,
+                &mut fixture.database,
+                &fixture.paths,
+                &DeleteSnapshotsInput {
+                    snapshot_ids: vec![snapshot.snapshot_id.clone()],
+                },
+            )
+            .unwrap();
+            assert_eq!(deletion.deleted_ids, vec![snapshot.snapshot_id]);
+            assert!(deletion.failures.is_empty());
         }
     }
 
@@ -6179,6 +7204,7 @@ mod tests {
             row_versions: Vec::new(),
             git: Some(inspect_path(&project, &untracked_target).unwrap()),
             exclude_from_git: true,
+            skill_takeover_entries: Vec::new(),
         };
         let second_preview = persist_requests(
             &mut fixture.database,

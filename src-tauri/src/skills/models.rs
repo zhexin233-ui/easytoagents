@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use specta::Type;
 
-use crate::domain::{SkillStatus, SyncStatus, Tool, TrustStatus};
+use crate::{
+    domain::{SkillStatus, SyncStatus, Tool, TrustStatus},
+    sync::{PreviewPlan, SkillTakeoverEntryType},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PreparedSkillRecord {
@@ -192,6 +195,8 @@ pub struct SkillImportCandidateDto {
     pub status: SkillImportCandidateStatus,
     pub reason: Option<String>,
     pub existing_skill_id: Option<String>,
+    pub takeover_eligible: bool,
+    pub takeover_entry_type: Option<SkillTakeoverEntryType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -216,4 +221,20 @@ pub struct ConfirmSkillImportInput {
 pub struct SkillImportResultDto {
     pub tool: Tool,
     pub created_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareSkillTakeoverInput {
+    pub preview_id: String,
+    pub candidate_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillTakeoverPreviewResultDto {
+    pub tool: Tool,
+    pub assigned_count: u32,
+    pub reused_count: u32,
+    pub plan: PreviewPlan,
 }

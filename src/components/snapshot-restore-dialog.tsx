@@ -171,7 +171,7 @@ export function SnapshotRestoreDialog({
           id="snapshot-restore-description"
           className="text-muted-foreground mt-3 text-sm leading-6"
         >
-          恢复前会再次创建当前状态快照并生成一次性持久化预览；此处不展示快照内容。
+          恢复前会再次创建当前状态快照并生成一次性持久化预览；目录树恢复会覆盖接管后的中央链接，并把目录恢复到接管时的内容，之后可能与中央副本产生漂移。
         </p>
 
         {snapshotsQuery.isPending ? (
@@ -199,6 +199,15 @@ export function SnapshotRestoreDialog({
             <p className="mt-2 text-sm">
               当前类型：{preview.currentType} · 快照类型：{preview.snapshotType}
             </p>
+            <p className="text-muted-foreground mt-2 text-sm">
+              存储方式：{snapshotStorageLabel(preview.storageKind)}
+            </p>
+            {preview.storageKind === "directory_tree" ? (
+              <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+                该恢复会重新放回完整目录树。恢复后此 Skill
+                不再指向中央副本，后续同步会把它识别为外部拥有变更。
+              </p>
+            ) : null}
             <div className="mt-4 flex justify-end gap-3">
               <Button variant="outline" onClick={() => setPreview(null)}>
                 返回列表
@@ -280,17 +289,23 @@ export function SnapshotRestoreDialog({
                         {snapshot.targetPath}
                       </code>
                       <p className="text-muted-foreground mt-2 text-xs">
-                        {snapshot.createdAt} · {snapshot.targetType}
+                        {snapshot.createdAt} · {snapshot.targetType} ·{" "}
+                        {snapshotStorageLabel(snapshot.storageKind)}
                       </p>
+                      {!snapshot.restorable ? (
+                        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                          旧目录占位快照不含目录内容，只能删除，不能恢复。
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={previewMutation.isPending}
+                    disabled={previewMutation.isPending || !snapshot.restorable}
                     onClick={() => previewMutation.mutate(snapshot)}
                   >
-                    预览恢复
+                    {snapshot.restorable ? "预览恢复" : "不可恢复"}
                   </Button>
                 </div>
               </article>
@@ -305,6 +320,17 @@ export function SnapshotRestoreDialog({
       </section>
     </div>
   );
+}
+
+function snapshotStorageLabel(storageKind: SnapshotSummary["storageKind"]) {
+  switch (storageKind) {
+    case "payload_file":
+      return "完整文件";
+    case "directory_tree":
+      return "完整目录树";
+    case "metadata_only":
+      return "仅元数据";
+  }
 }
 
 function prioritizeSnapshot(

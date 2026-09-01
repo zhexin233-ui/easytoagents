@@ -554,6 +554,18 @@ export function SkillsPage() {
             );
             setOpenImport(null);
           }}
+          onTakeoverPrepared={async (result) => {
+            await queryClient.invalidateQueries(
+              { queryKey: skillKeys.all },
+              { throwOnError: true },
+            );
+            setMessage(
+              `已为 ${result.assignedCount + result.reusedCount} 项 Skill 准备接管；请审阅持久化预览后显式应用。`,
+            );
+            setOpenImport(null);
+            // 接管无条件进入预览，即使全局偏好是 direct 也不会自动 Apply。
+            setOpenPreview({ plan: result.plan, tool: result.tool });
+          }}
         />
       ) : null}
 

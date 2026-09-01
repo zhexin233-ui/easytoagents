@@ -55,6 +55,8 @@ describe("SnapshotRestoreDialog", () => {
           targetId: "00000000-0000-4000-8000-000000000733",
           targetPath: "/isolated/home/.codex/config.toml",
           targetType: "file",
+          storageKind: "payload_file",
+          restorable: true,
           createdAt: "2026-08-24T10:00:00Z",
         },
       ],
@@ -67,6 +69,7 @@ describe("SnapshotRestoreDialog", () => {
         targetPath: "/isolated/home/.codex/config.toml",
         currentType: "file",
         snapshotType: "file",
+        storageKind: "payload_file",
       },
     });
     vi.mocked(commands.restoreSnapshot).mockResolvedValue({
@@ -130,6 +133,59 @@ describe("SnapshotRestoreDialog", () => {
     expect(screen.queryByText("确认恢复此目标")).not.toBeInTheDocument();
   });
 
+  it("区分完整目录树与旧占位快照，并在目录恢复预览中提示漂移", async () => {
+    vi.mocked(commands.listSnapshots).mockResolvedValueOnce({
+      status: "ok",
+      data: [
+        {
+          snapshotId: "00000000-0000-4000-8000-000000000751",
+          runId: "00000000-0000-4000-8000-000000000752",
+          targetId: "00000000-0000-4000-8000-000000000753",
+          targetPath: "/isolated/home/.cursor/skills/tree",
+          targetType: "directory",
+          storageKind: "directory_tree",
+          restorable: true,
+          createdAt: "2026-09-01T10:00:00Z",
+        },
+        {
+          snapshotId: "00000000-0000-4000-8000-000000000761",
+          runId: "00000000-0000-4000-8000-000000000762",
+          targetId: "00000000-0000-4000-8000-000000000763",
+          targetPath: "/isolated/home/.cursor/skills/legacy",
+          targetType: "directory",
+          storageKind: "metadata_only",
+          restorable: false,
+          createdAt: "2026-08-31T10:00:00Z",
+        },
+      ],
+    });
+    vi.mocked(commands.previewSnapshotRestore).mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        previewId: "00000000-0000-4000-8000-000000000754",
+        snapshotId: "00000000-0000-4000-8000-000000000751",
+        targetPath: "/isolated/home/.cursor/skills/tree",
+        currentType: "symlink",
+        snapshotType: "directory",
+        storageKind: "directory_tree",
+      },
+    });
+    renderHarness();
+    fireEvent.click(await screen.findByRole("button", { name: "打开恢复" }));
+    expect(await screen.findByText(/完整目录树/)).toBeVisible();
+    expect(
+      screen.getByText("旧目录占位快照不含目录内容，只能删除，不能恢复。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "不可恢复" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "预览恢复" }));
+    expect(
+      await screen.findByText(/恢复后此 Skill 不再指向中央副本/),
+    ).toBeVisible();
+    expect(commands.previewSnapshotRestore).toHaveBeenCalledExactlyOnceWith({
+      snapshotId: "00000000-0000-4000-8000-000000000751",
+    });
+  });
+
   it("勾选多个恢复点后经二次确认执行删除选中，并清空选择", async () => {
     vi.mocked(commands.listSnapshots).mockResolvedValue({
       status: "ok",
@@ -140,6 +196,8 @@ describe("SnapshotRestoreDialog", () => {
           targetId: "00000000-0000-4000-8000-000000000733",
           targetPath: "/isolated/home/.codex/config.toml",
           targetType: "file",
+          storageKind: "payload_file",
+          restorable: true,
           createdAt: "2026-08-24T10:00:00Z",
         },
         {
@@ -148,6 +206,8 @@ describe("SnapshotRestoreDialog", () => {
           targetId: "00000000-0000-4000-8000-000000000743",
           targetPath: "/isolated/home/.claude/CLAUDE.md",
           targetType: "file",
+          storageKind: "payload_file",
+          restorable: true,
           createdAt: "2026-08-24T11:00:00Z",
         },
       ],

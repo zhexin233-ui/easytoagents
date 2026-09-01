@@ -33,6 +33,7 @@ vi.mock("@/bindings/commands", () => ({
     importSkill: vi.fn(),
     discoverSkillImport: vi.fn(),
     confirmSkillImport: vi.fn(),
+    prepareSkillTakeover: vi.fn(),
     previewSkillContent: vi.fn(),
     deleteSkill: vi.fn(),
     setGlobalSkillAssignment: vi.fn(),
@@ -169,6 +170,8 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
         status: "importable",
         reason: null,
         existingSkillId: null,
+        takeoverEligible: false,
+        takeoverEntryType: null,
       },
       {
         candidateId: "unselected",
@@ -178,6 +181,8 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
         status: "importable",
         reason: null,
         existingSkillId: null,
+        takeoverEligible: false,
+        takeoverEntryType: null,
       },
       {
         candidateId: "existing",
@@ -187,6 +192,8 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
         status: "already_imported",
         reason: null,
         existingSkillId: skill.id,
+        takeoverEligible: false,
+        takeoverEntryType: null,
       },
       {
         candidateId: "conflict",
@@ -196,6 +203,8 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
         status: "name_conflict",
         reason: "同名技能内容不同，不会覆盖或改名。",
         existingSkillId: null,
+        takeoverEligible: false,
+        takeoverEntryType: null,
       },
       {
         candidateId: "invalid",
@@ -205,6 +214,8 @@ function nativeImport(tool: Tool): SkillImportPreviewDto {
         status: "invalid",
         reason: "来源链接不可安全读取。",
         existingSkillId: null,
+        takeoverEligible: false,
+        takeoverEntryType: null,
       },
     ],
     message: null,
@@ -240,6 +251,15 @@ beforeEach(() => {
   vi.mocked(commands.confirmSkillImport).mockResolvedValue({
     status: "ok",
     data: { tool: "claude", createdCount: 1 },
+  });
+  vi.mocked(commands.prepareSkillTakeover).mockResolvedValue({
+    status: "ok",
+    data: {
+      tool: "claude",
+      assignedCount: 1,
+      reusedCount: 0,
+      plan: preview,
+    },
   });
   vi.mocked(commands.listSkills).mockResolvedValue({
     status: "ok",
@@ -1110,7 +1130,7 @@ describe("全局 Skills 检测与复制导入", () => {
       ).toBeVisible();
       expect(within(dialog).getByText("来源链接不可安全读取。")).toBeVisible();
       expect(
-        within(dialog).getByRole("button", { name: "确认导入所选项（0）" }),
+        within(dialog).getByRole("button", { name: "复制所选项（0）" }),
       ).toBeDisabled();
       if (tool === "codex") {
         expect(
@@ -1147,7 +1167,7 @@ describe("全局 Skills 检测与复制导入", () => {
         data: [{ ...skill, name: "new-skill", globalTools: [] }],
       });
       fireEvent.click(
-        within(dialog).getByRole("button", { name: "确认导入所选项（1）" }),
+        within(dialog).getByRole("button", { name: "复制所选项（1）" }),
       );
       await waitFor(() => expect(dialog).not.toBeInTheDocument());
       expect(commands.confirmSkillImport).toHaveBeenCalledExactlyOnceWith({
@@ -1233,7 +1253,7 @@ describe("全局 Skills 检测与复制导入", () => {
     ).toBeVisible();
     fireEvent.click(checkbox);
     expect(
-      screen.getByRole("button", { name: "确认导入所选项（1）" }),
+      screen.getByRole("button", { name: "复制所选项（1）" }),
     ).toBeEnabled();
     expect(commands.confirmSkillImport).not.toHaveBeenCalled();
   });
@@ -1290,7 +1310,7 @@ describe("全局 Skills 检测与复制导入", () => {
       expect(within(dialog).getByText(diagnosticCode)).toBeVisible();
       expect(within(dialog).queryAllByRole("checkbox")).toHaveLength(0);
       expect(
-        within(dialog).getByRole("button", { name: "确认导入所选项（0）" }),
+        within(dialog).getByRole("button", { name: "复制所选项（0）" }),
       ).toBeDisabled();
       expect(
         within(dialog).getByRole("button", { name: "重新检测" }),
@@ -1327,7 +1347,7 @@ describe("全局 Skills 检测与复制导入", () => {
     });
     expect(commands.discoverSkillImport).toHaveBeenCalledTimes(1);
     expect(
-      screen.getByRole("button", { name: "确认导入所选项（0）" }),
+      screen.getByRole("button", { name: "复制所选项（0）" }),
     ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "重新检测" }));
     expect(
@@ -1353,9 +1373,7 @@ describe("全局 Skills 检测与复制导入", () => {
       fireEvent.click(
         await screen.findByRole("checkbox", { name: "导入 new-skill" }),
       );
-      fireEvent.click(
-        screen.getByRole("button", { name: "确认导入所选项（1）" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "复制所选项（1）" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(
         `${code}：检测证据已过期 请重新检测后再确认。`,
       );
@@ -1377,9 +1395,7 @@ describe("全局 Skills 检测与复制导入", () => {
       expect(checkbox).not.toBeChecked();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       fireEvent.click(checkbox);
-      fireEvent.click(
-        screen.getByRole("button", { name: "确认导入所选项（1）" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "复制所选项（1）" }));
       await waitFor(() =>
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
       );
@@ -1543,21 +1559,101 @@ describe("全局 Skills 检测与复制导入", () => {
         recoverable: true,
       },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "确认导入所选项（1）" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "复制所选项（1）" }));
     const dialog = screen.getByRole("dialog");
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "已复制到中央库，但列表刷新失败：DATABASE_ERROR：中央列表暂不可读",
     );
     expect(
-      within(dialog).getByRole("button", { name: "确认导入所选项（1）" }),
+      within(dialog).getByRole("button", { name: "复制所选项（1）" }),
     ).toBeDisabled();
     expect(
       within(dialog).getByRole("button", { name: "重新检测" }),
     ).toBeEnabled();
     fireEvent.submit(within(dialog).getByRole("form"));
     expect(commands.confirmSkillImport).toHaveBeenCalledTimes(1);
+  });
+
+  it("接管候选与复制候选分组独立选择，direct 模式也必须先审阅预览", async () => {
+    const data = nativeImport("claude");
+    data.candidates = data.candidates.map((candidate) =>
+      candidate.candidateId === "existing"
+        ? {
+            ...candidate,
+            takeoverEligible: true,
+            takeoverEntryType: "external_symlink",
+            reason: "中央库已有完全一致内容；可显式预览接管当前工具入口",
+          }
+        : candidate,
+    );
+    vi.mocked(commands.discoverSkillImport).mockResolvedValueOnce({
+      status: "ok",
+      data,
+    });
+    vi.mocked(commands.getAppSettings).mockResolvedValueOnce({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "检测并导入 Claude 全局 Skills",
+      }),
+    );
+    const importDialog = await screen.findByRole("dialog", {
+      name: "导入 Claude 全局 Skills",
+    });
+    expect(
+      await within(importDialog).findByRole("heading", {
+        name: "复制到中央库",
+      }),
+    ).toBeVisible();
+    expect(
+      within(importDialog).getByRole("heading", { name: "接管正式目录" }),
+    ).toBeVisible();
+    expect(
+      within(importDialog).getByRole("checkbox", { name: "导入 new-skill" }),
+    ).toBeEnabled();
+    const takeover = within(importDialog).getByRole("checkbox", {
+      name: "接管 fixture-skill",
+    });
+    expect(takeover).toBeEnabled();
+    expect(
+      within(importDialog).getByRole("button", {
+        name: "预览接管所选项（0）",
+      }),
+    ).toBeDisabled();
+    fireEvent.click(takeover);
+    fireEvent.click(
+      within(importDialog).getByRole("button", {
+        name: "预览接管所选项（1）",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(commands.prepareSkillTakeover).toHaveBeenCalledExactlyOnceWith({
+        previewId: data.previewId,
+        candidateIds: ["existing"],
+      }),
+    );
+    expect(commands.confirmSkillImport).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+    const previewDialog = await screen.findByRole("dialog", {
+      name: "确认原生配置变更",
+    });
+    expect(
+      within(previewDialog).getByRole("button", { name: "应用这份预览" }),
+    ).toBeEnabled();
+    fireEvent.click(
+      within(previewDialog).getByRole("button", { name: "应用这份预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.applySkillPreview).toHaveBeenCalledExactlyOnceWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: null,
+      }),
+    );
   });
 });
 

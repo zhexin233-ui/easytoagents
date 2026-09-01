@@ -12,12 +12,12 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    library::{self, PreparedSkillImport, SkillSourceEvidence},
-    service::descriptor_for,
-    ConfirmSkillImportInput, PreparedSkillRecord, SkillImportCandidateDto,
-    SkillImportCandidateStatus as CandidateStatus, SkillImportPreviewDto, SkillImportResultDto,
-    SkillImportSourceDto, SkillImportSourceKind as SourceKind,
-    SkillImportSourceStatus as SourceStatus,
+    library::{self, PreparedSkillImport, SkillSourceEvidence, SkillTakeoverEntryKind},
+    service::{self, descriptor_for},
+    ConfirmSkillImportInput, PrepareSkillTakeoverInput, PreparedSkillRecord,
+    SkillImportCandidateDto, SkillImportCandidateStatus as CandidateStatus, SkillImportPreviewDto,
+    SkillImportResultDto, SkillImportSourceDto, SkillImportSourceKind as SourceKind,
+    SkillImportSourceStatus as SourceStatus, SkillTakeoverPreviewResultDto,
 };
 use crate::{
     adapters::{CapabilityState, ExplicitEnvironment, PolicyState, TargetDescriptor},
@@ -25,13 +25,14 @@ use crate::{
     db::{skill_imports as repository, skills, Database},
     domain::{SkillStatus, Tool},
     error::{AppError, ErrorCode},
-    sync::hash_json,
+    security::SecretRedactor,
+    sync::{hash_json, SkillTakeoverEntry, SkillTakeoverEntryType},
 };
 
 const MAX_CANDIDATE_ENTRIES: usize = 256;
 const MAX_SELECTED: usize = 32;
 const MAX_READ_BYTES: u64 = 128 * 1024 * 1024;
-const CONTEXT_VERSION: u32 = 1;
+const CONTEXT_VERSION: u32 = 2;
 
 #[derive(Deserialize, Serialize)]
 struct ImportContext {
@@ -47,6 +48,18 @@ struct CandidateEvidence {
     name: String,
     hash: String,
     sources: Vec<SkillSourceEvidence>,
+    existing_skill_id: Option<String>,
+    takeover_source: Option<SkillSourceEvidence>,
+    takeover_entry_type: Option<SkillTakeoverEntryType>,
+    takeover_fingerprint: Option<String>,
+    central_path: Option<String>,
+}
+
+fn is_managed_source(kind: SourceKind) -> bool {
+    matches!(
+        kind,
+        SourceKind::ClaudeGlobal | SourceKind::CodexHome | SourceKind::CursorHome
+    )
 }
 
 fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKind, PathBuf)> {
@@ -325,7 +338,13 @@ pub fn discover_skill_import(
                 status: CandidateStatus::Importable,
                 reason: None,
                 existing_skill_id: None,
+                takeover_eligible: false,
+                takeover_entry_type: None,
             };
+            let mut takeover_source = None;
+            let mut takeover_entry_type = None;
+            let mut takeover_fingerprint = None;
+            let mut central_path = None;
             if let Some(record) = records
                 .iter()
                 .find(|record| record.name.eq_ignore_ascii_case(&candidate.name))
@@ -370,6 +389,32 @@ pub fn discover_skill_import(
                     candidate.reason =
                         Some("同名且完整内容一致，已在中央库；不新增副本或分配".to_owned());
                     candidate.existing_skill_id = Some(record.id.clone());
+                    if is_managed_source(kind)
+                        && descriptor.path.as_deref() == root.to_str()
+                        && !evidence.resolved.starts_with(paths.data_root())
+                    {
+                        if let Ok(takeover) = library::inspect_skill_takeover_entry(&entry) {
+                            if takeover.content_hash == inspection.hash {
+                                let entry_type = match takeover.entry_type {
+                                    SkillTakeoverEntryKind::ExternalSymlink => {
+                                        SkillTakeoverEntryType::ExternalSymlink
+                                    }
+                                    SkillTakeoverEntryKind::Directory => {
+                                        SkillTakeoverEntryType::Directory
+                                    }
+                                };
+                                candidate.takeover_eligible = true;
+                                candidate.takeover_entry_type = Some(entry_type);
+                                candidate.reason = Some(
+                                    "中央库已有完全一致内容；可显式预览接管当前工具入口".to_owned(),
+                                );
+                                takeover_source = Some(evidence.clone());
+                                takeover_entry_type = Some(entry_type);
+                                takeover_fingerprint = Some(takeover.fingerprint);
+                                central_path = Some(record.central_path.clone());
+                            }
+                        }
+                    }
                 } else {
                     candidate.status = CandidateStatus::NameConflict;
                     candidate.reason =
@@ -384,6 +429,11 @@ pub fn discover_skill_import(
                 name: inspection.name,
                 hash: inspection.hash,
                 sources: vec![evidence],
+                existing_skill_id: candidate.existing_skill_id.clone(),
+                takeover_source,
+                takeover_entry_type,
+                takeover_fingerprint,
+                central_path,
             });
             preview.candidates.push(candidate);
         }
@@ -417,7 +467,8 @@ pub fn discover_skill_import(
     }
     context.candidates.retain(|candidate| {
         preview.candidates.iter().any(|display| {
-            display.candidate_id == candidate.id && display.status == CandidateStatus::Importable
+            display.candidate_id == candidate.id
+                && (display.status == CandidateStatus::Importable || display.takeover_eligible)
         })
     });
     if !context.candidates.is_empty() {
@@ -459,6 +510,8 @@ fn invalid_candidate(entry: &Path, reason: &str) -> SkillImportCandidateDto {
         status: CandidateStatus::Invalid,
         reason: Some(reason.to_owned()),
         existing_skill_id: None,
+        takeover_eligible: false,
+        takeover_entry_type: None,
     }
 }
 
@@ -551,6 +604,15 @@ fn confirm_with_fault(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    if selected
+        .iter()
+        .any(|candidate| candidate.existing_skill_id.is_some())
+    {
+        return Err(AppError::invalid_input(
+            "candidateIds",
+            "复制确认只能选择尚未进入中央库的候选",
+        ));
+    }
     let roots = source_roots(environment, record.tool);
     let excluded = builtin_exclusions(environment);
     if selected.iter().any(|candidate| {
@@ -657,6 +719,214 @@ fn confirm_with_fault(
     })
 }
 
+pub fn prepare_skill_takeover(
+    database: &mut Database,
+    paths: &AppPaths,
+    environment: &ExplicitEnvironment,
+    redactor: &SecretRedactor,
+    input: &PrepareSkillTakeoverInput,
+) -> Result<SkillTakeoverPreviewResultDto, AppError> {
+    let selected_ids = input.candidate_ids.iter().collect::<BTreeSet<_>>();
+    if selected_ids.is_empty()
+        || selected_ids.len() != input.candidate_ids.len()
+        || selected_ids.len() > MAX_SELECTED
+    {
+        return Err(AppError::invalid_input(
+            "candidateIds",
+            "请选择 1 到 32 个不重复的可接管技能",
+        ));
+    }
+    let record = repository::get_preview(database.connection(), &input.preview_id)?;
+    let context: ImportContext = serde_json::from_str(&record.context_json)
+        .map_err(|_| AppError::invalid_input("previewId", "接管证据无效，请重新检测"))?;
+    if context.version != CONTEXT_VERSION {
+        return Err(AppError::stale_preview(&record.id, "skillTakeover"));
+    }
+    repository::validate_preview(database.connection(), &record, &context.central_state)?;
+    let descriptor = descriptor_for(
+        environment,
+        record.tool,
+        None,
+        environment.claude_customization_policy_probe(),
+    )?;
+    if descriptor.capability.state != CapabilityState::Supported
+        || descriptor.policy != PolicyState::Allowed
+        || environment_fingerprint(environment, record.tool, &descriptor) != context.environment
+    {
+        return Err(AppError::stale_preview(&record.id, "skillTakeover"));
+    }
+    let target_root = descriptor
+        .path
+        .as_deref()
+        .ok_or_else(|| AppError::stale_preview(&record.id, "skillTakeover"))?;
+    let selected = selected_ids
+        .iter()
+        .map(|id| {
+            context
+                .candidates
+                .iter()
+                .find(|candidate| &candidate.id == *id)
+                .ok_or_else(|| {
+                    AppError::invalid_input("candidateIds", "选择包含未知或不可接管候选")
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let database_path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| AppError::database(&database_path, "begin_prepare_skill_takeover"))?;
+    repository::validate_preview(&transaction, &record, &context.central_state)?;
+    let mut entries = Vec::with_capacity(selected.len());
+    let mut assigned_count = 0_u32;
+    let mut reused_count = 0_u32;
+    for candidate in &selected {
+        let skill_id = candidate.existing_skill_id.as_deref().ok_or_else(|| {
+            AppError::invalid_input("candidateIds", "接管候选缺少中央 Skill 身份")
+        })?;
+        let source = candidate.takeover_source.as_ref().ok_or_else(|| {
+            AppError::invalid_input("candidateIds", "候选不来自当前工具的正式全局目标")
+        })?;
+        if source.root != Path::new(target_root) || source.entry.parent() != Some(&source.root) {
+            return Err(AppError::stale_preview(&record.id, "skillTakeover"));
+        }
+        let entry_type = candidate
+            .takeover_entry_type
+            .ok_or_else(|| AppError::invalid_input("candidateIds", "接管候选缺少入口类型"))?;
+        let expected_fingerprint = candidate
+            .takeover_fingerprint
+            .as_deref()
+            .ok_or_else(|| AppError::invalid_input("candidateIds", "接管候选缺少入口身份"))?;
+        let central_path = candidate
+            .central_path
+            .as_deref()
+            .ok_or_else(|| AppError::invalid_input("candidateIds", "接管候选缺少中央路径"))?;
+        validate_takeover_candidate_entry(
+            paths,
+            &record.id,
+            candidate,
+            source,
+            entry_type,
+            expected_fingerprint,
+        )?;
+        let central = skills::get_skill_from_connection(&transaction, &database_path, skill_id)?;
+        if central.name != candidate.name
+            || central.content_hash != candidate.hash
+            || central.central_path != central_path
+            || central.status != SkillStatus::Ready
+        {
+            return Err(AppError::stale_preview(&record.id, "centralSkill"));
+        }
+        let inspection = library::inspect_central_skill(
+            paths,
+            &central.id,
+            &central.name,
+            &central.central_path,
+            &central.content_hash,
+            central.status,
+            false,
+        )?;
+        if inspection.status != SkillStatus::Ready {
+            return Err(AppError::stale_preview(&record.id, "centralSkill"));
+        }
+        let already_assigned = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM skill_global_assignments
+                    WHERE tool = ?1 AND skill_id = ?2
+                 )",
+                rusqlite::params![record.tool.as_str(), skill_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|_| AppError::database(&database_path, "read_takeover_assignment"))?;
+        if already_assigned {
+            reused_count = reused_count.saturating_add(1);
+        } else {
+            let row_version = u32::try_from(central.row_version)
+                .map_err(|_| AppError::invalid_input("rowVersion", "Skill 版本超出范围"))?;
+            skills::set_global_assignment_in_connection(
+                &transaction,
+                &database_path,
+                record.tool,
+                skill_id,
+                true,
+                row_version,
+            )?;
+            assigned_count = assigned_count.saturating_add(1);
+        }
+        entries.push(SkillTakeoverEntry {
+            name: candidate.name.clone(),
+            entry_path: source.entry.to_string_lossy().into_owned(),
+            entry_type,
+            expected_fingerprint: expected_fingerprint.to_owned(),
+            content_hash: candidate.hash.clone(),
+            central_path: central_path.to_owned(),
+        });
+    }
+    let plan = service::build_skill_takeover_preview_in_connection(
+        &transaction,
+        &database_path,
+        paths,
+        environment,
+        redactor,
+        record.tool,
+        entries,
+    )?;
+    for candidate in &selected {
+        let source = candidate.takeover_source.as_ref().ok_or_else(|| {
+            AppError::invalid_input("candidateIds", "候选不来自当前工具的正式全局目标")
+        })?;
+        validate_takeover_candidate_entry(
+            paths,
+            &record.id,
+            candidate,
+            source,
+            candidate
+                .takeover_entry_type
+                .ok_or_else(|| AppError::invalid_input("candidateIds", "接管候选缺少入口类型"))?,
+            candidate
+                .takeover_fingerprint
+                .as_deref()
+                .ok_or_else(|| AppError::invalid_input("candidateIds", "接管候选缺少入口身份"))?,
+        )?;
+    }
+    crate::sync::persist_preview_in_connection(&transaction, &plan, &database_path)?;
+    repository::consume_preview(&transaction, &record.id)?;
+    transaction
+        .commit()
+        .map_err(|_| AppError::database(&database_path, "commit_prepare_skill_takeover"))?;
+    Ok(SkillTakeoverPreviewResultDto {
+        tool: record.tool,
+        assigned_count,
+        reused_count,
+        plan,
+    })
+}
+
+fn validate_takeover_candidate_entry(
+    paths: &AppPaths,
+    preview_id: &str,
+    candidate: &CandidateEvidence,
+    source: &SkillSourceEvidence,
+    entry_type: SkillTakeoverEntryType,
+    expected_fingerprint: &str,
+) -> Result<(), AppError> {
+    let current = library::inspect_skill_takeover_entry(&source.entry)
+        .map_err(|_| AppError::stale_preview(preview_id, "skillTakeover"))?;
+    let current_type = match current.entry_type {
+        SkillTakeoverEntryKind::ExternalSymlink => SkillTakeoverEntryType::ExternalSymlink,
+        SkillTakeoverEntryKind::Directory => SkillTakeoverEntryType::Directory,
+    };
+    if current_type != entry_type
+        || current.fingerprint != expected_fingerprint
+        || current.content_hash != candidate.hash
+        || current.resolved.starts_with(paths.data_root())
+    {
+        return Err(AppError::stale_preview(preview_id, "skillTakeover"));
+    }
+    Ok(())
+}
+
 fn cleanup_batch(paths: &AppPaths, prepared: &[PreparedSkillImport]) -> Result<(), AppError> {
     let mut failure = None;
     for item in prepared.iter().rev() {
@@ -716,7 +986,7 @@ mod tests {
     use std::{
         fs,
         os::unix::fs::{symlink, MetadataExt, PermissionsExt},
-        sync::{Arc, Barrier},
+        sync::{Arc, Barrier, Mutex},
     };
 
     const BODY: &str = "PRIVATE_WORKFLOW_BODY_47281";
@@ -922,6 +1192,174 @@ mod tests {
         assert_eq!(fixture.metadata_counts(), metadata);
         assert!(cursor_source.join("SKILL.md").is_file());
         assert!(agents_source.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn exact_cursor_external_link_requires_takeover_preview_before_apply() {
+        let mut fixture = Fixture::new();
+        let external = fixture.root.join("external/one");
+        fixture.skill(&external, "one");
+        let agents_root = fixture.environment.home().join(".agents/skills");
+        fs::create_dir_all(&agents_root).unwrap();
+        symlink(&external, agents_root.join("one")).unwrap();
+        let import_preview = fixture.preview(Tool::Cursor);
+        let import_input = Fixture::input(&import_preview);
+        assert_eq!(fixture.confirm(&import_input).unwrap().created_count, 1);
+        fs::remove_file(agents_root.join("one")).unwrap();
+
+        let cursor_root = fixture.environment.home().join(".cursor/skills");
+        fs::create_dir_all(&cursor_root).unwrap();
+        let cursor_entry = cursor_root.join("one");
+        symlink(&external, &cursor_entry).unwrap();
+        let preview = fixture.preview(Tool::Cursor);
+        let candidate = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "one")
+            .unwrap();
+        assert_eq!(candidate.status, CandidateStatus::AlreadyImported);
+        assert!(candidate.takeover_eligible);
+        assert_eq!(
+            candidate.takeover_entry_type,
+            Some(SkillTakeoverEntryType::ExternalSymlink)
+        );
+        let takeover_input = PrepareSkillTakeoverInput {
+            preview_id: preview.preview_id.clone().unwrap(),
+            candidate_ids: vec![candidate.candidate_id.clone()],
+        };
+        assert_eq!(
+            fixture
+                .confirm(&ConfirmSkillImportInput {
+                    preview_id: takeover_input.preview_id.clone(),
+                    candidate_ids: takeover_input.candidate_ids.clone(),
+                })
+                .unwrap_err()
+                .code(),
+            ErrorCode::InvalidInput
+        );
+        let external_before = fs::metadata(external.join("SKILL.md")).unwrap();
+        let takeover = prepare_skill_takeover(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &takeover_input,
+        )
+        .unwrap();
+        assert_eq!(takeover.assigned_count, 1);
+        assert_eq!(takeover.reused_count, 0);
+        assert!(takeover
+            .plan
+            .warning_codes
+            .iter()
+            .any(|code| code == crate::sync::WARNING_SKILL_TAKEOVER_CONFIRMATION));
+        assert_eq!(fs::read_link(&cursor_entry).unwrap(), external);
+
+        service::apply_skill_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &crate::skills::ApplySkillPreviewInput {
+                preview_id: takeover.plan.preview_id,
+                tool: Tool::Cursor,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        let central = skills::list_skills(&fixture.database).unwrap()[0]
+            .central_path
+            .clone();
+        assert_eq!(
+            fs::canonicalize(&cursor_entry).unwrap(),
+            PathBuf::from(central)
+        );
+        let external_after = fs::metadata(external.join("SKILL.md")).unwrap();
+        assert_eq!(external_before.ino(), external_after.ino());
+        assert_eq!(
+            fs::read_to_string(external.join("asset.sh")).unwrap(),
+            "exit 0\n"
+        );
+    }
+
+    #[test]
+    fn takeover_prepare_failure_rolls_back_assignment_target_preview_and_token() {
+        let mut fixture = Fixture::new();
+        let external = fixture.root.join("external/one");
+        fixture.skill(&external, "one");
+        let agents_root = fixture.environment.home().join(".agents/skills");
+        fs::create_dir_all(&agents_root).unwrap();
+        symlink(&external, agents_root.join("one")).unwrap();
+        let input = Fixture::input(&fixture.preview(Tool::Cursor));
+        fixture.confirm(&input).unwrap();
+        fs::remove_file(agents_root.join("one")).unwrap();
+        let cursor_root = fixture.environment.home().join(".cursor/skills");
+        fs::create_dir_all(&cursor_root).unwrap();
+        symlink(&external, cursor_root.join("one")).unwrap();
+        let preview = fixture.preview(Tool::Cursor);
+        let candidate = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.takeover_eligible)
+            .unwrap();
+        let skill = skills::list_skills(&fixture.database).unwrap()[0].clone();
+        fixture
+            .database
+            .connection()
+            .execute(
+                "INSERT INTO managed_targets(
+                    id, tool, artifact_kind, scope, target_path,
+                    baseline_full_hash, baseline_managed_hash, baseline_projection_json
+                 ) VALUES (?1, 'cursor', 'skill', 'global', ?2, ?3, ?3, '{}')",
+                rusqlite::params![
+                    Uuid::new_v4().to_string(),
+                    cursor_root.to_string_lossy(),
+                    "b".repeat(64),
+                ],
+            )
+            .unwrap();
+
+        let error = prepare_skill_takeover(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &PrepareSkillTakeoverInput {
+                preview_id: preview.preview_id.clone().unwrap(),
+                candidate_ids: vec![candidate.candidate_id.clone()],
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
+        assert!(skills::global_tools_for_skill(&fixture.database, &skill.id)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            repository::get_preview(
+                fixture.database.connection(),
+                preview.preview_id.as_deref().unwrap(),
+            )
+            .unwrap()
+            .status,
+            "previewed"
+        );
+        assert_eq!(
+            fixture
+                .database
+                .connection()
+                .query_row("SELECT COUNT(*) FROM sync_runs", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            skills::get_skill(&fixture.database, &skill.id)
+                .unwrap()
+                .row_version,
+            skill.row_version
+        );
+        assert_eq!(fs::read_link(cursor_root.join("one")).unwrap(), external);
     }
 
     #[test]

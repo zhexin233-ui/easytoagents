@@ -42,10 +42,10 @@ use crate::{
     security::SecretRedactor,
     sync::{
         apply_persisted_preview, assess_drift, build_preview_plan, canonical_json, hash_json,
-        load_managed_target_baseline, load_persisted_preview, persist_preview,
-        read_directory_target, scan_target, ApplyResult, ApplyTargetInput, DatabaseEntityType,
-        DatabaseRowVersion, ManagedItemApply, ManagedTargetBaseline, NoApplyFault, PreviewPlan,
-        PreviewTargetRequest, TargetScan,
+        load_persisted_preview, persist_preview, read_directory_target, scan_target, ApplyResult,
+        ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion, ManagedItemApply,
+        ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest, SkillTakeoverEntry,
+        TargetScan,
     },
 };
 
@@ -252,6 +252,59 @@ pub fn preview_skill_sync_with_policy_probe(
     policy_probe: &dyn ClaudeCustomizationPolicyProbe,
 ) -> Result<PreviewPlan, AppError> {
     let prepared = prepare_skill_sync(database, paths, environment, input, policy_probe)?;
+    let plan =
+        build_prepared_skill_preview(redactor, input.exclude_from_git, prepared, Vec::new())?;
+    persist_preview(database, &plan)?;
+    Ok(plan)
+}
+
+pub(crate) fn build_skill_takeover_preview_in_connection(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    redactor: &SecretRedactor,
+    tool: Tool,
+    entries: Vec<SkillTakeoverEntry>,
+) -> Result<PreviewPlan, AppError> {
+    let input = PreviewSkillSyncInput {
+        tool,
+        project_id: None,
+        exclude_from_git: false,
+    };
+    let prepared = prepare_skill_sync_in_connection(
+        connection,
+        database_path,
+        paths,
+        environment,
+        &input,
+        environment.claude_customization_policy_probe(),
+    )?;
+    let target = prepared
+        .target
+        .as_ref()
+        .ok_or_else(|| AppError::conflict("skillTakeover", "接管目标没有可预览变更"))?;
+    if target.baseline.full_hash.is_some()
+        || target.baseline.managed_hash.is_some()
+        || target
+            .row_versions
+            .iter()
+            .any(|row| row.entity_type == DatabaseEntityType::ManagedItem)
+    {
+        return Err(AppError::conflict(
+            "skillTakeover",
+            "已有受管基线或条目时不能走首次接管",
+        ));
+    }
+    build_prepared_skill_preview(redactor, false, prepared, entries)
+}
+
+fn build_prepared_skill_preview(
+    redactor: &SecretRedactor,
+    exclude_from_git: bool,
+    prepared: PreparedSkillSync,
+    skill_takeover_entries: Vec<SkillTakeoverEntry>,
+) -> Result<PreviewPlan, AppError> {
     let scope = prepared.scope;
     let project_id = prepared.project.as_ref().map(|project| project.id.clone());
     let requests = prepared
@@ -267,12 +320,12 @@ pub fn preview_skill_sync_with_policy_probe(
                 desired_projection: target.desired_projection,
                 row_versions: target.row_versions,
                 git: target.git,
-                exclude_from_git: input.exclude_from_git,
+                exclude_from_git,
+                skill_takeover_entries,
             }]
         })
         .unwrap_or_default();
     let plan = build_preview_plan(scope, project_id, requests, redactor)?;
-    persist_preview(database, &plan)?;
     Ok(plan)
 }
 
@@ -337,6 +390,11 @@ pub fn apply_skill_preview_with_policy_probe(
                 delete_target: false,
                 managed_items: target.managed_items,
                 remove_managed_item_ids: target.remove_managed_item_ids,
+                skill_takeover_entries: persisted
+                    .items
+                    .first()
+                    .map(|item| item.envelope.skill_takeover_entries.clone())
+                    .unwrap_or_default(),
             }]
         })
         .unwrap_or_default();
@@ -393,14 +451,18 @@ pub fn list_global_skill_target_statuses_with_policy_probe(
                     diagnostic_code: inspection.diagnostic_code.map(str::to_owned),
                 });
             }
-            let baseline = find_skill_target_baseline(database, &descriptor, None)?.unwrap_or(
-                ManagedTargetBaseline {
-                    target_id: String::new(),
-                    target_row_version: 0,
-                    full_hash: None,
-                    managed_hash: None,
-                },
-            );
+            let baseline = find_skill_target_baseline(
+                database.connection(),
+                &database.path().to_string_lossy(),
+                &descriptor,
+                None,
+            )?
+            .unwrap_or(ManagedTargetBaseline {
+                target_id: String::new(),
+                target_row_version: 0,
+                full_hash: None,
+                managed_hash: None,
+            });
             let existing = if baseline.target_id.is_empty() {
                 Vec::new()
             } else {
@@ -477,7 +539,25 @@ struct PreparedSkillTarget {
 }
 
 fn prepare_skill_sync(
-    database: &mut Database,
+    database: &Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    input: &PreviewSkillSyncInput,
+    policy_probe: &dyn ClaudeCustomizationPolicyProbe,
+) -> Result<PreparedSkillSync, AppError> {
+    prepare_skill_sync_in_connection(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        paths,
+        environment,
+        input,
+        policy_probe,
+    )
+}
+
+fn prepare_skill_sync_in_connection(
+    connection: &rusqlite::Connection,
+    database_path: &str,
     paths: &AppPaths,
     environment: &crate::adapters::ExplicitEnvironment,
     input: &PreviewSkillSyncInput,
@@ -486,7 +566,7 @@ fn prepare_skill_sync(
     let project = input
         .project_id
         .as_deref()
-        .map(|id| repository::get_project(database, id))
+        .map(|id| repository::get_project_from_connection(connection, database_path, id))
         .transpose()?;
     let scope = if project.is_some() {
         Scope::Project
@@ -498,13 +578,19 @@ fn prepare_skill_sync(
         .map(|project| canonical_project(&project.root_path))
         .transpose()?;
     let descriptor = descriptor_for(environment, input.tool, project_root.as_ref(), policy_probe)?;
-    let desired_records = repository::list_assigned_skills(
-        database,
+    let desired_records = repository::list_assigned_skills_from_connection(
+        connection,
+        database_path,
         input.tool,
         project.as_ref().map(|project| project.id.as_str()),
     )?;
     let inherited_records = if scope == Scope::Project {
-        repository::list_assigned_skills(database, input.tool, None)?
+        repository::list_assigned_skills_from_connection(
+            connection,
+            database_path,
+            input.tool,
+            None,
+        )?
     } else {
         Vec::new()
     };
@@ -513,7 +599,8 @@ fn prepare_skill_sync(
         desired_records.iter().chain(inherited_records.iter()),
     )?;
     let existing_baseline = find_skill_target_baseline(
-        database,
+        connection,
+        database_path,
         &descriptor,
         project.as_ref().map(|project| project.id.as_str()),
     )?;
@@ -537,9 +624,13 @@ fn prepare_skill_sync(
     }
     let baseline = match existing_baseline {
         Some(baseline) => baseline,
-        None => ensure_skill_target(database, &descriptor, project.as_ref())?,
+        None => ensure_skill_target(connection, database_path, &descriptor, project.as_ref())?,
     };
-    let existing_items = repository::list_managed_skill_items(database, &baseline.target_id)?;
+    let existing_items = repository::list_managed_skill_items_from_connection(
+        connection,
+        database_path,
+        &baseline.target_id,
+    )?;
     if desired_records.is_empty() && inherited_records.is_empty() && existing_items.is_empty() {
         return Ok(PreparedSkillSync {
             scope,
@@ -566,7 +657,8 @@ fn prepare_skill_sync(
     let (managed_items, remove_managed_item_ids) =
         build_managed_item_changes(&desired_records, &existing_items)?;
     let row_versions = collect_row_versions(
-        database,
+        connection,
+        database_path,
         project.as_ref(),
         desired_records.iter().chain(inherited_records.iter()),
         &existing_items,
@@ -773,7 +865,8 @@ fn build_managed_item_changes(
 }
 
 fn collect_row_versions<'a>(
-    database: &Database,
+    connection: &rusqlite::Connection,
+    database_path: &str,
     project: Option<&SkillProjectRecord>,
     records: impl Iterator<Item = &'a SkillRecord>,
     items: &[ManagedSkillItemRecord],
@@ -796,7 +889,9 @@ fn collect_row_versions<'a>(
             (DatabaseEntityType::ManagedItem, item.id.clone()),
             safe_row_version(item.row_version)?,
         );
-        if let Ok(record) = repository::get_skill(database, &item.resource_id) {
+        if let Ok(record) =
+            repository::get_skill_from_connection(connection, database_path, &item.resource_id)
+        {
             versions.insert(
                 (DatabaseEntityType::Skill, record.id),
                 safe_row_version(record.row_version)?,
@@ -816,7 +911,8 @@ fn collect_row_versions<'a>(
 }
 
 fn ensure_skill_target(
-    database: &mut Database,
+    connection: &rusqlite::Connection,
+    database_path: &str,
     descriptor: &TargetDescriptor,
     project: Option<&SkillProjectRecord>,
 ) -> Result<ManagedTargetBaseline, AppError> {
@@ -825,14 +921,12 @@ fn ensure_skill_target(
         .as_deref()
         .ok_or_else(|| AppError::not_found("skillTarget", descriptor.tool.as_str()))?;
     let project_id = project.map(|project| project.id.as_str());
-    let existing = find_skill_target_baseline(database, descriptor, project_id)?;
+    let existing = find_skill_target_baseline(connection, database_path, descriptor, project_id)?;
     if let Some(existing) = existing {
         return Ok(existing);
     }
-    let database_path = database.path().to_string_lossy().into_owned();
     let id = Uuid::new_v4().to_string();
-    database
-        .connection_mut()
+    connection
         .execute(
             "INSERT INTO managed_targets(
                 id, tool, artifact_kind, scope, project_id, target_path
@@ -845,21 +939,21 @@ fn ensure_skill_target(
                 target_path,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "insert_skill_managed_target"))?;
-    load_managed_target_baseline(database, &id)
+        .map_err(|_| AppError::database(database_path, "insert_skill_managed_target"))?;
+    find_skill_target_baseline(connection, database_path, descriptor, project_id)?
+        .ok_or_else(|| AppError::database(database_path, "load_inserted_skill_managed_target"))
 }
 
 fn find_skill_target_baseline(
-    database: &Database,
+    connection: &rusqlite::Connection,
+    database_path: &str,
     descriptor: &TargetDescriptor,
     project_id: Option<&str>,
 ) -> Result<Option<ManagedTargetBaseline>, AppError> {
     let Some(target_path) = descriptor.path.as_deref() else {
         return Ok(None);
     };
-    let database_path = database.path().to_string_lossy();
-    database
-        .connection()
+    connection
         .query_row(
             "SELECT id, row_version, baseline_full_hash, baseline_managed_hash
              FROM managed_targets
@@ -881,7 +975,7 @@ fn find_skill_target_baseline(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_skill_managed_target"))
+        .map_err(|_| AppError::database(database_path, "find_skill_managed_target"))
 }
 
 fn validate_ready_records<'a>(

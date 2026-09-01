@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/skill-import-guidelines.md","reason":"Skills 显式来源、exact match、内置排除、首次状态与复制不接管的现有合同"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"持久化 Preview/Apply、journal、snapshot、rollback 与路径安全总合同"}
+{"file":".trellis/spec/backend/mcp-import-guidelines.md","reason":"参考显式选择后写中央 assignment/ownership 且不直接写原生目标的接管先例"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"SkillImportDialog、ChangePreviewDialog 与恢复点对话框交互规范"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"导入/接管请求隔离、mutation 状态与 query invalidation 规范"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Rust/Specta DTO 与前端生成类型边界"}
+{"file":".trellis/tasks/09-01-cursor-default-skills-takeover/research/root-cause-and-recovery.md","reason":"根因、实机入口形态、Apply 可复用边界与目录快照缺口"}

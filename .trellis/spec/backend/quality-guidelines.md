@@ -210,6 +210,21 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
   Restore must prove that derived relationship from the persisted descriptor/ownership
   (immediate managed child name or Git-resolved local exclude path); exact main-target
   equality alone is insufficient, while a generic descendant check is unsafe.
+- Snapshot persistence has an explicit `storage_kind`: file bodies use `payload_file`,
+  missing/symlink and legacy directory placeholders use `metadata_only`, and an
+  explicitly taken-over real Skill directory uses `directory_tree`. Migration defaults
+  old files to payload and every other old row to metadata only; a metadata-only
+  directory is intentionally not restorable.
+- A directory-tree snapshot is a private, no-follow, content-hashed copy rooted at
+  `snapshots/<run>/<snapshot>.snapshot.d`. Restore copies it to an owned temporary
+  sibling, verifies the complete tree hash, quarantines only a currently proven central
+  link, then atomically installs the directory. Verification uses tree hash rather than
+  the old directory inode. Delete recursively removes a tree only after path ownership,
+  direct-parent layout, type, and full hash all match.
+- A takeover mutation uses an owned `.takeover` quarantine in the target's immediate
+  parent. Journal the quarantine path/fingerprint, entry type, and directory hash before
+  installing the central link. Success, rollback, and explicit snapshot recovery may
+  clean it only from this evidence; never follow or remove an external symlink target.
 
 ### 4. Validation & Error Matrix
 
@@ -223,6 +238,9 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
 | Rollback or restore fails after any mutation | Reverse recovery where proven safe; preserve all evidence and block later writes |
 | Tracked Git path | Warning only; never modify `.gitignore` or the index |
 | Confirmed untracked Git path | Idempotently update only the owned `.git/info/exclude` marker block |
+| Legacy `metadata_only` directory snapshot | List as non-restorable; reject restore before any native write; allow safe metadata-file deletion |
+| `directory_tree` snapshot hash/path/type mismatch | Conflict; preserve snapshot and current target |
+| Directory-tree restore over a central managed link | Create a second snapshot, restore and hash-verify the tree, then mark target externally changed |
 
 ### 5. Good/Base/Bad Cases
 
@@ -233,6 +251,11 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
 - Bad: a path, fingerprint, ancestor, descriptor, or row version changes between
   preflight and rename. Apply returns a stable stale/conflict error and preserves the
   external writer's state.
+- Good: a real Skill directory is snapshotted as a complete tree before takeover and can
+  later replace only the proven central link; the restored tree is hash-identical even
+  though its inode is new.
+- Bad: treat a legacy directory metadata row as recursive backup, compare a restored
+  directory to the old inode, or recursively remove a tree without an owned full hash.
 
 ### 6. Tests Required
 
@@ -244,6 +267,9 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
   stale snapshot row versions, derived Skill/Git snapshots, unknown
   directories/symlinks/temporary entries, and partial source-run restoration that must
   continue blocking.
+- Cover external-link and real-directory takeover, failure/crash on both sides of
+  quarantine/link rename, external target preservation, `directory_tree` restore/delete,
+  legacy `metadata_only` refusal, and v10→v11 storage-kind migration classification.
 - Audit preview, error, journal, and RPC serialization for fixture secrets. Keep all
   native Claude/Codex fixtures under explicit temporary roots.
 - In end-to-end restore tests, derive `allowed_root` through the production

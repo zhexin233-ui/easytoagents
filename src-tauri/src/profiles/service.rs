@@ -723,6 +723,7 @@ pub fn apply_profile_preview(
         delete_target: prepared.delete_target,
         managed_items: Vec::new(),
         remove_managed_item_ids: Vec::new(),
+        skill_takeover_entries: Vec::new(),
     };
     apply_persisted_preview(
         write_operations,
@@ -930,6 +931,7 @@ fn persist_prepared_preview(
             row_versions: prepared.row_versions,
             git: prepared.git,
             exclude_from_git: false,
+            skill_takeover_entries: Vec::new(),
         }],
         redactor,
     )?;

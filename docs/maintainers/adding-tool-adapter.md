@@ -63,9 +63,9 @@ Cursor 的当前矩阵是一个非对称示例：全局/项目 MCP 与 Skills �
 逐项检查 MCP、Skills、Profiles、Projects、Overview、Sync 与 Restore：
 
 - 中央 CRUD 与工具分配是不同动作；分配不隐式 Apply。
-- Import 是只读发现 → 持久化脱敏预览 → 用户显式选择 → 中央导入，不隐式接管原生目标。
+- Import 是只读发现 → 持久化脱敏预览 → 用户显式选择 → 中央导入，不隐式接管原生目标。全局 Skill 只有在正式目标入口与 Ready 中央副本的名称和完整树哈希精确一致时，才可另行准备 takeover-aware Preview；首次接管即使开启 direct Apply 也必须再次确认。
 - MCP renderer/parser 必须保留未知字段，只修改受管名称；`headers`、`env`、`auth` 和扩展凭据不能进入普通 DTO、日志或预览明文。
-- Skills 继续使用中央不可变副本和逐名称受管链接。普通目录、外部链接、断链和逃逸均保持冲突保护。工具是否发现符号链接必须由实机 smoke 证明。
+- Skills 继续使用中央不可变副本和逐名称受管链接。普通 Apply 对普通目录、外部链接、断链和逃逸保持冲突保护；显式首次接管只能通过持久化证据生成专用 mutation。外部链接只替换入口，普通目录必须先创建可恢复目录树快照。工具是否发现符号链接必须由实机 smoke 证明。
 - Project service 只创建该工具支持的 assignment/status；不支持 Prompt 的工具不能产生项目 Prompt 行。
 - Overview 可以展示 Unsupported，但不能把它描述为“未接管”。
 - Restore 必须从 snapshot 的 tool/artifact/scope 重新推导同一窄 allowed root，并复用现有 journal、snapshot、写后校验与回滚。

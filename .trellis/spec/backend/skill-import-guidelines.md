@@ -1,10 +1,12 @@
-# 全局 Skills 检测与复制导入
+# 全局 Skills 检测、复制导入与显式接管
 
 ## 1. 适用范围
 
 修改全局 Skills 来源、入口链接、批量导入、导入 RPC/DTO、证据表或首次状态提示时，必须遵守本规范。中央库和原生同步的一般约束仍见 [Quality Guidelines](./quality-guidelines.md)。
 
-导入只创建私有中央副本，不自动创建 assignment、managed target/item、同步历史或原生链接。原文件、目录、链接文本和权限不变；导入成功不能声称原安装已受管。之后用户主动同步时，同名外部安装仍受原有冲突保护。
+复制导入只创建私有中央副本，不自动创建 assignment、managed target/item、同步历史或原生链接。原文件、目录、链接文本和权限不变；复制成功不能声称原安装已受管。之后用户主动同步时，同名外部安装仍受原有冲突保护。
+
+显式接管是独立流程：只处理当前工具**正式全局目标根的直属精确同名入口**，且该外部符号链接或真实目录的完整树 hash 必须与一个 Ready 中央副本一致。接管准备可以创建/复用全局 assignment，但只能生成持久化预览；只有用户随后确认 Apply 才能替换入口。兼容来源（`*.agents`）、项目目标、不同内容、中央私有链接和内置集合永远不能借此绕过普通冲突保护。
 
 ## 2. 命令与存储签名
 
@@ -13,6 +15,8 @@ discover_skill_import(state: State<'_, AppState>, tool: Tool)
     -> Result<SkillImportPreviewDto, AppError>;
 confirm_skill_import(state: State<'_, AppState>, input: ConfirmSkillImportInput)
     -> Result<SkillImportResultDto, AppError>;
+prepare_skill_takeover(state: State<'_, AppState>, input: PrepareSkillTakeoverInput)
+    -> Result<SkillTakeoverPreviewResultDto, AppError>;
 ```
 
 领域实现位于 `src-tauri/src/skills/import.rs`；命令只取得显式环境、私有路径和数据库锁，不读取进程环境或执行技能脚本。Rust/Specta 是类型唯一来源：
@@ -20,6 +24,7 @@ confirm_skill_import(state: State<'_, AppState>, input: ConfirmSkillImportInput)
 ```ts
 commands.discoverSkillImport(tool);
 commands.confirmSkillImport({ previewId, candidateIds });
+commands.prepareSkillTakeover({ previewId, candidateIds });
 ```
 
 迁移 `0006_skill_import_previews.sql` 新建表：
@@ -28,7 +33,7 @@ commands.confirmSkillImport({ previewId, candidateIds });
 | ---------------------------- | -------------------------------------------------------------------------------------------------- |
 | `id`                         | 小写 UUID 文本主键                                                                                 |
 | `tool`                       | `claude` / `codex` / `cursor`                                                                      |
-| `context_json`               | 合法 object JSON；版本、来源环境指纹、全部中央 Skill ID/row_version 指纹、候选来源链/目录身份/hash |
+| `context_json`               | 合法 object JSON；版本、来源环境指纹、全部中央 Skill ID/row_version 指纹、候选来源链/目录身份/hash，以及可接管入口类型/身份/中央路径 |
 | `redacted_preview_json`      | 合法 object JSON；安全的展示 DTO                                                                   |
 | `status`                     | `previewed` / `consumed`，默认 `previewed`                                                         |
 | `created_at` / `consumed_at` | 创建时间默认由 SQLite 生成；消费时更新后者                                                         |
@@ -70,6 +75,28 @@ Desktop smoke 已验证指向中央 Skill 目录的符号链接可被发现；�
 
 中央已有项只有精确 name/hash、记录状态及磁盘副本均有效才识别为 `already_imported`。已指向中央目录的原生链接必须匹配已知记录的直接私有子目录，不能重新复制中央目录到自身。
 
+### 精确接管证据与预览
+
+检测仍是只读的。只有正式全局来源 kind（`claude_global` / `codex_home` /
+`cursor_home`）中，入口路径精确等于 `<formal_root>/<skill.name>`，才可附加接管
+资格。入口必须是解析到应用数据根之外的符号链接，或正式根下的真实目录；完整树
+hash、入口类型、no-follow 身份指纹、中央 Skill ID/path/hash 都写入私有
+`context_json`。已指向中央库、兼容来源别名、项目路径、非直属入口、名称或内容不一致
+都不可接管。
+
+`prepare_skill_takeover` 只接受令牌与 1–32 个非重复 candidate ID，并重新校验环境、
+正式目标、入口类型/身份/树 hash、中央记录 row version/状态/磁盘内容和活动 writer。
+通过后创建或复用对应工具的全局 assignment，再用正常 `prepare_skill_sync` 生成
+`PreviewPlan`；持久化预览 envelope 额外保存服务端构造的 `SkillTakeoverEntry`，客户端
+不能重建或修改这些证据。接管允许覆盖的唯一首次冲突是：目标无任何 baseline/item，
+before 投影中的每个被替换名称都有精确接管证据，desired 对应中央路径，其他未知兄弟
+完全不变。预览必须带 `SKILL_TAKEOVER_REQUIRES_CONFIRMATION` 警告。
+
+Apply 必须同时匹配持久化证据和服务端重新准备的 intent，并在快照前、隔离 rename 前、
+安装中央链接前重复校验入口身份和树 hash。外部链接只移动链接本身，永不修改或删除其
+目标；真实目录先写入私有完整目录树快照，再同目录隔离并原子换成中央链接。普通 Skills
+Apply 没有接管证据时仍拒绝外部链接或目录，不能扩宽既有写入面。
+
 ### 中央副本目录命名
 
 中央副本目录以 `central_skills/<frontmatter.name>` 命名（`validate_skill_name` 保证其为安全的单段小写名）；`skills.id` 仍是 UUID，仅目录名与主键解耦。重名中央目录在 prepare 阶段即冲突清理，finalize 仍用排他 rename 兜底。中央路径边界校验（`validate_direct_child`）的期望名是 `record.name`；`inspect_central_skill` 同时接受 `record.name` 与历史 `record.id` 两种布局——启动迁移 `migrate_legacy_central_skill_directories` 对校验失败（hash 漂移、目标名被占用等）的记录跳过重命名，这些记录必须以 legacy 布局继续可用。迁移在 `AppState` 初始化时运行：原子 rename → 改写仍指向旧目录的受管 symlink（临时链接 + rename）→ 单事务更新 `skills.central_path` 与 `managed_items.last_applied_item_hash`；崩溃后重启按"旧目录缺失 + 新目录核验通过"补完记录，必须保持幂等。
@@ -78,15 +105,16 @@ Desktop smoke 已验证指向中央 Skill 目录的符号链接可被发现；�
 
 ### DTO 与选择
 
-- 预览：`previewId: string | null`、`tool`、`sources`、`candidates`、`message`。无可新增候选时没有确认令牌。
+- 预览：`previewId: string | null`、`tool`、`sources`、`candidates`、`message`。无可复制且无可接管候选时没有确认令牌。
 - 来源：`kind`（`claude_global` / `codex_home` / `codex_agents` /
   `cursor_home` / `cursor_agents`）、`path`、`status`（`ready` / `missing` /
   `empty` / `unavailable`）、`diagnosticCode`、`message`。一个来源失败不能隐藏
   另一个来源结果。`codex_home`、`cursor_home` 分别是正式同步目标所在目录；
   `codex_agents`、`cursor_agents` 仅作导入来源。
-- 候选：`candidateId`、`name`、`description`、`sourcePaths`、`status`、`reason`、`existingSkillId`。状态为 `importable` / `already_imported` / `name_conflict` / `invalid`。
+- 候选：`candidateId`、`name`、`description`、`sourcePaths`、`status`、`reason`、`existingSkillId`、`takeoverEligible`、`takeoverEntryType`。状态为 `importable` / `already_imported` / `name_conflict` / `invalid`；接管类型仅为 `external_symlink` / `directory`。
 - 确认输入仅 `previewId` 与 1–32 个非重复 `candidateIds`。路径、名称、hash、工具均从私有证据读取，不信任客户端重建值。
 - 结果仅 `tool`、`createdCount`；不返回暗示自动分配的数量。同目录或精确 name/hash 相同来源合并并保留来源路径；同名不同内容和 NOCASE 名称碰撞不可选，不覆盖或自动改名。
+- 接管准备结果为 `tool`、`assignedCount`、`reusedCount` 与持久化 `plan`；它不是 Apply 成功结果。复制确认必须拒绝带既有中央身份的接管候选，两个按钮和选择集合不能混用 payload。
 
 ### 事务与清理
 
@@ -101,6 +129,11 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 `SkillImportDialog` 复用共享模态焦点机制。查询键为 `['skill-import', tool, requestId]`；每次显式打开/重扫换 requestId，`retry:false`、`staleTime:Infinity`、`gcTime:0`，禁止 focus/reconnect 自动重扫。
 
 默认不勾选，只有 importable 可选。确认同步上锁，禁关闭/取消/重扫/双提交。失败后必须新扫描；重扫清空旧选择和错误。成功仅失效 `skillKeys.all`，等待列表刷新再关闭并恢复焦点。若确认成功但列表刷新失败，明确显示已复制，不能再次提交旧令牌。不得隐式调用 assignment、同步 preview 或 Apply。
+
+对话框必须把“复制到中央库”和“接管正式目录”分区展示并维护独立选择。接管按钮只调用
+`prepareSkillTakeover`，成功后由 `SkillsPage` 打开返回的 `ChangePreviewDialog`；即使用户
+偏好是 `direct` 也禁止自动 Apply。接管准备期间与列表刷新期间沿用同一模态锁和焦点
+约束。文案必须说明外链源不变、目录会先形成完整树快照，并明确准备成功仍需审阅 Apply。
 
 未分配 Skills 的初始诊断必须同时满足：通用状态 `external_non_owned_change`、两个 baseline hash 都空、existing managed items 和 desired assignments 都空、成功扫描为 `ObservedDocument::SymlinkDirectory`。
 
@@ -130,6 +163,11 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 | 活动 writer                              | `WRITE_IN_PROGRESS`，不消费令牌                                       |
 | 第二项复制、rename、SQL 或已知提交前失败 | 无部分中央记录，清理仅限可证明的本次副本                              |
 | 提交结果不确定                           | 核验整批，不能盲删已提交副本或猜测成功                                |
+| 精确正式入口与 Ready 中央副本同名同 hash | 标记可接管；准备时重验并只生成带警告的持久化预览                      |
+| 兼容来源、项目入口、中央链接或不同 hash  | 不标记可接管；普通复制/Apply 规则保持不变                              |
+| 接管预览后入口身份、类型、hash 或中央路径变化 | `STALE_PREVIEW` / `CONFLICT`，不创建快照、不改入口                  |
+| 接管 Apply 外部链接                      | 仅原子替换链接入口；外部目标 inode、内容、权限不变                     |
+| 接管 Apply 真实目录                      | 先持久化完整目录树快照，再原子替换；可显式恢复和删除快照               |
 | 有 desired、无 baseline/item、目标缺失或仅含不同名外部条目 | `SKILL_TARGET_INITIAL_SYNC_PENDING`，预览仍按真实 assessment 生成 |
 | 半基线、managed item 漂移、同名外部项、中央损坏或策略/权限错误 | 保留真实阻断；不能显示首次待同步                                |
 
@@ -142,6 +180,9 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
   三张工具卡片显示“已分配，待同步”；用户显式 Preview/Apply 后分别创建受管链接
   并保留 `.DS_Store`。
 - Bad：仅看到 desired assignment 就覆盖半基线、同名外部目录或中央副本损坏的真实诊断，或分配成功后自动 Apply。
+- Good：Cursor 正式目录中 `one` 外链与 Ready 中央副本完全一致；用户在接管分区勾选，审阅带警告预览后 Apply，外部目标保持原 inode/内容。
+- Base：真实目录接管后可从 `directory_tree` 恢复点恢复；恢复后显示为外部漂移，用户自行决定是否再次接管。
+- Bad：因为设置了 direct 就跳过接管预览，或把 `.agents/skills` 中的兼容别名当成可接管正式入口。
 
 ## 6. 必需测试与断言
 
@@ -154,6 +195,9 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 - DB：v5→v6 保留已有数据，重复打开幂等，绑定生成检查通过。
 - service + UI：初始/空/仅元文件/缺失目标/无基线 target 行/半基线/desired/managed item 漂移/同名普通目录与外部或断裂链接/中央损坏/策略权限类型错误/完整基线后真实非受管变化矩阵；首次三工具 Apply 后 InSync 且原兄弟保留，MCP 回归不变。
 - `skills-page.test.tsx`：选择和精确 payload、局部失败、失效重扫、晚到响应、双提交与关闭锁、Tab/Escape/焦点、复制后刷新失败，断言没有 assignment/Apply。
+- 接管回归：Claude/Codex/Cursor 正式入口的外链与目录资格、兼容来源不可接管、准备 stale/活动 writer/重复消费、普通复制拒绝接管候选；Apply 覆盖接管前后竞态、外链目标不变、目录树快照恢复/删除、隔离项回滚/崩溃清理。
+- `skills-page.test.tsx`：复制/接管分组与独立 payload；接管准备后一定打开精确返回的持久化预览，`direct` 下也断言 Apply 尚未调用。
+- `snapshot-restore-dialog.test.tsx`：显示 `payload_file` / `metadata_only` / `directory_tree`，旧目录占位快照禁恢复但可删除，目录树恢复预览提示恢复后的中央漂移。
 - 分配 UI：断言中央列表与目标状态一起刷新，成功文案说明仍需显式同步；仅 `missing` 或 `external_non_owned_change` 与 pending 诊断组合覆盖徽标，其它组合不覆盖；分配/取消分配均不调用 Preview/Apply。
 - 浏览器 fixture 只证明实际组件的交互/布局；不能替代真实 Tauri 或真实安装验收。真实桌面未跑必须明确记载。
 
@@ -179,6 +223,11 @@ let evidence = library::resolve_skill_source_excluding(root, entry, &excluded)?;
 错误：把“复制成功”当成“已同步”，给来源工具自动 assignment 或刷新受管 baseline。
 
 正确：只提交中央 Skill 记录和导入令牌；前端提示原安装未变、尚未分配或同步。
+
+错误：把 `already_imported` 一律视为无操作，或在 direct 模式下直接替换正式目录入口。
+
+正确：只有服务端私有证据证明“正式直属入口 + 同名同 hash 中央副本”时显示接管；准备
+命令只返回持久化预览，前端无条件交给 `ChangePreviewDialog`，Apply 再完成入口替换。
 
 错误：为避免“非受管变更”看起来像故障，只要 `desired` 非空就把目标显示为待同步。
 

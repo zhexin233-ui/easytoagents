@@ -73,6 +73,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "cursor_tool_support",
         sql: include_str!("migrations/0010_cursor_tool_support.sql"),
     },
+    Migration {
+        version: 11,
+        name: "snapshot_storage_kind",
+        sql: include_str!("migrations/0011_snapshot_storage_kind.sql"),
+    },
 ];
 
 struct Migration {
@@ -462,7 +467,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 10);
+        assert_eq!(database.schema_version().unwrap(), 11);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -999,7 +1004,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 10);
+            assert_eq!(database.schema_version().unwrap(), 11);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1034,12 +1039,79 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 10);
+            assert_eq!(database.schema_version().unwrap(), 11);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
             assert!(database.connection().execute("INSERT INTO skill_import_previews(id, tool, context_json, redacted_preview_json) VALUES (?1, 'codex', '[]', '{}')", [MCP_ID]).is_err());
         }
+    }
+
+    #[test]
+    fn snapshot_storage_kind_migration_classifies_existing_rows() {
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v10-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        let run_id = "00000000-0000-4000-8000-000000000301";
+        let file_snapshot = "00000000-0000-4000-8000-000000000302";
+        let directory_snapshot = "00000000-0000-4000-8000-000000000303";
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..10] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO sync_runs(id, kind, status, scope, db_version)
+                     VALUES (?1, 'apply', 'succeeded', 'global', 0)",
+                    [run_id],
+                )
+                .unwrap();
+            for (id, target_type) in [(file_snapshot, "file"), (directory_snapshot, "directory")] {
+                connection
+                    .execute(
+                        "INSERT INTO snapshots(id, run_id, target_path, snapshot_path, target_type)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            id,
+                            run_id,
+                            format!("/fixture/target/{id}"),
+                            format!("/fixture/snapshot/{id}.snapshot"),
+                            target_type,
+                        ],
+                    )
+                    .unwrap();
+            }
+        }
+        let database = Database::open(&paths).unwrap();
+        assert_eq!(database.schema_version().unwrap(), 11);
+        let kinds = database
+            .connection()
+            .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            kinds,
+            vec![
+                (file_snapshot.to_owned(), "payload_file".to_owned()),
+                (directory_snapshot.to_owned(), "metadata_only".to_owned()),
+            ]
+        );
     }
 
     #[test]
@@ -1090,7 +1162,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 10);
+            assert_eq!(database.schema_version().unwrap(), 11);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1161,7 +1233,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 10);
+            assert_eq!(database.schema_version().unwrap(), 11);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1248,7 +1320,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 10);
+            assert_eq!(database.schema_version().unwrap(), 11);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

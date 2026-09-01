@@ -60,10 +60,20 @@ pub fn list_skills(database: &Database) -> Result<Vec<SkillRecord>, AppError> {
 }
 
 pub fn get_skill(database: &Database, id: &str) -> Result<SkillRecord, AppError> {
+    get_skill_from_connection(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        id,
+    )
+}
+
+pub(crate) fn get_skill_from_connection(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    id: &str,
+) -> Result<SkillRecord, AppError> {
     EntityId::parse(id)?;
-    let path = database.path().to_string_lossy();
-    database
-        .connection()
+    connection
         .query_row(
             "SELECT id, name, source_path, central_path, content_hash,
                     frontmatter_json, status, row_version
@@ -72,7 +82,7 @@ pub fn get_skill(database: &Database, id: &str) -> Result<SkillRecord, AppError>
             skill_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "get_skill"))?
+        .map_err(|_| AppError::database(database_path, "get_skill"))?
         .ok_or_else(|| AppError::not_found("skill", id))
 }
 
@@ -253,53 +263,73 @@ pub fn set_global_assignment(
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| AppError::database(&path, "begin_set_skill_global_assignment"))?;
-    verify_row_version(
+    set_global_assignment_in_connection(
         &transaction,
+        &path,
+        tool,
+        skill_id,
+        assigned,
+        expected_row_version,
+    )?;
+    transaction
+        .commit()
+        .map_err(|_| AppError::database(&path, "commit_set_skill_global_assignment"))?;
+    get_skill(database, skill_id)
+}
+
+pub(crate) fn set_global_assignment_in_connection(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    tool: Tool,
+    skill_id: &str,
+    assigned: bool,
+    expected_row_version: u32,
+) -> Result<bool, AppError> {
+    EntityId::parse(skill_id)?;
+    verify_row_version(
+        connection,
         "skills",
         skill_id,
         expected_row_version,
         "skill",
-        &path,
+        database_path,
     )?;
     let changed = if assigned {
-        let project_count = transaction
+        let project_count = connection
             .query_row(
                 "SELECT COUNT(*) FROM skill_project_assignments
                  WHERE tool = ?1 AND skill_id = ?2",
                 params![tool.as_str(), skill_id],
                 |row| row.get::<_, i64>(0),
             )
-            .map_err(|_| AppError::database(&path, "count_skill_project_assignments"))?;
+            .map_err(|_| AppError::database(database_path, "count_skill_project_assignments"))?;
         validate_global_assignment(project_count > 0)?;
-        transaction
+        connection
             .execute(
                 "INSERT OR IGNORE INTO skill_global_assignments(tool, skill_id) VALUES (?1, ?2)",
                 params![tool.as_str(), skill_id],
             )
             .map_err(|error| {
-                map_skill_write_error(error, &path, "insert_skill_global_assignment")
+                map_skill_write_error(error, database_path, "insert_skill_global_assignment")
             })?
     } else {
-        transaction
+        connection
             .execute(
                 "DELETE FROM skill_global_assignments WHERE tool = ?1 AND skill_id = ?2",
                 params![tool.as_str(), skill_id],
             )
-            .map_err(|_| AppError::database(&path, "delete_skill_global_assignment"))?
+            .map_err(|_| AppError::database(database_path, "delete_skill_global_assignment"))?
     };
     if changed == 1 {
         touch_versioned_row(
-            &transaction,
+            connection,
             "skills",
             skill_id,
             expected_row_version,
-            &path,
+            database_path,
         )?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&path, "commit_set_skill_global_assignment"))?;
-    get_skill(database, skill_id)
+    Ok(changed == 1)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -392,7 +422,20 @@ pub fn list_assigned_skills(
     tool: Tool,
     project_id: Option<&str>,
 ) -> Result<Vec<SkillRecord>, AppError> {
-    let path = database.path().to_string_lossy();
+    list_assigned_skills_from_connection(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        tool,
+        project_id,
+    )
+}
+
+pub(crate) fn list_assigned_skills_from_connection(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    tool: Tool,
+    project_id: Option<&str>,
+) -> Result<Vec<SkillRecord>, AppError> {
     let (sql, project_parameter) = match project_id {
         Some(project_id) => (
             "SELECT skill.id, skill.name, skill.source_path, skill.central_path,
@@ -413,15 +456,14 @@ pub fn list_assigned_skills(
             None,
         ),
     };
-    let mut statement = database
-        .connection()
+    let mut statement = connection
         .prepare(sql)
-        .map_err(|_| AppError::database(&path, "prepare_list_assigned_skills"))?;
+        .map_err(|_| AppError::database(database_path, "prepare_list_assigned_skills"))?;
     let records = statement
         .query_map(params![project_parameter, tool.as_str()], skill_from_row)
-        .map_err(|_| AppError::database(&path, "query_list_assigned_skills"))?
+        .map_err(|_| AppError::database(database_path, "query_list_assigned_skills"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_assigned_skills"))?;
+        .map_err(|_| AppError::database(database_path, "decode_list_assigned_skills"))?;
     Ok(records)
 }
 
@@ -445,10 +487,20 @@ pub fn list_projects(database: &Database) -> Result<Vec<SkillProjectRecord>, App
 }
 
 pub fn get_project(database: &Database, id: &str) -> Result<SkillProjectRecord, AppError> {
+    get_project_from_connection(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        id,
+    )
+}
+
+pub(crate) fn get_project_from_connection(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    id: &str,
+) -> Result<SkillProjectRecord, AppError> {
     EntityId::parse(id)?;
-    let path = database.path().to_string_lossy();
-    database
-        .connection()
+    connection
         .query_row(
             "SELECT id, display_name, root_path, codex_trust_status, row_version
              FROM projects WHERE id = ?1 AND removed_at IS NULL",
@@ -456,7 +508,7 @@ pub fn get_project(database: &Database, id: &str) -> Result<SkillProjectRecord, 
             project_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "get_skill_project"))?
+        .map_err(|_| AppError::database(database_path, "get_skill_project"))?
         .ok_or_else(|| AppError::not_found("project", id))
 }
 
@@ -464,16 +516,26 @@ pub fn list_managed_skill_items(
     database: &Database,
     target_id: &str,
 ) -> Result<Vec<ManagedSkillItemRecord>, AppError> {
-    let path = database.path().to_string_lossy();
-    let mut statement = database
-        .connection()
+    list_managed_skill_items_from_connection(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        target_id,
+    )
+}
+
+pub(crate) fn list_managed_skill_items_from_connection(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    target_id: &str,
+) -> Result<Vec<ManagedSkillItemRecord>, AppError> {
+    let mut statement = connection
         .prepare(
             "SELECT id, resource_id, external_key, last_applied_item_hash, row_version
              FROM managed_items
              WHERE target_id = ?1 AND resource_kind = 'skill'
              ORDER BY external_key COLLATE NOCASE, id",
         )
-        .map_err(|_| AppError::database(&path, "prepare_list_managed_skill_items"))?;
+        .map_err(|_| AppError::database(database_path, "prepare_list_managed_skill_items"))?;
     let items = statement
         .query_map([target_id], |row| {
             Ok(ManagedSkillItemRecord {
@@ -484,14 +546,14 @@ pub fn list_managed_skill_items(
                 row_version: row.get(4)?,
             })
         })
-        .map_err(|_| AppError::database(&path, "query_list_managed_skill_items"))?
+        .map_err(|_| AppError::database(database_path, "query_list_managed_skill_items"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_managed_skill_items"))?;
+        .map_err(|_| AppError::database(database_path, "decode_list_managed_skill_items"))?;
     Ok(items)
 }
 
 fn verify_row_version(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &rusqlite::Connection,
     table: &str,
     id: &str,
     expected: u32,
@@ -514,7 +576,7 @@ fn verify_row_version(
 }
 
 fn touch_versioned_row(
-    transaction: &rusqlite::Transaction<'_>,
+    transaction: &rusqlite::Connection,
     table: &str,
     id: &str,
     expected: u32,

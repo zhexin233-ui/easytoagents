@@ -158,3 +158,20 @@ pub fn confirm_skill_import(
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     skills::confirm_skill_import(&mut database, state.paths(), state.environment()?, &input)
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn prepare_skill_takeover(
+    state: State<'_, AppState>,
+    input: PrepareSkillTakeoverInput,
+) -> Result<SkillTakeoverPreviewResultDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    let redactor = state.redactor().read().map_err(|_| state_lock_error())?;
+    skills::prepare_skill_takeover(
+        &mut database,
+        state.paths(),
+        state.environment()?,
+        &redactor,
+        &input,
+    )
+}
