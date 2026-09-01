@@ -21,9 +21,11 @@ import {
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
+import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import {
   globalMcpStatusesQueryOptions,
@@ -61,6 +63,16 @@ interface OpenMcpPreview {
   tool: Tool;
 }
 
+interface McpPreviewRequest {
+  tool: Tool;
+  notifyResult: boolean;
+}
+
+interface McpApplyRequest {
+  input: ApplyMcpPreviewInput;
+  notifyResult: boolean;
+}
+
 const emptyForm: McpFormState = {
   id: null,
   rowVersion: null,
@@ -89,6 +101,7 @@ export function McpPage() {
   const saveInFlight = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const { notification, notify } = useNotify();
   const [listLayout, setListLayout] = usePersistedCentralListLayout("mcp");
   const [openPreview, setOpenPreview] = useState<OpenMcpPreview | null>(null);
   const [openImport, setOpenImport] = useState<{
@@ -151,7 +164,9 @@ export function McpPage() {
       if (!directApply) return;
       // 启停改变已分配工具的期望投影；逐个工具自动同步，未分配则无需同步。
       for (const tool of server.globalTools) {
-        await previewMutation.mutateAsync({ tool }).catch(() => undefined);
+        await previewMutation
+          .mutateAsync({ tool, notifyResult: true })
+          .catch(() => undefined);
       }
     },
   });
@@ -193,13 +208,13 @@ export function McpPage() {
     onSuccess: async (_result, { tool }) => {
       await invalidateMcp();
       if (directApply) {
-        previewMutation.mutate({ tool });
+        previewMutation.mutate({ tool, notifyResult: true });
       }
     },
   });
 
   const previewMutation = useMutation({
-    mutationFn: async ({ tool }: { tool: Tool }) => ({
+    mutationFn: async ({ tool }: McpPreviewRequest) => ({
       tool,
       plan: unwrapResult(
         await commands.previewMcpSync({
@@ -209,7 +224,7 @@ export function McpPage() {
         }),
       ),
     }),
-    onSuccess: ({ plan, tool }) => {
+    onSuccess: ({ plan, tool }, { notifyResult }) => {
       if (plan.targets.length === 0) {
         setMessage(
           "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
@@ -217,27 +232,49 @@ export function McpPage() {
         setOpenPreview(null);
         return;
       }
-      if (directApply && canAutoApplyPreview(plan)) {
+      if (notifyResult && canAutoApplyPreview(plan)) {
         applyMutation.mutate({
-          previewId: plan.previewId,
-          tool,
-          projectId: null,
+          input: {
+            previewId: plan.previewId,
+            tool,
+            projectId: null,
+          },
+          notifyResult: true,
         });
         return;
       }
       setOpenPreview({ plan, tool });
     },
+    onError: (error, { notifyResult }) => {
+      if (notifyResult) {
+        notify({
+          kind: "error",
+          message: profileErrorText(error) ?? "生成 MCP 全局预览失败。",
+        });
+      }
+    },
   });
 
   const applyMutation = useMutation({
-    mutationFn: async (input: ApplyMcpPreviewInput) =>
+    mutationFn: async ({ input }: McpApplyRequest) =>
       unwrapResult(await commands.applyMcpPreview(input)),
-    onSuccess: async (result) => {
-      setMessage(
-        `已应用 ${result.appliedTargets} 个 MCP 目标，并创建 ${result.snapshotCount} 份快照。`,
-      );
+    onSuccess: async (result, { notifyResult }) => {
+      const successMessage = `已应用 ${result.appliedTargets} 个 MCP 目标，并创建 ${result.snapshotCount} 份快照。`;
+      if (notifyResult) {
+        notify({ kind: "success", message: successMessage });
+      } else {
+        setMessage(successMessage);
+      }
       setOpenPreview(null);
       await invalidateMcp();
+    },
+    onError: (error, { notifyResult }) => {
+      if (notifyResult) {
+        notify({
+          kind: "error",
+          message: profileErrorText(error) ?? "应用 MCP 全局同步失败。",
+        });
+      }
     },
   });
 
@@ -250,16 +287,23 @@ export function McpPage() {
         `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
       );
       await invalidateMcp();
-      previewMutation.mutate({ tool });
+      previewMutation.mutate({ tool, notifyResult: directApply });
     },
   });
+
+  const previewError = previewMutation.variables?.notifyResult
+    ? null
+    : previewMutation.error;
+  const applyError = applyMutation.variables?.notifyResult
+    ? null
+    : applyMutation.error;
 
   const operationError = [
     enabledMutation.error,
     deleteMutation.error,
     globalAssignmentMutation.error,
-    previewMutation.error,
-    applyMutation.error,
+    previewError,
+    applyError,
     readoptMutation.error,
   ]
     .map(profileErrorText)
@@ -267,6 +311,7 @@ export function McpPage() {
 
   return (
     <main className="p-6 lg:p-8">
+      <Notify notification={notification} />
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">中央配置库</p>
         <h1 className="mt-1 text-2xl font-semibold">MCP</h1>
@@ -542,6 +587,7 @@ export function McpPage() {
                   onClick={() =>
                     previewMutation.mutate({
                       tool: status.tool,
+                      notifyResult: directApply,
                     })
                   }
                 >
@@ -768,9 +814,12 @@ export function McpPage() {
         onApply={() => {
           if (openPreview) {
             applyMutation.mutate({
-              previewId: openPreview.plan.previewId,
-              tool: openPreview.tool,
-              projectId: null,
+              input: {
+                previewId: openPreview.plan.previewId,
+                tool: openPreview.tool,
+                projectId: null,
+              },
+              notifyResult: false,
             });
           }
         }}

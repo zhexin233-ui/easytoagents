@@ -818,7 +818,63 @@ describe("SkillsPage", () => {
     expect(
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();
-    expect(await screen.findByText(/已应用 1 个 Skills 目标/)).toBeVisible();
+    expect(await screen.findByText(/已应用 1 个 Skills 目标/)).toHaveAttribute(
+      "role",
+      "status",
+    );
+  });
+
+  it("直接应用模式下预览与 Apply 失败都只使用失败通知", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.previewSkillSync).mockResolvedValueOnce({
+      status: "error",
+      error: {
+        code: "DATABASE_ERROR",
+        message: "Skills 预览暂不可用",
+        recoverable: true,
+      },
+    });
+    vi.mocked(commands.applySkillPreview).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "ATOMIC_WRITE_FAILED",
+        message: "Skills 应用失败",
+        recoverable: true,
+      },
+    });
+    renderPage();
+    const section = screen
+      .getByRole("heading", { name: "全局目标状态" })
+      .closest("section");
+    const card = section
+      ? (await within(section).findByText("Claude")).closest("article")
+      : null;
+    if (!card) throw new Error("未找到 Claude Skills 状态卡");
+
+    fireEvent.click(
+      within(card).getByRole("button", { name: "直接应用全局同步" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "DATABASE_ERROR：Skills 预览暂不可用",
+    );
+    expect(
+      screen.getAllByText("DATABASE_ERROR：Skills 预览暂不可用"),
+    ).toHaveLength(1);
+
+    fireEvent.click(
+      within(card).getByRole("button", { name: "直接应用全局同步" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "ATOMIC_WRITE_FAILED：Skills 应用失败",
+      ),
+    );
+    expect(
+      screen.getAllByText("ATOMIC_WRITE_FAILED：Skills 应用失败"),
+    ).toHaveLength(1);
   });
 
   it("全局空目标预览只提示无需写入，不展示可 Apply 的对话框", async () => {

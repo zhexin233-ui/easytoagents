@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "核验共享组件样式、暗色模式与可访问性"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "核验计时器 effect cleanup 与 Hook 依赖"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核验 direct apply 契约、测试覆盖和禁止模式"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核验三个入口的一致性与无重复实现"}

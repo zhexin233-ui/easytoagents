@@ -17,10 +17,12 @@ import {
   CentralListCardFooter,
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
+import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import { SkillDirectoryImportDialog } from "@/features/skills/skill-directory-import-dialog";
 import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
@@ -42,6 +44,16 @@ interface OpenSkillPreview {
   tool: Tool;
 }
 
+interface SkillPreviewRequest {
+  tool: Tool;
+  notifyResult: boolean;
+}
+
+interface SkillApplyRequest {
+  input: ApplySkillPreviewInput;
+  notifyResult: boolean;
+}
+
 export function SkillsPage() {
   const queryClient = useQueryClient();
   const skillsQuery = useQuery(skillsQueryOptions());
@@ -51,6 +63,7 @@ export function SkillsPage() {
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
   const [openDirectoryImport, setOpenDirectoryImport] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const { notification, notify } = useNotify();
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenSkillPreview | null>(null);
@@ -104,12 +117,12 @@ export function SkillsPage() {
         );
         return;
       }
-      previewMutation.mutate({ tool });
+      previewMutation.mutate({ tool, notifyResult: true });
     },
   });
 
   const previewMutation = useMutation({
-    mutationFn: async ({ tool }: { tool: Tool }) => ({
+    mutationFn: async ({ tool }: SkillPreviewRequest) => ({
       tool,
       plan: unwrapResult(
         await commands.previewSkillSync({
@@ -119,46 +132,76 @@ export function SkillsPage() {
         }),
       ),
     }),
-    onSuccess: ({ plan, tool }) => {
+    onSuccess: ({ plan, tool }, { notifyResult }) => {
       if (plan.targets.length === 0) {
         setMessage("当前工具没有需要同步的全局 Skill。");
         setOpenPreview(null);
         return;
       }
-      if (directApply && canAutoApplyPreview(plan)) {
+      if (notifyResult && canAutoApplyPreview(plan)) {
         applyMutation.mutate({
-          previewId: plan.previewId,
-          tool,
-          projectId: null,
+          input: {
+            previewId: plan.previewId,
+            tool,
+            projectId: null,
+          },
+          notifyResult: true,
         });
         return;
       }
       setOpenPreview({ plan, tool });
     },
-  });
-
-  const applyMutation = useMutation({
-    mutationFn: async (input: ApplySkillPreviewInput) =>
-      unwrapResult(await commands.applySkillPreview(input)),
-    onSuccess: async (result) => {
-      setMessage(
-        `已应用 ${result.appliedTargets} 个 Skills 目标，并创建 ${result.snapshotCount} 份快照。`,
-      );
-      setOpenPreview(null);
-      await invalidateSkills();
+    onError: (error, { notifyResult }) => {
+      if (notifyResult) {
+        notify({
+          kind: "error",
+          message: profileErrorText(error) ?? "生成 Skills 全局预览失败。",
+        });
+      }
     },
   });
 
+  const applyMutation = useMutation({
+    mutationFn: async ({ input }: SkillApplyRequest) =>
+      unwrapResult(await commands.applySkillPreview(input)),
+    onSuccess: async (result, { notifyResult }) => {
+      const successMessage = `已应用 ${result.appliedTargets} 个 Skills 目标，并创建 ${result.snapshotCount} 份快照。`;
+      if (notifyResult) {
+        notify({ kind: "success", message: successMessage });
+      } else {
+        setMessage(successMessage);
+      }
+      setOpenPreview(null);
+      await invalidateSkills();
+    },
+    onError: (error, { notifyResult }) => {
+      if (notifyResult) {
+        notify({
+          kind: "error",
+          message: profileErrorText(error) ?? "应用 Skills 全局同步失败。",
+        });
+      }
+    },
+  });
+
+  const previewError = previewMutation.variables?.notifyResult
+    ? null
+    : previewMutation.error;
+  const applyError = applyMutation.variables?.notifyResult
+    ? null
+    : applyMutation.error;
+
   const operationError = [
     globalAssignmentMutation.error,
-    previewMutation.error,
-    applyMutation.error,
+    previewError,
+    applyError,
   ]
     .map(profileErrorText)
     .find(Boolean);
 
   return (
     <main className="p-6 lg:p-8">
+      <Notify notification={notification} />
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">应用私有中央库</p>
         <h1 className="mt-1 text-2xl font-semibold">Skills</h1>
@@ -457,6 +500,7 @@ export function SkillsPage() {
                     onClick={() =>
                       previewMutation.mutate({
                         tool: status.tool,
+                        notifyResult: directApply,
                       })
                     }
                   >
@@ -577,9 +621,12 @@ export function SkillsPage() {
         onClose={() => setOpenPreview(null)}
         onApply={(previewId, tool) =>
           applyMutation.mutate({
-            previewId,
-            tool,
-            projectId: null,
+            input: {
+              previewId,
+              tool,
+              projectId: null,
+            },
+            notifyResult: false,
           })
         }
       />

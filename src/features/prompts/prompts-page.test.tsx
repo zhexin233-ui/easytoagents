@@ -472,6 +472,91 @@ describe("PromptsPage", () => {
     );
   });
 
+  it("直接应用模式下无冲突提示词预览跳过对话框并显示成功通知", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.applyProfilePreview).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: promptPreview.previewId,
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 1,
+      },
+    });
+    renderPromptsPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "直接应用 Claude 全局同步",
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: promptPreview.previewId,
+        tool: "claude",
+        artifactKind: "prompt",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("已应用 1 个目标，可从快照恢复。"),
+    ).toHaveAttribute("role", "status");
+  });
+
+  it("直接应用模式下提示词预览与 Apply 失败都只使用失败通知", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.previewPromptSync).mockResolvedValueOnce({
+      status: "error",
+      error: {
+        code: "DATABASE_ERROR",
+        message: "提示词预览暂不可用",
+        recoverable: true,
+      },
+    });
+    vi.mocked(commands.applyProfilePreview).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "ATOMIC_WRITE_FAILED",
+        message: "提示词应用失败",
+        recoverable: true,
+      },
+    });
+    renderPromptsPage();
+    const applyButton = await screen.findByRole("button", {
+      name: "直接应用 Claude 全局同步",
+    });
+
+    fireEvent.click(applyButton);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "DATABASE_ERROR：提示词预览暂不可用",
+    );
+    expect(
+      screen.getAllByText("DATABASE_ERROR：提示词预览暂不可用"),
+    ).toHaveLength(1);
+
+    fireEvent.click(applyButton);
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "ATOMIC_WRITE_FAILED：提示词应用失败",
+      ),
+    );
+    expect(
+      screen.getAllByText("ATOMIC_WRITE_FAILED：提示词应用失败"),
+    ).toHaveLength(1);
+  });
+
   it("每工具至多一份生效：已启用图标呈选中态，启用新档案走替换语义", async () => {
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引与本任务相关层级入口"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "共享通知组件、状态语义、暗色样式与可访问性约定"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "三秒计时器与卸载、替换时 cleanup 约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "短暂 UI 状态应保持局部或聚焦复用，不引入通用全局 store"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "direct apply 契约及前端测试要求"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "三个页面复用通知行为，避免重复计时器与常量"}

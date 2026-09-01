@@ -499,6 +499,9 @@ projectAssignmentMutation.mutate(input);
   singleton; pages derive `directApply = settingsQuery.data?.applyMode === "direct"`.
 - `canAutoApplyPreview(plan)` mirrors the `ChangePreviewDialog` Apply-enabled
   condition: at least one target, no `conflict` changeKind, no `errorCode`.
+- `useNotify()` returns page-local `notification` state plus a `notify({ kind,
+  message })` callback. `Notify` renders that state; `kind` is exactly
+  `"success" | "error"`, and the shared lifetime is 3,000 ms.
 
 ### 3. Contracts
 
@@ -524,6 +527,17 @@ projectAssignmentMutation.mutate(input);
   keep pointing at the sync button.
 - The direct-mode branch must run after mutation invalidations so the UI
   reflects committed intent; the backend preview reads committed DB state.
+- On the central MCP, Skills, and Prompts pages, direct global-sync preview or
+  Apply success/failure is transient operation feedback: use the shared
+  notification contract instead of a persistent inline result. A new notification
+  replaces the current one and restarts the 3,000 ms timer. Success uses
+  `role="status"`; failure uses `role="alert"`; do not render the same direct-mode
+  error again in the page's inline mutation-error area.
+- Whether a result is transient is page-local mutation metadata (for example,
+  `notifyResult`), never a generated command input or RPC payload field. Manual
+  preview confirmation passes the non-notifying branch, while conflicts/blocked
+  plans still open `ChangePreviewDialog` and zero-target plans keep their existing
+  no-op explanation.
 
 ### 4. Tests Required
 
@@ -538,6 +552,29 @@ projectAssignmentMutation.mutate(input);
   until the user explicitly confirms it.
 - Settings page: toggle persists both directions and surfaces read failures
   without rendering the toggle.
+- Test the shared notification with fake timers: success and failure both disappear
+  after 3,000 ms, replacement restarts the full lifetime, and unmount clears the
+  timer. Each central-page regression test must assert direct Preview/Apply failures
+  appear once as `alert`, direct success appears as `status`, and the generated
+  command receives no notification-only metadata.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+// Direct-mode feedback persists and presentation metadata leaks into the RPC input.
+setMessage("已应用");
+commands.applyMcpPreview({ ...input, notifyResult: true });
+```
+
+#### Correct
+
+```tsx
+// Presentation stays in mutation metadata; the generated command input is unchanged.
+applyMutation.mutate({ input, notifyResult: true });
+notify({ kind: "success", message: "已应用" });
+```
 
 ---
 

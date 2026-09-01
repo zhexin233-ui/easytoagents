@@ -17,8 +17,10 @@ import {
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
+import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import {
   profileErrorText,
@@ -40,6 +42,16 @@ interface OpenPreview {
   tool: Tool;
 }
 
+interface PromptPreviewRequest {
+  tool: Tool;
+  notifyResult: boolean;
+}
+
+interface PromptApplyRequest {
+  preview: OpenPreview;
+  notifyResult: boolean;
+}
+
 export function PromptsPage() {
   const queryClient = useQueryClient();
   const profilesQuery = useQuery(promptProfilesQueryOptions());
@@ -56,6 +68,7 @@ export function PromptsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const saveInFlight = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const { notification, notify } = useNotify();
   const [importPreview, setImportPreview] =
     useState<PromptImportPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenPreview | null>(null);
@@ -132,24 +145,35 @@ export function PromptsPage() {
         );
         return;
       }
-      previewMutation.mutate({ tool });
+      previewMutation.mutate({ tool, notifyResult: true });
     },
   });
 
   const previewMutation = useMutation({
-    mutationFn: async ({ tool }: { tool: Tool }) =>
+    mutationFn: async ({ tool }: PromptPreviewRequest) =>
       unwrapResult(await commands.previewPromptSync(tool, null)),
-    onSuccess: (plan, { tool }) => {
-      if (directApply && canAutoApplyPreview(plan)) {
-        applyMutation.mutate({ plan, tool });
+    onSuccess: (plan, { tool, notifyResult }) => {
+      if (notifyResult && canAutoApplyPreview(plan)) {
+        applyMutation.mutate({
+          preview: { plan, tool },
+          notifyResult: true,
+        });
         return;
       }
       setOpenPreview({ plan, tool });
     },
+    onError: (error, { notifyResult }) => {
+      if (notifyResult) {
+        notify({
+          kind: "error",
+          message: profileErrorText(error) ?? "生成提示词全局预览失败。",
+        });
+      }
+    },
   });
 
   const applyMutation = useMutation({
-    mutationFn: async (preview: OpenPreview) =>
+    mutationFn: async ({ preview }: PromptApplyRequest) =>
       unwrapResult(
         await commands.applyProfilePreview({
           previewId: preview.plan.previewId,
@@ -158,9 +182,22 @@ export function PromptsPage() {
           projectId: null,
         }),
       ),
-    onSuccess: (result) => {
-      setApplyMessage(`已应用 ${result.appliedTargets} 个目标，可从快照恢复。`);
+    onSuccess: (result, { notifyResult }) => {
+      const successMessage = `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`;
+      if (notifyResult) {
+        notify({ kind: "success", message: successMessage });
+      } else {
+        setApplyMessage(successMessage);
+      }
       setOpenPreview(null);
+    },
+    onError: (error, { notifyResult }) => {
+      if (notifyResult) {
+        notify({
+          kind: "error",
+          message: profileErrorText(error) ?? "应用提示词全局同步失败。",
+        });
+      }
     },
   });
 
@@ -217,7 +254,9 @@ export function PromptsPage() {
   ]
     .map(profileErrorText)
     .find(Boolean);
-  const applyError = profileErrorText(applyMutation.error);
+  const applyError = applyMutation.variables?.notifyResult
+    ? null
+    : profileErrorText(applyMutation.error);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -228,6 +267,7 @@ export function PromptsPage() {
 
   return (
     <main className="p-6 lg:p-8">
+      <Notify notification={notification} />
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">提示词</p>
         <h1 className="mt-1 text-2xl font-semibold">全局提示词档案</h1>
@@ -520,7 +560,12 @@ export function PromptsPage() {
                     size="sm"
                     variant="outline"
                     disabled={previewMutation.isPending}
-                    onClick={() => previewMutation.mutate({ tool })}
+                    onClick={() =>
+                      previewMutation.mutate({
+                        tool,
+                        notifyResult: directApply,
+                      })
+                    }
                   >
                     {previewMutation.isPending
                       ? directApply
@@ -587,7 +632,10 @@ export function PromptsPage() {
         onClose={() => setOpenPreview(null)}
         onApply={() => {
           if (openPreview) {
-            applyMutation.mutate(openPreview);
+            applyMutation.mutate({
+              preview: openPreview,
+              notifyResult: false,
+            });
           }
         }}
       />

@@ -986,7 +986,52 @@ describe("McpPage", () => {
     expect(
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();
-    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
+    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toHaveAttribute(
+      "role",
+      "status",
+    );
+  });
+
+  it("直接应用模式下预览与 Apply 失败都只使用失败通知", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.previewMcpSync).mockResolvedValueOnce({
+      status: "error",
+      error: {
+        code: "DATABASE_ERROR",
+        message: "MCP 预览暂不可用",
+        recoverable: true,
+      },
+    });
+    vi.mocked(commands.applyMcpPreview).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "ATOMIC_WRITE_FAILED",
+        message: "MCP 应用失败",
+        recoverable: true,
+      },
+    });
+    renderPage();
+
+    fireEvent.click(await globalButton("直接应用全局同步"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "DATABASE_ERROR：MCP 预览暂不可用",
+    );
+    expect(
+      screen.getAllByText("DATABASE_ERROR：MCP 预览暂不可用"),
+    ).toHaveLength(1);
+
+    fireEvent.click(await globalButton("直接应用全局同步"));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "ATOMIC_WRITE_FAILED：MCP 应用失败",
+      ),
+    );
+    expect(
+      screen.getAllByText("ATOMIC_WRITE_FAILED：MCP 应用失败"),
+    ).toHaveLength(1);
   });
 
   it("直接应用模式下冲突预览回退为人工确认且 Apply 禁用", async () => {
