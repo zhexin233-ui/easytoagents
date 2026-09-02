@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 28
+- **Total Sessions**: 29
 - **Last Active**: 2026-09-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~783 | Active |
+| `journal-1.md` | ~804 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 29 | 2026-09-02 | 统一中央页面操作通知 | `d1b7d0d` | `codex/migrate-page-status-notifications` |
 | 28 | 2026-09-02 | 提示词 MCP Skills 操作按钮图标化 | `4966eac` | `main` |
 | 27 | 2026-09-01 | 全局同步三秒通知 | `0036a94` | `codex/cursor-ide-support` |
 | 26 | 2026-09-01 | 完成全局 Skills 显式接管 | `7e17e86` | `codex/cursor-ide-support` |

@@ -66,12 +66,11 @@ interface OpenMcpPreview {
 
 interface McpPreviewRequest {
   tool: Tool;
-  notifyResult: boolean;
+  autoApply: boolean;
 }
 
 interface McpApplyRequest {
   input: ApplyMcpPreviewInput;
-  notifyResult: boolean;
 }
 
 const emptyForm: McpFormState = {
@@ -101,7 +100,6 @@ export function McpPage() {
   const [formOpen, setFormOpen] = useState(false);
   const saveInFlight = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const { notification, notify } = useNotify();
   const [listLayout, setListLayout] = usePersistedCentralListLayout("mcp");
   const [openPreview, setOpenPreview] = useState<OpenMcpPreview | null>(null);
@@ -122,14 +120,15 @@ export function McpPage() {
     },
     onSuccess: async () => {
       await invalidateMcp();
-      setMessage(
-        directApply
-          ? "中央 MCP 已保存；原生配置尚未修改。点击「直接应用全局同步」写入。"
-          : "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
-      );
       setForm(emptyForm);
       setFormError(null);
       setFormOpen(false);
+      notify({
+        kind: "success",
+        message: directApply
+          ? "中央 MCP 已保存；原生配置尚未修改。点击「直接应用全局同步」写入。"
+          : "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+      });
     },
     onSettled: () => {
       saveInFlight.current = false;
@@ -166,9 +165,15 @@ export function McpPage() {
       // 启停改变已分配工具的期望投影；逐个工具自动同步，未分配则无需同步。
       for (const tool of server.globalTools) {
         await previewMutation
-          .mutateAsync({ tool, notifyResult: true })
+          .mutateAsync({ tool, autoApply: true })
           .catch(() => undefined);
       }
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "更新 MCP 启停状态失败。",
+      });
     },
   });
 
@@ -181,12 +186,19 @@ export function McpPage() {
         }),
       ),
     onSuccess: async () => {
-      setMessage(
-        directApply
+      await invalidateMcp();
+      notify({
+        kind: "success",
+        message: directApply
           ? "中央 MCP 已删除；点击「直接应用全局同步」安全清理旧受管条目。"
           : "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
-      );
-      await invalidateMcp();
+      });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "删除中央 MCP 失败。",
+      });
     },
   });
 
@@ -209,8 +221,14 @@ export function McpPage() {
     onSuccess: async (_result, { tool }) => {
       await invalidateMcp();
       if (directApply) {
-        previewMutation.mutate({ tool, notifyResult: true });
+        previewMutation.mutate({ tool, autoApply: true });
       }
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "更新 MCP 全局分配失败。",
+      });
     },
   });
 
@@ -225,61 +243,50 @@ export function McpPage() {
         }),
       ),
     }),
-    onSuccess: ({ plan, tool }, { notifyResult }) => {
+    onSuccess: ({ plan, tool }, { autoApply }) => {
       if (plan.targets.length === 0) {
-        const emptyTargetsMessage =
-          "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。";
-        if (notifyResult) {
-          notify({ kind: "success", message: emptyTargetsMessage });
-        } else {
-          setMessage(emptyTargetsMessage);
-        }
+        notify({
+          kind: "success",
+          message:
+            "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
+        });
         setOpenPreview(null);
         return;
       }
-      if (notifyResult && canAutoApplyPreview(plan)) {
+      if (autoApply && canAutoApplyPreview(plan)) {
         applyMutation.mutate({
           input: {
             previewId: plan.previewId,
             tool,
             projectId: null,
           },
-          notifyResult: true,
         });
         return;
       }
       setOpenPreview({ plan, tool });
     },
-    onError: (error, { notifyResult }) => {
-      if (notifyResult) {
-        notify({
-          kind: "error",
-          message: profileErrorText(error) ?? "生成 MCP 全局预览失败。",
-        });
-      }
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "生成 MCP 全局预览失败。",
+      });
     },
   });
 
   const applyMutation = useMutation({
     mutationFn: async ({ input }: McpApplyRequest) =>
       unwrapResult(await commands.applyMcpPreview(input)),
-    onSuccess: async (result, { notifyResult }) => {
+    onSuccess: async (result) => {
       const successMessage = `已应用 ${result.appliedTargets} 个 MCP 目标，并创建 ${result.snapshotCount} 份快照。`;
-      if (notifyResult) {
-        notify({ kind: "success", message: successMessage });
-      } else {
-        setMessage(successMessage);
-      }
       setOpenPreview(null);
       await invalidateMcp();
+      notify({ kind: "success", message: successMessage });
     },
-    onError: (error, { notifyResult }) => {
-      if (notifyResult) {
-        notify({
-          kind: "error",
-          message: profileErrorText(error) ?? "应用 MCP 全局同步失败。",
-        });
-      }
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "应用 MCP 全局同步失败。",
+      });
     },
   });
 
@@ -288,31 +295,20 @@ export function McpPage() {
       unwrapResult(await commands.readoptMcpTarget({ tool, projectId: null })),
     onSuccess: async (result, { tool }) => {
       setOpenPreview(null);
-      setMessage(
-        `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
-      );
       await invalidateMcp();
-      previewMutation.mutate({ tool, notifyResult: directApply });
+      notify({
+        kind: "success",
+        message: `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
+      });
+      previewMutation.mutate({ tool, autoApply: directApply });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "重新接管 MCP 目标失败。",
+      });
     },
   });
-
-  const previewError = previewMutation.variables?.notifyResult
-    ? null
-    : previewMutation.error;
-  const applyError = applyMutation.variables?.notifyResult
-    ? null
-    : applyMutation.error;
-
-  const operationError = [
-    enabledMutation.error,
-    deleteMutation.error,
-    globalAssignmentMutation.error,
-    previewError,
-    applyError,
-    readoptMutation.error,
-  ]
-    .map(profileErrorText)
-    .find(Boolean);
 
   return (
     <main className="p-6 lg:p-8">
@@ -326,22 +322,6 @@ export function McpPage() {
           DTO；原生写入必须经过持久化预览。
         </p>
       </header>
-
-      <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
-        {message ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
-            {message}
-          </p>
-        ) : null}
-        {operationError ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
-          >
-            {operationError}
-          </p>
-        ) : null}
-      </div>
 
       <div className="mx-auto mt-6 max-w-6xl">
         <section
@@ -585,7 +565,6 @@ export function McpPage() {
                   disabled={presentation.previewBlocked}
                   onClick={() => {
                     if (openImport) return;
-                    setMessage(null);
                     setOpenImport({
                       tool: status.tool,
                       requestId: crypto.randomUUID(),
@@ -603,7 +582,7 @@ export function McpPage() {
                   onClick={() =>
                     previewMutation.mutate({
                       tool: status.tool,
-                      notifyResult: directApply,
+                      autoApply: directApply,
                     })
                   }
                 >
@@ -805,12 +784,13 @@ export function McpPage() {
           }
           onImported={async (result) => {
             setOpenImport(null);
-            setMessage(
-              directApply
+            await invalidateMcp();
+            notify({
+              kind: "success",
+              message: directApply
                 ? `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。原生配置未改写，可点击「直接应用全局同步」写入。`
                 : `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。原生配置未改写，请单独生成全局预览。`,
-            );
-            await invalidateMcp();
+            });
           }}
         />
       ) : null}
@@ -835,7 +815,6 @@ export function McpPage() {
                 tool: openPreview.tool,
                 projectId: null,
               },
-              notifyResult: false,
             });
           }
         }}

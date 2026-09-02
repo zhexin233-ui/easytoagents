@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"全范围检查时按前端 Quality Check 入口确定必要指南"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"复核 status/alert 可访问语义与旧内联 DOM 清理"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核 notify 生命周期、唯一呈现、preview/Apply 时序与测试要求"}
+{"file":".trellis/tasks/09-02-migrate-page-status-notifications/research/notification-audit.md","reason":"逐页审核所有迁移候选与应保留上下文反馈"}
+{"file":".trellis/tasks/09-02-migrate-page-status-notifications/research/test-audit.md","reason":"确认旧断言已更新、成功/无结果/失败缺口已补齐"}

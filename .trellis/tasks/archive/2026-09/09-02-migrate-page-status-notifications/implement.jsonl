@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"实施前加载前端分层指南与必读入口"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"遵守组件可访问语义、共享状态组件与可查询 role 约定"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复用并扩大现有 direct-sync notify、preview/Apply 和测试契约"}
+{"file":".trellis/tasks/09-02-migrate-page-status-notifications/research/notification-audit.md","reason":"按已审计的三页候选、保留项和时序实施，避免无差别字符串替换"}
+{"file":".trellis/tasks/09-02-migrate-page-status-notifications/research/test-audit.md","reason":"按现有用例锚点更新旧内联断言并补齐通知缺口"}

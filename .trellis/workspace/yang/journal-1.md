@@ -781,3 +781,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: 统一中央页面操作通知
+
+**Date**: 2026-09-02
+**Task**: 统一中央页面操作通知
+**Branch**: `codex/migrate-page-status-notifications`
+
+### Summary
+
+将 MCP、Skills 和 Prompts 中央页面的瞬时操作结果统一迁移到 Notify，保留查询、表单、导入对话框和诊断状态的内联展示；补齐通知时序、替换语义及延迟失效测试，并完成全量质量检查。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d1b7d0d` | (see git log) |
+
+### Status
+
+[OK] **Completed**

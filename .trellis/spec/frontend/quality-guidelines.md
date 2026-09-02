@@ -484,14 +484,15 @@ projectAssignmentMutation.mutate(input);
 
 ---
 
-## Scenario: Direct-apply mode (MCP/Skills/Provider/Prompt sync)
+## Scenario: Direct-apply mode and central-page operation notifications
 
 ### 1. Scope / Trigger
 
 - Trigger: any change to global MCP/Skills sync buttons, project MCP/Skill
   append buttons, Provider/Prompt sync and activate buttons, central-list
   assignment or enable toggles, `src/lib/settings-api.ts`, or the settings page
-  apply-mode toggle.
+  apply-mode toggle. The notification rules also trigger when an MCP, Skills,
+  or Prompts central-page mutation adds or changes transient operation feedback.
 
 ### 2. Signatures
 
@@ -502,6 +503,9 @@ projectAssignmentMutation.mutate(input);
 - `useNotify()` returns page-local `notification` state plus a `notify({ kind,
   message })` callback. `Notify` renders that state; `kind` is exactly
   `"success" | "error"`, and the shared lifetime is 3,000 ms.
+- Central-page previews use page-only `autoApply: boolean` to decide whether a
+  safe plan continues into Apply. Apply needs no notification flag; neither
+  concept enters generated RPC inputs.
 
 ### 3. Contracts
 
@@ -523,21 +527,21 @@ projectAssignmentMutation.mutate(input);
   sync: Skills/MCP global assignment toggles sync that tool, MCP enable/disable
   syncs every tool in the server's `globalTools`, project assignment checkboxes
   sync that project+tool, and Provider/Prompt activation (切换并直接应用)
-  previews then auto-applies. Save/delete/import stay manual and their notices
-  keep pointing at the sync button.
+  previews then auto-applies. Save/delete/import stay manual; their success
+  notifications still identify the required preview or sync action.
 - The direct-mode branch must run after mutation invalidations so the UI
   reflects committed intent; the backend preview reads committed DB state.
-- On the central MCP, Skills, and Prompts pages, direct global-sync preview or
-  Apply success/failure is transient operation feedback: use the shared
-  notification contract instead of a persistent inline result. A new notification
-  replaces the current one and restarts the 3,000 ms timer. Success uses
-  `role="status"`; failure uses `role="alert"`; do not render the same direct-mode
-  error again in the page's inline mutation-error area.
-- Whether a result is transient is page-local mutation metadata (for example,
-  `notifyResult`), never a generated command input or RPC payload field. Manual
-  preview confirmation passes the non-notifying branch, while conflicts/blocked
-  plans still open `ChangePreviewDialog` and zero-target plans keep their existing
-  no-op explanation.
+- Central MCP/Skills/Prompts mutation successes, terminal no-ops, and page-level
+  failures use shared notification, never persistent `message`, `notice`,
+  `applyMessage`, or aggregate error regions. Latest replaces current and restarts
+  3,000 ms. Success/no-op uses `status`, failure uses `alert`; render once.
+- Query, form, and import-dialog errors plus persistent diagnostics stay inline
+  because their correction context must remain visible.
+- Manual/direct preview failures notify. Non-empty manual and conflict/blocked
+  previews open `ChangePreviewDialog`; zero targets notify success without Apply.
+  All manual/automatic Apply results notify.
+- Notify only after required invalidation resolves. MCP readopt notifies before
+  regenerating preview; a later failure replaces that success notification.
 
 ### 4. Tests Required
 
@@ -552,18 +556,19 @@ projectAssignmentMutation.mutate(input);
   until the user explicitly confirms it.
 - Settings page: toggle persists both directions and surfaces read failures
   without rendering the toggle.
-- Test the shared notification with fake timers: success and failure both disappear
-  after 3,000 ms, replacement restarts the full lifetime, and unmount clears the
-  timer. Each central-page regression test must assert direct Preview/Apply failures
-  appear once as `alert`, direct success appears as `status`, and the generated
-  command receives no notification-only metadata.
+- Shared-notification fake-timer tests cover 3,000 ms expiry, replacement, and
+  unmount cleanup. Central-page tests cover representative CRUD, assignment,
+  import/takeover, empty preview, manual/direct Apply, correct role,
+  `aria-atomic="true"`, and single rendering.
+- Deferred invalidation tests assert no early success or MCP replacement preview.
+  Keep form/import errors contextual and `autoApply` out of generated commands.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```tsx
-// Direct-mode feedback persists and presentation metadata leaks into the RPC input.
+// Feedback persists and page-only metadata leaks into RPC.
 setMessage("已应用");
 commands.applyMcpPreview({ ...input, notifyResult: true });
 ```
@@ -571,8 +576,10 @@ commands.applyMcpPreview({ ...input, notifyResult: true });
 #### Correct
 
 ```tsx
-// Presentation stays in mutation metadata; the generated command input is unchanged.
-applyMutation.mutate({ input, notifyResult: true });
+// Auto-apply stays in preview metadata; Apply receives only typed input.
+previewMutation.mutate({ tool, autoApply: directApply });
+applyMutation.mutate({ input });
+await invalidateMcp();
 notify({ kind: "success", message: "已应用" });
 ```
 
@@ -603,6 +610,7 @@ notify({ kind: "success", message: "已应用" });
   automatically (direct-apply mode then continues into Apply). The project page
   closes the dialog and asks the user to press the sync button again because
   the preview mutation lives in the child components.
-- Readopt errors surface through the page-level error areas like apply errors.
+- Central-page readopt success notifies after invalidation and before preview
+  regeneration; later failures notify error. Project detail keeps local feedback.
 - Skills/Provider/Prompt plans never set `readoptAvailable`; do not wire the
   handler there until the backend supports those ownership kinds.
