@@ -45,12 +45,11 @@ interface OpenPreview {
 
 interface PromptPreviewRequest {
   tool: Tool;
-  notifyResult: boolean;
+  autoApply: boolean;
 }
 
 interface PromptApplyRequest {
   preview: OpenPreview;
-  notifyResult: boolean;
 }
 
 export function PromptsPage() {
@@ -68,12 +67,10 @@ export function PromptsPage() {
   const [body, setBody] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const saveInFlight = useRef(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const { notification, notify } = useNotify();
   const [importPreview, setImportPreview] =
     useState<PromptImportPreviewDto | null>(null);
   const [openPreview, setOpenPreview] = useState<OpenPreview | null>(null);
-  const [applyMessage, setApplyMessage] = useState<string | null>(null);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: profileKeys.prompts });
@@ -97,7 +94,10 @@ export function PromptsPage() {
       setName("");
       setBody("");
       setFormOpen(false);
-      setNotice("中央提示词档案已保存，原生文件尚未修改。");
+      notify({
+        kind: "success",
+        message: "中央提示词档案已保存，原生文件尚未修改。",
+      });
     },
     onSettled: () => {
       saveInFlight.current = false;
@@ -141,35 +141,40 @@ export function PromptsPage() {
     onSuccess: async (_result, { tool }) => {
       await refresh();
       if (!directApply) {
-        setNotice(
-          "全局启用已更新；这只改变中央配置，原生全局文件尚未写入。请在该工具卡片预览全局同步并确认应用。",
-        );
+        notify({
+          kind: "success",
+          message:
+            "全局启用已更新；这只改变中央配置，原生全局文件尚未写入。请在该工具卡片预览全局同步并确认应用。",
+        });
         return;
       }
-      previewMutation.mutate({ tool, notifyResult: true });
+      previewMutation.mutate({ tool, autoApply: true });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "更新提示词全局启用失败。",
+      });
     },
   });
 
   const previewMutation = useMutation({
     mutationFn: async ({ tool }: PromptPreviewRequest) =>
       unwrapResult(await commands.previewPromptSync(tool, null)),
-    onSuccess: (plan, { tool, notifyResult }) => {
-      if (notifyResult && canAutoApplyPreview(plan)) {
+    onSuccess: (plan, { tool, autoApply }) => {
+      if (autoApply && canAutoApplyPreview(plan)) {
         applyMutation.mutate({
           preview: { plan, tool },
-          notifyResult: true,
         });
         return;
       }
       setOpenPreview({ plan, tool });
     },
-    onError: (error, { notifyResult }) => {
-      if (notifyResult) {
-        notify({
-          kind: "error",
-          message: profileErrorText(error) ?? "生成提示词全局预览失败。",
-        });
-      }
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "生成提示词全局预览失败。",
+      });
     },
   });
 
@@ -183,22 +188,16 @@ export function PromptsPage() {
           projectId: null,
         }),
       ),
-    onSuccess: (result, { notifyResult }) => {
+    onSuccess: (result) => {
       const successMessage = `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`;
-      if (notifyResult) {
-        notify({ kind: "success", message: successMessage });
-      } else {
-        setApplyMessage(successMessage);
-      }
       setOpenPreview(null);
+      notify({ kind: "success", message: successMessage });
     },
-    onError: (error, { notifyResult }) => {
-      if (notifyResult) {
-        notify({
-          kind: "error",
-          message: profileErrorText(error) ?? "应用提示词全局同步失败。",
-        });
-      }
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "应用提示词全局同步失败。",
+      });
     },
   });
 
@@ -211,8 +210,17 @@ export function PromptsPage() {
         }),
       ),
     onSuccess: async () => {
-      setNotice("中央提示词已删除；生成新预览后才会清理已接管文件。");
       await refresh();
+      notify({
+        kind: "success",
+        message: "中央提示词已删除；生成新预览后才会清理已接管文件。",
+      });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "删除中央提示词失败。",
+      });
     },
   });
 
@@ -221,10 +229,19 @@ export function PromptsPage() {
       unwrapResult(await commands.discoverPromptImport(tool)),
     onSuccess: (preview) => {
       if (!preview) {
-        setNotice("未发现可导入的已有提示词。");
+        notify({
+          kind: "success",
+          message: "未发现可导入的已有提示词。",
+        });
         return;
       }
       setImportPreview(preview);
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "检测已有提示词失败。",
+      });
     },
   });
 
@@ -242,22 +259,19 @@ export function PromptsPage() {
     },
     onSuccess: async () => {
       setImportPreview(null);
-      setNotice("已有提示词已无损导入并启用到来源工具，原生文件保持不变。");
       await refresh();
+      notify({
+        kind: "success",
+        message: "已有提示词已无损导入并启用到来源工具，原生文件保持不变。",
+      });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "导入已有提示词失败。",
+      });
     },
   });
-
-  const listMutationError = [
-    assignmentMutation.error,
-    deleteMutation.error,
-    discoverMutation.error,
-    confirmImportMutation.error,
-  ]
-    .map(profileErrorText)
-    .find(Boolean);
-  const applyError = applyMutation.variables?.notifyResult
-    ? null
-    : profileErrorText(applyMutation.error);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -276,22 +290,6 @@ export function PromptsPage() {
           集中维护提示词指令文档，并按工具通过图标启用或停用（每个工具同时只有一份生效，启用新档案会自动替换原生效档案）。中央修改不会直接改写原生配置，同步需经持久化预览确认。项目级的提示词分配在各项目详情页中进行。
         </p>
       </header>
-
-      <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
-        {applyMessage ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
-            {applyMessage}
-          </p>
-        ) : null}
-        {applyError ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
-          >
-            {applyError}
-          </p>
-        ) : null}
-      </div>
 
       <div className="mx-auto mt-6 max-w-6xl">
         <section
@@ -317,20 +315,6 @@ export function PromptsPage() {
               </Button>
             </div>
           </div>
-
-          {notice ? (
-            <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">
-              {notice}
-            </p>
-          ) : null}
-          {listMutationError ? (
-            <p
-              role="alert"
-              className="mt-4 text-sm text-red-700 dark:text-red-300"
-            >
-              {listMutationError}
-            </p>
-          ) : null}
 
           {profilesQuery.isPending ? (
             <p role="status" className="text-muted-foreground mt-5 text-sm">
@@ -554,10 +538,7 @@ export function PromptsPage() {
                     size="sm"
                     variant="outline"
                     disabled={discoverMutation.isPending}
-                    onClick={() => {
-                      setNotice(null);
-                      discoverMutation.mutate(tool);
-                    }}
+                    onClick={() => discoverMutation.mutate(tool)}
                   >
                     检测并导入已有提示词
                   </Button>
@@ -568,7 +549,7 @@ export function PromptsPage() {
                     onClick={() =>
                       previewMutation.mutate({
                         tool,
-                        notifyResult: directApply,
+                        autoApply: directApply,
                       })
                     }
                   >
@@ -639,7 +620,6 @@ export function PromptsPage() {
           if (openPreview) {
             applyMutation.mutate({
               preview: openPreview,
-              notifyResult: false,
             });
           }
         }}

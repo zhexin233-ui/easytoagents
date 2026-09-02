@@ -632,11 +632,15 @@ describe("SkillsPage", () => {
       }),
     );
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    const status = screen.getByText(
+      "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
+    );
+    expect(status).toHaveAttribute("role", "status");
     expect(
-      screen.getByText(
+      screen.getAllByText(
         "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
       ),
-    ).toBeVisible();
+    ).toHaveLength(1);
   });
 
   it("本地目录导入失败时保留弹窗、已选目录与重试入口", async () => {
@@ -710,14 +714,27 @@ describe("SkillsPage", () => {
       screen.queryByText("phase6-private-frontmatter-marker"),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "内容预览" }));
+    const contentAlert = await screen.findByText(
+      "内容预览失败：CONFLICT：中央 Skill 已变化",
+    );
+    expect(contentAlert).toHaveAttribute("role", "alert");
+    expect(contentAlert).toHaveAttribute("aria-atomic", "true");
     expect(
-      await screen.findByText("内容预览失败：CONFLICT：中央 Skill 已变化"),
-    ).toHaveAttribute("role", "alert");
+      screen.getAllByText("内容预览失败：CONFLICT：中央 Skill 已变化"),
+    ).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("button", { name: "移出中央库" }));
+    const deleteAlert = await screen.findByText(
+      "移出中央库失败：CONFLICT：中央 Skill 已变化",
+    );
+    expect(deleteAlert).toHaveAttribute("role", "alert");
+    expect(deleteAlert).toHaveAttribute("aria-atomic", "true");
     expect(
-      await screen.findByText("移出中央库失败：CONFLICT：中央 Skill 已变化"),
-    ).toHaveAttribute("role", "alert");
+      screen.getAllByText("移出中央库失败：CONFLICT：中央 Skill 已变化"),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByText("内容预览失败：CONFLICT：中央 Skill 已变化"),
+    ).toBeNull();
   });
 
   it("内容预览和移出中央库进行中时保留图标按钮状态语义", async () => {
@@ -767,6 +784,13 @@ describe("SkillsPage", () => {
       });
       await removePending.promise;
     });
+    const status = await screen.findByText(
+      "Skill 已安全移出中央库，来源目录保持不变。",
+    );
+    expect(status).toHaveAttribute("role", "status");
+    expect(
+      screen.getAllByText("Skill 已安全移出中央库，来源目录保持不变。"),
+    ).toHaveLength(1);
   });
 
   it("关闭内容预览后把焦点恢复到触发按钮", async () => {
@@ -844,6 +868,9 @@ describe("SkillsPage", () => {
         projectId: null,
       }),
     );
+    const status = await screen.findByText(/已应用 1 个 Skills 目标/);
+    expect(status).toHaveAttribute("role", "status");
+    expect(screen.getAllByText(/已应用 1 个 Skills 目标/)).toHaveLength(1);
   });
 
   it("直接应用模式下无冲突 Skills 预览跳过对话框立即 Apply", async () => {
@@ -948,9 +975,13 @@ describe("SkillsPage", () => {
     if (!card) throw new Error("未找到 Claude Skills 状态卡");
 
     fireEvent.click(within(card).getByRole("button", { name: "预览全局同步" }));
+    const status = await screen.findByText(
+      "当前工具没有需要同步的全局 Skill。",
+    );
+    expect(status).toHaveAttribute("role", "status");
     expect(
-      await screen.findByText("当前工具没有需要同步的全局 Skill。"),
-    ).toBeVisible();
+      screen.getAllByText("当前工具没有需要同步的全局 Skill。"),
+    ).toHaveLength(1);
     expect(
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();
@@ -1034,11 +1065,15 @@ describe("SkillsPage", () => {
           rowVersion: skill.rowVersion,
         }),
       );
+      const status = await screen.findByText(
+        "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
+      );
+      expect(status).toHaveAttribute("role", "status");
       expect(
-        await screen.findByText(
+        screen.getAllByText(
           "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
         ),
-      ).toBeVisible();
+      ).toHaveLength(1);
       const updatedButton = await screen.findByRole("button", {
         name: `${toolLabel} 全局${assigned ? "已分配" : "未分配"}`,
       });
@@ -1289,11 +1324,15 @@ describe("全局 Skills 检测与复制导入", () => {
       expect(
         await screen.findByRole("heading", { name: "new-skill" }),
       ).toBeVisible();
+      const status = screen.getByText(
+        /已复制 1 项 Skill 到中央库；原有安装未变，尚未自动分配或同步/,
+      );
+      expect(status).toHaveAttribute("role", "status");
       expect(
-        screen.getByText(
+        screen.getAllByText(
           /已复制 1 项 Skill 到中央库；原有安装未变，尚未自动分配或同步/,
         ),
-      ).toBeVisible();
+      ).toHaveLength(1);
       expect(
         screen.getByRole("button", { name: "Claude 全局未分配" }),
       ).toBeVisible();
@@ -1634,6 +1673,11 @@ describe("全局 Skills 检测与复制导入", () => {
     expect(
       await screen.findByText("已复制到中央库，正在刷新列表…"),
     ).toHaveAttribute("role", "status");
+    expect(
+      screen.queryByText(
+        /已复制 1 项 Skill 到中央库；原有安装未变，尚未自动分配或同步/,
+      ),
+    ).not.toBeInTheDocument();
     expect(dialog).toBeVisible();
     for (const button of within(dialog).getAllByRole("button"))
       expect(button).toBeDisabled();
@@ -1650,6 +1694,11 @@ describe("全局 Skills 检测与复制导入", () => {
       await refresh.promise;
     });
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(
+      await screen.findByText(
+        /已复制 1 项 Skill 到中央库；原有安装未变，尚未自动分配或同步/,
+      ),
+    ).toHaveAttribute("role", "status");
     expect(trigger).toHaveFocus();
   });
 
@@ -1753,6 +1802,15 @@ describe("全局 Skills 检测与复制导入", () => {
     const previewDialog = await screen.findByRole("dialog", {
       name: "确认原生配置变更",
     });
+    const status = await screen.findByText(
+      "已为 1 项 Skill 准备接管；请审阅持久化预览后显式应用。",
+    );
+    expect(status).toHaveAttribute("role", "status");
+    expect(
+      screen.getAllByText(
+        "已为 1 项 Skill 准备接管；请审阅持久化预览后显式应用。",
+      ),
+    ).toHaveLength(1);
     expect(
       within(previewDialog).getByRole("button", { name: "应用这份预览" }),
     ).toBeEnabled();

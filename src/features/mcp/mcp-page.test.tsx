@@ -547,6 +547,38 @@ describe("McpPage", () => {
         rowVersion: server.rowVersion,
       }),
     );
+    const status = await screen.findByText(
+      "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
+    );
+    expect(status).toHaveAttribute("role", "status");
+    expect(
+      screen.getAllByText(
+        "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("删除失败只显示一次错误通知", async () => {
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [server],
+    });
+    vi.mocked(commands.deleteMcpServer).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "CONFLICT",
+        message: "MCP 已变化",
+        recoverable: true,
+      },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+
+    const alert = await screen.findByText("CONFLICT：MCP 已变化");
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveAttribute("aria-atomic", "true");
+    expect(screen.getAllByText("CONFLICT：MCP 已变化")).toHaveLength(1);
   });
 
   it("直接应用模式下分配切换自动同步并 Apply", async () => {
@@ -637,6 +669,9 @@ describe("McpPage", () => {
         projectId: null,
       }),
     );
+    const status = await screen.findByText(/已应用 1 个 MCP 目标/);
+    expect(status).toHaveAttribute("role", "status");
+    expect(screen.getAllByText(/已应用 1 个 MCP 目标/)).toHaveLength(1);
     expect(
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();
@@ -838,6 +873,11 @@ describe("McpPage", () => {
     await waitFor(() =>
       expect(commands.listMcpServers).toHaveBeenCalledTimes(2),
     );
+    expect(
+      screen.queryByText(
+        "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+      ),
+    ).not.toBeInTheDocument();
     fireEvent.click(trigger);
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(dialog).toBeVisible();
@@ -849,6 +889,11 @@ describe("McpPage", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
+    expect(
+      await screen.findByText(
+        "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+      ),
+    ).toHaveAttribute("role", "status");
     expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
     const nextDialog = screen.getByRole("dialog", { name: "新增 MCP" });
@@ -911,6 +956,15 @@ describe("McpPage", () => {
     expect(
       await screen.findByRole("heading", { name: server.name }),
     ).toBeVisible();
+    const status = await screen.findByText(
+      "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+    );
+    expect(status).toHaveAttribute("role", "status");
+    expect(
+      screen.getAllByText(
+        "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+      ),
+    ).toHaveLength(1);
     expect(commands.listMcpServers).toHaveBeenCalledTimes(2);
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
@@ -1096,6 +1150,8 @@ describe("McpPage", () => {
   });
 
   it("冲突预览展示不匹配条目并支持以当前内容重新接管", async () => {
+    const refresh =
+      deferred<Awaited<ReturnType<typeof commands.listMcpServers>>>();
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
     vi.mocked(commands.previewMcpSync).mockResolvedValue({
@@ -1128,6 +1184,7 @@ describe("McpPage", () => {
     expect(
       await screen.findByText("内容不一致的受管条目：node_repl"),
     ).toBeVisible();
+    vi.mocked(commands.listMcpServers).mockReturnValueOnce(refresh.promise);
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -1140,13 +1197,89 @@ describe("McpPage", () => {
         projectId: null,
       }),
     );
+    expect(commands.previewMcpSync).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByText(
+        "已以当前内容重新接管（刷新 1 个、清理 0 个条目基线）；正在重新生成预览。",
+      ),
+    ).not.toBeInTheDocument();
+    await act(async () => {
+      refresh.resolve({ status: "ok", data: [] });
+      await refresh.promise;
+    });
     // 接管后自动重新生成预览。
     await waitFor(() =>
       expect(commands.previewMcpSync).toHaveBeenCalledTimes(2),
     );
+    const status = await screen.findByText(
+      "已以当前内容重新接管（刷新 1 个、清理 0 个条目基线）；正在重新生成预览。",
+    );
+    expect(status).toHaveAttribute("role", "status");
+    expect(
+      screen.getAllByText(
+        "已以当前内容重新接管（刷新 1 个、清理 0 个条目基线）；正在重新生成预览。",
+      ),
+    ).toHaveLength(1);
     expect(
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
+  });
+
+  it("重新接管后的预览失败替换成功通知且不重复呈现", async () => {
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewMcpSync)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          ...preview,
+          targets: [
+            {
+              ...baseTarget,
+              changeKind: "conflict",
+              status: "external_owned_change",
+              readoptAvailable: true,
+              errorCode: "CONFLICT",
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          code: "DATABASE_ERROR",
+          message: "重新生成预览失败",
+          recoverable: true,
+        },
+      });
+    vi.mocked(commands.readoptMcpTarget).mockResolvedValue({
+      status: "ok",
+      data: {
+        targetPath: "/isolated/home/.claude.json",
+        updatedItemCount: 2,
+        removedItemCount: 1,
+      },
+    });
+    renderPage();
+
+    fireEvent.click(await globalButton("生成全局预览"));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "以当前内容重新接管 /isolated/home/.claude.json",
+      }),
+    );
+
+    const alert = await screen.findByText("DATABASE_ERROR：重新生成预览失败");
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveAttribute("aria-atomic", "true");
+    expect(
+      screen.getAllByText("DATABASE_ERROR：重新生成预览失败"),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByText(
+        "已以当前内容重新接管（刷新 2 个、清理 1 个条目基线）；正在重新生成预览。",
+      ),
+    ).toBeNull();
   });
 
   it.each([
@@ -1220,9 +1353,12 @@ describe("McpPage", () => {
     fireEvent.click(
       within(claudeCard).getByRole("button", { name: "生成全局预览" }),
     );
+    const status =
+      await screen.findByText(/暂无启用且已分配到该工具的中央 MCP/);
+    expect(status).toHaveAttribute("role", "status");
     expect(
-      await screen.findByText(/暂无启用且已分配到该工具的中央 MCP/),
-    ).toBeVisible();
+      screen.getAllByText(/暂无启用且已分配到该工具的中央 MCP/),
+    ).toHaveLength(1);
     expect(
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();
@@ -1310,9 +1446,12 @@ describe("McpPage", () => {
           candidateIds: [newCandidateId],
         }),
       );
+      const status =
+        await screen.findByText(/原生配置未改写，请单独生成全局预览/);
+      expect(status).toHaveAttribute("role", "status");
       expect(
-        await screen.findByText(/原生配置未改写，请单独生成全局预览/),
-      ).toBeVisible();
+        screen.getAllByText(/原生配置未改写，请单独生成全局预览/),
+      ).toHaveLength(1);
       await waitFor(() =>
         expect(commands.listMcpServers).toHaveBeenCalledTimes(
           readsBeforeImport + 1,

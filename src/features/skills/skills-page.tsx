@@ -47,12 +47,11 @@ interface OpenSkillPreview {
 
 interface SkillPreviewRequest {
   tool: Tool;
-  notifyResult: boolean;
+  autoApply: boolean;
 }
 
 interface SkillApplyRequest {
   input: ApplySkillPreviewInput;
-  notifyResult: boolean;
 }
 
 export function SkillsPage() {
@@ -63,7 +62,6 @@ export function SkillsPage() {
   const directApply = settingsQuery.data?.applyMode === "direct";
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
   const [openDirectoryImport, setOpenDirectoryImport] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const { notification, notify } = useNotify();
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
@@ -89,8 +87,17 @@ export function SkillsPage() {
         }),
       ),
     onSuccess: async () => {
-      setMessage("Skill 已安全移出中央库，来源目录保持不变。");
       await invalidateSkills();
+      notify({
+        kind: "success",
+        message: "Skill 已安全移出中央库，来源目录保持不变。",
+      });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: `移出中央库失败：${profileErrorText(error) ?? "未知错误"}`,
+      });
     },
   });
 
@@ -98,6 +105,12 @@ export function SkillsPage() {
     mutationFn: async (id: string) =>
       unwrapResult(await commands.previewSkillContent(id)),
     onSuccess: setContentPreview,
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: `内容预览失败：${profileErrorText(error) ?? "未知错误"}`,
+      });
+    },
   });
 
   const globalAssignmentMutation = useMutation({
@@ -113,12 +126,20 @@ export function SkillsPage() {
     onSuccess: async (_result, { tool }) => {
       await invalidateSkills();
       if (!directApply) {
-        setMessage(
-          "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
-        );
+        notify({
+          kind: "success",
+          message:
+            "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
+        });
         return;
       }
-      previewMutation.mutate({ tool, notifyResult: true });
+      previewMutation.mutate({ tool, autoApply: true });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "更新 Skill 全局分配失败。",
+      });
     },
   });
 
@@ -133,72 +154,51 @@ export function SkillsPage() {
         }),
       ),
     }),
-    onSuccess: ({ plan, tool }, { notifyResult }) => {
+    onSuccess: ({ plan, tool }, { autoApply }) => {
       if (plan.targets.length === 0) {
-        setMessage("当前工具没有需要同步的全局 Skill。");
+        notify({
+          kind: "success",
+          message: "当前工具没有需要同步的全局 Skill。",
+        });
         setOpenPreview(null);
         return;
       }
-      if (notifyResult && canAutoApplyPreview(plan)) {
+      if (autoApply && canAutoApplyPreview(plan)) {
         applyMutation.mutate({
           input: {
             previewId: plan.previewId,
             tool,
             projectId: null,
           },
-          notifyResult: true,
         });
         return;
       }
       setOpenPreview({ plan, tool });
     },
-    onError: (error, { notifyResult }) => {
-      if (notifyResult) {
-        notify({
-          kind: "error",
-          message: profileErrorText(error) ?? "生成 Skills 全局预览失败。",
-        });
-      }
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "生成 Skills 全局预览失败。",
+      });
     },
   });
 
   const applyMutation = useMutation({
     mutationFn: async ({ input }: SkillApplyRequest) =>
       unwrapResult(await commands.applySkillPreview(input)),
-    onSuccess: async (result, { notifyResult }) => {
+    onSuccess: async (result) => {
       const successMessage = `已应用 ${result.appliedTargets} 个 Skills 目标，并创建 ${result.snapshotCount} 份快照。`;
-      if (notifyResult) {
-        notify({ kind: "success", message: successMessage });
-      } else {
-        setMessage(successMessage);
-      }
       setOpenPreview(null);
       await invalidateSkills();
+      notify({ kind: "success", message: successMessage });
     },
-    onError: (error, { notifyResult }) => {
-      if (notifyResult) {
-        notify({
-          kind: "error",
-          message: profileErrorText(error) ?? "应用 Skills 全局同步失败。",
-        });
-      }
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: profileErrorText(error) ?? "应用 Skills 全局同步失败。",
+      });
     },
   });
-
-  const previewError = previewMutation.variables?.notifyResult
-    ? null
-    : previewMutation.error;
-  const applyError = applyMutation.variables?.notifyResult
-    ? null
-    : applyMutation.error;
-
-  const operationError = [
-    globalAssignmentMutation.error,
-    previewError,
-    applyError,
-  ]
-    .map(profileErrorText)
-    .find(Boolean);
 
   return (
     <main className="p-6 lg:p-8">
@@ -211,22 +211,6 @@ export function SkillsPage() {
           并且只能通过持久化预览 Apply。
         </p>
       </header>
-
-      <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
-        {message ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
-            {message}
-          </p>
-        ) : null}
-        {operationError ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
-          >
-            {operationError}
-          </p>
-        ) : null}
-      </div>
 
       <div className="mx-auto mt-6 max-w-6xl">
         <section
@@ -264,22 +248,6 @@ export function SkillsPage() {
             <p className="text-muted-foreground mt-4 text-sm">
               尚无 Skill。可在下方全局目标卡片选择“检测并导入已有
               Skills”，或点击“从本地目录导入”复制本地目录。
-            </p>
-          ) : null}
-          {contentMutation.isError ? (
-            <p
-              role="alert"
-              className="mt-4 text-sm text-red-700 dark:text-red-300"
-            >
-              内容预览失败：{profileErrorText(contentMutation.error)}
-            </p>
-          ) : null}
-          {deleteMutation.isError ? (
-            <p
-              role="alert"
-              className="mt-4 text-sm text-red-700 dark:text-red-300"
-            >
-              移出中央库失败：{profileErrorText(deleteMutation.error)}
             </p>
           ) : null}
           <CentralList layout={listLayout}>
@@ -487,7 +455,6 @@ export function SkillsPage() {
                     aria-label={`检测并导入 ${toolMetadata(status.tool).label} 全局 Skills`}
                     onClick={() => {
                       if (openImport) return;
-                      setMessage(null);
                       setOpenImport({
                         tool: status.tool,
                         requestId: crypto.randomUUID(),
@@ -505,7 +472,7 @@ export function SkillsPage() {
                     onClick={() =>
                       previewMutation.mutate({
                         tool: status.tool,
-                        notifyResult: directApply,
+                        autoApply: directApply,
                       })
                     }
                   >
@@ -574,9 +541,11 @@ export function SkillsPage() {
           onClose={() => setOpenDirectoryImport(false)}
           onImported={async () => {
             await invalidateSkills();
-            setMessage(
-              "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
-            );
+            notify({
+              kind: "success",
+              message:
+                "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
+            });
           }}
         />
       ) : null}
@@ -598,9 +567,10 @@ export function SkillsPage() {
               { queryKey: skillKeys.all },
               { throwOnError: true },
             );
-            setMessage(
-              `已复制 ${result.createdCount} 项 Skill 到中央库；原有安装未变，尚未自动分配或同步。中央副本不会随原安装自动更新。`,
-            );
+            notify({
+              kind: "success",
+              message: `已复制 ${result.createdCount} 项 Skill 到中央库；原有安装未变，尚未自动分配或同步。中央副本不会随原安装自动更新。`,
+            });
             setOpenImport(null);
           }}
           onTakeoverPrepared={async (result) => {
@@ -608,9 +578,10 @@ export function SkillsPage() {
               { queryKey: skillKeys.all },
               { throwOnError: true },
             );
-            setMessage(
-              `已为 ${result.assignedCount + result.reusedCount} 项 Skill 准备接管；请审阅持久化预览后显式应用。`,
-            );
+            notify({
+              kind: "success",
+              message: `已为 ${result.assignedCount + result.reusedCount} 项 Skill 准备接管；请审阅持久化预览后显式应用。`,
+            });
             setOpenImport(null);
             // 接管无条件进入预览，即使全局偏好是 direct 也不会自动 Apply。
             setOpenPreview({ plan: result.plan, tool: result.tool });
@@ -631,7 +602,6 @@ export function SkillsPage() {
               tool,
               projectId: null,
             },
-            notifyResult: false,
           })
         }
       />
