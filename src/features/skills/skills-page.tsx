@@ -372,7 +372,7 @@ export function SkillsPage() {
                           </p>
                         ) : null}
                       </div>
-                      {listLayout === "list" ? skillActions : null}
+                      {skillActions}
                     </div>
                     {listLayout === "list" ? (
                       <>
@@ -406,7 +406,6 @@ export function SkillsPage() {
                     label={`${skill.name} 操作`}
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      {listLayout === "grid" ? skillActions : null}
                       {platformActions}
                     </div>
                     {listLayout === "list" ? (

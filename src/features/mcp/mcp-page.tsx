@@ -466,7 +466,7 @@ export function McpPage() {
                           {server.enabled ? "已启用" : "已停用"}
                         </p>
                       </div>
-                      {listLayout === "list" ? serverActions : null}
+                      {serverActions}
                     </div>
                     {listLayout === "list" ? (
                       <>
@@ -515,7 +515,6 @@ export function McpPage() {
                     label={`${server.name} 操作`}
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      {listLayout === "grid" ? serverActions : null}
                       {platformActions}
                     </div>
                   </CentralListCardFooter>

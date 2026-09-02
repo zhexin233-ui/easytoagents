@@ -402,9 +402,7 @@ export function PromptsPage() {
                             : null}
                         </p>
                       </div>
-                      {listLayout === "list" ? (
-                        <div className="flex shrink-0 gap-2">{cardActions}</div>
-                      ) : null}
+                      <div className="flex shrink-0 gap-2">{cardActions}</div>
                     </div>
                     {listLayout === "list" ? (
                       <p className="bg-muted mt-3 line-clamp-6 rounded p-2 text-xs leading-5 whitespace-pre-wrap">
@@ -424,7 +422,6 @@ export function PromptsPage() {
                     label={`${profile.name} 提示词操作`}
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      {listLayout === "grid" ? cardActions : null}
                       <div
                         className={
                           listLayout === "grid"

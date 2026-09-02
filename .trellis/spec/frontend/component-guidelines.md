@@ -241,8 +241,23 @@ const [layout, setLayout] = usePersistedCentralListLayout("mcp");
 
 Grid uses one column by default, two at `md`, and three at `lg` so a normal
 desktop window actually presents three cards per row. Grid cards use
-equal-height bodies plus a separate border-top action footer, and children keep
-`min-w-0` to contain long paths or previews.
+equal-height bodies plus a separate border-top footer for global assignment
+controls, and children keep `min-w-0` to contain long paths or previews. Any
+card-level actions (edit, enable/disable, delete, preview, or remove) must stay
+in the title row's right side in both list and grid layouts; render them once
+and let the footer contain only the distinct global assignment group.
+
+```tsx
+<CentralListCardBody layout={layout}>
+  <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+    <CardTitle />
+    <CardActions />
+  </div>
+</CentralListCardBody>
+<CentralListCardFooter layout={layout} label="Card actions">
+  <GlobalAssignmentActions />
+</CentralListCardFooter>
+```
 
 Claude and Codex assignment controls must use unchanged, locally bundled
 official brand assets with source and checksum provenance recorded beside the
