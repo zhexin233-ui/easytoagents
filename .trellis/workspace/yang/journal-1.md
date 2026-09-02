@@ -760,3 +760,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: 提示词 MCP Skills 操作按钮图标化
+
+**Date**: 2026-09-02
+**Task**: 提示词 MCP Skills 操作按钮图标化
+**Branch**: `main`
+
+### Summary
+
+为提示词、MCP、Skills 中央库的行级编辑、删除、启停、内容预览和移出操作引入 lucide-react 图标按钮，保留无障碍语义与原有 mutation 行为；补充测试与前端图标按钮规范。格式、Lint、TypeScript、全量测试和构建均通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4966eac` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-09-01
+- **Total Sessions**: 28
+- **Last Active**: 2026-09-02
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~762 | Active |
+| `journal-1.md` | ~783 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-09-02 | 提示词 MCP Skills 操作按钮图标化 | `4966eac` | `main` |
 | 27 | 2026-09-01 | 全局同步三秒通知 | `0036a94` | `codex/cursor-ide-support` |
 | 26 | 2026-09-01 | 完成全局 Skills 显式接管 | `7e17e86` | `codex/cursor-ide-support` |
 | 25 | 2026-09-01 | 完成 Cursor IDE 支持 | `10ee524` | `codex/cursor-ide-support` |
