@@ -781,3 +781,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: 调整三列中央列表卡片操作按钮位置
+
+**Date**: 2026-09-02
+**Task**: 调整三列中央列表卡片操作按钮位置
+**Branch**: `main`
+
+### Summary
+
+将 MCP、提示词和 Skills 三列卡片的主要操作按钮移至标题区右上角，保留底部全局平台分配/启用操作；补充 DOM 位置回归测试并通过 lint、typecheck、全量测试和格式检查。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `63c026e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
