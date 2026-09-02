@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"遵循中央列表卡片结构、Tailwind 样式及图标按钮无障碍命名约定。"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"遵循前端页面测试、交互行为保持及现有命令/查询边界要求。"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"批量调整 MCP、提示词和 Skills 的相似卡片操作渲染时检查重复模式与遗漏。"}

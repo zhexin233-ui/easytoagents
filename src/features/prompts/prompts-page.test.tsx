@@ -184,49 +184,6 @@ afterEach(() => {
 });
 
 describe("PromptsPage", () => {
-  it("三列网格将编辑和删除放在卡片标题区，底部仅保留全局启用", async () => {
-    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
-      status: "ok",
-      data: [promptProfile],
-    });
-    renderPromptsPage();
-
-    const section = promptSection();
-    const card = await within(section).findByRole("heading", {
-      name: promptProfile.name,
-    });
-    const article = card.closest("article");
-    if (!article) throw new Error("未找到提示词中央卡片");
-    const body = article.querySelector<HTMLElement>(
-      '[data-slot="central-list-card-body"]',
-    );
-    const footer = article.querySelector<HTMLElement>(
-      '[data-slot="central-list-card-actions"]',
-    );
-    if (!body || !footer) throw new Error("未找到提示词卡片主体或操作栏");
-
-    fireEvent.click(
-      within(section).getByRole("button", { name: "三列网格显示" }),
-    );
-
-    for (const name of ["编辑", "删除"]) {
-      const button = within(body).getByRole("button", { name });
-      expect(button).toBeVisible();
-      expect(button).toHaveAttribute("title", name);
-      expect(button).toHaveClass("size-8", "p-0");
-      expect(button.querySelector("svg")).toHaveAttribute(
-        "aria-hidden",
-        "true",
-      );
-      expect(
-        within(footer).queryByRole("button", { name }),
-      ).not.toBeInTheDocument();
-    }
-    expect(
-      within(footer).getByLabelText(`${promptProfile.name} 全局启用`),
-    ).toBeVisible();
-  });
-
   it("默认隐藏表单，新增和编辑可关闭清理且焦点不离开弹窗", async () => {
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",

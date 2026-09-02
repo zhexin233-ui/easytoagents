@@ -399,7 +399,7 @@ describe("SkillsPage", () => {
       "line-clamp-3",
     );
     for (const name of ["内容预览", "移出中央库"]) {
-      const button = within(body).getByRole("button", { name });
+      const button = within(footer).getByRole("button", { name });
       expect(button).toBeVisible();
       expect(button).toHaveAttribute("title", name);
       expect(button).toHaveClass("size-8", "p-0");
@@ -407,11 +407,6 @@ describe("SkillsPage", () => {
         "aria-hidden",
         "true",
       );
-    }
-    for (const name of ["内容预览", "移出中央库"]) {
-      expect(
-        within(footer).queryByRole("button", { name }),
-      ).not.toBeInTheDocument();
     }
     expect(
       within(footer).getByLabelText(`${skill.name} 全局平台分配`),

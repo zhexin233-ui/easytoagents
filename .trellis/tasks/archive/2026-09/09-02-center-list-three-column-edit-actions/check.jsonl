@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核对三列卡片标题区、底部操作栏和图标按钮的可访问性与样式约定。"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"按前端质量门禁检查行为回归、测试覆盖和现有交互边界。"}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复核三个页面的批量修改是否覆盖完整且未引入不必要重复。"}

@@ -355,7 +355,7 @@ describe("McpPage", () => {
     expect(within(body).getByText("入口摘要")).toBeVisible();
     expect(body).toHaveTextContent("扩展信息已脱敏");
     for (const name of ["编辑", "停用", "删除"]) {
-      const button = within(body).getByRole("button", { name });
+      const button = within(footer).getByRole("button", { name });
       expect(button).toBeVisible();
       expect(button).toHaveAttribute("title", name);
       expect(button).toHaveClass("size-8", "p-0");
@@ -364,15 +364,9 @@ describe("McpPage", () => {
         "true",
       );
     }
-    for (const name of ["编辑", "停用", "删除"]) {
-      expect(
-        within(footer).queryByRole("button", { name }),
-      ).not.toBeInTheDocument();
-    }
-    expect(within(body).getByRole("button", { name: "停用" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(
+      within(footer).getByRole("button", { name: "停用" }),
+    ).toHaveAttribute("aria-pressed", "true");
     expect(
       within(footer).getByLabelText(`${server.name} 全局平台分配`),
     ).toHaveClass("ml-auto");
