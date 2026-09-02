@@ -132,6 +132,30 @@ the toggle). Do not introduce a theme Context or store.
 - Disabled or blocked actions must be represented semantically and explained
   in text. Color cannot be the only status signal.
 
+### Icon-only Row Actions
+
+Feature-page row actions that are intentionally icon-only use `lucide-react`
+icons inside the shared `Button` primitive. Keep the original action as the
+button's accessible name and `title`, hide the decorative icon from assistive
+technology, and expose toggle state with `aria-pressed` when applicable.
+
+```tsx
+<Button
+  type="button"
+  size="sm"
+  variant="outline"
+  className="size-8 p-0"
+  aria-label="编辑"
+  title="编辑"
+  onClick={onEdit}
+>
+  <Pencil aria-hidden="true" className="size-4" />
+</Button>
+```
+
+Do not replace established brand assets with Lucide glyphs, and do not rely on
+an icon's shape or color as the only action or state cue.
+
 ---
 
 ## Shared Central List Controls

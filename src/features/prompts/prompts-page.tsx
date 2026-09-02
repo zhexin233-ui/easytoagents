@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Trash2 } from "lucide-react";
 
 import {
   commands,
@@ -357,15 +358,19 @@ export function PromptsPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className={listLayout === "grid" ? "px-2" : undefined}
+                    className="size-8 p-0"
+                    aria-label="编辑"
+                    title="编辑"
                     onClick={() => openForm(profile)}
                   >
-                    编辑
+                    <Pencil aria-hidden="true" className="size-4" />
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    className={listLayout === "grid" ? "px-2" : undefined}
+                    className="size-8 p-0"
+                    aria-label="删除"
+                    title="删除"
                     onClick={() => {
                       if (
                         globalThis.confirm(
@@ -376,7 +381,7 @@ export function PromptsPage() {
                       }
                     }}
                   >
-                    删除
+                    <Trash2 aria-hidden="true" className="size-4" />
                   </Button>
                 </>
               );

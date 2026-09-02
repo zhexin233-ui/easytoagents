@@ -194,6 +194,18 @@ describe("PromptsPage", () => {
     const edit = await within(section).findByRole("button", {
       name: "编辑",
     });
+    expect(edit).toHaveAttribute("title", "编辑");
+    expect(edit).toHaveClass("size-8", "p-0");
+    expect(edit.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    const deleteButton = within(section).getByRole("button", {
+      name: "删除",
+    });
+    expect(deleteButton).toHaveAttribute("title", "删除");
+    expect(deleteButton).toHaveClass("size-8", "p-0");
+    expect(deleteButton.querySelector("svg")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     const trigger = within(section).getByRole("button", {
       name: "新增提示词",
     });
@@ -276,6 +288,32 @@ describe("PromptsPage", () => {
     expect(within(nextDialog).queryByRole("alert")).not.toBeInTheDocument();
     expect(within(nextDialog).getByLabelText("名称")).toHaveValue("");
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
+
+  it("删除图标按钮保留确认提示和版本化删除 payload", async () => {
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfile],
+    });
+    vi.mocked(commands.deletePromptProfile).mockResolvedValue({
+      status: "ok",
+      data: { id: promptProfile.id, deleted: true },
+    });
+    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    renderPromptsPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+
+    await waitFor(() =>
+      expect(commands.deletePromptProfile).toHaveBeenCalledWith({
+        id: promptProfile.id,
+        rowVersion: promptProfile.rowVersion,
+      }),
+    );
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "删除中央提示词档案？原生文件不会在此步骤修改。",
+    );
+    confirmSpy.mockRestore();
   });
 
   it("提示词 保存和刷新期间阻止重复提交与关闭，完成后不影响新草稿", async () => {

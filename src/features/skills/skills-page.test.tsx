@@ -399,7 +399,14 @@ describe("SkillsPage", () => {
       "line-clamp-3",
     );
     for (const name of ["内容预览", "移出中央库"]) {
-      expect(within(footer).getByRole("button", { name })).toBeVisible();
+      const button = within(footer).getByRole("button", { name });
+      expect(button).toBeVisible();
+      expect(button).toHaveAttribute("title", name);
+      expect(button).toHaveClass("size-8", "p-0");
+      expect(button.querySelector("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
     }
     expect(
       within(footer).getByLabelText(`${skill.name} 全局平台分配`),
@@ -711,6 +718,55 @@ describe("SkillsPage", () => {
     expect(
       await screen.findByText("移出中央库失败：CONFLICT：中央 Skill 已变化"),
     ).toHaveAttribute("role", "alert");
+  });
+
+  it("内容预览和移出中央库进行中时保留图标按钮状态语义", async () => {
+    const contentPending =
+      deferred<Awaited<ReturnType<typeof commands.previewSkillContent>>>();
+    vi.mocked(commands.previewSkillContent).mockReturnValue(
+      contentPending.promise,
+    );
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "内容预览" }));
+    const readingButton = await screen.findByRole("button", {
+      name: "正在读取…",
+    });
+    expect(readingButton).toBeDisabled();
+    expect(readingButton).toHaveAttribute("title", "正在读取…");
+
+    await act(async () => {
+      contentPending.resolve({
+        status: "ok",
+        data: {
+          id: skill.id,
+          name: skill.name,
+          skillMd: "# 内容",
+          files: ["SKILL.md"],
+          contentHash: skill.contentHash,
+          rowVersion: skill.rowVersion,
+        },
+      });
+      await contentPending.promise;
+    });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+
+    const removePending =
+      deferred<Awaited<ReturnType<typeof commands.deleteSkill>>>();
+    vi.mocked(commands.deleteSkill).mockReturnValue(removePending.promise);
+    fireEvent.click(await screen.findByRole("button", { name: "移出中央库" }));
+    const removingButton = await screen.findByRole("button", {
+      name: "正在移出…",
+    });
+    expect(removingButton).toBeDisabled();
+    expect(removingButton).toHaveAttribute("title", "正在移出…");
+    await act(async () => {
+      removePending.resolve({
+        status: "ok",
+        data: { id: skill.id, deleted: true },
+      });
+      await removePending.promise;
+    });
   });
 
   it("关闭内容预览后把焦点恢复到触发按钮", async () => {

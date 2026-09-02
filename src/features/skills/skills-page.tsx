@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Eye, FolderMinus } from "lucide-react";
 
 import {
   commands,
@@ -283,34 +284,38 @@ export function SkillsPage() {
           ) : null}
           <CentralList layout={listLayout}>
             {skillsQuery.data?.map((skill) => {
+              const isReadingContent =
+                contentMutation.isPending &&
+                contentMutation.variables === skill.id;
+              const isRemovingSkill =
+                deleteMutation.isPending &&
+                deleteMutation.variables?.id === skill.id;
               const skillActions = (
                 <div className="flex min-w-0 flex-wrap gap-2">
                   <Button
                     size="sm"
                     variant="outline"
-                    className={listLayout === "grid" ? "px-2" : undefined}
+                    className="size-8 p-0"
+                    aria-label={isReadingContent ? "正在读取…" : "内容预览"}
+                    title={isReadingContent ? "正在读取…" : "内容预览"}
                     disabled={contentMutation.isPending}
                     onClick={() => contentMutation.mutate(skill.id)}
                   >
-                    {contentMutation.isPending &&
-                    contentMutation.variables === skill.id
-                      ? "正在读取…"
-                      : "内容预览"}
+                    <Eye aria-hidden="true" className="size-4" />
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    className={listLayout === "grid" ? "px-2" : undefined}
+                    className="size-8 p-0"
+                    aria-label={isRemovingSkill ? "正在移出…" : "移出中央库"}
+                    title={isRemovingSkill ? "正在移出…" : "移出中央库"}
                     disabled={
                       deleteMutation.isPending &&
                       deleteMutation.variables?.id === skill.id
                     }
                     onClick={() => deleteMutation.mutate(skill)}
                   >
-                    {deleteMutation.isPending &&
-                    deleteMutation.variables?.id === skill.id
-                      ? "正在移出…"
-                      : "移出中央库"}
+                    <FolderMinus aria-hidden="true" className="size-4" />
                   </Button>
                 </div>
               );

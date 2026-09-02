@@ -355,8 +355,18 @@ describe("McpPage", () => {
     expect(within(body).getByText("入口摘要")).toBeVisible();
     expect(body).toHaveTextContent("扩展信息已脱敏");
     for (const name of ["编辑", "停用", "删除"]) {
-      expect(within(footer).getByRole("button", { name })).toBeVisible();
+      const button = within(footer).getByRole("button", { name });
+      expect(button).toBeVisible();
+      expect(button).toHaveAttribute("title", name);
+      expect(button).toHaveClass("size-8", "p-0");
+      expect(button.querySelector("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
     }
+    expect(
+      within(footer).getByRole("button", { name: "停用" }),
+    ).toHaveAttribute("aria-pressed", "true");
     expect(
       within(footer).getByLabelText(`${server.name} 全局平台分配`),
     ).toHaveClass("ml-auto");
@@ -516,6 +526,27 @@ describe("McpPage", () => {
     });
     expect(commands.previewMcpSync).not.toHaveBeenCalled();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
+  it("删除图标按钮保留版本化删除 payload", async () => {
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [server],
+    });
+    vi.mocked(commands.deleteMcpServer).mockResolvedValue({
+      status: "ok",
+      data: { id: server.id, deleted: true },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+
+    await waitFor(() =>
+      expect(commands.deleteMcpServer).toHaveBeenCalledWith({
+        id: server.id,
+        rowVersion: server.rowVersion,
+      }),
+    );
   });
 
   it("直接应用模式下分配切换自动同步并 Apply", async () => {

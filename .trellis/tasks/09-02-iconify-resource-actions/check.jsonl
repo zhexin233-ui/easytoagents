@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复核图标按钮 accessible name、title 与布局兼容性"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "复核无业务行为回归与测试要求"}
