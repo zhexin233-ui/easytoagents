@@ -1198,6 +1198,28 @@ describe("McpPage", () => {
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
+  it("直接应用模式下空目标预览使用通知提示无需写入", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.previewMcpSync).mockResolvedValue({
+      status: "ok",
+      data: { ...preview, targets: [] },
+    });
+    renderPage();
+
+    fireEvent.click(await globalButton("直接应用全局同步"));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "暂无启用且已分配到该工具的中央 MCP",
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
   it.each(["claude", "codex", "cursor"] as const)(
     "按 %s 扫描且只导入明确勾选项，成功后独立生成同步预览",
     async (tool) => {

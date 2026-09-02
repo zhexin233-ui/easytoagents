@@ -226,9 +226,13 @@ export function McpPage() {
     }),
     onSuccess: ({ plan, tool }, { notifyResult }) => {
       if (plan.targets.length === 0) {
-        setMessage(
-          "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
-        );
+        const emptyTargetsMessage =
+          "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。";
+        if (notifyResult) {
+          notify({ kind: "success", message: emptyTargetsMessage });
+        } else {
+          setMessage(emptyTargetsMessage);
+        }
         setOpenPreview(null);
         return;
       }
