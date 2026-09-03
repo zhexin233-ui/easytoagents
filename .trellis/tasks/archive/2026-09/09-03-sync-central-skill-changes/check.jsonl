@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-03-sync-central-skill-changes/research/central-skill-adoption.md", "reason": "Verify adopt updates only the central record and does not native-write"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "Verify name/path stay unchanged and source is not recopied"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify confirmation dialog, generated command payload, and query invalidation"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify dialog focus, Escape, and pending lock"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify diagnostic, hash, and Ready status stay consistent across layers"}

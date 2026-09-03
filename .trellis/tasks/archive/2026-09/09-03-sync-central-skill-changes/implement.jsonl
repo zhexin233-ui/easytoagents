@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-03-sync-central-skill-changes/research/central-skill-adoption.md", "reason": "Task-local inspect, projection, and adopt contracts without truncating the large quality-guidelines file"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "Central copy naming, inspect, and no implicit native write"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "skills row_version bump and SHA-256 hash CAS updates"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Stable conflict and write-in-progress RPC errors"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Skills page commands, dialogs, and no implicit Apply"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "useDialogFocus confirmation dialog pattern"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "New RPC status must stay aligned across DTO, DB, and UI"}
