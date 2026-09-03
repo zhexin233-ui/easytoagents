@@ -823,3 +823,39 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 31: 管理项目级 Skill、MCP 与提示词
+
+**Date**: 2026-09-03
+**Task**: 管理项目级 Skill、MCP 与提示词
+**Branch**: `codex/manage-project-resources`
+
+### Summary
+
+登记项目后只读发现项目原生 Skill/MCP/Prompt，用户可经持久化预览显式临时禁用并恢复；direct 偏好不自动 Apply。写入 v12 观察表、快照引用保护与项目详情原生分区。
+
+### Main Changes
+
+- 新增 project_native_resources 与只读发现、Preview/Apply 禁用恢复（MCP selector、Skill 树/链接、Prompt 整文件）
+- 项目详情在中央追加之上展示原生资源；有 disabled 时阻止移除项目和删除引用快照
+- 把观察身份、空 baseline 非 ownership、direct 例外和快照保护写入 backend/frontend spec
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `583da65` | (see git log) |
+| `63126c4` | (see git log) |
+
+### Testing
+
+- [OK] cargo test（含 bindings/phase8_e2e）、clippy -D warnings、pnpm test 215、pnpm typecheck/lint/format、pnpm bindings:check
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 如需原生禁用也跳过预览弹窗，需先改 PRD R4
