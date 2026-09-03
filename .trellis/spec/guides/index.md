@@ -36,6 +36,7 @@ These guides help you **ask the right questions before coding**.
 - [ ] You're not sure where to put some logic
 - [ ] You are adding an event kind, JSONL record, RPC payload, or config field
 - [ ] UI / command code starts casting raw payload fields directly
+- [ ] A new table or DTO will observe files the app does not own
 
 → Read [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md)
 
@@ -48,6 +49,7 @@ These guides help you **ask the right questions before coding**.
 - [ ] **You're creating a new utility/helper function** ← Search first!
 - [ ] Two files read the same untyped payload field with local casts
 - [ ] Multiple branches update the same derived state from `kind` / `action`
+- [ ] You're adding disable/restore for a native file the app does not own
 
 → Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
 

@@ -35,6 +35,7 @@ grep -r "keyword" .
 | Is this pattern used elsewhere? | Follow the existing pattern |
 | Could this be a shared utility? | Create it in the right place |
 | Am I copying code from another file? | **STOP** - extract to shared |
+| Am I writing a second Apply/rollback engine for native files? | Reuse `sync` preview/apply/journal/snapshot |
 
 ---
 

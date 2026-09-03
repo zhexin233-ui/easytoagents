@@ -261,6 +261,8 @@ rules.
   native data from a component.
 - Applying native configuration directly after CRUD instead of opening the
   persisted `ChangePreviewDialog` flow.
+- Auto-applying a project-native disable/restore because settings `applyMode` is
+  `"direct"`. That path always opens `ChangePreviewDialog`, same as Skill takeover.
 - Reimplementing `Button`, dialog focus, sync badges, or blocking-state language
   inside a feature.
 - Hiding loading, empty, policy, conflict, and RPC failure behind one generic

@@ -40,6 +40,7 @@ For each arrow, ask:
 | Service ↔ Database    | Format conversions, null handling |
 | Backend ↔ Frontend    | Serialization, date formats       |
 | Component ↔ Component | Props shape changes               |
+| Observation ↔ Ownership | Treating a scan row as proof the app owns the file |
 
 ### Step 3: Define Contracts
 
@@ -110,6 +111,9 @@ Before implementation:
 - [ ] Identified all layer boundaries
 - [ ] Defined format at each boundary
 - [ ] Decided where validation happens
+- [ ] If the feature observes project files: distinguished assignment vs
+      `managed_items` ownership vs `project_native_resources` observation
+      (empty-baseline identity rows are not ownership)
 
 After implementation:
 

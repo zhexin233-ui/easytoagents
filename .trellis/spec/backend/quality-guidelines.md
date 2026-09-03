@@ -10,6 +10,10 @@ Backend integrations use explicit inputs and fail-closed evidence. Discovery, sc
 preview generation, and Git inspection are read-only operations; they must be safe to
 run against hostile paths and configuration contents.
 
+Project-native Skill/MCP/Prompt observation is a third identity: it is not a central
+assignment and not `managed_items` ownership. Empty-baseline target identity rows exist
+only to hang that observation; they must not relax ordinary Apply.
+
 ---
 
 ## Forbidden Patterns
@@ -23,6 +27,8 @@ run against hostile paths and configuration contents.
   and trust evidence as allowed.
 - Following a symlinked target or a symlink introduced in an ancestor after discovery.
 - Treating an incomplete full/managed hash pair as a mergeable baseline.
+- Treating a `managed_targets` row with empty baselines and no `managed_items` as
+  ownership, or using it to create an empty project file / widen ordinary Apply.
 - Logging or persisting raw native configuration, raw diffs, tokens, environment
   values, headers, or other secret-bearing values.
 - Running Git inspection without argument termination, a timeout, sanitized repository
@@ -78,6 +84,9 @@ run against hostile paths and configuration contents.
   skill-link handling do not follow unmanaged links.
 - Preview remains pure read/compute/persist and exposes no apply, snapshot, restore, or
   external-write entry point.
+- Project-native disable/restore preview inputs carry only `resourceId`, `rowVersion`,
+  and `action`. Apply claims a `previewed` run before the action matrix so a consumed
+  preview cannot collapse into `INVALID_INPUT`.
 
 ## Scenario: Explicit discovery and read-only preview
 
@@ -713,9 +722,12 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
 
 - Project mutations use `RegisterProjectInput` or `VersionedProjectInput`; removal
   returns `RemoveProjectResultDto` and never mutates a native project target.
-- Project reads return `ProjectDto` after a fresh native scan. Dashboard reads return
-  `DashboardSummaryDto`; explicit all-skip completion uses an idempotent
-  `complete_onboarding` central-state command.
+- Project reads return `ProjectDto` after a fresh native scan, including
+  `nativeResources` counts (`active` / `disabled` / `missing` / `conflict`). List and
+  register responses carry that summary only; the item list is
+  `list_project_native_resources`. Dashboard reads return `DashboardSummaryDto`;
+  explicit all-skip completion uses an idempotent `complete_onboarding` central-state
+  command.
 - Snapshot UI first calls `preview_snapshot_restore`, then consumes its exact preview
   through `restore_snapshot`.
 
@@ -728,7 +740,10 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
   native target type/content, managed-item hashes, and external same-name collisions.
   They never substitute persisted `last_status` for native evidence.
 - Project removal is CAS-protected, is blocked by any `applying`, `restoring`, or
-  `rollback_failed` run, removes only central assignment intent, and leaves native
+  `rollback_failed` run, and is also blocked while the project has
+  `project_native_resources` in `disabled` or `conflict` (`count_blocking_native_resources`).
+  Removal returns `CONFLICT` with field `projectNativeResource` until those rows are
+  restored. It still removes only central assignment intent and leaves native
   files/links untouched.
 - Project assignment updates bump the project row version. Every frontend consumer of
   project, MCP, and Skill project DTOs must refresh together after either assignment.
@@ -767,6 +782,7 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
 | Re-register a soft-removed canonical root | Reactivate the same identity and rescan current native state |
 | Stale project `row_version` | `CONFLICT`; preserve project, assignments, and native targets |
 | Any active Apply/Restore/rollback-recovery run during removal | `WRITE_IN_PROGRESS`; remove nothing |
+| Project has `disabled` or `conflict` native resources during removal | `CONFLICT` (`projectNativeResource`); remove nothing; keep snapshots |
 | Native external same-name entry or managed-item drift | Distinct conflict/drift target status; never reuse cached success |
 | Unknown recent-run kind/status/error value | Fail closed while building the typed dashboard DTO |
 | All tools explicitly skipped in onboarding | Persist completion; create no profile, preview, or native write |
@@ -788,8 +804,9 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
 - Use explicit canonical `tempfile` home, Claude root, Codex root, project root, and
   application-data root. Never read process tool environment or a developer config.
 - Cover symlink aliases, `NOCASE` duplicates, soft reactivation, stale removal CAS,
-  active-writer removal blocking, native preservation, live managed drift, and
-  external same-name conflict before the first preview.
+  active-writer removal blocking, disabled-native-resource removal blocking, native
+  preservation, live managed drift, and external same-name conflict before the first
+  preview.
 - Cover the neutral `PROJECT_TARGET_INITIAL_UNMANAGED` diagnostic for an observed
   external-only project target with global inheritance and no baseline, and its muted
   frontend rendering without the raw diagnostic line.
@@ -1017,13 +1034,19 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 - Input is `snapshot_ids: Vec<String>` (deduped in place); empty input is a
   no-op returning empty results, not an error. Single delete, multi-select
   delete, and delete-all share this one command.
-- Per-item flow: pre-check (existence, active-run blocker, storage-path
-  validation) for the WHOLE batch BEFORE any file removal, then
-  `fs::remove_file` (a missing file counts as already deleted and succeeds),
-  then ONE `IMMEDIATE` transaction deleting the rows whose files were removed.
+- Per-item flow: pre-check (existence, active-run blocker, native-resource
+  snapshot reference, storage-path validation) for the WHOLE batch BEFORE any
+  file removal, then `fs::remove_file` (a missing file counts as already deleted
+  and succeeds), then ONE `IMMEDIATE` transaction deleting the rows whose files
+  were removed.
 - Active-run blocker: a snapshot whose `run_id` has status
   `applying` / `restoring` / `rollback_failed` must be refused; those journals
   reference the snapshot for crash recovery.
+- Native-resource blocker: `db::native_resources::snapshot_is_referenced` must
+  run on this shared `delete_snapshots` path (and any later retention/cleanup
+  entry). A `disabled_snapshot_id` reference is `CONFLICT`; do not add a second
+  deletion API that skips the guard. SQLite `ON DELETE RESTRICT` is backup, not
+  the product error.
 - Deletion order is file-first, DB-second. A DB commit failure after file
   removal leaves rows pointing at missing files, which fail closed on restore
   (mirrored risk of create's file-first/insert-second); never invert the order
@@ -1038,6 +1061,8 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 
 - Unknown id (or empty batch entry) -> per-item `NOT_FOUND`.
 - Snapshot's run status in `applying`/`restoring`/`rollback_failed` ->
+  per-item `CONFLICT`; file and row untouched.
+- Snapshot referenced by `project_native_resources.disabled_snapshot_id` ->
   per-item `CONFLICT`; file and row untouched.
 - `snapshot_path` mismatching `<snapshots_root>/<run_id>/<snapshot_id>.snapshot`
   or parent canonicalizing outside the snapshots root -> per-item `CONFLICT`;
@@ -1061,6 +1086,8 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
   deleted.
 - All three active statuses reject (file + row preserved) while an unaffected
   item in the same batch still deletes.
+- A snapshot still referenced by a disabled native resource is refused; after
+  restore the same id may follow ordinary historical-snapshot deletion.
 - Unknown id in a mixed batch is `NOT_FOUND` without blocking the others.
 - Impersonated storage path is refused and the real file survives.
 - Duplicate ids delete once; empty input is a no-op.
@@ -1087,4 +1114,143 @@ for id in ids {
 let plan = plan_deletions(database, paths, &ids)?; // per-item pre-checks
 remove_files(&plan)?;                              // per-item results
 delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
+```
+
+## Scenario: Project-native resource observation, disable, and restore
+
+### 1. Scope / Trigger
+
+- Trigger: project registration/rescan/get DTOs, `project_native_resources`,
+  native disable/restore preview/apply, MCP selector mutation, Skill entry
+  removal/restore without central takeover, Prompt whole-file disable, snapshot
+  reference protection, or project-detail native UI.
+
+### 2. Signatures
+
+- `list_project_native_resources(ProjectNativeResourceQueryInput { projectId, tool, artifactKind }) -> Vec<ProjectNativeResourceDto>`
+- `preview_project_native_resource_action(PreviewProjectNativeResourceActionInput { resourceId, rowVersion, action }) -> PreviewPlan`
+- `apply_project_native_resource_preview(ApplyProjectNativeResourcePreviewInput { previewId }) -> ApplyResult`
+- Persistence: `db/native_resources.rs` (`insert_project_target_identity`,
+  `upsert_observed_active`, `snapshot_is_referenced`,
+  `count_blocking_native_resources`) and `projects/native_resources.rs`.
+  Commands live in `commands/projects.rs`.
+- `ProjectNativeResourceDto.safeSummary` is `{ kind: "mcp" }` for MCP,
+  `{ entryType }` for Skill, `{ kind: "prompt" }` for Prompt. It never carries
+  command, args, env, headers, URL, or raw config.
+- Migration `0012_project_native_resources.sql` only. Do not rewrite historical
+  migrations.
+
+### 3. Contracts
+
+- Three identities stay distinct:
+  1. central resource + assignment = what the app wants to sync;
+  2. `managed_items` + filled baselines = proven ownership;
+  3. `project_native_resources` = observation and recoverable disable state.
+- `insert_project_target_identity` may create a `managed_targets` row with empty
+  `baseline_*` and no `managed_items`. That row is not ownership. Ordinary
+  `preview_mcp_sync` / Skill / Prompt Apply with no assignment must still produce
+  zero targets and must not create an empty project file.
+- Register/get/rescan reuse adapter `discover` + `scan_target`. Classification:
+  matching managed item hash → central-owned (hidden from operable native list);
+  managed key with drifted hash → central drift (not a native disable target);
+  no ownership evidence → project-native. Cursor project Prompt stays unsupported
+  and pathless.
+- Reconciliation: new native keys upsert `active`; vanished `active` rows become
+  `missing` (no snapshot, unrestorable); `disabled` stays disabled while the
+  snapshot is valid and the key is absent; a disabled key that reappears becomes
+  `conflict` and keeps the snapshot until a later scan proves the occupancy is
+  gone.
+- Native writes reuse `sync` writer, `claim_preview`, journal, snapshot, and
+  `finish_failed_apply`. Success updates native state via
+  `apply_native_resource_changes` and must not fill ownership baselines or create
+  `managed_items`. `ApplyTargetInput.central_skills_root` is `None`.
+- MCP disable: whole-file snapshot, delete one selector, preserve unknown
+  siblings and TOML comments outside the target. Restore merges the selector
+  from the private snapshot; same-name occupancy is `CONFLICT`. Restore
+  projections must call `register_native_projection_secrets` even when the
+  current scan no longer contains that selector.
+- Skill disable: directory uses `directory_tree` + full digest; external symlink
+  stores link text and no-follow identity, then removes only the entry. Restore
+  uses a same-parent temp entry and exclusive rename. Occupancy keeps the
+  snapshot. Observed Skill hash is `inspect_skill_takeover_entry` content hash
+  (directory) or fingerprint (symlink), not a type/link-target-only hash.
+- Prompt disable: Claude `CLAUDE.md` and Codex `AGENTS.md` exact descriptors
+  only. Snapshot as `payload_file`, remove the file, restore original bytes and
+  Unix mode onto an empty path.
+- Rollback of a native Skill mutation must restore an external symlink without
+  `central_root` (`restore_external_symlink_without_central`). If restore created
+  an empty parent directory, rollback may `remove_dir` that empty directory.
+  Requiring a central library path here turns `FailAfterTarget` into
+  `rollback_failed` after the entry is already gone.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Preview input includes path, hash, selector, or raw config | Reject at type boundary; only `resourceId` + `rowVersion` + `action` |
+| `active` + `restore`, or `disabled` + `disable` | `INVALID_INPUT` |
+| `missing` or `conflict` + any action | `CONFLICT` |
+| Central-owned or central-drift item presented as native disable | `NOT_FOUND` / `CONFLICT`; no native write |
+| Apply when `sync_runs.status != "previewed"` | `PREVIEW_ALREADY_CONSUMED` **before** the action matrix |
+| Stale resource/target `row_version` or target identity change | `STALE_PREVIEW` / `CONFLICT`; no overwrite |
+| Restore path/selector occupied | `CONFLICT`; keep private snapshot |
+| Active writer or `rollback_failed` | `WRITE_IN_PROGRESS` |
+| MCP restore preview JSON / DTO / journal contains fixture secret | Fail the audit; register restore-projection secrets |
+| Disabled/conflict rows while deleting a referenced snapshot | per-item `CONFLICT` from `delete_snapshots` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: register a fixture project, list native MCP/Skill/Prompt items, persist a
+  disable preview, confirm Apply, rescan still shows `disabled` with restore,
+  then restore siblings/tree/bytes without rewriting unrelated entries.
+- Base: register/rescan never writes project files. `applyMode: "direct"` still
+  only creates a persisted preview; Apply waits for explicit confirm.
+- Bad: auto-import to the central library, treat empty-baseline identity as
+  ownership, auto-Apply native actions, leak MCP secrets into `safeSummary`,
+  skip `snapshot_is_referenced` in a new cleanup path, or require `central_root`
+  to roll back a native symlink disable.
+
+### 6. Tests Required
+
+- Registration discovers items without rewriting bytes, trees, or symlink text.
+  Cursor project Prompt is absent; Claude/Codex Prompt are present.
+- Empty-baseline identity: after register, `preview_mcp_sync` with no assignment
+  has zero targets and does not create `.mcp.json`.
+- MCP selector-only disable/restore; unknown siblings and out-of-target TOML
+  comments preserved; restore preview JSON has zero fixture-secret matches.
+- Skill Claude/Codex/Cursor directory and external-symlink disable/restore;
+  occupancy keeps the snapshot; content-hash CAS sees directory edits.
+- Prompt Claude/Codex exact bytes and mode; Cursor Prompt unsupported.
+- Consumed preview, active writer, occupancy, and action-matrix rejects.
+- Native Apply fault: MCP `CrashBeforeTarget` keeps bytes and blocks the writer;
+  Skill symlink/directory `FailAfterTarget` with `central_root = None` rolls back.
+- `soft_remove_project` and `delete_snapshots` refuse while a disabled native
+  resource references the snapshot.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+apply_persisted_preview(..., &[ApplyTargetInput {
+    central_skills_root: Some(paths.central_skills_root()),
+    managed_items: inferred_ownership,
+    project_native_action: None,
+    ..
+}])?;
+```
+
+#### Correct
+
+```rust
+let apply_input = ApplyTargetInput {
+    central_skills_root: None,
+    managed_items: Vec::new(),
+    project_native_action: Some(evidence),
+    ..
+};
+if run_status != "previewed" {
+    return Err(AppError::preview_already_consumed(&preview_id, &run_status));
+}
+validate_action_matrix(state, action)?;
 ```

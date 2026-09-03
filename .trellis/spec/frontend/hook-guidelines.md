@@ -65,7 +65,9 @@ element; keep that logic and its boundary checks when changing the hook.
   become `ProfileRpcError` or the domain-equivalent structured error.
 - Pages call `useQuery`/`useMutation` and invalidate every affected key after a
   mutation. Cross-domain mutations invalidate all domains whose row versions or
-  inheritance changed.
+  inheritance changed. Project-native Apply invalidates `projectKeys.detail`,
+  `projectKeys.nativeResources(...)`, MCP, Skill, Prompt, and recovery families
+  together.
 - The application owns one stable `QueryClient` in `AppProviders`; it is created
   lazily with `useState` and is not recreated on render.
 
@@ -75,7 +77,8 @@ element; keep that logic and its boundary checks when changing the hook.
 
 - Hook functions start with `use`; hook files use `use-<behavior>.ts`.
 - Query option factories describe the resource, for example
-  `providerProfilesQueryOptions`, rather than pretending to be custom hooks.
+  `providerProfilesQueryOptions` and `projectNativeResourcesQueryOptions`, rather than
+  pretending to be custom hooks.
 - Event handlers returned by a hook use the event name, such as `onKeyDown`.
 
 ---

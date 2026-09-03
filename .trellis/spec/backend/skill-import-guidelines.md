@@ -92,6 +92,12 @@ hash、入口类型、no-follow 身份指纹、中央 Skill ID/path/hash 都写�
 before 投影中的每个被替换名称都有精确接管证据，desired 对应中央路径，其他未知兄弟
 完全不变。预览必须带 `SKILL_TAKEOVER_REQUIRES_CONFIRMATION` 警告。
 
+项目原生 Skill 禁用/恢复复用同一套完整树 digest、no-follow 身份和 `sync` Apply，但
+`central_skills_root` 为 `None`。回滚外部 symlink 入口必须走
+`restore_external_symlink_without_central`，不能因为缺少中央库路径把
+`FailAfterTarget` 升级成 `rollback_failed`。项目原生禁用不是接管，不得放宽普通
+Apply 的 ownership 规则。
+
 Apply 必须同时匹配持久化证据和服务端重新准备的 intent，并在快照前、隔离 rename 前、
 安装中央链接前重复校验入口身份和树 hash。外部链接只移动链接本身，永不修改或删除其
 目标；真实目录先写入私有完整目录树快照，再同目录隔离并原子换成中央链接。普通 Skills

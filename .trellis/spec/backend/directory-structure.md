@@ -27,6 +27,7 @@ src-tauri/
 │   ├── db/
 │   │   ├── migrations/         # Ordered embedded SQLite migrations
 │   │   ├── mcp.rs
+│   │   ├── native_resources.rs # Project-native observation CAS and snapshot guards
 │   │   ├── profiles.rs
 │   │   ├── projects.rs
 │   │   └── skills.rs
@@ -35,7 +36,7 @@ src-tauri/
 │   ├── git/                     # Read-only Git inspection
 │   ├── mcp/                     # MCP central intent and synchronization
 │   ├── profiles/                # Provider/prompt profile services
-│   ├── projects/                # Project registration and scanning
+│   ├── projects/                # Project registration, scanning, native resources
 │   ├── security/                # Redaction and path safety
 │   ├── skills/                  # Skill import and synchronization
 │   ├── sync/                    # Preview, apply, snapshot and recovery engine
@@ -96,7 +97,7 @@ src-tauri/
 
 - `src-tauri/src/db/mod.rs` owns connection setup and the ordered embedded
   migration list. Entity-specific persistence is split into `db/mcp.rs`,
-  `db/profiles.rs`, `db/projects.rs`, and `db/skills.rs`.
+  `db/native_resources.rs`, `db/profiles.rs`, `db/projects.rs`, and `db/skills.rs`.
 - `src-tauri/src/sync/` is the reference for a cross-cutting module with pure
   preview computation, durable apply, snapshots, journals, and recovery tests.
 - `src-tauri/tests/command_smoke.rs`, `bindings.rs`, and `phase8_e2e.rs`

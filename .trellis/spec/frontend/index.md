@@ -20,7 +20,7 @@ helpers and keep native writes behind persisted preview flows.
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Current |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Current |
 | [State Management](./state-management.md) | Local state, global state, server state | Current |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Current |
+| [Quality Guidelines](./quality-guidelines.md) | Preview dialogs, direct-apply exceptions, project-native resources | Current |
 | [Native MCP Import](../backend/mcp-import-guidelines.md) | Generated import DTOs, selection, query lifecycle and no implicit Apply | Current |
 | [全局 Skills 导入](../backend/skill-import-guidelines.md) | 生成 DTO、检测选择、请求隔离、复制不接管与首次状态展示 | Current |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Current |

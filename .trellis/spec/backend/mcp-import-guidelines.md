@@ -51,6 +51,9 @@ enter the central library only after an explicit selection and confirmation.
   `mcpServers` object 显式导入。支持 stdio（`command`/`args`/`env`）与 HTTP
   （`url`/`headers`）；`headers`、`env`、`auth` 及嵌套凭据必须登记脱敏，不能
   落入普通 extensions、预览、错误、日志或快照索引明文。
+- 项目原生 MCP 恢复预览同样必须脱敏：desired 来自私有快照，当前 `scan_target`
+  往往已不含该 selector。对恢复投影调用 `register_native_projection_secrets`，
+  不能只登记当前扫描里仍存在的条目。
 - Disabled entries, SSE, `env_http_headers`, mixed transports, and unsafe ordinary
   fields remain unselectable and unmanaged. Do not relax central validation.
   Central `enabled=false` removes an item from the desired set: adopting a native

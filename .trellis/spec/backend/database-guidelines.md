@@ -82,6 +82,12 @@ CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
   Cursor 的任意其他 artifact 组合必须继续由表级 CHECK 拒绝。执行
   `writable_schema` 文本改写前，运行时代码必须验证每张目标表的精确旧锚点；
   缺失或重复锚点应让迁移事务失败，不能静默推进版本。
+- 0012 只新增 `project_native_resources`、索引、row-version trigger，以及对
+  `snapshots.id` UPDATE 的交叉 RESTRICT。不要改写历史 migration 文本。
+  `managed_targets` 在这里只是规范化目标身份：允许插入空 `baseline_*` 且无
+  `managed_items` 的行；那不是 ownership。`disabled`/`conflict` 必须带
+  `disabled_snapshot_id`；`ON DELETE RESTRICT` 是备份，产品删除入口仍须走
+  `snapshot_is_referenced`。
 - 当列的语义整体作废而表无法重建时（0009：`prompt_profiles` 被以
   RESTRICT 外键引用），保留旧列 + `ALTER TABLE ADD COLUMN` 新语义列是
   首选：每工具启用位 `is_active_claude`/`is_active_codex` + 各自部分唯一
@@ -131,9 +137,10 @@ CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
 - Private directories are `0700`; the database, WAL/SHM, backup, journal, and
   snapshot files are `0600`.
 - The schema contains provider/prompt/MCP/skill/project entities, four explicit
-  assignment tables, managed targets/items, sync runs/items, snapshots, and the
-  `app_settings` key-value table for singleton user preferences (no
-  `row_version`; unknown stored enum values fail closed with `DATABASE_ERROR`).
+  assignment tables, managed targets/items, `project_native_resources`, sync
+  runs/items, snapshots, and the `app_settings` key-value table for singleton
+  user preferences (no `row_version`; unknown stored enum values fail closed
+  with `DATABASE_ERROR`).
 - Every stored JSON value validates its expected top-level shape. Every stored
   hash is lowercase SHA-256. Global inheritance is not represented by duplicate
   project assignments.
@@ -179,4 +186,91 @@ Connection::open(format!("{path}/Library/Application Support/app.sqlite"))?;
 ```rust
 let paths = AppPaths::from_data_root(explicit_isolated_root)?;
 let database = Database::open(&paths)?;
+```
+
+## Scenario: `project_native_resources` identity and snapshot guards
+
+### 1. Scope / Trigger
+
+- Trigger: any change to migration `0012_project_native_resources.sql`,
+  `db/native_resources.rs`, native-resource CAS, target-identity upsert, snapshot
+  FK/RESTRICT, `soft_remove_project`, or `delete_snapshots` reference checks.
+
+### 2. Signatures
+
+- Table `project_native_resources`: UUID `id`, `target_id` → `managed_targets(id)`
+  `ON DELETE CASCADE`, `external_key`, `entry_type` in
+  `mcp_entry|directory|symlink|prompt_file`, `state` in
+  `active|disabled|missing|conflict`, optional SHA-256 `observed_item_hash`,
+  `disabled_snapshot_id` → `snapshots(id)` `ON DELETE RESTRICT`, `disabled_at`,
+  timestamps, `row_version`. Unique `(target_id, external_key)`.
+- `insert_project_target_identity(...)` inserts only
+  `id, tool, artifact_kind, scope='project', project_id, target_path` when no
+  row exists; baselines stay NULL.
+- `snapshot_is_referenced(connection, snapshot_id, database_path) -> bool`
+- `count_blocking_native_resources(tx, project_id, database_path) -> u32`
+  counts `disabled` + `conflict` for that project.
+- Compiled schema version is `12` (`src-tauri/src/app/mod.rs` assertion).
+
+### 3. Contracts
+
+- CHECK: `active`/`missing` must have NULL snapshot and `disabled_at`;
+  `disabled`/`conflict` must have both. Row-version triggers follow the shared
+  decrease-abort / same-version bump pattern.
+- `trg_snapshots_reject_native_resource_id_update` refuses `UPDATE snapshots SET id`
+  while a native row references the old id.
+- Identity upsert does not write `baseline_full_hash`, `baseline_managed_hash`,
+  `baseline_projection_json`, or `managed_items`.
+- Product deletion of snapshots still goes through `delete_snapshots` +
+  `snapshot_is_referenced`. Project removal calls
+  `count_blocking_native_resources` inside the same IMMEDIATE transaction as
+  assignment deletes.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| `disabled` row without snapshot | SQLite CHECK abort |
+| Delete snapshot row still referenced | SQLite RESTRICT plus command-level `CONFLICT` |
+| Decrease `row_version` | `ROW_VERSION_MUST_INCREASE` |
+| Remove project while native `disabled`/`conflict` > 0 | domain `CONFLICT`; transaction rolls back |
+| Reopen after 0012 | idempotent; schema version stays 12 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: upgrade an old database, first scan lazily inserts `active` observation
+  rows, no project files are read during the migration itself.
+- Base: empty-baseline identity row exists after register; ordinary Apply still
+  has no target.
+- Bad: rebuild `managed_targets` to add the native table; delete snapshots only
+  via a new repository helper that skips `delete_snapshots`.
+
+### 6. Tests Required
+
+- Old-database upgrade, idempotent reopen, CHECK/unique/CAS failures.
+- Empty identity is not treated as ownership and does not create project files.
+- Referenced snapshot survives `delete_snapshots`; `soft_remove_project` refuses
+  while disabled/conflict rows exist.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+-- 改历史 migration 或在新 API 里单独删 snapshots，绕过 delete_snapshots。
+DROP TABLE snapshots;
+```
+
+#### Correct
+
+```sql
+-- 0012: 新表 + RESTRICT。删除入口仍调用 snapshot_is_referenced。
+CREATE TABLE project_native_resources (
+    ...
+    disabled_snapshot_id TEXT REFERENCES snapshots(id) ON DELETE RESTRICT,
+    CHECK (
+        (state IN ('active', 'missing') AND disabled_snapshot_id IS NULL)
+        OR (state IN ('disabled', 'conflict') AND disabled_snapshot_id IS NOT NULL)
+    )
+);
 ```

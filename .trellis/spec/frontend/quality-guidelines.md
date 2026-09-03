@@ -9,6 +9,8 @@
 Feature pages consume generated Tauri commands through typed API helpers. Native
 configuration writes are always represented by a persisted preview and confirmed in
 the shared change dialog, unless the user opted into the direct-apply mode below.
+Skill takeover preparation and project-native disable/restore are hard exceptions:
+they always open `ChangePreviewDialog` and never auto-Apply.
 
 ## Forbidden Patterns
 
@@ -17,6 +19,8 @@ the shared change dialog, unless the user opted into the direct-apply mode below
 - Rendering API keys, bearer tokens, native secret extensions, or unredacted diffs.
 - Applying a Provider/Prompt change from a CRUD success handler without a persisted
   preview dialog.
+- Auto-applying a project-native disable/restore preview because `applyMode` is
+  `"direct"`.
 - Collapsing loading, empty, RPC error, policy-blocked, override, and conflict states
   into one generic message.
 
@@ -365,14 +369,18 @@ const adopted = unwrapResult(
 
 ### 1. Scope / Trigger
 
-- Trigger: project list/detail, project MCP/Skill assignment, dashboard cards/history,
-  first-run takeover, status badges, blocking states, or snapshot restore UI changes.
+- Trigger: project list/detail, project MCP/Skill assignment, project-native
+  resource disable/restore, dashboard cards/history, first-run takeover, status
+  badges, blocking states, or snapshot restore UI changes.
 
 ### 2. Signatures
 
 - Project CRUD uses generated `RegisterProjectInput`, `VersionedProjectInput`,
   `ProjectDto`, and `RemoveProjectResultDto`; assignment calls send the complete
   generated MCP/Skill input including project/tool/item IDs and both row versions.
+  Native resource list/preview/apply uses `ProjectNativeResourceQueryInput`,
+  `PreviewProjectNativeResourceActionInput` (`resourceId`, `rowVersion`, `action`
+  only), and `ApplyProjectNativeResourcePreviewInput` (`previewId` only).
 - Onboarding consumes generated discovery/import/profile/preview/apply commands.
   Snapshot recovery uses `SnapshotRestoreInput`, `RestorePreview`, and
   `ApplySnapshotRestoreInput` without reconstructing a restore payload locally.
@@ -383,15 +391,27 @@ const adopted = unwrapResult(
 
 - Project pages consume generated `ProjectDto` and option DTOs. Global inheritance is
   checked and read-only; there is no project-level global-disable mutation.
-- `ProjectDetailPage` is the single UI owner for project MCP/Skill assignment. It uses
-  independent local resource (`"mcp" | "skill"`) and tool
-  (`"claude" | "codex" | "cursor"`)
-  view state, defaults to MCP + Claude, and exposes both switches as accessible
-  pressed-button groups. Claude/Codex/Cursor selection uses the bundled brand
-  assets with an accessible button name, `title`, and `aria-pressed`; the decorative
-  image stays hidden from assistive technology. Mount only the active tool/resource
-  assignment view and key that subtree by project, tool, and resource so unsubmitted
-  child state cannot leak across combinations.
+- `ProjectDetailPage` is the single UI owner for project MCP/Skill assignment **and**
+  project-native resources. It uses independent local resource
+  (`"mcp" | "skill"`) and tool (`"claude" | "codex" | "cursor"`) view state, defaults
+  to MCP + Claude, and exposes both switches as accessible pressed-button groups.
+  Claude/Codex/Cursor selection uses the bundled brand assets with an accessible button
+  name, `title`, and `aria-pressed`; the decorative image stays hidden from assistive
+  technology. Mount only the active tool/resource assignment view and key that subtree
+  by project, tool, and resource so unsubmitted child state cannot leak across
+  combinations. Inside the active combination, render a "项目原生资源" heading
+  **above** "中央追加". Cursor Prompt has no native list. Native `safeSummary` and
+  diagnostics never render MCP secrets.
+- Native disable/restore always call `previewProjectNativeResourceAction` then open
+  `ChangePreviewDialog`. `applyMode: "direct"` must not call
+  `applyProjectNativeResourcePreview` until the user confirms. Success invalidates
+  `projectKeys.detail`, `projectKeys.nativeResources(project, tool, artifactKind)`,
+  MCP, Skill, Prompt, and recovery query families together.
+- `active` shows disable; `disabled` shows restore and `disabledAt`; `missing` is
+  unrestorable; `conflict` keeps restore materials but blocks the write. An active
+  writer or `rollback_failed` is a page-level block, not a per-item conflict.
+- Project cards/register feedback render `ProjectDto.nativeResources` counts. Remove
+  is disabled while `disabled + conflict > 0`.
 - Changing either project-detail view axis clears the open preview, operation message,
   and Apply observer state. A mutation that completes after its assignment subtree was
   unmounted may still invalidate server queries, but it must not reopen a preview or
@@ -437,6 +457,10 @@ const adopted = unwrapResult(
 | Inherited MCP/Skill option | Checked/read-only text; no project mutation path |
 | Policy/trust/parse/permission/drift/external-name block | Distinct text/code and `BlockingState`; never imply synchronized |
 | Assignment success | Invalidate project, MCP, and Skill key families together |
+| Native disable/restore preview | Open `ChangePreviewDialog`; zero Apply calls until confirm, including `applyMode: "direct"` |
+| Native Apply success | Invalidate project, native-resources, MCP, Skill, Prompt, and recovery keys |
+| Project has disabled/conflict native resources | Disable remove; show an actionable restore hint |
+| Active writer / `rollback_failed` on project detail | Global block; do not present native restore as writable |
 | Project resource/tool view switch | Update both groups' `aria-pressed`; show/query only the active tool/resource combination; reset transient state |
 | Mutation completes after a project view switch | Invalidate affected server queries when required; ignore stale preview/message/dialog UI effects |
 | Tool onboarding choice omitted | Keep preview disabled until choose import/manage or explicit skip |
@@ -467,6 +491,9 @@ const adopted = unwrapResult(
   Claude/Codex/Cursor switches update `aria-pressed`; only the active combination query runs;
   and remounting a combination resets unsubmitted preview-only state such as the local
   Git-exclude checkbox.
+- Assert the native-resources heading appears above 中央追加; disable/restore with
+  `applyMode: "direct"` opens `ChangePreviewDialog` and does not call Apply until
+  confirm; MCP fixture secrets never appear in rendered native copy.
 - Resolve deferred preview, assignment, and Apply mutations after switching combinations
   and assert they cannot reopen a stale dialog, close the current dialog, or write the
   inactive combination's message. Keep the exact current tool in preview/Apply payload
@@ -542,6 +569,9 @@ projectAssignmentMutation.mutate(input);
   `prepareSkillTakeover` always opens `ChangePreviewDialog`, even when direct mode is
   enabled and `canAutoApplyPreview(plan)` is true. This exception applies only to the
   takeover preparation path; ordinary Skills sync retains normal direct-mode behavior.
+- Project-native disable/restore is the same class of exception: preview from
+  `previewProjectNativeResourceAction` always opens `ChangePreviewDialog`. Direct mode
+  must not auto-call `applyProjectNativeResourcePreview`.
 - Warnings never block auto-apply (same as the dialog). An empty target list
   keeps the existing no-op message and must not apply.
 - Settings are backend-owned server state: derive `directApply` from the query,
@@ -580,6 +610,8 @@ projectAssignmentMutation.mutate(input);
   payload and the auto-applied preview ID.
 - A clean takeover plan under direct mode opens the dialog and asserts zero Apply calls
   until the user explicitly confirms it.
+- A clean project-native disable/restore plan under direct mode opens the dialog and
+  asserts zero `applyProjectNativeResourcePreview` calls until confirm.
 - Settings page: toggle persists both directions and surfaces read failures
   without rendering the toggle.
 - Shared-notification fake-timer tests cover 3,000 ms expiry, replacement, and

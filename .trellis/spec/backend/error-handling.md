@@ -51,6 +51,9 @@ Regenerate and check `src/bindings/commands.ts` whenever this contract changes.
   MCP 普通字段使用 `contains_secret`，具体拒绝原因仅含固定 field/reason，不能包含原生值。
 - Do not catch an `AppError` and return an ordinary success value. Preserve its
   stable code, recovery metadata, and redacted details through the RPC boundary.
+- For project-native Apply, inspect `sync_runs.status == "previewed"` **before** the
+  disable/restore action matrix. A consumed disable preview would otherwise fail
+  `Disabled+Disable` as `INVALID_INPUT` instead of `PREVIEW_ALREADY_CONSUMED`.
 
 ## Construction Example
 
