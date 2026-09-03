@@ -8,6 +8,8 @@ import {
   type McpProjectOptionDto,
   type PreviewPlan,
   type ProjectDto,
+  type ProjectNativeResourceAction,
+  type ProjectNativeResourceDto,
   type SkillProjectOptionDto,
   type Tool,
 } from "@/bindings/commands";
@@ -23,8 +25,13 @@ import {
   promptProjectAssignmentQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
-import { projectKeys, projectQueryOptions } from "@/lib/projects-api";
+import {
+  projectKeys,
+  projectNativeResourcesQueryOptions,
+  projectQueryOptions,
+} from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
+import { interruptedRunQueryOptions, syncKeys } from "@/lib/sync-api";
 import { MCP_TOOLS, toolMetadata } from "@/lib/tool-metadata";
 import {
   appSettingsQueryOptions,
@@ -36,6 +43,7 @@ interface OpenProjectPreview {
   plan: PreviewPlan;
   tool: Tool;
   artifactKind: ArtifactKind;
+  source: "assignment" | "native";
 }
 
 type ProjectResourceView = "mcp" | "skill" | "prompt";
@@ -45,6 +53,8 @@ export function ProjectDetailPage() {
   const queryClient = useQueryClient();
   const projectQuery = useQuery(projectQueryOptions(projectId));
   const settingsQuery = useQuery(appSettingsQueryOptions());
+  const interruptedQuery = useQuery(interruptedRunQueryOptions());
+  const writerBlocked = interruptedQuery.data != null;
   const directApply = settingsQuery.data?.applyMode === "direct";
   const [resourceView, setResourceView] = useState<ProjectResourceView>("mcp");
   const [toolView, setToolView] = useState<Tool>("claude");
@@ -55,6 +65,13 @@ export function ProjectDetailPage() {
   const [message, setMessage] = useState<string | null>(null);
   const applyMutation = useMutation({
     mutationFn: async (preview: OpenProjectPreview) => {
+      if (preview.source === "native") {
+        return unwrapResult(
+          await commands.applyProjectNativeResourcePreview({
+            previewId: preview.plan.previewId,
+          }),
+        );
+      }
       if (preview.artifactKind === "mcp") {
         return unwrapResult(
           await commands.applyMcpPreview({
@@ -88,6 +105,7 @@ export function ProjectDetailPage() {
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
         queryClient.invalidateQueries({ queryKey: profileKeys.all }),
+        queryClient.invalidateQueries({ queryKey: syncKeys.all }),
       ]);
     },
   });
@@ -130,7 +148,7 @@ export function ProjectDetailPage() {
   ) => {
     if (directApply && canAutoApplyPreview(plan)) {
       applyMutation.mutate(
-        { plan, tool, artifactKind },
+        { plan, tool, artifactKind, source: "assignment" },
         {
           onSuccess: () => {
             setMessage("项目原生配置已通过持久化预览应用并完成写后验证。");
@@ -139,7 +157,14 @@ export function ProjectDetailPage() {
       );
       return;
     }
-    setOpenPreview({ plan, tool, artifactKind });
+    setOpenPreview({ plan, tool, artifactKind, source: "assignment" });
+  };
+  const handleNativePreview = (
+    plan: PreviewPlan,
+    tool: Tool,
+    artifactKind: ArtifactKind,
+  ) => {
+    setOpenPreview({ plan, tool, artifactKind, source: "native" });
   };
   const changeToolView = (nextTool: Tool) => {
     if (nextTool === toolView) return;
@@ -341,6 +366,21 @@ export function ProjectDetailPage() {
 
       <div className="mx-auto mt-6 max-w-6xl">
         <section key={viewKey} className="space-y-5">
+          {writerBlocked ? (
+            <BlockingState
+              title="存在未完成的写入或回滚失败"
+              description="当前有 applying、restoring 或 rollback_failed 的同步运行。项目原生资源禁用与恢复已被全局阻断，请先处理恢复计划。"
+              code={interruptedQuery.data?.status ?? "WRITE_IN_PROGRESS"}
+            />
+          ) : null}
+          <ProjectNativeResources
+            project={project}
+            tool={toolView}
+            artifactKind={resourceView}
+            writerBlocked={writerBlocked}
+            applyPending={applyMutation.isPending}
+            onPreview={handleNativePreview}
+          />
           <h2 className="text-xl font-semibold">
             {toolLabel(toolView)}{" "}
             {resourceView === "mcp"
@@ -390,12 +430,10 @@ export function ProjectDetailPage() {
         artifactKind={openPreview?.artifactKind ?? "mcp"}
         applying={applyMutation.isPending}
         readopting={readoptMutation.isPending}
-        onReadopt={() => {
-          if (openPreview) {
-            readoptMutation.mutate(openPreview);
-          }
+        onClose={() => {
+          if (applyMutation.isPending) return;
+          setOpenPreview(null);
         }}
-        onClose={() => setOpenPreview(null)}
         onApply={() => {
           if (!openPreview) return;
           applyMutation.mutate(openPreview, {
@@ -405,6 +443,15 @@ export function ProjectDetailPage() {
             },
           });
         }}
+        {...(openPreview?.source === "assignment"
+          ? {
+              onReadopt: () => {
+                if (openPreview) {
+                  readoptMutation.mutate(openPreview);
+                }
+              },
+            }
+          : {})}
       />
     </main>
   );
@@ -460,6 +507,236 @@ function ProjectToolViewButton({
       />
     </Button>
   );
+}
+
+function ProjectNativeResources({
+  project,
+  tool,
+  artifactKind,
+  writerBlocked,
+  applyPending,
+  onPreview,
+}: {
+  project: ProjectDto;
+  tool: Tool;
+  artifactKind: ProjectResourceView;
+  writerBlocked: boolean;
+  applyPending: boolean;
+  onPreview: (
+    plan: PreviewPlan,
+    tool: Tool,
+    artifactKind: ArtifactKind,
+  ) => void;
+}) {
+  const nativeQuery = useQuery({
+    ...projectNativeResourcesQueryOptions(project.id, tool, artifactKind),
+    enabled:
+      artifactKind !== "prompt" ||
+      toolMetadata(tool).capabilities.promptProject,
+  });
+  const previewInFlight = useRef(false);
+  const previewMutation = useMutation({
+    mutationFn: async (resource: ProjectNativeResourceDto) => {
+      const action: ProjectNativeResourceAction = resource.canDisable
+        ? "disable"
+        : "restore";
+      return unwrapResult(
+        await commands.previewProjectNativeResourceAction({
+          resourceId: resource.id,
+          rowVersion: resource.rowVersion,
+          action,
+        }),
+      );
+    },
+  });
+
+  const pending = writerBlocked || applyPending || previewMutation.isPending;
+  const queryError = profileErrorText(nativeQuery.error);
+  const previewError = profileErrorText(previewMutation.error);
+
+  const runPreview = (resource: ProjectNativeResourceDto) => {
+    if (pending || previewInFlight.current) return;
+    if (!resource.canDisable && !resource.canRestore) return;
+    previewInFlight.current = true;
+    previewMutation.mutate(resource, {
+      onSuccess: (plan) => {
+        onPreview(plan, tool, artifactKind);
+      },
+      onSettled: () => {
+        previewInFlight.current = false;
+      },
+    });
+  };
+
+  return (
+    <section
+      className="space-y-3"
+      aria-labelledby="project-native-resources-title"
+    >
+      <div>
+        <h2
+          id="project-native-resources-title"
+          className="text-xl font-semibold"
+        >
+          项目原生资源
+        </h2>
+        <p className="text-muted-foreground mt-1 text-sm">
+          只读识别项目自带资源。临时禁用与恢复必须审阅持久化预览，即使已开启直接应用也不会自动写入。
+        </p>
+      </div>
+      {nativeQuery.isPending ? (
+        <p role="status" className="text-sm">
+          正在读取项目原生资源…
+        </p>
+      ) : null}
+      {queryError ? (
+        <BlockingState
+          title="无法读取项目原生资源"
+          description={queryError}
+          actionLabel="重试"
+          onAction={() => void nativeQuery.refetch()}
+        />
+      ) : null}
+      {previewError ? (
+        <BlockingState
+          title="无法生成原生资源预览"
+          description={previewError}
+        />
+      ) : null}
+      {nativeQuery.data?.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-4 text-sm">
+          <p className="font-medium">当前组合没有项目原生资源</p>
+          <p className="text-muted-foreground mt-1">
+            登记与扫描不会改写这些文件。中央追加资源显示在下方。
+          </p>
+        </div>
+      ) : null}
+      <div className="space-y-3">
+        {nativeQuery.data?.map((resource) => (
+          <NativeResourceRow
+            key={resource.id}
+            resource={resource}
+            pending={pending}
+            onAction={() => runPreview(resource)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function NativeResourceRow({
+  resource,
+  pending,
+  onAction,
+}: {
+  resource: ProjectNativeResourceDto;
+  pending: boolean;
+  onAction: () => void;
+}) {
+  const actionLabel = resource.canDisable
+    ? `临时禁用 ${resource.displayName}`
+    : resource.canRestore
+      ? `恢复 ${resource.displayName}`
+      : `${resource.displayName} 当前不可操作`;
+  const actionText = resource.canDisable
+    ? "临时禁用"
+    : resource.canRestore
+      ? "恢复"
+      : "不可操作";
+
+  return (
+    <article className="rounded-lg border p-4 text-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="font-medium">{resource.displayName}</span>
+            <OptionTag tone={nativeStateTone(resource.state)}>
+              {nativeStateLabel(resource.state)}
+            </OptionTag>
+            <OptionTag tone="muted">
+              {entryTypeLabel(resource.entryType)}
+            </OptionTag>
+          </div>
+          <code className="text-muted-foreground block text-xs break-all">
+            {resource.targetPath}
+          </code>
+          {resource.disabledAt ? (
+            <p className="text-muted-foreground text-xs">
+              禁用时间：{resource.disabledAt}
+            </p>
+          ) : null}
+          {resource.diagnosticCodes.map((code) => (
+            <p key={code} className="text-xs">
+              诊断：{code}
+            </p>
+          ))}
+          {resource.state === "missing" ? (
+            <p className="text-muted-foreground text-xs">
+              资源已被外部移除，且没有可恢复的禁用快照。
+            </p>
+          ) : null}
+          {resource.state === "conflict" ? (
+            <p className="text-muted-foreground text-xs">
+              生效位置被重新占用或发生外部变化。恢复材料已保留，请先处理冲突。
+            </p>
+          ) : null}
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0 shadow-none"
+          aria-label={actionLabel}
+          disabled={pending || (!resource.canDisable && !resource.canRestore)}
+          onClick={onAction}
+        >
+          {actionText}
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+function nativeStateLabel(state: ProjectNativeResourceDto["state"]) {
+  switch (state) {
+    case "active":
+      return "项目原生 · 已启用";
+    case "disabled":
+      return "项目原生 · 已禁用";
+    case "missing":
+      return "项目原生 · 已缺失";
+    case "conflict":
+      return "项目原生 · 冲突";
+  }
+}
+
+function nativeStateTone(
+  state: ProjectNativeResourceDto["state"],
+): "muted" | "info" | "success" | "warning" {
+  switch (state) {
+    case "active":
+      return "success";
+    case "disabled":
+      return "info";
+    case "missing":
+      return "muted";
+    case "conflict":
+      return "warning";
+  }
+}
+
+function entryTypeLabel(entryType: ProjectNativeResourceDto["entryType"]) {
+  switch (entryType) {
+    case "mcp_entry":
+      return "MCP 条目";
+    case "directory":
+      return "技能目录";
+    case "symlink":
+      return "符号链接";
+    case "prompt_file":
+      return "提示词文件";
+  }
 }
 
 function ProjectMcpAssignments({

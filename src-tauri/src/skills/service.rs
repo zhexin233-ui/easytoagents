@@ -353,6 +353,7 @@ fn build_prepared_skill_preview(
                 git: target.git,
                 exclude_from_git,
                 skill_takeover_entries,
+                project_native_action: None,
             }]
         })
         .unwrap_or_default();
@@ -426,6 +427,7 @@ pub fn apply_skill_preview_with_policy_probe(
                     .first()
                     .map(|item| item.envelope.skill_takeover_entries.clone())
                     .unwrap_or_default(),
+                project_native_action: None,
             }]
         })
         .unwrap_or_default();

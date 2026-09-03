@@ -17,6 +17,7 @@ use crate::{
 
 pub mod mcp;
 pub(crate) mod mcp_imports;
+pub(crate) mod native_resources;
 pub mod profiles;
 pub mod projects;
 pub(crate) mod skill_imports;
@@ -77,6 +78,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 11,
         name: "snapshot_storage_kind",
         sql: include_str!("migrations/0011_snapshot_storage_kind.sql"),
+    },
+    Migration {
+        version: 12,
+        name: "project_native_resources",
+        sql: include_str!("migrations/0012_project_native_resources.sql"),
     },
 ];
 
@@ -467,7 +473,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 11);
+        assert_eq!(database.schema_version().unwrap(), 12);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -501,6 +507,7 @@ mod tests {
             "mcp_import_previews",
             "skill_import_previews",
             "onboarding_state",
+            "project_native_resources",
         ] {
             assert!(tables.contains(table), "缺少表：{table}");
         }
@@ -1004,7 +1011,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 11);
+            assert_eq!(database.schema_version().unwrap(), 12);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1039,7 +1046,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 11);
+            assert_eq!(database.schema_version().unwrap(), 12);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1094,7 +1101,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 11);
+        assert_eq!(database.schema_version().unwrap(), 12);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1162,7 +1169,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 11);
+            assert_eq!(database.schema_version().unwrap(), 12);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1233,7 +1240,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 11);
+            assert_eq!(database.schema_version().unwrap(), 12);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1320,7 +1327,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 11);
+            assert_eq!(database.schema_version().unwrap(), 12);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1489,5 +1496,141 @@ mod tests {
         }
 
         assert!(Database::open(&paths).is_err());
+    }
+
+    #[test]
+    fn project_native_resources_migration_upgrades_v11_and_enforces_constraints() {
+        const RUN_ID: &str = "00000000-0000-4000-8000-000000000401";
+        const SNAPSHOT_ID: &str = "00000000-0000-4000-8000-000000000402";
+        const TARGET_ID: &str = "00000000-0000-4000-8000-000000000403";
+        const RESOURCE_ID: &str = "00000000-0000-4000-8000-000000000404";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v11-native-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..11] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/native-project");
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'claude', 'mcp', 'project', ?2, '/fixture/native-project/.mcp.json')",
+                    params![TARGET_ID, PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sync_runs(id, kind, status, scope, project_id, db_version)
+                     VALUES (?1, 'apply', 'succeeded', 'project', ?2, 0)",
+                    params![RUN_ID, PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO snapshots(id, run_id, target_id, target_path, snapshot_path, target_type, storage_kind)
+                     VALUES (?1, ?2, ?3, '/fixture/native-project/.mcp.json', '/fixture/snapshot/native.snapshot', 'file', 'payload_file')",
+                    params![SNAPSHOT_ID, RUN_ID, TARGET_ID],
+                )
+                .unwrap();
+        }
+        for _ in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 12);
+            let connection = database.connection();
+            let preserved: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_targets WHERE id = ?1
+                       AND baseline_full_hash IS NULL AND baseline_managed_hash IS NULL
+                       AND baseline_projection_json IS NULL",
+                    [TARGET_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(preserved, 1);
+            assert!(connection
+                .execute(
+                    "INSERT INTO project_native_resources(
+                        id, target_id, external_key, entry_type, state, disabled_snapshot_id, disabled_at
+                     ) VALUES (?1, ?2, 'fixture', 'mcp_entry', 'disabled', NULL, NULL)",
+                    params![RESOURCE_ID, TARGET_ID],
+                )
+                .is_err());
+            connection
+                .execute(
+                    "INSERT INTO project_native_resources(
+                        id, target_id, external_key, entry_type, state, observed_item_hash
+                     ) VALUES (?1, ?2, 'fixture', 'mcp_entry', 'active', ?3)",
+                    params![RESOURCE_ID, TARGET_ID, "a".repeat(64)],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE project_native_resources
+                     SET state = 'disabled', disabled_snapshot_id = ?2,
+                         disabled_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE id = ?1",
+                    params![RESOURCE_ID, SNAPSHOT_ID],
+                )
+                .unwrap();
+            assert!(
+                connection
+                    .execute("DELETE FROM snapshots WHERE id = ?1", [SNAPSHOT_ID])
+                    .is_err(),
+                "被原生禁用记录引用的快照必须 RESTRICT"
+            );
+            connection
+                .execute(
+                    "DELETE FROM project_native_resources WHERE id = ?1",
+                    [RESOURCE_ID],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn empty_target_identity_is_not_ownership() {
+        let (_temporary, _paths, database) = open_isolated_database();
+        insert_project(database.connection(), PROJECT_ONE_ID, "/fixture/identity");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                 VALUES (?1, 'claude', 'mcp', 'project', ?2, '/fixture/identity/.mcp.json')",
+                params![TARGET_ONE_ID, PROJECT_ONE_ID],
+            )
+            .unwrap();
+        let (full, managed, items): (Option<String>, Option<String>, i64) = database
+            .connection()
+            .query_row(
+                "SELECT baseline_full_hash, baseline_managed_hash,
+                        (SELECT COUNT(*) FROM managed_items WHERE target_id = ?1)
+                 FROM managed_targets WHERE id = ?1",
+                [TARGET_ONE_ID],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!(full.is_none());
+        assert!(managed.is_none());
+        assert_eq!(items, 0);
+        let counts = super::native_resources::count_for_project(&database, PROJECT_ONE_ID).unwrap();
+        assert_eq!(counts.active, 0);
+        assert_eq!(counts.disabled, 0);
+        assert!(
+            super::native_resources::list_for_target(&database, TARGET_ONE_ID)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

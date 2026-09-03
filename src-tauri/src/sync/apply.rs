@@ -60,6 +60,8 @@ pub struct ApplyTargetInput {
     pub remove_managed_item_ids: Vec<String>,
     /// 只接受持久化 Preview 中绑定的首次 Skills 接管证据。
     pub skill_takeover_entries: Vec<super::SkillTakeoverEntry>,
+    /// 只接受持久化 Preview 中绑定的项目原生资源禁用/恢复证据。
+    pub project_native_action: Option<super::ProjectNativeResourceEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,6 +346,13 @@ enum Mutation {
         snapshot_path: PathBuf,
         content_hash: String,
     },
+    RemoveNativeSkill {
+        entry_type: super::NativeResourceEntryType,
+        content_hash: Option<String>,
+    },
+    RestoreNativeSymlink {
+        link_target: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -490,14 +499,7 @@ fn apply_claimed_preview(
                 allowed_root: &mutation.allowed_root,
                 central_root: mutation.central_root.as_deref(),
                 expected_before_fingerprint: &mutation.expected_before_fingerprint,
-                directory_tree_hash: match &mutation.mutation {
-                    Mutation::TakeoverSymlink {
-                        entry_type: SkillTakeoverEntryType::Directory,
-                        content_hash,
-                        ..
-                    } => Some(content_hash.as_str()),
-                    _ => None,
-                },
+                directory_tree_hash: native_or_takeover_directory_hash(&mutation.mutation),
             },
         ) {
             Ok(snapshot) => snapshot,
@@ -534,6 +536,11 @@ fn apply_claimed_preview(
                     entry_type: SkillTakeoverEntryType::Directory,
                     content_hash,
                     ..
+                }
+                | Mutation::RestoreDirectoryTree { content_hash, .. } => Some(content_hash.clone()),
+                Mutation::RemoveNativeSkill {
+                    entry_type: super::NativeResourceEntryType::Directory,
+                    content_hash: Some(content_hash),
                 } => Some(content_hash.clone()),
                 _ => None,
             },
@@ -809,6 +816,21 @@ fn mark_run_stale(database: &mut Database, run_id: &str) -> Result<(), AppError>
     Ok(())
 }
 
+fn native_or_takeover_directory_hash(mutation: &Mutation) -> Option<&str> {
+    match mutation {
+        Mutation::TakeoverSymlink {
+            entry_type: SkillTakeoverEntryType::Directory,
+            content_hash,
+            ..
+        } => Some(content_hash.as_str()),
+        Mutation::RemoveNativeSkill {
+            entry_type: super::NativeResourceEntryType::Directory,
+            content_hash: Some(content_hash),
+        } => Some(content_hash.as_str()),
+        _ => None,
+    }
+}
+
 fn validate_preview_inputs(
     database: &Database,
     preview: &PersistedPreview,
@@ -885,6 +907,7 @@ fn validate_preview_inputs(
             &database_path,
         )?;
         validate_skill_takeover_inputs(item, input)?;
+        validate_native_resource_inputs(item, input)?;
         record_expected_versions(item, &mut expected_versions)?;
         validate_allowed_path(
             Path::new(&item.target_path),
@@ -899,6 +922,53 @@ fn validate_preview_inputs(
         &preview.preview_id,
         &database_path,
     )
+}
+
+fn validate_native_resource_inputs(
+    item: &PersistedPreviewItem,
+    input: &ApplyTargetInput,
+) -> Result<(), AppError> {
+    if input.project_native_action != item.envelope.project_native_action {
+        return Err(AppError::stale_preview("persisted", &item.target_id));
+    }
+    let Some(evidence) = input.project_native_action.as_ref() else {
+        return Ok(());
+    };
+    if !input.skill_takeover_entries.is_empty() {
+        return Err(AppError::invalid_input(
+            "projectNativeAction",
+            "原生资源动作不能与 Skills 接管证据同时出现",
+        ));
+    }
+    if evidence.resource_id.is_empty()
+        || evidence.external_key.is_empty()
+        || !is_sha256(&evidence.observed_item_hash)
+    {
+        return Err(AppError::invalid_input(
+            "projectNativeAction",
+            "原生资源证据缺少稳定身份或 hash",
+        ));
+    }
+    match evidence.action {
+        super::NativeResourceActionKind::Disable
+            if item.change_kind != ChangeKind::Delete && item.change_kind != ChangeKind::Update =>
+        {
+            return Err(AppError::invalid_input(
+                "projectNativeAction",
+                "禁用预览必须删除或更新目标选择器",
+            ));
+        }
+        super::NativeResourceActionKind::Restore
+            if item.change_kind != ChangeKind::Add && item.change_kind != ChangeKind::Update =>
+        {
+            return Err(AppError::invalid_input(
+                "projectNativeAction",
+                "恢复预览必须新增或更新目标选择器",
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn validate_skill_takeover_inputs(
@@ -1191,7 +1261,34 @@ fn validate_preview_hashes(
     input: &ApplyTargetInput,
 ) -> Result<(), AppError> {
     let adapter = adapter_for(input.descriptor.tool);
-    match scan_target(adapter, &input.descriptor, &input.ownership) {
+    let scan = scan_target(adapter, &input.descriptor, &input.ownership);
+    if input.project_native_action.is_some() {
+        return match scan {
+            TargetScan::Missing
+                if item.envelope.current_full_hash.is_none()
+                    && item.envelope.current_managed_hash.is_none() =>
+            {
+                Ok(())
+            }
+            TargetScan::Observed(observed)
+                if item.envelope.current_managed_hash.as_deref()
+                    == Some(&observed.managed_hash) =>
+            {
+                Ok(())
+            }
+            TargetScan::Missing
+                if item
+                    .envelope
+                    .current_managed_hash
+                    .as_deref()
+                    .is_some_and(|hash| hash == hash_json(&serde_json::json!({}))) =>
+            {
+                Ok(())
+            }
+            _ => Err(AppError::stale_preview("persisted", &item.target_id)),
+        };
+    }
+    match scan {
         TargetScan::Missing
             if item.envelope.current_full_hash.is_none()
                 && item.envelope.current_managed_hash.is_none() =>
@@ -1318,6 +1415,238 @@ fn build_target_work<'a>(
     Ok(work)
 }
 
+fn build_native_resource_mutations(
+    item: &PersistedPreviewItem,
+    input: &ApplyTargetInput,
+    evidence: &super::ProjectNativeResourceEvidence,
+    target_index: usize,
+) -> Result<Vec<PendingMutation>, AppError> {
+    use super::NativeResourceEntryType;
+    validate_preview_hashes(item, input)?;
+    match (evidence.entry_type, evidence.action) {
+        (NativeResourceEntryType::McpEntry, _) | (NativeResourceEntryType::PromptFile, _) => {
+            build_file_native_mutations(item, input, evidence, target_index)
+        }
+        (NativeResourceEntryType::Directory | NativeResourceEntryType::Symlink, _) => {
+            build_skill_native_mutations(item, input, evidence, target_index)
+        }
+    }
+}
+
+fn build_file_native_mutations(
+    item: &PersistedPreviewItem,
+    input: &ApplyTargetInput,
+    evidence: &super::ProjectNativeResourceEvidence,
+    target_index: usize,
+) -> Result<Vec<PendingMutation>, AppError> {
+    use super::NativeResourceActionKind;
+    let path = PathBuf::from(&item.target_path);
+    if input.delete_target
+        || evidence.action == NativeResourceActionKind::Disable
+            && evidence.entry_type == super::NativeResourceEntryType::PromptFile
+    {
+        let expected_before_fingerprint = capture_path_state(&path)?.fingerprint();
+        return Ok(vec![PendingMutation {
+            target_id: item.target_id.clone(),
+            target_index,
+            path,
+            allowed_root: input.allowed_root.clone(),
+            central_root: None,
+            expected_before_fingerprint,
+            expected_after_fingerprint: PathState::Missing.fingerprint(),
+            mutation: Mutation::Remove,
+        }]);
+    }
+    let adapter = adapter_for(input.descriptor.tool);
+    let scan = scan_target(adapter, &input.descriptor, &input.ownership);
+    let current = match &scan {
+        TargetScan::Observed(observed) => Some(observed.document()),
+        TargetScan::Missing => None,
+        _ => return Err(AppError::stale_preview("persisted", &item.target_id)),
+    };
+    let RenderedTarget::File(bytes) = adapter.render(
+        &input.descriptor,
+        current,
+        &input.desired_projection,
+        &input.ownership,
+    )?;
+    let current_state = capture_path_state(&path)?;
+    let mode = evidence.restore_file_mode.unwrap_or(match &current_state {
+        PathState::File { mode, .. } => *mode,
+        PathState::Missing => PRIVATE_FILE_MODE,
+        _ => {
+            return Err(AppError::conflict(
+                "targetPath",
+                "文件目标被未知目录或链接占用",
+            ));
+        }
+    });
+    Ok(vec![PendingMutation {
+        target_id: item.target_id.clone(),
+        target_index,
+        path,
+        allowed_root: input.allowed_root.clone(),
+        central_root: None,
+        expected_before_fingerprint: current_state.fingerprint(),
+        expected_after_fingerprint: PathState::File {
+            hash: hash_bytes(&bytes),
+            bytes: bytes.clone(),
+            mode,
+        }
+        .fingerprint(),
+        mutation: Mutation::WriteFile { bytes, mode },
+    }])
+}
+
+fn build_skill_native_mutations(
+    item: &PersistedPreviewItem,
+    input: &ApplyTargetInput,
+    evidence: &super::ProjectNativeResourceEvidence,
+    target_index: usize,
+) -> Result<Vec<PendingMutation>, AppError> {
+    use super::{NativeResourceActionKind, NativeResourceEntryType};
+    validate_child_name(&evidence.external_key)?;
+    let directory = Path::new(&item.target_path);
+    let child = directory.join(&evidence.external_key);
+    let mut mutations = if evidence.action == NativeResourceActionKind::Restore {
+        build_missing_project_directories(
+            directory,
+            &input.allowed_root,
+            &item.target_id,
+            target_index,
+        )?
+    } else {
+        Vec::new()
+    };
+    match evidence.action {
+        NativeResourceActionKind::Disable => {
+            let current = capture_path_state(&child)?;
+            match evidence.entry_type {
+                NativeResourceEntryType::Directory => {
+                    if !matches!(current, PathState::Directory { .. }) {
+                        return Err(AppError::stale_preview("persisted", &item.target_id));
+                    }
+                    let content_hash = evidence.content_hash.clone().ok_or_else(|| {
+                        AppError::invalid_input("projectNativeAction", "目录禁用缺少树 hash")
+                    })?;
+                    mutations.push(PendingMutation {
+                        target_id: item.target_id.clone(),
+                        target_index,
+                        path: child,
+                        allowed_root: input.allowed_root.clone(),
+                        central_root: None,
+                        expected_before_fingerprint: current.fingerprint(),
+                        expected_after_fingerprint: PathState::Missing.fingerprint(),
+                        mutation: Mutation::RemoveNativeSkill {
+                            entry_type: NativeResourceEntryType::Directory,
+                            content_hash: Some(content_hash),
+                        },
+                    });
+                }
+                NativeResourceEntryType::Symlink => {
+                    if !matches!(current, PathState::Symlink { .. }) {
+                        return Err(AppError::stale_preview("persisted", &item.target_id));
+                    }
+                    mutations.push(PendingMutation {
+                        target_id: item.target_id.clone(),
+                        target_index,
+                        path: child,
+                        allowed_root: input.allowed_root.clone(),
+                        central_root: None,
+                        expected_before_fingerprint: current.fingerprint(),
+                        expected_after_fingerprint: PathState::Missing.fingerprint(),
+                        mutation: Mutation::RemoveNativeSkill {
+                            entry_type: NativeResourceEntryType::Symlink,
+                            content_hash: None,
+                        },
+                    });
+                }
+                _ => {
+                    return Err(AppError::invalid_input(
+                        "projectNativeAction",
+                        "Skill 入口类型无效",
+                    ));
+                }
+            }
+        }
+        NativeResourceActionKind::Restore => {
+            let current = capture_path_state(&child)?;
+            if !matches!(current, PathState::Missing) {
+                return Err(AppError::conflict(
+                    "targetPath",
+                    "恢复目标已被占用，拒绝覆盖",
+                ));
+            }
+            match evidence.entry_type {
+                NativeResourceEntryType::Directory => {
+                    let snapshot_path =
+                        evidence.restore_snapshot_path.as_deref().ok_or_else(|| {
+                            AppError::invalid_input("projectNativeAction", "目录恢复缺少快照路径")
+                        })?;
+                    let content_hash = evidence.content_hash.clone().ok_or_else(|| {
+                        AppError::invalid_input("projectNativeAction", "目录恢复缺少树 hash")
+                    })?;
+                    mutations.push(PendingMutation {
+                        target_id: item.target_id.clone(),
+                        target_index,
+                        path: child,
+                        allowed_root: input.allowed_root.clone(),
+                        central_root: None,
+                        expected_before_fingerprint: current.fingerprint(),
+                        expected_after_fingerprint: String::new(),
+                        mutation: Mutation::RestoreDirectoryTree {
+                            snapshot_path: PathBuf::from(snapshot_path),
+                            content_hash,
+                        },
+                    });
+                }
+                NativeResourceEntryType::Symlink => {
+                    let link_target = evidence.restore_link_target.as_deref().ok_or_else(|| {
+                        AppError::invalid_input("projectNativeAction", "符号链接恢复缺少目标")
+                    })?;
+                    mutations.push(PendingMutation {
+                        target_id: item.target_id.clone(),
+                        target_index,
+                        path: child,
+                        allowed_root: input.allowed_root.clone(),
+                        central_root: None,
+                        expected_before_fingerprint: current.fingerprint(),
+                        expected_after_fingerprint: PathState::Symlink {
+                            link_target: PathBuf::from(link_target),
+                        }
+                        .fingerprint(),
+                        mutation: Mutation::RestoreNativeSymlink {
+                            link_target: PathBuf::from(link_target),
+                        },
+                    });
+                }
+                _ => {
+                    return Err(AppError::invalid_input(
+                        "projectNativeAction",
+                        "Skill 入口类型无效",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(mutations)
+}
+
+fn build_missing_project_directories(
+    directory: &Path,
+    allowed_root: &Path,
+    target_id: &str,
+    target_index: usize,
+) -> Result<Vec<PendingMutation>, AppError> {
+    build_missing_skill_directories(
+        directory,
+        allowed_root,
+        allowed_root,
+        target_id,
+        target_index,
+    )
+}
+
 fn build_target_mutations(
     item: &PersistedPreviewItem,
     input: &ApplyTargetInput,
@@ -1328,6 +1657,9 @@ fn build_target_mutations(
         ChangeKind::Unchanged | ChangeKind::Warning
     ) {
         return Ok(Vec::new());
+    }
+    if let Some(evidence) = input.project_native_action.as_ref() {
+        return build_native_resource_mutations(item, input, evidence, target_index);
     }
     validate_preview_hashes(item, input)?;
     let path = PathBuf::from(&item.target_path);
@@ -2215,6 +2547,28 @@ fn apply_mutation(
             journal,
             journal_index,
         )?,
+        Mutation::RemoveNativeSkill {
+            entry_type,
+            content_hash,
+        } => apply_remove_native_skill(
+            mutation,
+            *entry_type,
+            content_hash.as_deref(),
+            expected,
+            fault,
+            paths,
+            journal,
+            journal_index,
+        )?,
+        Mutation::RestoreNativeSymlink { link_target } => apply_restore_native_symlink(
+            mutation,
+            link_target,
+            expected,
+            fault,
+            paths,
+            journal,
+            journal_index,
+        )?,
     }
     let state = capture_path_state(&mutation.path)?;
     let expected_after_fingerprint = if matches!(
@@ -2269,6 +2623,132 @@ fn apply_mutation(
             )))
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_remove_native_skill(
+    mutation: &PendingMutation,
+    entry_type: super::NativeResourceEntryType,
+    content_hash: Option<&str>,
+    expected: ExpectedPathFingerprint<'_>,
+    fault: &dyn ApplyFaultInjector,
+    paths: &AppPaths,
+    journal: &mut RunJournal,
+    journal_index: usize,
+) -> Result<(), MutationFailure> {
+    use super::NativeResourceEntryType;
+    match fault.decide(&ApplyFaultEvent::BeforeRename {
+        index: mutation.target_index,
+        path: mutation.path.clone(),
+    }) {
+        ApplyFaultDecision::Continue => {}
+        ApplyFaultDecision::Fail => {
+            return Err(AppError::atomic_write(
+                &mutation.path.to_string_lossy(),
+                "fault_before_native_remove",
+            )
+            .into());
+        }
+        ApplyFaultDecision::Crash => {
+            journal.targets[journal_index].phase = "crashed_before_native_remove".to_owned();
+            persist_journal(paths, journal)?;
+            return Err(MutationFailure::Crash(AppError::atomic_write(
+                &mutation.path.to_string_lossy(),
+                "simulated_crash_before_native_remove",
+            )));
+        }
+    }
+    verify_expected_path_state(&mutation.path, expected)?;
+    match entry_type {
+        NativeResourceEntryType::Symlink => {
+            let PathState::Symlink { .. } = capture_path_state(&mutation.path)? else {
+                return Err(AppError::stale_preview(expected.run_id, expected.target_id).into());
+            };
+            fs::remove_file(&mutation.path).map_err(|_| {
+                AppError::atomic_write(&mutation.path.to_string_lossy(), "remove_native_symlink")
+            })?;
+        }
+        NativeResourceEntryType::Directory => {
+            let hash = content_hash.ok_or_else(|| {
+                AppError::invalid_input("projectNativeAction", "目录删除缺少树 hash")
+            })?;
+            skill_library::remove_skill_tree(
+                &mutation.path,
+                mutation.path.parent().expect("Skill 入口必须有父目录"),
+                hash,
+            )?;
+        }
+        NativeResourceEntryType::McpEntry | NativeResourceEntryType::PromptFile => {
+            return Err(AppError::invalid_input(
+                "projectNativeAction",
+                "非 Skill 入口不能走目录删除",
+            )
+            .into());
+        }
+    }
+    sync_directory(mutation.path.parent().expect("Skill 入口必须有父目录"))?;
+    journal.targets[journal_index].phase = "removed".to_owned();
+    persist_journal(paths, journal)?;
+    Ok(())
+}
+
+fn apply_restore_native_symlink(
+    mutation: &PendingMutation,
+    link_target: &Path,
+    expected: ExpectedPathFingerprint<'_>,
+    fault: &dyn ApplyFaultInjector,
+    paths: &AppPaths,
+    journal: &mut RunJournal,
+    journal_index: usize,
+) -> Result<(), MutationFailure> {
+    if !matches!(
+        verify_expected_path_state(&mutation.path, expected)?,
+        PathState::Missing
+    ) {
+        return Err(AppError::conflict("targetPath", "恢复目标已被占用，拒绝覆盖").into());
+    }
+    let parent = mutation.path.parent().expect("链接必须有父目录");
+    let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
+    symlink(link_target, &temporary).map_err(|_| {
+        AppError::atomic_write(&temporary.to_string_lossy(), "create_native_restore_link")
+    })?;
+    journal.targets[journal_index].phase = "native_link_pending".to_owned();
+    journal.targets[journal_index].temporary_path = Some(temporary.to_string_lossy().into_owned());
+    journal.targets[journal_index].temporary_fingerprint =
+        Some(capture_path_state(&temporary)?.fingerprint());
+    persist_journal(paths, journal)?;
+    match fault.decide(&ApplyFaultEvent::BeforeRename {
+        index: mutation.target_index,
+        path: mutation.path.clone(),
+    }) {
+        ApplyFaultDecision::Continue => {}
+        ApplyFaultDecision::Fail => {
+            let _ = fs::remove_file(&temporary);
+            return Err(AppError::atomic_write(
+                &mutation.path.to_string_lossy(),
+                "fault_before_native_link",
+            )
+            .into());
+        }
+        ApplyFaultDecision::Crash => {
+            journal.targets[journal_index].phase = "crashed_before_native_link".to_owned();
+            persist_journal(paths, journal)?;
+            return Err(MutationFailure::Crash(AppError::atomic_write(
+                &mutation.path.to_string_lossy(),
+                "simulated_crash_before_native_link",
+            )));
+        }
+    }
+    if skill_library::rename_import_exclusively(&temporary, &mutation.path).is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err(AppError::conflict("targetPath", "恢复目标已被占用，拒绝覆盖").into());
+    }
+    sync_directory(parent)?;
+    journal.targets[journal_index].phase = "renamed".to_owned();
+    journal.targets[journal_index].temporary_path = None;
+    journal.targets[journal_index].temporary_fingerprint = None;
+    persist_journal(paths, journal)?;
+    Ok(())
 }
 
 type RenameFaultContext<'a> = (
@@ -2902,35 +3382,6 @@ fn finish_successful_apply(
         .map(|input| (input.descriptor.path.as_deref().unwrap_or_default(), input))
         .collect::<BTreeMap<_, _>>();
     for verification in verifications {
-        let projection = serde_json::to_string(&verification.projection)
-            .map_err(|_| AppError::database(&database_path, "serialize_managed_baseline"))?;
-        let expected_version = preview
-            .items
-            .iter()
-            .find(|item| item.target_id == verification.target_id)
-            .map(|item| item.envelope.target_row_version)
-            .ok_or_else(|| AppError::stale_preview(&preview.preview_id, &verification.target_id))?;
-        let updated = transaction
-            .execute(
-                "UPDATE managed_targets
-                 SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
-                     baseline_projection_json = ?4, last_status = 'in_sync'
-                 WHERE id = ?1 AND row_version = ?5",
-                params![
-                    verification.target_id,
-                    verification.full_hash,
-                    verification.managed_hash,
-                    projection,
-                    expected_version,
-                ],
-            )
-            .map_err(|_| AppError::database(&database_path, "update_managed_baseline"))?;
-        if updated != 1 {
-            return Err(AppError::stale_preview(
-                &preview.preview_id,
-                &verification.target_id,
-            ));
-        }
         let preview_item = preview
             .items
             .iter()
@@ -2940,13 +3391,47 @@ fn finish_successful_apply(
             .get(preview_item.target_path.as_str())
             .copied()
             .ok_or_else(|| AppError::stale_preview(&preview.preview_id, &verification.target_id))?;
-        apply_managed_item_changes(
-            &transaction,
-            preview_item,
-            input,
-            &preview.preview_id,
-            &database_path,
-        )?;
+        if let Some(evidence) = input.project_native_action.as_ref() {
+            apply_native_resource_changes(
+                &transaction,
+                preview,
+                preview_item,
+                evidence,
+                &database_path,
+            )?;
+        } else {
+            let projection = serde_json::to_string(&verification.projection)
+                .map_err(|_| AppError::database(&database_path, "serialize_managed_baseline"))?;
+            let expected_version = preview_item.envelope.target_row_version;
+            let updated = transaction
+                .execute(
+                    "UPDATE managed_targets
+                     SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
+                         baseline_projection_json = ?4, last_status = 'in_sync'
+                     WHERE id = ?1 AND row_version = ?5",
+                    params![
+                        verification.target_id,
+                        verification.full_hash,
+                        verification.managed_hash,
+                        projection,
+                        expected_version,
+                    ],
+                )
+                .map_err(|_| AppError::database(&database_path, "update_managed_baseline"))?;
+            if updated != 1 {
+                return Err(AppError::stale_preview(
+                    &preview.preview_id,
+                    &verification.target_id,
+                ));
+            }
+            apply_managed_item_changes(
+                &transaction,
+                preview_item,
+                input,
+                &preview.preview_id,
+                &database_path,
+            )?;
+        }
         let item_updates = transaction
             .execute(
                 "UPDATE sync_items SET status = 'in_sync', error_code = NULL
@@ -2979,6 +3464,66 @@ fn finish_successful_apply(
     transaction
         .commit()
         .map_err(|_| AppError::database(&database_path, "commit_finish_apply"))
+}
+
+fn apply_native_resource_changes(
+    transaction: &Transaction<'_>,
+    preview: &PersistedPreview,
+    preview_item: &PersistedPreviewItem,
+    evidence: &super::ProjectNativeResourceEvidence,
+    database_path: &str,
+) -> Result<(), AppError> {
+    use super::NativeResourceActionKind;
+    match evidence.action {
+        NativeResourceActionKind::Disable => {
+            let snapshot_path = native_disable_snapshot_path(preview_item, evidence);
+            let snapshot_id: String = transaction
+                .query_row(
+                    "SELECT id FROM snapshots
+                     WHERE run_id = ?1 AND target_id = ?2 AND target_path = ?3
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT 1",
+                    params![preview.preview_id, preview_item.target_id, snapshot_path],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AppError::database(database_path, "load_native_disable_snapshot"))?;
+            crate::db::native_resources::mark_disabled_in_transaction(
+                transaction,
+                &evidence.resource_id,
+                evidence.resource_row_version,
+                &snapshot_id,
+                &evidence.observed_item_hash,
+                database_path,
+            )
+        }
+        NativeResourceActionKind::Restore => {
+            crate::db::native_resources::mark_restored_in_transaction(
+                transaction,
+                &evidence.resource_id,
+                evidence.resource_row_version,
+                &evidence.observed_item_hash,
+                database_path,
+            )
+        }
+    }
+}
+
+fn native_disable_snapshot_path(
+    preview_item: &PersistedPreviewItem,
+    evidence: &super::ProjectNativeResourceEvidence,
+) -> String {
+    use super::NativeResourceEntryType;
+    match evidence.entry_type {
+        NativeResourceEntryType::Directory | NativeResourceEntryType::Symlink => {
+            Path::new(&preview_item.target_path)
+                .join(&evidence.external_key)
+                .to_string_lossy()
+                .into_owned()
+        }
+        NativeResourceEntryType::McpEntry | NativeResourceEntryType::PromptFile => {
+            preview_item.target_path.clone()
+        }
+    }
 }
 
 fn apply_managed_item_changes(
@@ -3276,10 +3821,13 @@ fn restore_snapshot_record(
                 sync_directory(snapshot.target_path.parent().expect("目标必须有父目录"))
             }
             PathState::Symlink { link_target } => {
-                let central_root = central_root.ok_or_else(|| {
-                    AppError::conflict("rollbackTarget", "没有中央库证据时拒绝删除链接")
-                })?;
-                validate_central_link_target(&snapshot.target_path, &link_target, central_root)?;
+                if let Some(central_root) = central_root {
+                    validate_central_link_target(
+                        &snapshot.target_path,
+                        &link_target,
+                        central_root,
+                    )?;
+                }
                 validate_allowed_path(&snapshot.target_path, allowed_root, false)?;
                 verify_expected_path_state(
                     &snapshot.target_path,
@@ -3298,12 +3846,6 @@ fn restore_snapshot_record(
                 sync_directory(snapshot.target_path.parent().expect("目标必须有父目录"))
             }
             PathState::Directory { .. } => {
-                if central_root.is_none() {
-                    return Err(AppError::conflict(
-                        "rollbackTarget",
-                        "回滚拒绝删除未知普通目录",
-                    ));
-                }
                 verify_expected_path_state(
                     &snapshot.target_path,
                     ExpectedPathFingerprint {
@@ -3337,22 +3879,27 @@ fn restore_snapshot_record(
             })
         }
         PathState::Symlink { link_target } => {
-            let central_root = central_root.ok_or_else(|| {
-                AppError::conflict("rollbackTarget", "没有中央库证据时拒绝恢复链接")
-            })?;
-            // 恢复路径只由 restore_snapshot 的 journal 包装调用；普通 Apply 的链接回滚
-            // 会在下方专用函数中使用真实 journal。这里直接执行同目录临时链接替换。
-            replace_symlink_without_journal(
-                &snapshot.target_path,
-                link_target,
-                central_root,
-                allowed_root,
-                ExpectedPathFingerprint {
-                    run_id: &snapshot.run_id,
-                    target_id: snapshot.target_id.as_deref().unwrap_or("snapshot"),
-                    fingerprint: &current_fingerprint,
-                },
-            )
+            let expected = ExpectedPathFingerprint {
+                run_id: &snapshot.run_id,
+                target_id: snapshot.target_id.as_deref().unwrap_or("snapshot"),
+                fingerprint: &current_fingerprint,
+            };
+            if let Some(central_root) = central_root {
+                replace_symlink_without_journal(
+                    &snapshot.target_path,
+                    link_target,
+                    central_root,
+                    allowed_root,
+                    expected,
+                )
+            } else {
+                restore_external_symlink_without_central(
+                    &snapshot.target_path,
+                    link_target,
+                    allowed_root,
+                    expected,
+                )
+            }
         }
         PathState::Directory { .. }
             if snapshot.storage_kind == SnapshotStorageKind::DirectoryTree =>
@@ -3424,6 +3971,37 @@ fn replace_directory_tree_without_journal(
         fs::remove_file(&quarantine).map_err(|_| {
             AppError::atomic_write(&quarantine.to_string_lossy(), "cleanup_rollback_link")
         })?;
+    }
+    sync_directory(parent)
+}
+
+fn restore_external_symlink_without_central(
+    path: &Path,
+    link_target: &Path,
+    allowed_root: &Path,
+    expected_current: ExpectedPathFingerprint<'_>,
+) -> Result<(), AppError> {
+    validate_allowed_path(path, allowed_root, false)?;
+    if !matches!(
+        verify_expected_path_state(path, expected_current)?,
+        PathState::Missing
+    ) {
+        return Err(AppError::conflict(
+            "targetPath",
+            "恢复目标已被占用，拒绝覆盖",
+        ));
+    }
+    let parent = path.parent().expect("链接必须有父目录");
+    let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
+    symlink(link_target, &temporary).map_err(|_| {
+        AppError::atomic_write(&temporary.to_string_lossy(), "create_native_rollback_link")
+    })?;
+    if skill_library::rename_import_exclusively(&temporary, path).is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err(AppError::conflict(
+            "targetPath",
+            "恢复目标已被占用，拒绝覆盖",
+        ));
     }
     sync_directory(parent)
 }
@@ -3588,6 +4166,21 @@ pub fn delete_snapshots(
                     true,
                 )
                 .with_action(RecoveryAction::ReviewConflict),
+            ));
+            continue;
+        }
+        let referenced = crate::db::native_resources::snapshot_is_referenced(
+            database.connection(),
+            snapshot_id,
+            &database_path,
+        )?;
+        if referenced {
+            failures.push(snapshot_delete_failure(
+                snapshot_id,
+                &AppError::conflict(
+                    "snapshot",
+                    "快照仍被已禁用的项目原生资源引用，请先恢复该资源",
+                ),
             ));
             continue;
         }
@@ -4540,15 +5133,19 @@ fn mutation_from_snapshot(
             bytes: bytes.clone(),
             mode: *mode,
         },
-        PathState::Symlink { link_target } => Mutation::ReplaceSymlink {
-            link_target: link_target.clone(),
-            central_root: central_root
-                .ok_or_else(|| {
-                    AppError::invalid_input("centralSkillsRoot", "恢复链接必须提供中央库边界")
-                })?
-                .to_path_buf(),
-            allow_external_target: true,
-        },
+        PathState::Symlink { link_target } => {
+            if let Some(central_root) = central_root {
+                Mutation::ReplaceSymlink {
+                    link_target: link_target.clone(),
+                    central_root: central_root.to_path_buf(),
+                    allow_external_target: true,
+                }
+            } else {
+                Mutation::RestoreNativeSymlink {
+                    link_target: link_target.clone(),
+                }
+            }
+        }
         PathState::Directory { .. }
             if snapshot.storage_kind == SnapshotStorageKind::DirectoryTree =>
         {
@@ -4968,6 +5565,7 @@ mod tests {
             git,
             exclude_from_git,
             skill_takeover_entries: Vec::new(),
+            project_native_action: None,
         }
     }
 
@@ -4999,6 +5597,7 @@ mod tests {
             managed_items: Vec::new(),
             remove_managed_item_ids: Vec::new(),
             skill_takeover_entries: Vec::new(),
+            project_native_action: None,
         }
     }
 
@@ -5651,6 +6250,7 @@ mod tests {
                 git: None,
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
         );
         let mut apply_input = input(descriptor, json!({}), &fixture.targets);
@@ -6674,6 +7274,7 @@ mod tests {
             git: None,
             exclude_from_git: false,
             skill_takeover_entries: Vec::new(),
+            project_native_action: None,
         }
     }
 
@@ -6718,6 +7319,7 @@ mod tests {
                 managed_items: Vec::new(),
                 remove_managed_item_ids: Vec::new(),
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
             &InjectFault {
                 target_index: 0,
@@ -6778,6 +7380,7 @@ mod tests {
                 managed_items: Vec::new(),
                 remove_managed_item_ids: Vec::new(),
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
             &NoApplyFault,
         )
@@ -6860,6 +7463,7 @@ mod tests {
                     managed_items: Vec::new(),
                     remove_managed_item_ids: Vec::new(),
                     skill_takeover_entries: Vec::new(),
+                    project_native_action: None,
                 }],
                 &NoApplyFault,
             )
@@ -6960,6 +7564,7 @@ mod tests {
                     git: None,
                     exclude_from_git: false,
                     skill_takeover_entries: vec![takeover.clone()],
+                    project_native_action: None,
                 }],
                 &SecretRedactor::default(),
             )
@@ -6989,6 +7594,7 @@ mod tests {
                     managed_items: Vec::new(),
                     remove_managed_item_ids: Vec::new(),
                     skill_takeover_entries: vec![takeover],
+                    project_native_action: None,
                 }],
                 &NoApplyFault,
             )
@@ -7205,6 +7811,7 @@ mod tests {
             git: Some(inspect_path(&project, &untracked_target).unwrap()),
             exclude_from_git: true,
             skill_takeover_entries: Vec::new(),
+            project_native_action: None,
         };
         let second_preview = persist_requests(
             &mut fixture.database,

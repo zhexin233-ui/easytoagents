@@ -6,4 +6,5 @@ mod service;
 
 pub use import::{confirm_mcp_import, discover_mcp_import};
 pub use models::*;
+pub(crate) use service::register_native_projection_secrets;
 pub use service::*;

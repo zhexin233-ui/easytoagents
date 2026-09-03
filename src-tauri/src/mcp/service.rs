@@ -234,6 +234,7 @@ pub fn preview_mcp_sync_with_probes(
                 git: target.git,
                 exclude_from_git: input.exclude_from_git,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }]
         })
         .unwrap_or_default();
@@ -313,6 +314,7 @@ pub fn apply_mcp_preview_with_probes(
                 managed_items: target.managed_items,
                 remove_managed_item_ids: target.remove_managed_item_ids,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }]
         })
         .unwrap_or_default();
@@ -1156,6 +1158,34 @@ pub(super) fn configuration_from_record(
         enabled: record.enabled,
     };
     ValidatedMcpConfiguration::from_create(&input)
+}
+
+pub(crate) fn register_native_projection_secrets(redactor: &mut SecretRedactor, value: &Value) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::Object(env)) = object.get("env") {
+                for (key, value) in env {
+                    if let Some(text) = value.as_str() {
+                        register_environment_value(redactor, key, text);
+                    }
+                }
+            }
+            for header_key in ["headers", "http_headers", "env_http_headers"] {
+                if let Some(Value::Object(headers)) = object.get(header_key) {
+                    for value in headers.values() {
+                        if let Some(text) = value.as_str() {
+                            redactor.register_secret(text);
+                        }
+                    }
+                }
+            }
+            if let Some(auth) = object.get("auth") {
+                register_detectable_extra_secrets(redactor, Some("auth"), auth);
+            }
+            register_detectable_extra_secrets(redactor, None, value);
+        }
+        _ => register_detectable_extra_secrets(redactor, None, value),
+    }
 }
 
 pub(super) fn register_configuration_secrets(

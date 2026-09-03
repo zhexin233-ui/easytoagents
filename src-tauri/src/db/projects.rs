@@ -198,6 +198,17 @@ pub fn soft_remove_project(
     if let Some((run_id, status)) = blocking_run {
         return Err(AppError::write_in_progress(&run_id, &status));
     }
+    let blocking_native = crate::db::native_resources::count_blocking_native_resources(
+        &transaction,
+        id,
+        &database_path,
+    )?;
+    if blocking_native > 0 {
+        return Err(AppError::conflict(
+            "projectNativeResource",
+            "项目仍有已禁用的原生资源，请先恢复后再移除登记",
+        ));
+    }
     let managed_target_count = transaction
         .query_row(
             "SELECT COUNT(*) FROM managed_targets WHERE project_id = ?1",

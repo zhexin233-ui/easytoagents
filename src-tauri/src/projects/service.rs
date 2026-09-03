@@ -17,8 +17,8 @@ use crate::{
 };
 
 use super::{
-    GitRepositoryStatus, ProjectDto, ProjectPathStatus, ProjectTargetStatusDto,
-    RegisterProjectInput, RemoveProjectResultDto, VersionedProjectInput,
+    GitRepositoryStatus, ProjectDto, ProjectNativeResourceSummaryDto, ProjectPathStatus,
+    ProjectTargetStatusDto, RegisterProjectInput, RemoveProjectResultDto, VersionedProjectInput,
 };
 
 struct ProjectObservation {
@@ -36,7 +36,7 @@ struct PersistedProjectTarget {
 const DIAGNOSTIC_PROJECT_TARGET_INITIAL_UNMANAGED: &str = "PROJECT_TARGET_INITIAL_UNMANAGED";
 
 pub fn list_projects(
-    database: &Database,
+    database: &mut Database,
     environment: &ExplicitEnvironment,
 ) -> Result<Vec<ProjectDto>, AppError> {
     repository::list_registered_projects(database)?
@@ -53,7 +53,7 @@ pub fn list_projects(
 }
 
 pub fn get_project(
-    database: &Database,
+    database: &mut Database,
     environment: &ExplicitEnvironment,
     id: &str,
 ) -> Result<ProjectDto, AppError> {
@@ -111,7 +111,7 @@ fn register_project_with_policy_probe(
             &scan_update,
         )?,
     };
-    project_dto_from_observation(record, ProjectPathStatus::Valid, observation)
+    project_dto(database, environment, policy_probe, record)
 }
 
 pub fn rescan_project(
@@ -174,7 +174,12 @@ pub fn rescan_project(
         },
         input.row_version,
     )?;
-    project_dto_from_observation(updated, ProjectPathStatus::Valid, observation)
+    project_dto(
+        database,
+        environment,
+        environment.claude_customization_policy_probe(),
+        updated,
+    )
 }
 
 pub fn remove_project(
@@ -220,11 +225,12 @@ fn invalid_project_after_rescan(
             claude_policy_status: PolicyState::Unknown,
             targets: blocked_project_targets(diagnostic),
         },
+        ProjectNativeResourceSummaryDto::empty(),
     )
 }
 
 fn project_dto(
-    database: &Database,
+    database: &mut Database,
     environment: &ExplicitEnvironment,
     policy_probe: &dyn ClaudeCustomizationPolicyProbe,
     record: repository::ProjectRecord,
@@ -241,6 +247,7 @@ fn project_dto(
                     claude_policy_status: PolicyState::Unknown,
                     targets: blocked_project_targets("PROJECT_ROOT_CHANGED"),
                 },
+                ProjectNativeResourceSummaryDto::empty(),
             );
         }
         Err(error) => {
@@ -261,17 +268,29 @@ fn project_dto(
                     claude_policy_status: PolicyState::Unknown,
                     targets: blocked_project_targets(diagnostic),
                 },
+                ProjectNativeResourceSummaryDto::empty(),
             );
         }
     };
     let observation = observe_project(database, environment, policy_probe, &project_root)?;
-    project_dto_from_observation(record, ProjectPathStatus::Valid, observation)
+    let native_resources = super::native_resources::reconcile_project_native_resources(
+        database,
+        environment,
+        &record.id,
+    )?;
+    project_dto_from_observation(
+        record,
+        ProjectPathStatus::Valid,
+        observation,
+        native_resources,
+    )
 }
 
 fn project_dto_from_observation(
     record: repository::ProjectRecord,
     path_status: ProjectPathStatus,
     observation: ProjectObservation,
+    native_resources: ProjectNativeResourceSummaryDto,
 ) -> Result<ProjectDto, AppError> {
     Ok(ProjectDto {
         id: record.id,
@@ -282,6 +301,7 @@ fn project_dto_from_observation(
         codex_trust_status: observation.codex_trust_status,
         claude_policy_status: observation.claude_policy_status,
         targets: observation.targets,
+        native_resources,
         last_scanned_at: record.last_scanned_at,
         row_version: record.row_version,
     })
@@ -348,8 +368,9 @@ fn project_targets(targets: Vec<TargetDescriptor>) -> Vec<TargetDescriptor> {
             target.scope == crate::domain::Scope::Project
                 && matches!(
                     target.artifact_kind,
-                    ArtifactKind::Mcp | ArtifactKind::Skill
+                    ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Prompt
                 )
+                && target.path.is_some()
         })
         .collect()
 }
@@ -903,7 +924,6 @@ mod tests {
                 .unwrap(),
         );
         let mcp_id = "00000000-0000-4000-8000-000000000711";
-        let target_id = "00000000-0000-4000-8000-000000000712";
         let item_id = "00000000-0000-4000-8000-000000000713";
         fixture
             .database
@@ -923,21 +943,25 @@ mod tests {
                 params![registered.id, mcp_id],
             )
             .unwrap();
+        let target_id: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT id FROM managed_targets
+                 WHERE project_id = ?1 AND tool = 'codex' AND artifact_kind = 'mcp'
+                   AND scope = 'project'",
+                [&registered.id],
+                |row| row.get(0),
+            )
+            .unwrap();
         fixture
             .database
             .connection()
             .execute(
-                "INSERT INTO managed_targets(
-                    id, tool, artifact_kind, scope, project_id, target_path,
-                    baseline_full_hash, baseline_managed_hash, last_status
-                 ) VALUES (?1, 'codex', 'mcp', 'project', ?2, ?3, ?4, ?5, 'in_sync')",
-                params![
-                    target_id,
-                    registered.id,
-                    native.to_string_lossy(),
-                    observed.full_hash,
-                    observed.managed_hash,
-                ],
+                "UPDATE managed_targets
+                 SET baseline_full_hash = ?2, baseline_managed_hash = ?3, last_status = 'in_sync'
+                 WHERE id = ?1",
+                params![target_id, observed.full_hash, observed.managed_hash],
             )
             .unwrap();
         fixture
@@ -1026,7 +1050,8 @@ mod tests {
             .unwrap();
 
         let detail =
-            super::get_project(&fixture.database, &fixture.environment, &registered.id).unwrap();
+            super::get_project(&mut fixture.database, &fixture.environment, &registered.id)
+                .unwrap();
         let codex_mcp = detail
             .targets
             .iter()

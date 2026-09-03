@@ -43,6 +43,12 @@ const project: ProjectDto = {
       diagnosticCode: "EXTERNAL_OWNED_CHANGE",
     },
   ],
+  nativeResources: {
+    active: 0,
+    disabled: 0,
+    missing: 0,
+    conflict: 0,
+  },
   lastScannedAt: "2026-08-24T10:00:00Z",
   rowVersion: 3,
 };
@@ -92,6 +98,7 @@ describe("ProjectsPage", () => {
     expect(await screen.findByText("隔离项目")).toBeInTheDocument();
     expect(screen.getByText("/isolated/projects/fixture")).toBeInTheDocument();
     expect(screen.getByText("external_owned_change")).toHaveClass("sr-only");
+    expect(screen.getByText(/原生资源：启用 0 · 已禁用 0/)).toBeVisible();
     expect(screen.getByRole("link", { name: "打开详情" })).toHaveAttribute(
       "href",
       "/projects/00000000-0000-4000-8000-000000000701",
@@ -116,7 +123,32 @@ describe("ProjectsPage", () => {
       }),
     );
     expect(
-      screen.getByText(/尚未对项目原生配置执行任何写入/),
+      screen.getByText(
+        /尚未对项目原生配置执行任何写入。原生资源：启用 0 · 已禁用 0/,
+      ),
     ).toBeInTheDocument();
+  });
+
+  it("项目卡展示原生资源计数，存在已禁用资源时阻止移除登记", async () => {
+    vi.mocked(commands.listProjects).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          ...project,
+          nativeResources: {
+            active: 2,
+            disabled: 1,
+            missing: 0,
+            conflict: 0,
+          },
+        },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText("隔离项目")).toBeInTheDocument();
+    expect(screen.getByText(/原生资源：启用 2 · 已禁用 1/)).toBeVisible();
+    expect(screen.getByText(/移除登记前须先恢复已禁用资源/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "移除登记" })).toBeDisabled();
+    expect(commands.removeProject).not.toHaveBeenCalled();
   });
 });

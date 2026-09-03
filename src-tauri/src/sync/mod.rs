@@ -48,6 +48,8 @@ pub const ERROR_INCOMPLETE_BASELINE: &str = "INCOMPLETE_MANAGED_BASELINE";
 pub const WARNING_CODEX_PROMPT_OVERRIDE: &str = "CODEX_PROMPT_OVERRIDE_DETECTED";
 pub const WARNING_CODEX_PROMPT_OVERRIDE_UNKNOWN: &str = "CODEX_PROMPT_OVERRIDE_UNKNOWN";
 pub const WARNING_SKILL_TAKEOVER_CONFIRMATION: &str = "SKILL_TAKEOVER_REQUIRES_CONFIRMATION";
+pub const WARNING_PROJECT_NATIVE_RESOURCE_CONFIRMATION: &str =
+    "PROJECT_NATIVE_RESOURCE_REQUIRES_CONFIRMATION";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +67,39 @@ pub struct SkillTakeoverEntry {
     pub expected_fingerprint: String,
     pub content_hash: String,
     pub central_path: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeResourceActionKind {
+    Disable,
+    Restore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeResourceEntryType {
+    McpEntry,
+    Directory,
+    Symlink,
+    PromptFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectNativeResourceEvidence {
+    pub resource_id: String,
+    pub resource_row_version: u32,
+    pub action: NativeResourceActionKind,
+    pub entry_type: NativeResourceEntryType,
+    pub external_key: String,
+    pub observed_item_hash: String,
+    pub expected_fingerprint: Option<String>,
+    pub content_hash: Option<String>,
+    pub restore_snapshot_id: Option<String>,
+    pub restore_snapshot_path: Option<String>,
+    pub restore_link_target: Option<String>,
+    pub restore_file_mode: Option<u32>,
 }
 
 pub struct ObservedTarget {
@@ -480,6 +515,7 @@ pub enum DatabaseEntityType {
     Project,
     ManagedTarget,
     ManagedItem,
+    ProjectNativeResource,
 }
 
 impl DatabaseEntityType {
@@ -492,6 +528,7 @@ impl DatabaseEntityType {
             Self::Project => "project",
             Self::ManagedTarget => "managed_target",
             Self::ManagedItem => "managed_item",
+            Self::ProjectNativeResource => "project_native_resource",
         }
     }
 
@@ -504,6 +541,7 @@ impl DatabaseEntityType {
             Self::Project => "projects",
             Self::ManagedTarget => "managed_targets",
             Self::ManagedItem => "managed_items",
+            Self::ProjectNativeResource => "project_native_resources",
         }
     }
 }
@@ -532,6 +570,8 @@ pub struct PreviewTargetRequest {
     pub exclude_from_git: bool,
     /// 仅首次全局 Skills 接管使用；普通 Preview 必须保持空集合。
     pub skill_takeover_entries: Vec<SkillTakeoverEntry>,
+    /// 仅项目原生资源禁用/恢复使用；普通 Preview 必须保持 None。
+    pub project_native_action: Option<ProjectNativeResourceEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -556,6 +596,8 @@ pub struct PreviewTargetPlan {
     pub exclude_from_git: bool,
     #[specta(skip)]
     pub skill_takeover_entries: Vec<SkillTakeoverEntry>,
+    #[specta(skip)]
+    pub project_native_action: Option<ProjectNativeResourceEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -623,28 +665,37 @@ pub fn build_preview_plan(
             &desired_projection,
             request.baseline.full_hash.is_none() && request.baseline.managed_hash.is_none(),
         );
-        let (mut change_kind, error_code) = if !assessment.can_merge && !takeover_allows_merge {
-            (
-                ChangeKind::Conflict,
-                Some(error_code_for_status(assessment.status)),
-            )
-        } else if matches!(request.scan, TargetScan::Missing) {
-            (ChangeKind::Add, None)
-        } else if current_matches_desired {
-            if assessment.status == SyncStatus::ExternalNonOwnedChange {
-                (ChangeKind::Warning, None)
+        let native_allows_merge = native_action_allows_merge(
+            request.project_native_action.as_ref(),
+            &request.scan,
+            &desired_projection,
+        );
+        let (mut change_kind, error_code) =
+            if !assessment.can_merge && !takeover_allows_merge && !native_allows_merge {
+                (
+                    ChangeKind::Conflict,
+                    Some(error_code_for_status(assessment.status)),
+                )
+            } else if matches!(request.scan, TargetScan::Missing) {
+                (ChangeKind::Add, None)
+            } else if current_matches_desired {
+                if assessment.status == SyncStatus::ExternalNonOwnedChange {
+                    (ChangeKind::Warning, None)
+                } else {
+                    (ChangeKind::Unchanged, None)
+                }
+            } else if projection_is_empty(&desired_projection) {
+                (ChangeKind::Delete, None)
             } else {
-                (ChangeKind::Unchanged, None)
-            }
-        } else if projection_is_empty(&desired_projection) {
-            (ChangeKind::Delete, None)
-        } else {
-            (ChangeKind::Update, None)
-        };
+                (ChangeKind::Update, None)
+            };
 
         let mut warning_codes = assessment.diagnostic_codes;
         if takeover_allows_merge {
             warning_codes.push(WARNING_SKILL_TAKEOVER_CONFIRMATION.to_owned());
+        }
+        if native_allows_merge {
+            warning_codes.push(WARNING_PROJECT_NATIVE_RESOURCE_CONFIRMATION.to_owned());
         }
         match request.descriptor.prompt_override {
             PromptOverrideState::Present => {
@@ -718,6 +769,7 @@ pub fn build_preview_plan(
             git: request.git,
             exclude_from_git,
             skill_takeover_entries: request.skill_takeover_entries,
+            project_native_action: request.project_native_action,
         });
     }
 
@@ -759,6 +811,40 @@ fn takeover_entries_cover_projection(
             expected == value || names.contains(name.as_str())
         })
     })
+}
+
+fn native_action_allows_merge(
+    evidence: Option<&ProjectNativeResourceEvidence>,
+    scan: &TargetScan,
+    desired: &Value,
+) -> bool {
+    let Some(evidence) = evidence else {
+        return false;
+    };
+    match evidence.action {
+        NativeResourceActionKind::Disable => {
+            !projection_is_empty(&scan_managed_projection(scan)) && projection_is_empty(desired)
+        }
+        NativeResourceActionKind::Restore => match evidence.entry_type {
+            NativeResourceEntryType::PromptFile => {
+                matches!(scan, TargetScan::Missing) && !projection_is_empty(desired)
+            }
+            NativeResourceEntryType::McpEntry
+            | NativeResourceEntryType::Directory
+            | NativeResourceEntryType::Symlink => {
+                (matches!(scan, TargetScan::Missing)
+                    || projection_is_empty(&scan_managed_projection(scan)))
+                    && !projection_is_empty(desired)
+            }
+        },
+    }
+}
+
+fn scan_managed_projection(scan: &TargetScan) -> Value {
+    match scan {
+        TargetScan::Observed(observed) => observed.managed_projection.clone(),
+        _ => Value::Null,
+    }
 }
 
 fn record_row_version(
@@ -832,6 +918,8 @@ pub struct PersistedPreviewEnvelope {
     pub allowed_root: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_takeover_entries: Vec<SkillTakeoverEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_native_action: Option<ProjectNativeResourceEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -904,6 +992,7 @@ pub(crate) fn persist_preview_in_connection(
             restore_target_path: None,
             allowed_root: None,
             skill_takeover_entries: target.skill_takeover_entries.clone(),
+            project_native_action: target.project_native_action.clone(),
         };
         let envelope_json = serde_json::to_string(&envelope)
             .map_err(|_| AppError::database(database_path, "serialize_preview_item"))?;
@@ -1694,6 +1783,7 @@ mod tests {
                 git: None,
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
             &SecretRedactor::default(),
         )
@@ -1738,6 +1828,7 @@ mod tests {
                 git: None,
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
             &SecretRedactor::default(),
         )
@@ -1794,6 +1885,7 @@ mod tests {
                 git: None,
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
             &SecretRedactor::default(),
         )
@@ -1878,6 +1970,7 @@ mod tests {
                 git: None,
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
             &redactor,
         )
@@ -1990,6 +2083,7 @@ mod tests {
                 git: None,
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
+                project_native_action: None,
             }],
             &SecretRedactor::default(),
         )

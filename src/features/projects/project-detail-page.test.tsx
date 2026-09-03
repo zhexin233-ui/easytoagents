@@ -17,6 +17,7 @@ import {
   type McpProjectOptionDto,
   type PreviewPlan,
   type ProjectDto,
+  type ProjectNativeResourceDto,
   type PromptProfileDto,
   type SkillProjectOptionDto,
 } from "@/bindings/commands";
@@ -44,6 +45,10 @@ vi.mock("@/bindings/commands", () => ({
     listPromptProfiles: vi.fn(),
     previewPromptSync: vi.fn(),
     applyProfilePreview: vi.fn(),
+    getInterruptedRun: vi.fn(),
+    listProjectNativeResources: vi.fn(),
+    previewProjectNativeResourceAction: vi.fn(),
+    applyProjectNativeResourcePreview: vi.fn(),
   },
 }));
 
@@ -117,6 +122,12 @@ const project: ProjectDto = {
       diagnosticCode: null,
     },
   ],
+  nativeResources: {
+    active: 0,
+    disabled: 0,
+    missing: 0,
+    conflict: 0,
+  },
   lastScannedAt: "2026-08-24T10:00:00Z",
   rowVersion: 7,
 };
@@ -315,6 +326,34 @@ const promptPreview: PreviewPlan = {
   ],
 };
 
+const nativeResource: ProjectNativeResourceDto = {
+  id: "00000000-0000-4000-8000-000000000741",
+  projectId: project.id,
+  tool: "claude",
+  artifactKind: "mcp",
+  displayName: "native-stdio",
+  targetPath: "/isolated/projects/detail/.mcp.json",
+  entryType: "mcp_entry",
+  state: "active",
+  rowVersion: 2,
+  canDisable: true,
+  canRestore: false,
+  diagnosticCodes: [],
+  safeSummary: { kind: "mcp" },
+  disabledAt: null,
+};
+
+const nativePreview: PreviewPlan = {
+  ...preview,
+  previewId: "00000000-0000-4000-8000-000000000742",
+  warningCodes: ["PROJECT_NATIVE_RESOURCE_REQUIRES_CONFIRMATION"],
+  targets: preview.targets.map((target) => ({
+    ...target,
+    changeKind: "delete",
+    redactedDiff: { after: {} },
+  })),
+};
+
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -421,6 +460,27 @@ describe("ProjectDetailPage", () => {
       status: "ok",
       data: {
         runId: "run-2",
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 1,
+      },
+    });
+    vi.mocked(commands.getInterruptedRun).mockResolvedValue({
+      status: "ok",
+      data: null,
+    });
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    vi.mocked(commands.previewProjectNativeResourceAction).mockResolvedValue({
+      status: "ok",
+      data: nativePreview,
+    });
+    vi.mocked(commands.applyProjectNativeResourcePreview).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: "run-native-1",
         status: "succeeded",
         appliedTargets: 1,
         snapshotCount: 1,
@@ -1450,5 +1510,105 @@ describe("ProjectDetailPage", () => {
     expect(screen.getByText(/Codex 项目尚未受信任/)).toBeVisible();
     expect(commands.previewMcpSync).not.toHaveBeenCalled();
     expect(commands.previewSkillSync).not.toHaveBeenCalled();
+  });
+
+  it("空的项目原生资源分区位于中央追加之上，且不展示敏感配置", async () => {
+    renderPage();
+    expect(
+      await screen.findByRole("heading", { name: "项目原生资源" }),
+    ).toBeVisible();
+    expect(await screen.findByText("当前组合没有项目原生资源")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Claude MCP 项目追加" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(commands.listProjectNativeResources).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        artifactKind: "mcp",
+      }),
+    );
+  });
+
+  it("直接应用模式下禁用原生资源仍只打开预览，确认后才 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [nativeResource],
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "临时禁用 native-stdio" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("PROJECT_NATIVE_RESOURCE_REQUIRES_CONFIRMATION"),
+    ).toBeVisible();
+    expect(commands.applyProjectNativeResourcePreview).not.toHaveBeenCalled();
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    await waitFor(() =>
+      expect(commands.applyProjectNativeResourcePreview).toHaveBeenCalledWith({
+        previewId: nativePreview.previewId,
+      }),
+    );
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+    expect(screen.queryByText("sk-native-secret")).not.toBeInTheDocument();
+  });
+
+  it("rollback_failed 时全局阻断原生资源操作", async () => {
+    vi.mocked(commands.getInterruptedRun).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: "00000000-0000-4000-8000-000000000750",
+        status: "rollback_failed",
+        journalAvailable: true,
+        targets: [],
+      },
+    });
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [nativeResource],
+    });
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "存在未完成的写入或回滚失败",
+    );
+    expect(
+      await screen.findByRole("button", { name: "临时禁用 native-stdio" }),
+    ).toBeDisabled();
+  });
+
+  it("已禁用原生资源提供恢复入口且不自动 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct" },
+    });
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          ...nativeResource,
+          state: "disabled",
+          canDisable: false,
+          canRestore: true,
+          disabledAt: "2026-09-03T03:00:00Z",
+        },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText("项目原生 · 已禁用")).toBeVisible();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "恢复 native-stdio" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(commands.applyProjectNativeResourcePreview).not.toHaveBeenCalled();
   });
 });

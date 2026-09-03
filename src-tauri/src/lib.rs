@@ -122,6 +122,15 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<projects::RegisterProjectInput>()
         .typ::<projects::VersionedProjectInput>()
         .typ::<projects::RemoveProjectResultDto>()
+        .typ::<projects::ProjectNativeResourceKind>()
+        .typ::<projects::ProjectNativeResourceState>()
+        .typ::<projects::ProjectNativeEntryType>()
+        .typ::<projects::ProjectNativeResourceAction>()
+        .typ::<projects::ProjectNativeResourceSummaryDto>()
+        .typ::<projects::ProjectNativeResourceDto>()
+        .typ::<projects::ProjectNativeResourceQueryInput>()
+        .typ::<projects::PreviewProjectNativeResourceActionInput>()
+        .typ::<projects::ApplyProjectNativeResourcePreviewInput>()
         .typ::<overview::DashboardToolSummaryDto>()
         .typ::<overview::RecentSyncRunDto>()
         .typ::<overview::DashboardSummaryDto>()
@@ -147,6 +156,9 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::projects::register_project,
             commands::projects::rescan_project,
             commands::projects::remove_project,
+            commands::projects::list_project_native_resources,
+            commands::projects::preview_project_native_resource_action,
+            commands::projects::apply_project_native_resource_preview,
             commands::profiles::list_provider_profiles,
             commands::profiles::create_provider_profile,
             commands::profiles::update_provider_profile,

@@ -28,10 +28,12 @@ export function ProjectsPage() {
   const registerMutation = useMutation({
     mutationFn: async () =>
       unwrapResult(await commands.registerProject({ rootPath, displayName })),
-    onSuccess: async () => {
+    onSuccess: async (project) => {
       setRootPath("");
       setDisplayName("");
-      setMessage("项目已登记；尚未对项目原生配置执行任何写入。");
+      setMessage(
+        `项目已登记；尚未对项目原生配置执行任何写入。原生资源：启用 ${project.nativeResources.active} · 已禁用 ${project.nativeResources.disabled}。`,
+      );
       await invalidateProjects();
     },
   });
@@ -201,6 +203,13 @@ export function ProjectsPage() {
                 {project.codexTrustStatus} · Claude policy：
                 {project.claudePolicyStatus}
               </p>
+              <p className="text-muted-foreground mt-2 text-xs">
+                原生资源：启用 {project.nativeResources.active} · 已禁用{" "}
+                {project.nativeResources.disabled}
+                {project.nativeResources.disabled > 0
+                  ? "。移除登记前须先恢复已禁用资源。"
+                  : ""}
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {project.targets.map((target) => (
                   <SyncStatusBadge
@@ -224,7 +233,12 @@ export function ProjectsPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={removeMutation.isPending}
+                  disabled={
+                    removeMutation.isPending ||
+                    project.nativeResources.disabled +
+                      project.nativeResources.conflict >
+                      0
+                  }
                   onClick={() => removeMutation.mutate(project)}
                 >
                   移除登记
