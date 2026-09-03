@@ -4,7 +4,7 @@
 
 修改全局 Skills 来源、入口链接、批量导入、导入 RPC/DTO、证据表或首次状态提示时，必须遵守本规范。中央库和原生同步的一般约束仍见 [Quality Guidelines](./quality-guidelines.md)。
 
-复制导入只创建私有中央副本，不自动创建 assignment、managed target/item、同步历史或原生链接。原文件、目录、链接文本和权限不变；复制成功不能声称原安装已受管。之后用户主动同步时，同名外部安装仍受原有冲突保护。
+复制导入只创建私有中央副本，不自动创建 assignment、managed target/item、同步历史或原生链接。原文件、目录、链接文本和权限不变；复制成功不能声称原安装已受管。之后用户主动同步时，同名外部安装仍受原有冲突保护。中央副本被用户改写并出现 `CENTRAL_SKILL_CONTENT_CHANGED` 时，用 `adopt_skill_content` 把当前中央文件采纳为权威内容；不得从来源重拷、不得改写工具目录符号链接、不得走 Preview/Apply。未采纳前内容预览、同步和删除仍阻断。
 
 显式接管是独立流程：只处理当前工具**正式全局目标根的直属精确同名入口**，且该外部符号链接或真实目录的完整树 hash 必须与一个 Ready 中央副本一致。接管准备可以创建/复用全局 assignment，但只能生成持久化预览；只有用户随后确认 Apply 才能替换入口。兼容来源（`*.agents`）、项目目标、不同内容、中央私有链接和内置集合永远不能借此绕过普通冲突保护。
 
@@ -170,6 +170,7 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 | 接管 Apply 真实目录                      | 先持久化完整目录树快照，再原子替换；可显式恢复和删除快照               |
 | 有 desired、无 baseline/item、目标缺失或仅含不同名外部条目 | `SKILL_TARGET_INITIAL_SYNC_PENDING`，预览仍按真实 assessment 生成 |
 | 半基线、managed item 漂移、同名外部项、中央损坏或策略/权限错误 | 保留真实阻断；不能显示首次待同步                                |
+| 中央副本 hash/status 漂移 | `CENTRAL_SKILL_CONTENT_CHANGED`；未采纳前阻断预览/同步/删除；`adopt_skill_content` 只更新中央记录 |
 
 ## 5. Good / Base / Bad 示例
 
@@ -183,6 +184,8 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 - Good：Cursor 正式目录中 `one` 外链与 Ready 中央副本完全一致；用户在接管分区勾选，审阅带警告预览后 Apply，外部目标保持原 inode/内容。
 - Base：真实目录接管后可从 `directory_tree` 恢复点恢复；恢复后显示为外部漂移，用户自行决定是否再次接管。
 - Bad：因为设置了 direct 就跳过接管预览，或把 `.agents/skills` 中的兼容别名当成可接管正式入口。
+- Good：用户改了已导入的中央 `SKILL.md` 后点「同步更改」，记录恢复 Ready，工具目录符号链接不变。
+- Bad：把「同步更改」做成从来源重拷、改写 symlink，或在 hash 漂移时通过内容预览 RPC 返回正文。
 
 ## 6. 必需测试与断言
 

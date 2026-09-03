@@ -570,8 +570,9 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 
 ### 1. Scope / Trigger
 
-- Trigger: Skill directory import, central-library inspection/deletion, assignment,
-  target discovery, symlink preview/apply, or Skill RPC DTO changes.
+- Trigger: Skill directory import, central-library inspection/deletion, drifted
+  central-content adoption, assignment, target discovery, symlink preview/apply, or
+  Skill RPC DTO changes.
 
 ### 2. Signatures
 
@@ -579,6 +580,9 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
   copies into a private staging directory and computes the stable tree hash.
 - `inspect_central_skill(&AppPaths, id, central_path, expected_hash, status,
   include_content) -> Result<CentralSkillInspection, AppError>` proves central state.
+- `adopt_skill_content(&mut Database, &AppPaths, &VersionedSkillInput)
+  -> Result<SkillDto, AppError>` re-inspects the current central directory and
+  CAS-updates `content_hash` / `frontmatter_json` / `status='ready'`.
 - Native synchronization remains two-step:
   `preview_skill_sync(PreviewSkillSyncInput) -> PreviewPlan`, then
   `apply_skill_preview(ApplySkillPreviewInput) -> ApplyResult`.
@@ -594,6 +598,15 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
   hyphenated name, non-empty bounded description, non-empty workflow body, and no
   reserved `synced` name. Ordinary DTOs expose the description only; full content is
   returned solely by the explicit content-preview RPC after rehashing the central copy.
+  Hash or stored-status drift (`CENTRAL_SKILL_CONTENT_CHANGED`) still blocks that
+  preview, sync, and delete. Restoring Ready requires explicit
+  `adopt_skill_content`: parse `SKILL.md` while drifted through
+  `read_central_skill_for_adoption`, keep `name` and `central_path`, refuse a
+  frontmatter rename, refuse `applying` / `restoring` / `rollback_failed` writers, and
+  CAS-update hash/frontmatter/status inside an Immediate transaction. Do not recopy
+  the original source, rewrite tool-directory symlinks, refresh managed baselines, or
+  widen `preview_skill_content` / ordinary inspect to return the drifted body. If the
+  digest already matches and the record is Ready, the command is idempotent.
 - Staging and central directories are `0700`; files are `0600` plus a normalized owner
   executable bit. Executability participates in the deterministic tree hash. Rename is
   atomic and directory metadata is synced. Copy/hash/rename/DB failures remove only the
@@ -628,7 +641,10 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 | --- | --- |
 | Unsafe entry/link/hard link/special file/limit breach/source race | Reject import; clean operation staging; source unchanged |
 | Case-only duplicate name or stale row version | `CONFLICT`; central intent unchanged |
-| Central path/type/hash/status drift | Invalid/missing diagnostic; content preview, sync, and delete blocked |
+| Central path/type/missing drift | Invalid/missing diagnostic; adopt, content preview, sync, and delete blocked |
+| Unadopted central hash/status drift | `CENTRAL_SKILL_CONTENT_CHANGED`; content preview, sync, and delete blocked |
+| Explicit adopt of current central files (name/path unchanged, parse ok, no writer) | Ready DTO; hash/frontmatter updated; disk bytes and tool-dir symlinks unchanged |
+| Adopt rename, type/path/missing, stale `row_version`, or active writer | `CONFLICT` / `INVALID_INPUT` / `WRITE_IN_PROGRESS`; no DB write |
 | Assignment or managed-item blocker at delete | Transactional conflict; central directory restored/preserved |
 | Ordinary directory, unknown/external/broken link, or item drift at native target | Conflict; do not overwrite or delete |
 | Claude policy unknown/blocked or Codex project untrusted | Blocked preview/apply; zero native writes |
@@ -638,13 +654,16 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 
 - Good: import an isolated, descriptor-bound source tree into a private central child,
   assign it globally, preview the canonical child link, and apply it while unrelated
-  siblings and source files remain unchanged.
-- Base: importing, listing, content preview, assignment, and deletion change only the
-  private library or SQLite central intent; native Skill targets remain unchanged until
-  a non-empty persisted preview is explicitly applied.
+  siblings and source files remain unchanged. After the user edits that central copy,
+  `adopt_skill_content` restores Ready without rewriting the applied symlink.
+- Base: importing, listing, content preview, assignment, deletion, and content
+  adoption change only the private library or SQLite central intent; native Skill
+  targets remain unchanged until a non-empty persisted preview is explicitly applied.
 - Bad: a source race, escaping link, hard link, changed central hash, stale row version,
   inherited duplicate, ordinary target directory, unknown link, or untrusted/policy-
-  blocked target fails closed without deleting or replacing external state.
+  blocked target fails closed without deleting or replacing external state. Adopting a
+  rename, widening content preview while drifted, or recopying the original source is
+  also forbidden.
 
 ### 6. Tests Required
 
@@ -660,6 +679,10 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 - Search ordinary DTOs, errors, persisted previews, and journals for fixture body and
   private frontmatter markers; expected matches are zero. Regenerate/check bindings
   whenever a Skill command or DTO changes.
+- Cover drifted-content adoption: Ready + updated hash/description, unchanged central
+  bytes and symlink inode, restored global in_sync without Preview/Apply, reject
+  rename/broken `SKILL.md`/type change/stale version/active writer, and idempotent
+  success when the digest already matches.
 
 ### 7. Wrong vs Correct
 
@@ -668,6 +691,7 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 ```rust
 fs::read_dir(source)?;
 fs::remove_dir_all(database_central_path)?;
+preview_skill_content(database, paths, id)?; // while hash is drifted
 ```
 
 #### Correct
@@ -675,6 +699,7 @@ fs::remove_dir_all(database_central_path)?;
 ```rust
 let prepared = prepare_skill_import(paths, source)?;
 let inspection = inspect_central_skill(paths, id, central_path, expected_hash, status, false)?;
+let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, row_version })?;
 ```
 
 ## Scenario: Project registry, live status, dashboard, and onboarding

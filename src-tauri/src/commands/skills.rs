@@ -46,6 +46,16 @@ pub fn preview_skill_content(
 
 #[tauri::command]
 #[specta::specta]
+pub fn adopt_skill_content(
+    state: State<'_, AppState>,
+    input: VersionedSkillInput,
+) -> Result<SkillDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    skills::adopt_skill_content(&mut database, state.paths(), &input)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn delete_skill(
     state: State<'_, AppState>,
     input: VersionedSkillInput,

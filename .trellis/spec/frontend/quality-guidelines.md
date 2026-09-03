@@ -230,8 +230,9 @@ const update: UpdateMcpServerInput = {
 
 ### 1. Scope / Trigger
 
-- Trigger: Skills import/list/content/delete/status UI, global/project assignment,
-  query keys, or Skills preview/apply behavior changes.
+- Trigger: Skills import/list/content/delete/status UI, drifted central-content
+  adoption, global/project assignment, query keys, or Skills preview/apply behavior
+  changes.
 
 ### 2. Signatures
 
@@ -240,6 +241,8 @@ const update: UpdateMcpServerInput = {
 - Directory import calls `commands.importSkill({ sourcePath })` after an explicit native
   directory selection. Preview/apply calls `commands.previewSkillSync(...)` and then
   consumes the returned ID with `commands.applySkillPreview(...)`.
+- Drifted central content uses `commands.adoptSkillContent({ id, rowVersion })` after a
+  `useDialogFocus` confirmation; it is not Preview/Apply.
 - Native discovery copy uses `commands.confirmSkillImport({ previewId, candidateIds })`;
   exact formal-root takeover uses the separate
   `commands.prepareSkillTakeover({ previewId, candidateIds })` and consumes only the
@@ -261,6 +264,16 @@ const update: UpdateMcpServerInput = {
 - The ordinary list renders only the safe description and status diagnostics, never an
   arbitrary frontmatter object or Skill body. Full `SKILL.md` appears only after the
   explicit content-preview command in a closable, Escape-aware dialog.
+- 「同步更改」is shown only when `skill.diagnosticCode === "CENTRAL_SKILL_CONTENT_CHANGED"`
+  (list and grid), as an icon button matching the other central-card actions
+  (`size-8`, `aria-label` / `title`, no visible label). Clicking it opens a
+  `useDialogFocus` confirmation asking whether to adopt the current central files as
+  authority; primary action is 「是」, secondary is
+  「取消」. Escape, close, and cancel send no RPC and restore trigger focus. Confirm
+  sends the `id` / `rowVersion` captured when the dialog opened, locks close/resubmit
+  while pending, invalidates `skillKeys.all` on success, and never opens
+  `ChangePreviewDialog` or calls `previewSkillSync` / `applySkillPreview`. Success copy
+  must say the app record was updated and tool-directory links were not rewritten.
 - Global assignments remain visually distinct. A global inherited project option is
   checked, read-only, and cannot invoke project assignment. A currently selected invalid
   project item can still be unselected so users can recover.
@@ -285,6 +298,10 @@ const update: UpdateMcpServerInput = {
 | Directory chooser/import/content/delete failure | Operation-specific `role="alert"`; preserve unrelated state |
 | Skills/status/projects/options pending or empty | Independent status or explicit next-action message |
 | Invalid/missing central Skill | Diagnostic visible; new assignment disabled, existing assignment removable |
+| `CENTRAL_SKILL_CONTENT_CHANGED` | Show icon button named 「同步更改」; other central diagnostics must not |
+| Adopt confirm open / cancel / Escape | No RPC; restore trigger focus |
+| Adopt confirm 「是」 | Exact `{ id, rowVersion }`; pending lock; success notify + query family refresh |
+| Adopt failure / stale version | Error notify; do not replay the old `rowVersion`; diagnostic remains until a fresh list read |
 | Global inherited project option | Read-only inherited label; no project mutation |
 | Codex project untrusted | Trust alert and disabled project preview |
 | Empty persisted preview | No-write message; no Apply dialog |
@@ -301,8 +318,9 @@ const update: UpdateMcpServerInput = {
   keep independent accessible feedback and invalidate the Skills query family without
   writing a native target implicitly.
 - Bad: render arbitrary frontmatter/body in the ordinary list, allow a project to toggle
-  inherited state, apply an empty/blocked preview, lose dialog focus, or bypass generated
-  bindings with raw `invoke` or an asserted payload.
+  inherited state, apply an empty/blocked preview, lose dialog focus, bypass generated
+  bindings with raw `invoke` or an asserted payload, or route 「同步更改」 through
+  `window.confirm`, content preview, or `ChangePreviewDialog`.
 
 ### 6. Tests Required
 
@@ -318,6 +336,10 @@ const update: UpdateMcpServerInput = {
 - Assert copy/takeover grouping, independent selections and exact payloads. Under both
   apply modes, takeover preparation must leave `applySkillPreview` uncalled until the
   user activates `ChangePreviewDialog` Apply.
+- Assert 「同步更改」 icon-button visibility (`size-8`, `title`, hidden svg, no
+  visible label), no RPC on open/cancel/Escape, exact adopt payload,
+  success notify without Preview/Apply, and failure notify with the diagnostic still
+  visible.
 
 ### 7. Wrong vs Correct
 
@@ -326,6 +348,7 @@ const update: UpdateMcpServerInput = {
 ```tsx
 <pre>{JSON.stringify(skill.frontmatter)}</pre>
 await invoke("apply_skill_preview", preview);
+window.confirm("同步更改?");
 ```
 
 #### Correct
@@ -333,6 +356,9 @@ await invoke("apply_skill_preview", preview);
 ```tsx
 const plan = unwrapResult(await commands.previewSkillSync(input));
 await commands.applySkillPreview({ previewId: plan.previewId, tool, projectId });
+const adopted = unwrapResult(
+  await commands.adoptSkillContent({ id: skill.id, rowVersion: skill.rowVersion }),
+);
 ```
 
 ## Scenario: Project detail, dashboard, onboarding, and recovery dialogs

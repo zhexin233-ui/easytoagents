@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, FolderMinus } from "lucide-react";
+import { Eye, FolderMinus, RefreshCw } from "lucide-react";
 
 import {
   commands,
@@ -70,9 +70,18 @@ export function SkillsPage() {
     tool: Tool;
     requestId: string;
   } | null>(null);
+  const [adoptTarget, setAdoptTarget] = useState<SkillDto | null>(null);
+  const adoptInFlight = useRef(false);
+  const adoptTitleId = useId();
+  const adoptDescriptionId = useId();
   const closeContentPreview = () => setContentPreview(null);
   const { dialogRef: contentDialogRef, onKeyDown: onContentDialogKeyDown } =
     useDialogFocus(contentPreview !== null, closeContentPreview);
+  const closeAdoptDialog = () => {
+    if (!adoptInFlight.current) setAdoptTarget(null);
+  };
+  const { dialogRef: adoptDialogRef, onKeyDown: onAdoptDialogKeyDown } =
+    useDialogFocus(adoptTarget !== null, closeAdoptDialog);
 
   const invalidateSkills = async () => {
     await queryClient.invalidateQueries({ queryKey: skillKeys.all });
@@ -110,6 +119,35 @@ export function SkillsPage() {
         kind: "error",
         message: `内容预览失败：${profileErrorText(error) ?? "未知错误"}`,
       });
+    },
+  });
+
+  const adoptMutation = useMutation({
+    mutationFn: async (skill: SkillDto) =>
+      unwrapResult(
+        await commands.adoptSkillContent({
+          id: skill.id,
+          rowVersion: skill.rowVersion,
+        }),
+      ),
+    onSuccess: async () => {
+      await invalidateSkills();
+      setAdoptTarget(null);
+      notify({
+        kind: "success",
+        message: "已采纳当前中央文件为权威内容；工具目录中的符号链接未被改写。",
+      });
+    },
+    onError: async (error) => {
+      await invalidateSkills();
+      setAdoptTarget(null);
+      notify({
+        kind: "error",
+        message: `同步更改失败：${profileErrorText(error) ?? "未知错误"}`,
+      });
+    },
+    onSettled: () => {
+      adoptInFlight.current = false;
     },
   });
 
@@ -258,6 +296,9 @@ export function SkillsPage() {
               const isRemovingSkill =
                 deleteMutation.isPending &&
                 deleteMutation.variables?.id === skill.id;
+              const isAdoptingSkill =
+                adoptMutation.isPending &&
+                adoptMutation.variables?.id === skill.id;
               const skillActions = (
                 <div className="flex min-w-0 flex-wrap gap-2">
                   <Button
@@ -271,6 +312,20 @@ export function SkillsPage() {
                   >
                     <Eye aria-hidden="true" className="size-4" />
                   </Button>
+                  {skill.diagnosticCode === "CENTRAL_SKILL_CONTENT_CHANGED" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="size-8 p-0"
+                      aria-haspopup="dialog"
+                      aria-label={isAdoptingSkill ? "正在采纳…" : "同步更改"}
+                      title={isAdoptingSkill ? "正在采纳…" : "同步更改"}
+                      disabled={adoptMutation.isPending}
+                      onClick={() => setAdoptTarget(skill)}
+                    >
+                      <RefreshCw aria-hidden="true" className="size-4" />
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"
@@ -532,6 +587,74 @@ export function SkillsPage() {
                 目录文件列表为空。
               </p>
             ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      {adoptTarget ? (
+        <div
+          role="presentation"
+          className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
+        >
+          <section
+            ref={adoptDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={adoptTitleId}
+            aria-describedby={adoptDescriptionId}
+            tabIndex={-1}
+            onKeyDown={onAdoptDialogKeyDown}
+            className="bg-card w-full max-w-lg rounded-xl p-6 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id={adoptTitleId} className="text-xl font-semibold">
+                  同步更改
+                </h2>
+                <p
+                  id={adoptDescriptionId}
+                  className="text-muted-foreground mt-2 text-sm"
+                >
+                  是否将当前中央文件采纳为权威内容？这只会更新应用内记录，不会改写工具目录中的符号链接。
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={adoptMutation.isPending}
+                onClick={closeAdoptDialog}
+              >
+                关闭
+              </Button>
+            </div>
+            {adoptMutation.isPending ? (
+              <p role="status" className="text-muted-foreground mt-4 text-sm">
+                正在采纳当前中央文件…
+              </p>
+            ) : null}
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={adoptMutation.isPending}
+                onClick={closeAdoptDialog}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                disabled={adoptMutation.isPending}
+                onClick={() => {
+                  if (!adoptTarget || adoptInFlight.current) return;
+                  adoptDialogRef.current?.focus();
+                  adoptInFlight.current = true;
+                  adoptMutation.mutate(adoptTarget);
+                }}
+              >
+                {adoptMutation.isPending ? "正在采纳…" : "是"}
+              </Button>
+            </div>
           </section>
         </div>
       ) : null}

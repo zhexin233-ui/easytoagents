@@ -472,6 +472,14 @@ async previewSkillContent(id: string) : Promise<Result<SkillContentPreviewDto, A
     else return { status: "error", error: e  as any };
 }
 },
+async adoptSkillContent(input: VersionedSkillInput) : Promise<Result<SkillDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("adopt_skill_content", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteSkill(input: VersionedSkillInput) : Promise<Result<DeleteSkillResultDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_skill", { input }) };

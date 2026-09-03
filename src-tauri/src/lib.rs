@@ -191,6 +191,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::skills::confirm_skill_import,
             commands::skills::prepare_skill_takeover,
             commands::skills::preview_skill_content,
+            commands::skills::adopt_skill_content,
             commands::skills::delete_skill,
             commands::skills::set_global_skill_assignment,
             commands::skills::set_project_skill_assignment,

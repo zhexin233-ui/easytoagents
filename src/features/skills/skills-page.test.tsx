@@ -35,6 +35,7 @@ vi.mock("@/bindings/commands", () => ({
     confirmSkillImport: vi.fn(),
     prepareSkillTakeover: vi.fn(),
     previewSkillContent: vi.fn(),
+    adoptSkillContent: vi.fn(),
     deleteSkill: vi.fn(),
     setGlobalSkillAssignment: vi.fn(),
     setProjectSkillAssignment: vi.fn(),
@@ -408,6 +409,9 @@ describe("SkillsPage", () => {
         "true",
       );
     }
+    expect(
+      within(footer).queryByRole("button", { name: "同步更改" }),
+    ).not.toBeInTheDocument();
     expect(
       within(footer).getByLabelText(`${skill.name} 全局平台分配`),
     ).toHaveClass("ml-auto");
@@ -823,6 +827,242 @@ describe("SkillsPage", () => {
 
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();
+  });
+
+  it.each([
+    "CENTRAL_SKILL_MISSING",
+    "CENTRAL_SKILL_TYPE_CHANGED",
+    "CENTRAL_SKILL_PATH_CHANGED",
+    "CENTRAL_SKILL_INVALID",
+  ] as const)("其他中央诊断 %s 不显示同步更改", async (diagnosticCode) => {
+    vi.mocked(commands.listSkills).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          ...skill,
+          status: "invalid",
+          diagnosticCode,
+        },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText(diagnosticCode)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "同步更改" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("仅内容变更诊断在列表和网格显示同步更改，打开确认框不发 RPC", async () => {
+    const drifted: SkillDto = {
+      ...skill,
+      status: "invalid",
+      diagnosticCode: "CENTRAL_SKILL_CONTENT_CHANGED",
+    };
+    vi.mocked(commands.listSkills).mockResolvedValue({
+      status: "ok",
+      data: [drifted],
+    });
+    renderPage();
+
+    const section = screen
+      .getByRole("heading", { name: "中央列表" })
+      .closest("section");
+    if (!section) throw new Error("未找到 Skills 中央列表");
+    const listTrigger = await within(section).findByRole("button", {
+      name: "同步更改",
+    });
+    expect(listTrigger).toBeVisible();
+    expect(listTrigger).toHaveAttribute("title", "同步更改");
+    expect(listTrigger).toHaveClass("size-8", "p-0");
+    expect(listTrigger.querySelector("svg")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(listTrigger).not.toHaveTextContent("同步更改");
+    listTrigger.focus();
+    fireEvent.click(listTrigger);
+    const dialog = screen.getByRole("dialog", { name: "同步更改" });
+    expect(dialog).toHaveTextContent(
+      "是否将当前中央文件采纳为权威内容？这只会更新应用内记录，不会改写工具目录中的符号链接。",
+    );
+    expect(within(dialog).getByRole("button", { name: "是" })).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "取消" })).toBeVisible();
+    expect(commands.adoptSkillContent).not.toHaveBeenCalled();
+    expect(commands.previewSkillContent).not.toHaveBeenCalled();
+    expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+    expect(dialog).not.toHaveTextContent("# Skill");
+    expect(dialog).not.toHaveTextContent("phase6-private-content-marker");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(listTrigger).toHaveFocus();
+    expect(commands.adoptSkillContent).not.toHaveBeenCalled();
+
+    fireEvent.click(listTrigger);
+    const reopened = screen.getByRole("dialog", { name: "同步更改" });
+    fireEvent.keyDown(reopened, { key: "Escape" });
+    await waitFor(() => expect(reopened).not.toBeInTheDocument());
+    expect(listTrigger).toHaveFocus();
+    expect(commands.adoptSkillContent).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(section).getByRole("button", { name: "三列网格显示" }),
+    );
+    const gridTrigger = within(section).getByRole("button", {
+      name: "同步更改",
+    });
+    expect(gridTrigger).toBeVisible();
+    expect(gridTrigger).toHaveAttribute("title", "同步更改");
+    expect(gridTrigger).toHaveClass("size-8", "p-0");
+    expect(gridTrigger.querySelector("svg")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(gridTrigger).not.toHaveTextContent("同步更改");
+  });
+
+  it("确认同步更改只提交打开时的 id 与 rowVersion，成功后诊断消失且不预览 Apply", async () => {
+    const drifted: SkillDto = {
+      ...skill,
+      status: "invalid",
+      diagnosticCode: "CENTRAL_SKILL_CONTENT_CHANGED",
+      description: "漂移前的说明",
+      rowVersion: 3,
+    };
+    const adopted: SkillDto = {
+      ...drifted,
+      status: "ready",
+      diagnosticCode: null,
+      description: "采纳后的描述",
+      contentHash: "c".repeat(64),
+      rowVersion: 4,
+    };
+    vi.mocked(commands.listSkills).mockResolvedValue({
+      status: "ok",
+      data: [drifted],
+    });
+    vi.mocked(commands.adoptSkillContent).mockImplementation(() => {
+      vi.mocked(commands.listSkills).mockResolvedValue({
+        status: "ok",
+        data: [adopted],
+      });
+      return Promise.resolve({ status: "ok", data: adopted });
+    });
+    renderPage();
+
+    const trigger = await screen.findByRole("button", { name: "同步更改" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(commands.adoptSkillContent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "是" }));
+    await waitFor(() =>
+      expect(commands.adoptSkillContent).toHaveBeenCalledExactlyOnceWith({
+        id: drifted.id,
+        rowVersion: drifted.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "同步更改" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText("CENTRAL_SKILL_CONTENT_CHANGED"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "同步更改" })).toBeNull();
+    const status = screen.getByText(
+      "已采纳当前中央文件为权威内容；工具目录中的符号链接未被改写。",
+    );
+    expect(status).toHaveAttribute("role", "status");
+    expect(
+      screen.getAllByText(
+        "已采纳当前中央文件为权威内容；工具目录中的符号链接未被改写。",
+      ),
+    ).toHaveLength(1);
+    expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+    expect(commands.previewSkillContent).not.toHaveBeenCalled();
+  });
+
+  it("同步更改失败时通知错误，不调用预览或 Apply", async () => {
+    const drifted: SkillDto = {
+      ...skill,
+      status: "invalid",
+      diagnosticCode: "CENTRAL_SKILL_CONTENT_CHANGED",
+    };
+    vi.mocked(commands.listSkills).mockResolvedValue({
+      status: "ok",
+      data: [drifted],
+    });
+    vi.mocked(commands.adoptSkillContent).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "CONFLICT",
+        message: "Skill 已被其他操作修改",
+        recoverable: true,
+        action: "review_conflict",
+      },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "同步更改" }));
+    fireEvent.click(screen.getByRole("button", { name: "是" }));
+    const alert = await screen.findByText(
+      "同步更改失败：CONFLICT：Skill 已被其他操作修改",
+    );
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveAttribute("aria-atomic", "true");
+    expect(
+      screen.getAllByText("同步更改失败：CONFLICT：Skill 已被其他操作修改"),
+    ).toHaveLength(1);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "同步更改" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("CENTRAL_SKILL_CONTENT_CHANGED")).toBeVisible();
+    expect(screen.getByRole("button", { name: "同步更改" })).toBeVisible();
+    expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+  });
+
+  it("同步更改提交期间锁定关闭与重复提交", async () => {
+    const drifted: SkillDto = {
+      ...skill,
+      status: "invalid",
+      diagnosticCode: "CENTRAL_SKILL_CONTENT_CHANGED",
+    };
+    const pending =
+      deferred<Awaited<ReturnType<typeof commands.adoptSkillContent>>>();
+    vi.mocked(commands.listSkills).mockResolvedValue({
+      status: "ok",
+      data: [drifted],
+    });
+    vi.mocked(commands.adoptSkillContent).mockReturnValue(pending.promise);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "同步更改" }));
+    const dialog = screen.getByRole("dialog", { name: "同步更改" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "是" }));
+    expect(
+      await within(dialog).findByRole("button", { name: "正在采纳…" }),
+    ).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "取消" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "关闭" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "正在采纳…" }));
+    expect(dialog).toBeInTheDocument();
+    expect(commands.adoptSkillContent).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve({
+        status: "ok",
+        data: { ...drifted, status: "ready", diagnosticCode: null },
+      });
+      await pending.promise;
+    });
   });
 
   it("不再呈现或查询项目追加入口", async () => {

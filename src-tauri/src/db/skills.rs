@@ -10,6 +10,7 @@ use crate::{
     skills::PreparedSkillRecord,
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkillRecord {
@@ -136,6 +137,64 @@ pub(crate) fn insert_skill_in_transaction(
             skill_from_row,
         )
         .map_err(|_| AppError::database(path, "read_inserted_skill"))?;
+    Ok(record)
+}
+
+pub(crate) fn reject_active_writer(database: &Database) -> Result<(), AppError> {
+    reject_active_writer_on(database.connection(), &database.path().to_string_lossy())
+}
+
+fn reject_active_writer_on(connection: &rusqlite::Connection, path: &str) -> Result<(), AppError> {
+    let writer = connection
+        .query_row(
+            "SELECT id, status FROM sync_runs
+             WHERE status IN ('applying', 'restoring', 'rollback_failed')
+             LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|_| AppError::database(path, "check_skill_adopt_writer"))?;
+    if let Some((id, status)) = writer {
+        return Err(AppError::write_in_progress(&id, &status));
+    }
+    Ok(())
+}
+
+pub(crate) fn adopt_skill_content(
+    database: &mut Database,
+    id: &str,
+    expected_row_version: u32,
+    content_hash: &str,
+    frontmatter: &Value,
+) -> Result<SkillRecord, AppError> {
+    EntityId::parse(id)?;
+    let path = database.path().to_string_lossy().into_owned();
+    let frontmatter_json = serde_json::to_string(frontmatter)
+        .map_err(|_| AppError::invalid_input("frontmatter", "Skill frontmatter 无法序列化"))?;
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| AppError::database(&path, "begin_adopt_skill_content"))?;
+    reject_active_writer_on(&transaction, &path)?;
+    let updated = transaction
+        .execute(
+            "UPDATE skills
+             SET content_hash = ?2, frontmatter_json = ?3, status = 'ready'
+             WHERE id = ?1 AND row_version = ?4",
+            params![id, content_hash, frontmatter_json, expected_row_version],
+        )
+        .map_err(|error| map_skill_write_error(error, &path, "adopt_skill_content"))?;
+    if updated != 1 {
+        return match get_skill_from_connection(&transaction, &path, id) {
+            Ok(_) => Err(AppError::conflict("rowVersion", "Skill 已被其他操作修改")),
+            Err(error) => Err(error),
+        };
+    }
+    let record = get_skill_from_connection(&transaction, &path, id)?;
+    transaction
+        .commit()
+        .map_err(|_| AppError::database(&path, "commit_adopt_skill_content"))?;
     Ok(record)
 }
 

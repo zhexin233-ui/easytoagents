@@ -16,8 +16,8 @@ use super::{
     library::{
         cleanup_failed_import, delete_quarantined_skill, finalize_skill_import,
         inspect_central_skill, prepare_skill_import, quarantine_central_skill,
-        rename_import_exclusively, restore_quarantined_skill, sync_directory,
-        validate_central_skill_directory,
+        read_central_skill_for_adoption, rename_import_exclusively, restore_quarantined_skill,
+        sync_directory, validate_central_skill_directory,
     },
     ApplySkillPreviewInput, DeleteSkillResultDto, ImportSkillInput, PreparedSkillRecord,
     PreviewSkillSyncInput, SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput,
@@ -86,6 +86,37 @@ pub fn import_skill(
             return Err(error);
         }
     };
+    skill_dto(database, paths, &record)
+}
+
+pub fn adopt_skill_content(
+    database: &mut Database,
+    paths: &AppPaths,
+    input: &VersionedSkillInput,
+) -> Result<SkillDto, AppError> {
+    let record = repository::get_skill(database, &input.id)?;
+    if u32::try_from(record.row_version).ok() != Some(input.row_version) {
+        return Err(AppError::conflict("rowVersion", "Skill 已被其他操作修改"));
+    }
+    repository::reject_active_writer(database)?;
+    let adopted =
+        read_central_skill_for_adoption(paths, &record.id, &record.name, &record.central_path)?;
+    if adopted.name != record.name {
+        return Err(AppError::conflict(
+            "name",
+            "frontmatter.name 与记录名称不一致，不能作为内容采纳",
+        ));
+    }
+    if adopted.content_hash == record.content_hash && record.status == SkillStatus::Ready {
+        return skill_dto(database, paths, &record);
+    }
+    let record = repository::adopt_skill_content(
+        database,
+        &input.id,
+        input.row_version,
+        &adopted.content_hash,
+        &adopted.frontmatter,
+    )?;
     skill_dto(database, paths, &record)
 }
 
@@ -1371,7 +1402,7 @@ fn safe_row_version(value: i64) -> Result<u32, AppError> {
 mod tests {
     use std::{
         fs,
-        os::unix::fs::{symlink, PermissionsExt},
+        os::unix::fs::{symlink, MetadataExt, PermissionsExt},
         path::Path,
         sync::Mutex,
     };
@@ -1381,7 +1412,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_skill_preview_with_policy_probe, delete_skill, import_skill,
+        adopt_skill_content, apply_skill_preview_with_policy_probe, delete_skill, import_skill,
         list_skill_project_options, preview_skill_content, preview_skill_sync_with_policy_probe,
         set_global_skill_assignment, set_project_skill_assignment,
     };
@@ -2160,6 +2191,300 @@ mod tests {
             statuses[0].diagnostic_code.as_deref(),
             Some("CENTRAL_SKILL_CONTENT_CHANGED")
         );
+    }
+
+    fn stored_skill_fingerprint(fixture: &Fixture, id: &str) -> (String, String, i64, String) {
+        fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT content_hash, frontmatter_json, row_version, status
+                 FROM skills WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn adopting_drifted_central_files_restores_ready_without_rewriting_disk_or_symlinks() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("fixture-skill");
+        let skill = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let redactor = SecretRedactor::default();
+        let preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &policy,
+        )
+        .unwrap();
+        let link = fixture.home.join(".claude/skills/fixture-skill");
+        let link_target = fs::read_link(&link).unwrap();
+        let link_inode = fs::symlink_metadata(&link).unwrap().ino();
+        let skill_md = Path::new(&skill.central_path).join("SKILL.md");
+        let asset = Path::new(&skill.central_path).join("asset.txt");
+        let edited = format!(
+            "---\nname: fixture-skill\ndescription: 采纳后的描述\nmetadata:\n  token: {FRONTMATTER_MARKER}\n---\n\n# Skill\n\nupdated-body\n"
+        );
+        fs::write(&skill_md, &edited).unwrap();
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert_eq!(listed[0].status, SkillStatus::Invalid);
+        assert_eq!(
+            listed[0].diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+        assert_eq!(
+            preview_skill_content(&fixture.database, &fixture.paths, &skill.id)
+                .unwrap_err()
+                .code(),
+            ErrorCode::Conflict
+        );
+        let statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(statuses[0].status, SyncStatus::ExternalOwnedChange);
+        assert_eq!(
+            statuses[0].diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+        let edited_bytes = fs::read(&skill_md).unwrap();
+        let asset_bytes = fs::read(&asset).unwrap();
+
+        let adopted = adopt_skill_content(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: skill.id.clone(),
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(adopted.status, SkillStatus::Ready);
+        assert_eq!(adopted.diagnostic_code, None);
+        assert_eq!(adopted.description, "采纳后的描述");
+        assert_eq!(adopted.name, skill.name);
+        assert_eq!(adopted.central_path, skill.central_path);
+        assert_ne!(adopted.content_hash, skill.content_hash);
+        assert_eq!(fs::read(&skill_md).unwrap(), edited_bytes);
+        assert_eq!(fs::read(&asset).unwrap(), asset_bytes);
+        assert_eq!(fs::read_link(&link).unwrap(), link_target);
+        assert_eq!(fs::symlink_metadata(&link).unwrap().ino(), link_inode);
+
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert_eq!(listed[0].status, SkillStatus::Ready);
+        assert_eq!(listed[0].diagnostic_code, None);
+        let statuses = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(statuses[0].status, SyncStatus::InSync);
+        assert_ne!(
+            statuses[0].diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+        let content = preview_skill_content(&fixture.database, &fixture.paths, &skill.id).unwrap();
+        assert!(content.skill_md.contains("updated-body"));
+        preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn adopting_unchanged_ready_content_is_idempotent() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("fixture-skill");
+        let before = stored_skill_fingerprint(&fixture, &skill.id);
+        let adopted = adopt_skill_content(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: skill.id.clone(),
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(adopted.status, SkillStatus::Ready);
+        assert_eq!(adopted.content_hash, skill.content_hash);
+        assert_eq!(adopted.row_version, skill.row_version);
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+    }
+
+    #[test]
+    fn adopt_skill_content_rejects_rename_broken_markdown_type_change_stale_version_and_writers() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("fixture-skill");
+        let skill_md = Path::new(&skill.central_path).join("SKILL.md");
+        let original = fs::read(&skill_md).unwrap();
+        let before = stored_skill_fingerprint(&fixture, &skill.id);
+
+        fs::write(
+            &skill_md,
+            "---\nname: renamed-skill\ndescription: 改名不能采纳\n---\n\n# renamed\n",
+        )
+        .unwrap();
+        let rename_error = adopt_skill_content(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: skill.id.clone(),
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(rename_error.code(), ErrorCode::Conflict);
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+        assert_ne!(fs::read(&skill_md).unwrap(), original);
+
+        fs::write(&skill_md, "not-valid-frontmatter\n").unwrap();
+        let parse_error = adopt_skill_content(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: skill.id.clone(),
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(parse_error.code(), ErrorCode::InvalidInput);
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+
+        fs::write(&skill_md, &original).unwrap();
+        fs::remove_dir_all(&skill.central_path).unwrap();
+        fs::write(&skill.central_path, "not-a-directory").unwrap();
+        let type_error = adopt_skill_content(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: skill.id.clone(),
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(type_error.code(), ErrorCode::Conflict);
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+        assert!(Path::new(&skill.central_path).is_file());
+
+        fs::remove_file(&skill.central_path).unwrap();
+        let missing_error = adopt_skill_content(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: skill.id.clone(),
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(missing_error.code(), ErrorCode::Conflict);
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+
+        let second = fixture.import("second-skill");
+        fs::write(
+            Path::new(&second.central_path).join("SKILL.md"),
+            "---\nname: second-skill\ndescription: 漂移内容\n---\n\n# second\n",
+        )
+        .unwrap();
+        let stale = adopt_skill_content(
+            &mut fixture.database,
+            &fixture.paths,
+            &VersionedSkillInput {
+                id: second.id.clone(),
+                row_version: second.row_version + 1,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(stale.code(), ErrorCode::Conflict);
+        let second_before = stored_skill_fingerprint(&fixture, &second.id);
+        assert_eq!(second_before.2, i64::from(second.row_version));
+        let listed = super::list_skills(&fixture.database, &fixture.paths)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.id == second.id)
+            .unwrap();
+        assert_eq!(
+            listed.diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+
+        for status in ["applying", "restoring", "rollback_failed"] {
+            let run_id = Uuid::new_v4().to_string();
+            fixture
+                .database
+                .connection()
+                .execute(
+                    "INSERT INTO sync_runs(id, kind, status, scope, db_version)
+                     VALUES (?1, 'apply', ?2, 'global', 1)",
+                    rusqlite::params![run_id, status],
+                )
+                .unwrap();
+            let writer_error = adopt_skill_content(
+                &mut fixture.database,
+                &fixture.paths,
+                &VersionedSkillInput {
+                    id: second.id.clone(),
+                    row_version: second.row_version,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(writer_error.code(), ErrorCode::WriteInProgress);
+            assert_eq!(
+                stored_skill_fingerprint(&fixture, &second.id).0,
+                second_before.0
+            );
+            fixture
+                .database
+                .connection()
+                .execute("DELETE FROM sync_runs WHERE id = ?1", [&run_id])
+                .unwrap();
+        }
     }
 
     #[test]

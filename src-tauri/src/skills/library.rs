@@ -56,6 +56,13 @@ pub(crate) struct CentralSkillInspection {
     pub skill_md: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AdoptedCentralSkill {
+    pub name: String,
+    pub content_hash: String,
+    pub frontmatter: Value,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SkillTakeoverEntryKind {
     ExternalSymlink,
@@ -413,17 +420,79 @@ pub(crate) fn inspect_central_skill(
     stored_status: SkillStatus,
     include_content: bool,
 ) -> Result<CentralSkillInspection, AppError> {
+    let digest = match inspect_central_skill_tree(paths, id, name, central_path)? {
+        Ok(digest) => digest,
+        Err(inspection) => return Ok(inspection),
+    };
+    if digest.hash != expected_hash || stored_status != SkillStatus::Ready {
+        return Ok(CentralSkillInspection {
+            status: SkillStatus::Invalid,
+            diagnostic_code: Some("CENTRAL_SKILL_CONTENT_CHANGED"),
+            files: digest.files,
+            skill_md: None,
+        });
+    }
+    let skill_md = if include_content {
+        let text = read_regular_utf8(
+            &Path::new(central_path).join("SKILL.md"),
+            MAX_SKILL_MD_BYTES,
+            "SKILL.md",
+        )?;
+        parse_skill_frontmatter(&text)?;
+        Some(text)
+    } else {
+        None
+    };
+    Ok(CentralSkillInspection {
+        status: SkillStatus::Ready,
+        diagnostic_code: None,
+        files: digest.files,
+        skill_md,
+    })
+}
+
+/// 采纳专用读取：路径/类型/canonical/digest 与 `inspect_central_skill` 相同，
+/// 但在 hash 漂移时仍解析 `SKILL.md`。不得用于普通列表或内容预览 RPC。
+pub(crate) fn read_central_skill_for_adoption(
+    paths: &AppPaths,
+    id: &str,
+    name: &str,
+    central_path: &str,
+) -> Result<AdoptedCentralSkill, AppError> {
+    let digest = match inspect_central_skill_tree(paths, id, name, central_path)? {
+        Ok(digest) => digest,
+        Err(inspection) => {
+            return Err(conflict_from_central_inspection(inspection.diagnostic_code))
+        }
+    };
+    let text = digest
+        .skill_md
+        .ok_or_else(|| AppError::invalid_input("SKILL.md", "Skill 必须包含普通 SKILL.md 文件"))?;
+    let (parsed_name, frontmatter) = parse_skill_frontmatter(&text)?;
+    Ok(AdoptedCentralSkill {
+        name: parsed_name,
+        content_hash: digest.hash,
+        frontmatter,
+    })
+}
+
+fn inspect_central_skill_tree(
+    paths: &AppPaths,
+    id: &str,
+    name: &str,
+    central_path: &str,
+) -> Result<Result<TreeDigest, CentralSkillInspection>, AppError> {
     let path = Path::new(central_path);
     validate_central_skill_directory(path, paths.central_skills(), id, name)?;
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(CentralSkillInspection {
+            return Ok(Err(CentralSkillInspection {
                 status: SkillStatus::Missing,
                 diagnostic_code: Some("CENTRAL_SKILL_MISSING"),
                 files: Vec::new(),
                 skill_md: None,
-            });
+            }));
         }
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
             return Err(AppError::permission(central_path, "lstat_central_skill"));
@@ -436,58 +505,51 @@ pub(crate) fn inspect_central_skill(
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Ok(CentralSkillInspection {
+        return Ok(Err(CentralSkillInspection {
             status: SkillStatus::Invalid,
             diagnostic_code: Some("CENTRAL_SKILL_TYPE_CHANGED"),
             files: Vec::new(),
             skill_md: None,
-        });
+        }));
     }
     let canonical = fs::canonicalize(path)
         .map_err(|_| AppError::permission(central_path, "canonicalize_central_skill"))?;
     if canonical != path {
-        return Ok(CentralSkillInspection {
+        return Ok(Err(CentralSkillInspection {
             status: SkillStatus::Invalid,
             diagnostic_code: Some("CENTRAL_SKILL_PATH_CHANGED"),
             files: Vec::new(),
             skill_md: None,
-        });
+        }));
     }
-    let digest = match digest_tree(path, None) {
-        Ok(digest) => digest,
-        Err(error) if error.code() == crate::error::ErrorCode::PermissionDenied => {
-            return Err(error)
-        }
-        Err(_) => {
-            return Ok(CentralSkillInspection {
-                status: SkillStatus::Invalid,
-                diagnostic_code: Some("CENTRAL_SKILL_INVALID"),
-                files: Vec::new(),
-                skill_md: None,
-            })
-        }
-    };
-    if digest.hash != expected_hash || stored_status != SkillStatus::Ready {
-        return Ok(CentralSkillInspection {
+    match digest_tree(path, None) {
+        Ok(digest) => Ok(Ok(digest)),
+        Err(error) if error.code() == crate::error::ErrorCode::PermissionDenied => Err(error),
+        Err(_) => Ok(Err(CentralSkillInspection {
             status: SkillStatus::Invalid,
-            diagnostic_code: Some("CENTRAL_SKILL_CONTENT_CHANGED"),
-            files: digest.files,
+            diagnostic_code: Some("CENTRAL_SKILL_INVALID"),
+            files: Vec::new(),
             skill_md: None,
-        });
+        })),
     }
-    let skill_md = if include_content {
-        let text = read_regular_utf8(&path.join("SKILL.md"), MAX_SKILL_MD_BYTES, "SKILL.md")?;
-        parse_skill_frontmatter(&text)?;
-        Some(text)
-    } else {
-        None
-    };
-    Ok(CentralSkillInspection {
-        status: SkillStatus::Ready,
-        diagnostic_code: None,
-        files: digest.files,
-        skill_md,
-    })
+}
+
+fn conflict_from_central_inspection(diagnostic_code: Option<&'static str>) -> AppError {
+    match diagnostic_code {
+        Some("CENTRAL_SKILL_MISSING") => {
+            AppError::conflict("centralSkill", "中央 Skill 目录已缺失，不能采纳当前文件")
+        }
+        Some("CENTRAL_SKILL_TYPE_CHANGED") => {
+            AppError::conflict("centralSkill", "中央 Skill 类型已变化，不能采纳当前文件")
+        }
+        Some("CENTRAL_SKILL_PATH_CHANGED") => {
+            AppError::conflict("centralSkill", "中央 Skill 路径已变化，不能采纳当前文件")
+        }
+        _ => AppError::conflict(
+            "centralSkill",
+            "中央 Skill 内容无法安全读取，不能采纳当前文件",
+        ),
+    }
 }
 
 pub(crate) fn quarantine_central_skill(
@@ -1847,10 +1909,10 @@ mod tests {
 
     use super::{
         canonical_source_directory, delete_quarantined_skill, digest_tree,
-        digest_tree_with_root_identity, finalize_skill_import, prepare_skill_import,
-        quarantine_central_skill,
+        digest_tree_with_root_identity, finalize_skill_import, inspect_central_skill,
+        prepare_skill_import, quarantine_central_skill, read_central_skill_for_adoption,
     };
-    use crate::app::AppPaths;
+    use crate::{app::AppPaths, domain::SkillStatus};
 
     struct Fixture {
         _temporary: TempDir,
@@ -2161,6 +2223,55 @@ mod tests {
         assert!(quarantine.join("unknown.txt").is_file());
         assert!(!std::path::Path::new(&prepared.central_path).exists());
     }
+
+    #[test]
+    fn adoption_read_parses_drifted_skill_md_without_widening_inspect() {
+        let fixture = Fixture::new();
+        let source = fixture.source("adopt");
+        write_valid_skill(&source, "adopt-skill");
+        let mut prepared = prepare_skill_import(&fixture.paths, &source).unwrap();
+        finalize_skill_import(&fixture.paths, &mut prepared).unwrap();
+        fs::write(
+            std::path::Path::new(&prepared.central_path).join("SKILL.md"),
+            "---\nname: adopt-skill\ndescription: 漂移后的说明\n---\n\n# updated\n",
+        )
+        .unwrap();
+
+        let inspection = inspect_central_skill(
+            &fixture.paths,
+            &prepared.id,
+            &prepared.name,
+            &prepared.central_path,
+            &prepared.content_hash,
+            SkillStatus::Ready,
+            true,
+        )
+        .unwrap();
+        assert_eq!(inspection.status, SkillStatus::Invalid);
+        assert_eq!(
+            inspection.diagnostic_code,
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
+        assert_eq!(inspection.skill_md, None);
+
+        let adopted = read_central_skill_for_adoption(
+            &fixture.paths,
+            &prepared.id,
+            &prepared.name,
+            &prepared.central_path,
+        )
+        .unwrap();
+        assert_eq!(adopted.name, "adopt-skill");
+        assert_eq!(
+            adopted
+                .frontmatter
+                .get("description")
+                .and_then(|value| value.as_str()),
+            Some("漂移后的说明")
+        );
+        assert_ne!(adopted.content_hash, prepared.content_hash);
+    }
+
     #[test]
     fn failed_import_cleanup_preserves_replaced_or_changed_operation_directories() {
         for replace in [false, true] {
