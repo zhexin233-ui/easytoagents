@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "核对后端分层与相关规范是否全部覆盖。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查迁移幂等、约束、CAS 和旧库升级。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查错误码稳定性与隐私载体。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对项目、预览、Apply、writer、快照和 rollback_failed 总合同。"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "检查 MCP unknown siblings、secret redaction 和 selector 行为。"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "检查 Skill 完整树、链接、路径边界和恢复安全。"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端规范范围。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查组件复用、状态文案、模态与无障碍。"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "检查 query/mutation 隔离、刷新和竞态。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查生成类型、枚举穷尽与禁止本地 DTO。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查是否复用现有 sync/snapshot/helper 而非复制逻辑。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 schema→service→binding→UI→test 的跨层闭环。"}
+{"file": ".trellis/tasks/09-02-manage-project-resources/research/current-architecture.md", "reason": "按已确认架构证据复核设计偏差和安全缺口。"}

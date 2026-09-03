@@ -802,3 +802,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 30: 中央 Skill 内容变更后同步更改
+
+**Date**: 2026-09-03
+**Task**: 中央 Skill 内容变更后同步更改
+**Branch**: `main`
+
+### Summary
+
+中央 Skill 出现 CENTRAL_SKILL_CONTENT_CHANGED 时，卡片提供图标按钮「同步更改」；确认后把当前中央文件采纳为权威内容并恢复 Ready，不改写工具目录链接，也不走 Preview/Apply。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c3d043e` | (see git log) |
+
+### Status
+
+[OK] **Completed**

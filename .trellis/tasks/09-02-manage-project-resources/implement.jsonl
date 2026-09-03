@@ -1,0 +1,14 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "定位 Rust/Tauri 后端所有相关项目规范。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增迁移、CAS、约束和升级测试必须遵守数据库合同。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "复用稳定错误码并避免泄露私有资源内容。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "项目扫描、预览、Apply、快照、恢复和项目移除的总安全合同。"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "MCP 原生解析、selector ownership、凭据脱敏和持久化证据约束。"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "Skill 入口身份、完整树、外部链接、接管边界和快照恢复约束。"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "定位项目详情页涉及的前端规范。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "项目原生资源分区、预览对话和无障碍交互规范。"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "查询隔离、mutation 生命周期和联合失效规范。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "服务端状态与本地交互状态边界。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "生成 DTO 与穷尽状态渲染必须保持类型安全。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "优先复用 adapter、sync、snapshot 与共享 UI，避免三类资源重复状态机。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "约束数据库、Rust DTO、生成绑定、查询和 UI 的完整数据流。"}
+{"file": ".trellis/tasks/09-02-manage-project-resources/research/current-architecture.md", "reason": "提供现状证据、资源级操作语义、缺口与安全风险。"}
