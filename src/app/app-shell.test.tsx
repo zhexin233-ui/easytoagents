@@ -22,12 +22,12 @@ vi.mock("@/bindings/commands", () => ({
   },
 }));
 
-function renderShell() {
+function renderShell(initialEntry = "/") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={queryClient}>
         <AppShell />
       </QueryClientProvider>
@@ -99,6 +99,20 @@ describe("AppShell 侧边栏设置入口", () => {
     expect(
       screen.getByRole("button", { name: "跟随系统外观" }),
     ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("当前应用入口保留明显外边框，切换应用时只改变当前入口", () => {
+    renderShell("/claude");
+
+    const claudeLink = screen.getByRole("link", { name: /Claude/ });
+    const codexLink = screen.getByRole("link", { name: /Codex/ });
+    expect(claudeLink).toHaveClass("border-primary-foreground");
+    expect(claudeLink).not.toHaveClass("border-transparent");
+    expect(codexLink).not.toHaveClass("border-primary-foreground");
+
+    fireEvent.click(codexLink);
+    expect(codexLink).toHaveClass("border-primary-foreground");
+    expect(claudeLink).not.toHaveClass("border-primary-foreground");
   });
 
   it("在设置弹窗中切换外观会立即挂 dark class 并持久化", async () => {

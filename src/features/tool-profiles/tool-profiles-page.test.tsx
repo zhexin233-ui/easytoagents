@@ -476,8 +476,11 @@ describe("ToolProfilesPage", () => {
       ),
     ).toBeVisible();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(within(section).getByRole("listitem")).toHaveTextContent(
-      "新渠道 · 当前生效",
+    expect(within(section).getByRole("listitem")).toHaveTextContent("新渠道");
+    expect(within(section).getByText("当前生效")).toHaveClass(
+      "rounded-full",
+      "border-emerald-200",
+      "bg-emerald-50",
     );
     expect(commands.listProviderProfiles).toHaveBeenCalledTimes(2);
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();

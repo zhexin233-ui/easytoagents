@@ -256,7 +256,7 @@ pub fn list_provider_profiles(
             "SELECT id, tool, name, api_base_url, api_key, default_model, config_json,
                     is_active, row_version
              FROM provider_profiles WHERE tool = ?1
-             ORDER BY is_active DESC, name COLLATE NOCASE, id",
+             ORDER BY name COLLATE NOCASE, id",
         )
         .map_err(|_| AppError::database(&database_path, "prepare_list_provider_profiles"))?;
     let rows = statement
@@ -1260,6 +1260,13 @@ mod tests {
         set_active_provider_profile(&mut database, Tool::Claude, &second.id, second.row_version)
             .unwrap();
         let providers = list_provider_profiles(&database, Tool::Claude).unwrap();
+        assert_eq!(
+            providers
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Fallback", "主渠道"]
+        );
         assert!(providers
             .iter()
             .any(|item| item.id == second.id && item.is_active));

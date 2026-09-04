@@ -289,10 +289,14 @@ export function ProviderPanel({
           <li key={profile.id} className="rounded-lg border p-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="font-medium">
-                  {profile.name}{" "}
-                  {profile.isActive ? <span>· 当前生效</span> : null}
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium">{profile.name}</p>
+                  {profile.isActive ? (
+                    <span className="inline-flex shrink-0 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                      当前生效
+                    </span>
+                  ) : null}
+                </div>
                 <p className="text-muted-foreground mt-1 text-xs">
                   {profile.defaultModel} · {providerCredentialText(profile)}
                 </p>
