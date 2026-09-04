@@ -534,6 +534,9 @@ describe("ProjectDetailPage", () => {
       },
     });
     renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "展开工具配置状态" }),
+    );
     expect(await screen.findByText("○ 未纳管")).toBeVisible();
     expect(
       screen.getByText(
@@ -830,6 +833,26 @@ describe("ProjectDetailPage", () => {
         tool: "cursor",
       }),
     );
+  });
+
+  it("工具配置状态默认折叠且可展开收起", async () => {
+    renderPage();
+
+    const toggle = await screen.findByRole("button", {
+      name: "展开工具配置状态",
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Claude · MCP")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    const collapseToggle = screen.getByRole("button", {
+      name: "收起工具配置状态",
+    });
+    expect(collapseToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Claude · MCP")).toBeVisible();
+
+    fireEvent.click(collapseToggle);
+    expect(screen.queryByText("Claude · MCP")).not.toBeInTheDocument();
   });
 
   it("切换资源或平台会重置尚未提交的 Git exclude 选择", async () => {

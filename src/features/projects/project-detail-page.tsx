@@ -58,6 +58,7 @@ export function ProjectDetailPage() {
   const directApply = settingsQuery.data?.applyMode === "direct";
   const [resourceView, setResourceView] = useState<ProjectResourceView>("mcp");
   const [toolView, setToolView] = useState<Tool>("claude");
+  const [toolStatusOpen, setToolStatusOpen] = useState(false);
   const viewKey = projectViewKey(projectId, toolView, resourceView);
   const [openPreview, setOpenPreview] = useState<OpenProjectPreview | null>(
     null,
@@ -248,47 +249,83 @@ export function ProjectDetailPage() {
         className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
         aria-labelledby="project-status-title"
       >
-        <h2 id="project-status-title" className="text-lg font-semibold">
-          工具配置状态
-        </h2>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {project.targets.map((target) => {
-            const initialUnmanaged =
-              target.diagnosticCode === "PROJECT_TARGET_INITIAL_UNMANAGED";
-            return (
-              <article
-                key={`${target.tool}-${target.artifactKind}`}
-                className="rounded-lg border p-4"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-medium">
-                    {toolLabel(target.tool)} ·{" "}
-                    {artifactLabel(target.artifactKind)}
-                  </p>
-                  {initialUnmanaged ? (
-                    <SyncStatusBadge
-                      status={target.status}
-                      label="○ 未纳管"
-                      tone="muted"
-                    />
-                  ) : (
-                    <SyncStatusBadge status={target.status} />
-                  )}
-                </div>
-                <code className="mt-2 block text-xs break-all">
-                  {target.targetPath ?? "目标路径不可用"}
-                </code>
-                {initialUnmanaged ? (
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
-                  </p>
-                ) : target.diagnosticCode ? (
-                  <p className="mt-2 text-xs">诊断：{target.diagnosticCode}</p>
-                ) : null}
-              </article>
-            );
-          })}
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="project-status-title" className="text-lg font-semibold">
+            工具配置状态
+          </h2>
+          <button
+            type="button"
+            aria-controls="project-status-content"
+            aria-expanded={toolStatusOpen}
+            aria-label={
+              toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"
+            }
+            title={toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"}
+            className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded transition-colors"
+            onClick={() => setToolStatusOpen((open) => !open)}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={cn(
+                "size-4 transition-transform",
+                toolStatusOpen && "rotate-90",
+              )}
+            >
+              <path d="M6 3.5 10.5 8 6 12.5" />
+            </svg>
+          </button>
         </div>
+        {toolStatusOpen ? (
+          <div
+            id="project-status-content"
+            className="mt-4 grid gap-3 md:grid-cols-2"
+          >
+            {project.targets.map((target) => {
+              const initialUnmanaged =
+                target.diagnosticCode === "PROJECT_TARGET_INITIAL_UNMANAGED";
+              return (
+                <article
+                  key={`${target.tool}-${target.artifactKind}`}
+                  className="rounded-lg border p-4"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium">
+                      {toolLabel(target.tool)} ·{" "}
+                      {artifactLabel(target.artifactKind)}
+                    </p>
+                    {initialUnmanaged ? (
+                      <SyncStatusBadge
+                        status={target.status}
+                        label="○ 未纳管"
+                        tone="muted"
+                      />
+                    ) : (
+                      <SyncStatusBadge status={target.status} />
+                    )}
+                  </div>
+                  <code className="mt-2 block text-xs break-all">
+                    {target.targetPath ?? "目标路径不可用"}
+                  </code>
+                  {initialUnmanaged ? (
+                    <p className="text-muted-foreground mt-2 text-xs">
+                      该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
+                    </p>
+                  ) : target.diagnosticCode ? (
+                    <p className="mt-2 text-xs">
+                      诊断：{target.diagnosticCode}
+                    </p>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       <section
