@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 31
-- **Last Active**: 2026-09-03
+- **Total Sessions**: 32
+- **Last Active**: 2026-09-04
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~861 | Active |
+| `journal-1.md` | ~882 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 32 | 2026-09-04 | 设置新增启用的工具配置（enabled tools 显示过滤） | `ccb305e` | `main` |
 | 31 | 2026-09-03 | 管理项目级 Skill、MCP 与提示词 | `583da65`, `63126c4` | `codex/manage-project-resources` |
 | 30 | 2026-09-03 | 中央 Skill 内容变更后同步更改 | `c3d043e` | `main` |
 | 29 | 2026-09-02 | 统一中央页面操作通知 | `d1b7d0d` | `codex/migrate-page-status-notifications` |

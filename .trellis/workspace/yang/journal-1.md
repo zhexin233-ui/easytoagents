@@ -859,3 +859,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Next Steps
 
 - 如需原生禁用也跳过预览弹窗，需先改 PRD R4
+
+
+## Session 32: 设置新增启用的工具配置（enabled tools 显示过滤）
+
+**Date**: 2026-09-04
+**Task**: 设置新增启用的工具配置（enabled tools 显示过滤）
+**Branch**: `main`
+
+### Summary
+
+新增全局「启用的工具」设置：后端 app_settings 新增 enabled_tools 键（JSON 数组，缺省 claude+codex，非法值报 DatabaseError，双 key 同事务 UPSERT），绑定再生成；前端新增 useEnabledTools hook + filterEnabledTools 工具，设置对话框新增三开关区块；顶部工具入口、prompts/mcp/skills 中央列表图标列与全局目标状态、项目详情平台选择与工具配置状态、总览工具卡、新手引导、provider 复制入口全部按启用集合过滤，project-detail 以 render 期派生 activeTool 夹逼选中视图。质量门 pnpm check 全绿（225 vitest + cargo 全量），并用 mock.html + __TAURI_INTERNALS mock 在浏览器走查了默认/开启 Cursor/关闭 Codex 三种状态；踩坑：Tauri invoke mock 必须返回原始 DTO（绑定层才会包 Result）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ccb305e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
