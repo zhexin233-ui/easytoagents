@@ -74,6 +74,18 @@ export const SKILL_TOOLS = [
   "cursor",
 ] as const satisfies readonly Tool[];
 
+export const DEFAULT_ENABLED_TOOLS = [
+  "claude",
+  "codex",
+] as const satisfies readonly Tool[];
+
+export function filterEnabledTools<T extends Tool>(
+  tools: readonly T[],
+  enabled: ReadonlySet<Tool>,
+): T[] {
+  return tools.filter((tool) => enabled.has(tool));
+}
+
 export function toolMetadata<T extends Tool>(
   tool: T,
 ): (typeof TOOL_METADATA)[T] {

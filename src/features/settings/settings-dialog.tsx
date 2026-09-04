@@ -1,13 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactElement } from "react";
 
-import { commands, type ApplyMode } from "@/bindings/commands";
+import {
+  commands,
+  type Tool,
+  type UpdateAppSettingsInput,
+} from "@/bindings/commands";
 import { type ThemePreference } from "@/components/use-theme";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { appSettingsQueryOptions, settingsKeys } from "@/lib/settings-api";
+import { filterEnabledTools, toolMetadata } from "@/lib/tool-metadata";
 import { cn } from "@/lib/utils";
+
+// 启用的工具固定按 claude → codex → cursor 顺序展示与提交。
+const ENABLED_TOOL_ORDER = [
+  "claude",
+  "codex",
+  "cursor",
+] as const satisfies readonly Tool[];
 
 interface SettingsDialogProps {
   open: boolean;
@@ -28,8 +40,8 @@ export function SettingsDialog({
     enabled: open,
   });
   const updateMutation = useMutation({
-    mutationFn: async (applyMode: ApplyMode) =>
-      unwrapResult(await commands.updateAppSettings({ applyMode })),
+    mutationFn: async (input: UpdateAppSettingsInput) =>
+      unwrapResult(await commands.updateAppSettings(input)),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: settingsKeys.all });
     },
@@ -42,6 +54,35 @@ export function SettingsDialog({
   }
 
   const directApply = settingsQuery.data?.applyMode === "direct";
+  const enabledTools = settingsQuery.data?.enabledTools;
+
+  const toggleApplyMode = (nextDirect: boolean) => {
+    const settings = settingsQuery.data;
+    if (!settings) {
+      return;
+    }
+    updateMutation.mutate({
+      applyMode: nextDirect ? "direct" : "preview_confirm",
+      enabledTools: settings.enabledTools,
+    });
+  };
+
+  const toggleEnabledTool = (tool: Tool, enabled: boolean) => {
+    const settings = settingsQuery.data;
+    if (!settings) {
+      return;
+    }
+    const next = new Set(settings.enabledTools);
+    if (enabled) {
+      next.add(tool);
+    } else {
+      next.delete(tool);
+    }
+    updateMutation.mutate({
+      applyMode: settings.applyMode,
+      enabledTools: filterEnabledTools(ENABLED_TOOL_ORDER, next),
+    });
+  };
 
   return (
     <div
@@ -131,11 +172,7 @@ export function SettingsDialog({
                   aria-label="直接应用（跳过预览确认对话框）"
                   checked={directApply}
                   disabled={updateMutation.isPending}
-                  onChange={(event) =>
-                    updateMutation.mutate(
-                      event.target.checked ? "direct" : "preview_confirm",
-                    )
-                  }
+                  onChange={(event) => toggleApplyMode(event.target.checked)}
                 />
                 <span>
                   <span className="font-medium">
@@ -148,6 +185,48 @@ export function SettingsDialog({
                   </span>
                 </span>
               </label>
+            ) : null}
+          </section>
+
+          <section
+            aria-labelledby="settings-enabled-tools-title"
+            className="rounded-lg border p-4"
+          >
+            <h3 id="settings-enabled-tools-title" className="font-semibold">
+              启用的工具
+            </h3>
+            <p className="text-muted-foreground mt-1 text-sm">
+              关闭的工具将不再显示在顶部工具入口、中央列表与项目详情中；已有配置数据不会被删除，同步行为保持不变。
+            </p>
+            {enabledTools ? (
+              <div className="mt-3 space-y-2">
+                {ENABLED_TOOL_ORDER.map((tool) => {
+                  const metadata = toolMetadata(tool);
+                  return (
+                    <label
+                      key={tool}
+                      className="flex items-center gap-3 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={enabledTools.includes(tool)}
+                        disabled={updateMutation.isPending}
+                        onChange={(event) =>
+                          toggleEnabledTool(tool, event.target.checked)
+                        }
+                      />
+                      <img
+                        src={metadata.icon}
+                        alt=""
+                        aria-hidden="true"
+                        draggable={false}
+                        className="size-4 rounded-[4px] object-contain"
+                      />
+                      <span>{metadata.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             ) : null}
           </section>
         </div>

@@ -171,7 +171,7 @@ beforeEach(() => {
   );
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm" },
+    data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
   });
   vi.mocked(commands.listPromptProfiles).mockResolvedValue({
     status: "ok",
@@ -742,7 +742,7 @@ describe("PromptsPage", () => {
   it("直接应用模式下无冲突提示词预览跳过对话框并显示成功通知", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.applyProfilePreview).mockResolvedValue({
       status: "ok",
@@ -782,7 +782,7 @@ describe("PromptsPage", () => {
   it("直接应用模式下提示词预览与 Apply 失败都只使用失败通知", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.previewPromptSync).mockResolvedValueOnce({
       status: "error",

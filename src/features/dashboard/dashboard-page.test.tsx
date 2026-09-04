@@ -4,13 +4,19 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { commands, type DashboardSummaryDto } from "@/bindings/commands";
+import {
+  commands,
+  type AppSettingsDto,
+  type DashboardSummaryDto,
+} from "@/bindings/commands";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
 
 vi.mock("@/bindings/commands", () => ({
   commands: {
     getDashboardSummary: vi.fn(),
     listSnapshots: vi.fn(),
+    getAppSettings: vi.fn(),
+    updateAppSettings: vi.fn(),
   },
 }));
 
@@ -76,9 +82,18 @@ describe("DashboardPage", () => {
   beforeEach(() => {
     vi.mocked(commands.getDashboardSummary).mockReset();
     vi.mocked(commands.listSnapshots).mockReset();
+    vi.mocked(commands.getAppSettings).mockReset();
   });
 
+  function mockEnabledTools(enabledTools: AppSettingsDto["enabledTools"]) {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "preview_confirm", enabledTools },
+    });
+  }
+
   it("展示全部工具、Cursor 不支持能力、项目、冲突、快照与最近同步聚合", async () => {
+    mockEnabledTools(["claude", "codex", "cursor"]);
     vi.mocked(commands.getDashboardSummary).mockResolvedValue({
       status: "ok",
       data: summary,
@@ -99,7 +114,23 @@ describe("DashboardPage", () => {
     expect(screen.getByText("待处理冲突")).toBeInTheDocument();
   });
 
+  it("被关闭的工具不再渲染总览卡片", async () => {
+    mockEnabledTools(["claude", "codex"]);
+    vi.mocked(commands.getDashboardSummary).mockResolvedValue({
+      status: "ok",
+      data: summary,
+    });
+    renderDashboard();
+
+    expect(await screen.findByText("Claude 主渠道")).toBeInTheDocument();
+    expect(screen.getByText("Codex 主渠道")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Cursor" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("空状态只提供首次检测这一项下一步", async () => {
+    mockEnabledTools(["claude", "codex"]);
     vi.mocked(commands.getDashboardSummary).mockResolvedValue({
       status: "ok",
       data: {

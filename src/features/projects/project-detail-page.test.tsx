@@ -393,7 +393,10 @@ describe("ProjectDetailPage", () => {
     });
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm" },
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex", "cursor"],
+      },
     });
     vi.mocked(commands.listMcpProjectOptions).mockImplementation((input) =>
       Promise.resolve({
@@ -493,7 +496,7 @@ describe("ProjectDetailPage", () => {
   it("直接应用模式下无冲突项目预览跳过对话框立即 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     renderPage();
     // 预览自带 GIT_TRACKED 警告；警告不阻止直接应用，与对话框行为一致。
@@ -552,7 +555,7 @@ describe("ProjectDetailPage", () => {
   it("直接应用模式下启用项目追加自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     renderPage();
 
@@ -589,7 +592,7 @@ describe("ProjectDetailPage", () => {
   it("直接应用模式下冲突项目预览回退为人工确认且 Apply 禁用", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
@@ -831,6 +834,48 @@ describe("ProjectDetailPage", () => {
       expect(commands.listMcpProjectOptions).toHaveBeenLastCalledWith({
         projectId: project.id,
         tool: "cursor",
+      }),
+    );
+  });
+
+  it("当前选中工具被关闭时在渲染期回落到第一个启用工具", async () => {
+    const { client } = renderPage();
+    await screen.findByRole("heading", { name: "Claude MCP 项目追加" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "管理 Cursor 项目资源" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Cursor MCP 项目追加" }),
+    ).toBeVisible();
+
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "preview_confirm", enabledTools: ["codex"] },
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["settings"] });
+    });
+
+    const platformGroup = screen.getByRole("group", {
+      name: "项目平台管理视图",
+    });
+    expect(
+      within(platformGroup).queryByRole("button", {
+        name: "管理 Cursor 项目资源",
+      }),
+    ).not.toBeInTheDocument();
+    const codexButton = within(platformGroup).getByRole("button", {
+      name: "管理 Codex 项目资源",
+    });
+    expect(codexButton).toHaveAttribute("aria-pressed", "true");
+    expect(
+      await screen.findByRole("heading", { name: "Codex MCP 项目追加" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(commands.listMcpProjectOptions).toHaveBeenLastCalledWith({
+        projectId: project.id,
+        tool: "codex",
       }),
     );
   });
@@ -1556,7 +1601,7 @@ describe("ProjectDetailPage", () => {
   it("直接应用模式下禁用原生资源仍只打开预览，确认后才 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
       status: "ok",
@@ -1610,7 +1655,7 @@ describe("ProjectDetailPage", () => {
   it("已禁用原生资源提供恢复入口且不自动 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
       status: "ok",

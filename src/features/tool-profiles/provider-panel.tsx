@@ -11,6 +11,7 @@ import {
 } from "@/bindings/commands";
 import { FormDialog } from "@/components/form-dialog";
 import { Button } from "@/components/ui/button";
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import {
   profileErrorText,
   profileKeys,
@@ -51,6 +52,8 @@ export function ProviderPanel({
   onPreview,
 }: ProviderPanelProps) {
   const queryClient = useQueryClient();
+  const enabledTools = useEnabledTools();
+  const counterpartTool: Tool = tool === "claude" ? "codex" : "claude";
   const profilesQuery = useQuery(providerProfilesQueryOptions(tool));
   const [editing, setEditing] = useState<ProviderProfileDto | null>(null);
   const [form, setForm] = useState<ProviderFormState>(emptyForm);
@@ -317,14 +320,16 @@ export function ProviderPanel({
                 >
                   编辑
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={isCodexOAuthProfile(profile)}
-                  onClick={() => copyMutation.mutate(profile)}
-                >
-                  复制到{tool === "claude" ? " Codex" : " Claude"}
-                </Button>
+                {enabledTools.has(counterpartTool) ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={isCodexOAuthProfile(profile)}
+                    onClick={() => copyMutation.mutate(profile)}
+                  >
+                    复制到{tool === "claude" ? " Codex" : " Claude"}
+                  </Button>
+                ) : null}
                 <Button
                   variant="outline"
                   size="sm"

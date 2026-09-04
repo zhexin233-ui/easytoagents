@@ -22,6 +22,7 @@ import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { Button } from "@/components/ui/button";
 import { useNotify } from "@/components/use-notify";
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import {
   profileErrorText,
@@ -34,9 +35,11 @@ import {
   appSettingsQueryOptions,
   canAutoApplyPreview,
 } from "@/lib/settings-api";
-import { PROFILE_TOOLS, toolMetadata } from "@/lib/tool-metadata";
-
-const tools = PROFILE_TOOLS;
+import {
+  PROFILE_TOOLS,
+  filterEnabledTools,
+  toolMetadata,
+} from "@/lib/tool-metadata";
 
 interface OpenPreview {
   plan: PreviewPlan;
@@ -61,6 +64,7 @@ export function PromptsPage() {
   };
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
+  const tools = filterEnabledTools(PROFILE_TOOLS, useEnabledTools());
   const [listLayout, setListLayout] = usePersistedCentralListLayout("prompts");
   const [editing, setEditing] = useState<PromptProfileDto | null>(null);
   const [name, setName] = useState("");
@@ -473,100 +477,102 @@ export function PromptsPage() {
         </section>
       </div>
 
-      <section
-        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-        aria-labelledby="prompt-target-status-title"
-      >
-        <h2 id="prompt-target-status-title" className="text-lg font-semibold">
-          全局目标状态
-        </h2>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {tools.map((tool) => {
-            const statusQuery = statusQueries[tool];
-            const toolLabel = toolMetadata(tool).label;
-            return (
-              <article key={tool} className="rounded-lg border p-4 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <strong>{toolLabel}</strong>
-                  {statusQuery.data ? (
-                    <span className="text-xs">
-                      {statusQuery.data.availability === "installed"
-                        ? "已检测到"
-                        : statusQuery.data.availability === "unavailable"
-                          ? "未检测到"
-                          : "版本未确认"}
-                    </span>
-                  ) : null}
-                </div>
-                {statusQuery.isPending ? (
-                  <p role="status" className="mt-2 text-xs">
-                    正在检测工具配置状态…
-                  </p>
-                ) : null}
-                {statusQuery.isError ? (
-                  <p
-                    role="alert"
-                    className="mt-2 text-xs text-red-700 dark:text-red-300"
-                  >
-                    {profileErrorText(statusQuery.error)}
-                  </p>
-                ) : null}
-                {statusQuery.data ? (
-                  <>
-                    <code className="mt-2 block text-xs break-all">
-                      {statusQuery.data.promptTargetPath}
-                    </code>
-                    <p className="text-muted-foreground mt-2 text-xs">
-                      {statusQuery.data.newSessionNotice}
+      {tools.length > 0 ? (
+        <section
+          className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
+          aria-labelledby="prompt-target-status-title"
+        >
+          <h2 id="prompt-target-status-title" className="text-lg font-semibold">
+            全局目标状态
+          </h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {tools.map((tool) => {
+              const statusQuery = statusQueries[tool];
+              const toolLabel = toolMetadata(tool).label;
+              return (
+                <article key={tool} className="rounded-lg border p-4 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <strong>{toolLabel}</strong>
+                    {statusQuery.data ? (
+                      <span className="text-xs">
+                        {statusQuery.data.availability === "installed"
+                          ? "已检测到"
+                          : statusQuery.data.availability === "unavailable"
+                            ? "未检测到"
+                            : "版本未确认"}
+                      </span>
+                    ) : null}
+                  </div>
+                  {statusQuery.isPending ? (
+                    <p role="status" className="mt-2 text-xs">
+                      正在检测工具配置状态…
                     </p>
-                    {statusQuery.data.promptOverride === "present" ? (
-                      <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
-                        检测到更高优先级的 Codex 指令来源（如
-                        AGENTS.override.md）；当前 AGENTS.md 可能被遮蔽。
+                  ) : null}
+                  {statusQuery.isError ? (
+                    <p
+                      role="alert"
+                      className="mt-2 text-xs text-red-700 dark:text-red-300"
+                    >
+                      {profileErrorText(statusQuery.error)}
+                    </p>
+                  ) : null}
+                  {statusQuery.data ? (
+                    <>
+                      <code className="mt-2 block text-xs break-all">
+                        {statusQuery.data.promptTargetPath}
+                      </code>
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        {statusQuery.data.newSessionNotice}
                       </p>
-                    ) : null}
-                    {statusQuery.data.promptOverride === "unknown" ? (
-                      <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
-                        无法安全确认 Codex 指令遮蔽状态，请检查
-                        AGENTS.override.md 后再应用。
-                      </p>
-                    ) : null}
-                  </>
-                ) : null}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={discoverMutation.isPending}
-                    onClick={() => discoverMutation.mutate(tool)}
-                  >
-                    检测并导入已有提示词
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={previewMutation.isPending}
-                    onClick={() =>
-                      previewMutation.mutate({
-                        tool,
-                        autoApply: directApply,
-                      })
-                    }
-                  >
-                    {previewMutation.isPending
-                      ? directApply
-                        ? "正在应用…"
-                        : "正在生成…"
-                      : directApply
-                        ? `直接应用 ${toolLabel} 全局同步`
-                        : `预览 ${toolLabel} 全局同步`}
-                  </Button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </section>
+                      {statusQuery.data.promptOverride === "present" ? (
+                        <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                          检测到更高优先级的 Codex 指令来源（如
+                          AGENTS.override.md）；当前 AGENTS.md 可能被遮蔽。
+                        </p>
+                      ) : null}
+                      {statusQuery.data.promptOverride === "unknown" ? (
+                        <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                          无法安全确认 Codex 指令遮蔽状态，请检查
+                          AGENTS.override.md 后再应用。
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={discoverMutation.isPending}
+                      onClick={() => discoverMutation.mutate(tool)}
+                    >
+                      检测并导入已有提示词
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={previewMutation.isPending}
+                      onClick={() =>
+                        previewMutation.mutate({
+                          tool,
+                          autoApply: directApply,
+                        })
+                      }
+                    >
+                      {previewMutation.isPending
+                        ? directApply
+                          ? "正在应用…"
+                          : "正在生成…"
+                        : directApply
+                          ? `直接应用 ${toolLabel} 全局同步`
+                          : `预览 ${toolLabel} 全局同步`}
+                    </Button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <FormDialog
         open={formOpen}

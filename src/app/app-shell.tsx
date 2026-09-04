@@ -2,10 +2,15 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useTheme } from "@/components/use-theme";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { projectsQueryOptions } from "@/lib/projects-api";
-import { PROFILE_TOOLS, toolMetadata } from "@/lib/tool-metadata";
+import {
+  PROFILE_TOOLS,
+  filterEnabledTools,
+  toolMetadata,
+} from "@/lib/tool-metadata";
 import { cn } from "@/lib/utils";
 
 const primaryLinks = [
@@ -14,15 +19,6 @@ const primaryLinks = [
   { to: "/mcp", label: "MCP", end: false },
   { to: "/skills", label: "Skills", end: false },
 ] as const;
-
-const toolLinks = PROFILE_TOOLS.map((tool) => {
-  const metadata = toolMetadata(tool);
-  return {
-    to: metadata.profileRoute,
-    label: metadata.label,
-    icon: metadata.icon,
-  };
-});
 
 const primaryLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
@@ -111,6 +107,18 @@ function SettingsIcon() {
 }
 
 function TopBar() {
+  const enabledTools = useEnabledTools();
+  const toolLinks = filterEnabledTools(PROFILE_TOOLS, enabledTools).map(
+    (tool) => {
+      const metadata = toolMetadata(tool);
+      return {
+        to: metadata.profileRoute,
+        label: metadata.label,
+        icon: metadata.icon,
+      };
+    },
+  );
+
   return (
     <header className="bg-card flex h-14 shrink-0 items-center justify-between gap-4 border-b px-4 lg:px-6">
       <div className="flex items-center gap-2.5">

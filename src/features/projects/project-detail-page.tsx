@@ -17,6 +17,7 @@ import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import { mcpKeys, mcpProjectOptionsQueryOptions } from "@/lib/mcp-api";
 import {
   profileErrorText,
@@ -32,7 +33,11 @@ import {
 } from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
 import { interruptedRunQueryOptions, syncKeys } from "@/lib/sync-api";
-import { MCP_TOOLS, toolMetadata } from "@/lib/tool-metadata";
+import {
+  MCP_TOOLS,
+  filterEnabledTools,
+  toolMetadata,
+} from "@/lib/tool-metadata";
 import {
   appSettingsQueryOptions,
   canAutoApplyPreview,
@@ -58,8 +63,15 @@ export function ProjectDetailPage() {
   const directApply = settingsQuery.data?.applyMode === "direct";
   const [resourceView, setResourceView] = useState<ProjectResourceView>("mcp");
   const [toolView, setToolView] = useState<Tool>("claude");
+  const enabledTools = useEnabledTools();
+  const visibleTools = filterEnabledTools(MCP_TOOLS, enabledTools);
+  // 选中工具被关闭时在 render 期夹逼到第一个启用工具；toolView 本身保持，
+  // 重新启用后恢复原选中态。
+  const activeTool = visibleTools.includes(toolView)
+    ? toolView
+    : (visibleTools[0] ?? toolView);
   const [toolStatusOpen, setToolStatusOpen] = useState(false);
-  const viewKey = projectViewKey(projectId, toolView, resourceView);
+  const viewKey = projectViewKey(projectId, activeTool, resourceView);
   const [openPreview, setOpenPreview] = useState<OpenProjectPreview | null>(
     null,
   );
@@ -245,88 +257,93 @@ export function ProjectDetailPage() {
         ) : null}
       </div>
 
-      <section
-        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-        aria-labelledby="project-status-title"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <h2 id="project-status-title" className="text-lg font-semibold">
-            工具配置状态
-          </h2>
-          <button
-            type="button"
-            aria-controls="project-status-content"
-            aria-expanded={toolStatusOpen}
-            aria-label={
-              toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"
-            }
-            title={toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"}
-            className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded transition-colors"
-            onClick={() => setToolStatusOpen((open) => !open)}
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={cn(
-                "size-4 transition-transform",
-                toolStatusOpen && "rotate-90",
-              )}
+      {project.targets.some((target) => enabledTools.has(target.tool)) ? (
+        <section
+          className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
+          aria-labelledby="project-status-title"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="project-status-title" className="text-lg font-semibold">
+              工具配置状态
+            </h2>
+            <button
+              type="button"
+              aria-controls="project-status-content"
+              aria-expanded={toolStatusOpen}
+              aria-label={
+                toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"
+              }
+              title={toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"}
+              className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded transition-colors"
+              onClick={() => setToolStatusOpen((open) => !open)}
             >
-              <path d="M6 3.5 10.5 8 6 12.5" />
-            </svg>
-          </button>
-        </div>
-        {toolStatusOpen ? (
-          <div
-            id="project-status-content"
-            className="mt-4 grid gap-3 md:grid-cols-2"
-          >
-            {project.targets.map((target) => {
-              const initialUnmanaged =
-                target.diagnosticCode === "PROJECT_TARGET_INITIAL_UNMANAGED";
-              return (
-                <article
-                  key={`${target.tool}-${target.artifactKind}`}
-                  className="rounded-lg border p-4"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">
-                      {toolLabel(target.tool)} ·{" "}
-                      {artifactLabel(target.artifactKind)}
-                    </p>
-                    {initialUnmanaged ? (
-                      <SyncStatusBadge
-                        status={target.status}
-                        label="○ 未纳管"
-                        tone="muted"
-                      />
-                    ) : (
-                      <SyncStatusBadge status={target.status} />
-                    )}
-                  </div>
-                  <code className="mt-2 block text-xs break-all">
-                    {target.targetPath ?? "目标路径不可用"}
-                  </code>
-                  {initialUnmanaged ? (
-                    <p className="text-muted-foreground mt-2 text-xs">
-                      该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
-                    </p>
-                  ) : target.diagnosticCode ? (
-                    <p className="mt-2 text-xs">
-                      诊断：{target.diagnosticCode}
-                    </p>
-                  ) : null}
-                </article>
-              );
-            })}
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={cn(
+                  "size-4 transition-transform",
+                  toolStatusOpen && "rotate-90",
+                )}
+              >
+                <path d="M6 3.5 10.5 8 6 12.5" />
+              </svg>
+            </button>
           </div>
-        ) : null}
-      </section>
+          {toolStatusOpen ? (
+            <div
+              id="project-status-content"
+              className="mt-4 grid gap-3 md:grid-cols-2"
+            >
+              {project.targets
+                .filter((target) => enabledTools.has(target.tool))
+                .map((target) => {
+                  const initialUnmanaged =
+                    target.diagnosticCode ===
+                    "PROJECT_TARGET_INITIAL_UNMANAGED";
+                  return (
+                    <article
+                      key={`${target.tool}-${target.artifactKind}`}
+                      className="rounded-lg border p-4"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium">
+                          {toolLabel(target.tool)} ·{" "}
+                          {artifactLabel(target.artifactKind)}
+                        </p>
+                        {initialUnmanaged ? (
+                          <SyncStatusBadge
+                            status={target.status}
+                            label="○ 未纳管"
+                            tone="muted"
+                          />
+                        ) : (
+                          <SyncStatusBadge status={target.status} />
+                        )}
+                      </div>
+                      <code className="mt-2 block text-xs break-all">
+                        {target.targetPath ?? "目标路径不可用"}
+                      </code>
+                      {initialUnmanaged ? (
+                        <p className="text-muted-foreground mt-2 text-xs">
+                          该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
+                        </p>
+                      ) : target.diagnosticCode ? (
+                        <p className="mt-2 text-xs">
+                          诊断：{target.diagnosticCode}
+                        </p>
+                      ) : null}
+                    </article>
+                  );
+                })}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <section
         className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
@@ -370,7 +387,7 @@ export function ProjectDetailPage() {
               >
                 Skill
               </Button>
-              {toolMetadata(toolView).capabilities.promptProject ? (
+              {toolMetadata(activeTool).capabilities.promptProject ? (
                 <Button
                   type="button"
                   size="sm"
@@ -388,11 +405,11 @@ export function ProjectDetailPage() {
               role="group"
               aria-label="项目平台管理视图"
             >
-              {MCP_TOOLS.map((tool) => (
+              {visibleTools.map((tool) => (
                 <ProjectToolViewButton
                   key={tool}
                   tool={tool}
-                  selected={toolView === tool}
+                  selected={activeTool === tool}
                   onClick={() => changeToolView(tool)}
                 />
               ))}
@@ -412,14 +429,14 @@ export function ProjectDetailPage() {
           ) : null}
           <ProjectNativeResources
             project={project}
-            tool={toolView}
+            tool={activeTool}
             artifactKind={resourceView}
             writerBlocked={writerBlocked}
             applyPending={applyMutation.isPending}
             onPreview={handleNativePreview}
           />
           <h2 className="text-xl font-semibold">
-            {toolLabel(toolView)}{" "}
+            {toolLabel(activeTool)}{" "}
             {resourceView === "mcp"
               ? "MCP"
               : resourceView === "skill"
@@ -430,31 +447,31 @@ export function ProjectDetailPage() {
           {resourceView === "mcp" ? (
             <ProjectMcpAssignments
               project={project}
-              tool={toolView}
+              tool={activeTool}
               directApply={directApply}
-              onPreview={(plan) => handlePreview(plan, toolView, "mcp")}
+              onPreview={(plan) => handlePreview(plan, activeTool, "mcp")}
               onMessage={setMessage}
             />
           ) : resourceView === "skill" ? (
             <ProjectSkillAssignments
               project={project}
-              tool={toolView}
+              tool={activeTool}
               directApply={directApply}
-              onPreview={(plan) => handlePreview(plan, toolView, "skill")}
+              onPreview={(plan) => handlePreview(plan, activeTool, "skill")}
               onMessage={setMessage}
             />
-          ) : toolMetadata(toolView).capabilities.promptProject ? (
+          ) : toolMetadata(activeTool).capabilities.promptProject ? (
             <ProjectPromptAssignments
               project={project}
-              tool={toolView}
+              tool={activeTool}
               directApply={directApply}
-              onPreview={(plan) => handlePreview(plan, toolView, "prompt")}
+              onPreview={(plan) => handlePreview(plan, activeTool, "prompt")}
               onMessage={setMessage}
             />
           ) : (
             <BlockingState
-              title={`${toolLabel(toolView)} 项目提示词不受支持`}
-              description={`${toolLabel(toolView)} 项目视图只支持 MCP 与 Skills，不会读取或写入 Rules、Prompt 或 AGENTS.md。`}
+              title={`${toolLabel(activeTool)} 项目提示词不受支持`}
+              description={`${toolLabel(activeTool)} 项目视图只支持 MCP 与 Skills，不会读取或写入 Rules、Prompt 或 AGENTS.md。`}
               code="CURSOR_PROMPT_UNSUPPORTED"
             />
           )}

@@ -23,12 +23,17 @@ import { PlatformAssignmentButton } from "@/components/platform-assignment-butto
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import { SkillDirectoryImportDialog } from "@/features/skills/skill-directory-import-dialog";
 import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
-import { SKILL_TOOLS, toolMetadata } from "@/lib/tool-metadata";
+import {
+  SKILL_TOOLS,
+  filterEnabledTools,
+  toolMetadata,
+} from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
   appSettingsQueryOptions,
@@ -60,6 +65,10 @@ export function SkillsPage() {
   const statusesQuery = useQuery(globalSkillStatusesQueryOptions());
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
+  const enabledTools = useEnabledTools();
+  const visibleStatuses = statusesQuery.data?.filter((status) =>
+    enabledTools.has(status.tool),
+  );
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
   const [openDirectoryImport, setOpenDirectoryImport] = useState(false);
   const { notification, notify } = useNotify();
@@ -352,7 +361,7 @@ export function SkillsPage() {
                   role="group"
                   aria-label={`${skill.name} 全局平台分配`}
                 >
-                  {SKILL_TOOLS.map((tool) => (
+                  {filterEnabledTools(SKILL_TOOLS, enabledTools).map((tool) => (
                     <PlatformAssignmentButton
                       key={tool}
                       tool={tool}
@@ -465,85 +474,87 @@ export function SkillsPage() {
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
-        {statusesQuery.data?.length === 0 ? (
+        {statusesQuery.data != null && visibleStatuses?.length === 0 ? (
           <p className="text-muted-foreground mt-4 text-sm">
             当前没有可检查的全局 Skills 目标。
           </p>
         ) : null}
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {statusesQuery.data?.map((status) => {
-            const presentation = globalTargetStatusPresentation(
-              status.status,
-              status.diagnosticCode,
-            );
-            return (
-              <article
-                key={status.tool}
-                className="rounded-lg border p-4 text-sm"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <strong>{toolMetadata(status.tool).label}</strong>
-                  <SyncStatusBadge
-                    label={presentation.label}
-                    status={status.status}
-                    tone={presentation.tone}
-                  />
-                </div>
-                <code className="mt-2 block text-xs break-all">
-                  {status.targetPath ?? "目标不可用"}
-                </code>
-                {presentation.description ? (
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    {presentation.description}
-                  </p>
-                ) : null}
-                {status.diagnosticCode ? (
-                  <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
-                    诊断码：<code>{status.diagnosticCode}</code>
-                  </p>
-                ) : null}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={presentation.previewBlocked}
-                    aria-label={`检测并导入 ${toolMetadata(status.tool).label} 全局 Skills`}
-                    onClick={() => {
-                      if (openImport) return;
-                      setOpenImport({
-                        tool: status.tool,
-                        requestId: crypto.randomUUID(),
-                      });
-                    }}
-                  >
-                    检测并导入已有 Skills
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      previewMutation.isPending || presentation.previewBlocked
-                    }
-                    onClick={() =>
-                      previewMutation.mutate({
-                        tool: status.tool,
-                        autoApply: directApply,
-                      })
-                    }
-                  >
-                    {previewMutation.isPending
-                      ? directApply
-                        ? "正在应用…"
-                        : "正在生成…"
-                      : directApply
-                        ? "直接应用全局同步"
-                        : "预览全局同步"}
-                  </Button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+        {visibleStatuses && visibleStatuses.length > 0 ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {visibleStatuses.map((status) => {
+              const presentation = globalTargetStatusPresentation(
+                status.status,
+                status.diagnosticCode,
+              );
+              return (
+                <article
+                  key={status.tool}
+                  className="rounded-lg border p-4 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <strong>{toolMetadata(status.tool).label}</strong>
+                    <SyncStatusBadge
+                      label={presentation.label}
+                      status={status.status}
+                      tone={presentation.tone}
+                    />
+                  </div>
+                  <code className="mt-2 block text-xs break-all">
+                    {status.targetPath ?? "目标不可用"}
+                  </code>
+                  {presentation.description ? (
+                    <p className="text-muted-foreground mt-2 text-xs">
+                      {presentation.description}
+                    </p>
+                  ) : null}
+                  {status.diagnosticCode ? (
+                    <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                      诊断码：<code>{status.diagnosticCode}</code>
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={presentation.previewBlocked}
+                      aria-label={`检测并导入 ${toolMetadata(status.tool).label} 全局 Skills`}
+                      onClick={() => {
+                        if (openImport) return;
+                        setOpenImport({
+                          tool: status.tool,
+                          requestId: crypto.randomUUID(),
+                        });
+                      }}
+                    >
+                      检测并导入已有 Skills
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        previewMutation.isPending || presentation.previewBlocked
+                      }
+                      onClick={() =>
+                        previewMutation.mutate({
+                          tool: status.tool,
+                          autoApply: directApply,
+                        })
+                      }
+                    >
+                      {previewMutation.isPending
+                        ? directApply
+                          ? "正在应用…"
+                          : "正在生成…"
+                        : directApply
+                          ? "直接应用全局同步"
+                          : "预览全局同步"}
+                    </Button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       {contentPreview ? (

@@ -162,7 +162,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm" },
+    data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
   });
   vi.mocked(commands.listProviderProfiles).mockResolvedValue({
     status: "ok",
@@ -716,7 +716,7 @@ describe("ToolProfilesPage", () => {
   it("直接应用模式下无冲突渠道预览跳过对话框立即 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     renderPage();
     const section = sectionByHeading("渠道");
@@ -745,7 +745,7 @@ describe("ToolProfilesPage", () => {
   it("直接应用模式下冲突渠道预览回退为人工确认且 Apply 禁用", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
@@ -780,7 +780,7 @@ describe("ToolProfilesPage", () => {
   it("直接应用模式下切换生效渠道自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",

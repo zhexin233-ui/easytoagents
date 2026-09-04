@@ -6,6 +6,7 @@ import type { DashboardToolSummaryDto } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { SnapshotRestoreDialog } from "@/components/snapshot-restore-dialog";
 import { Button } from "@/components/ui/button";
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import { OnboardingWizard } from "@/features/onboarding/onboarding-wizard";
 import { dashboardSummaryQueryOptions } from "@/lib/dashboard-api";
 import { profileErrorText } from "@/lib/profile-api";
@@ -13,6 +14,7 @@ import { toolMetadata } from "@/lib/tool-metadata";
 
 export function DashboardPage() {
   const dashboardQuery = useQuery(dashboardSummaryQueryOptions());
+  const enabledTools = useEnabledTools();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
 
@@ -79,9 +81,11 @@ export function DashboardPage() {
             className="mx-auto mt-6 grid max-w-6xl gap-4 md:grid-cols-2"
             aria-label="工具配置卡片"
           >
-            {dashboardQuery.data.tools.map((tool) => (
-              <ToolSummaryCard key={tool.tool} tool={tool} />
-            ))}
+            {dashboardQuery.data.tools
+              .filter((tool) => enabledTools.has(tool.tool))
+              .map((tool) => (
+                <ToolSummaryCard key={tool.tool} tool={tool} />
+              ))}
           </section>
 
           <section className="mx-auto mt-4 grid max-w-6xl gap-4 sm:grid-cols-3">

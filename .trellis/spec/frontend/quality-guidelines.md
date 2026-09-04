@@ -672,3 +672,110 @@ notify({ kind: "success", message: "已应用" });
   regeneration; later failures notify error. Project detail keeps local feedback.
 - Skills/Provider/Prompt plans never set `readoptAvailable`; do not wire the
   handler there until the backend supports those ownership kinds.
+
+---
+
+## Scenario: 启用的工具全局设置（enabled-tools display filter）
+
+### 1. Scope / Trigger
+
+- Trigger: any change to `AppSettingsDto` / `UpdateAppSettingsInput` /
+  `app_settings` storage keys, or any new render site that draws a tool icon,
+  tool entry link, or per-tool card/column.
+
+### 2. Signatures
+
+- Rust (`src-tauri/src/settings.rs`):
+  `AppSettingsDto { apply_mode: ApplyMode, enabled_tools: Vec<Tool> }`,
+  `UpdateAppSettingsInput` mirrors it; both serialize camelCase
+  (`applyMode`, `enabledTools`).
+- Storage: `app_settings` KV table, key `enabled_tools`, value is a JSON array
+  string (e.g. `["claude","codex"]`); `apply_mode` key unchanged. One command
+  `update_app_settings` writes BOTH keys in a single `Immediate` transaction.
+- Frontend shared surface: `DEFAULT_ENABLED_TOOLS` and
+  `filterEnabledTools<T extends Tool>(tools, enabled: ReadonlySet<Tool>)` in
+  `src/lib/tool-metadata.ts`; `useEnabledTools(): ReadonlySet<Tool>` in
+  `src/components/use-enabled-tools.ts` (query key `["settings"]`, falls back
+  to `DEFAULT_ENABLED_TOOLS` while loading or on error).
+
+### 3. Contracts
+
+- Defaults: missing `enabled_tools` key → `["claude","codex"]` (Cursor off by
+  default, it is opt-in). Missing `apply_mode` → `preview_confirm`. Defaults
+  resolve per key; never written back implicitly.
+- Filtering is display-layer only: assignments (`globalTools`), syncs, and
+  stored data for disabled tools stay untouched; profile routes `/claude`
+  `/codex` stay reachable. The settings dialog description must keep saying so.
+- Toggle submissions are whole-DTO read-modify-write: the dialog always sends
+  `{ applyMode, enabledTools }`; `enabledTools` is normalized to canonical
+  order `claude → codex → cursor` via `filterEnabledTools(ENABLED_TOOL_ORDER, next)`.
+- Every tool-icon render site must derive visibility at render time from
+  `useEnabledTools()`: top-bar links, central-list assignment icon groups
+  (prompts/MCP/Skills), 全局目标状态 status cards, dashboard tool cards,
+  onboarding tool iteration, provider-panel copy-to-counterpart entry, project
+  platform selector + 工具配置状态 targets.
+- Project detail derives `activeTool = visibleTools.includes(toolView) ?
+  toolView : (visibleTools[0] ?? toolView)` at render time; the `toolView`
+  state itself is never pruned in an effect.
+
+### 4. Validation & Error Matrix
+
+- Stored `enabled_tools` is not valid JSON → `DatabaseError`
+  （“应用设置包含未知取值”）, no silent fallback.
+- Stored array contains a tool outside the `Tool` enum → same `DatabaseError`.
+- Empty array is legal: pages degrade to hidden groups/sections, onboarding
+  completes with zero prepared tools.
+
+### 5. Good/Base/Bad Cases
+
+- Good: toggle Cursor off → its assignment button, status card, dashboard card
+  disappear immediately (shared `["settings"]` cache invalidation); re-enable
+  restores them and any stale `toolView === "cursor"` selection re-applies.
+- Base: fresh install (no keys) → top bar shows Claude + Codex only.
+- Bad: filtering `statusesQuery.data`/`project.targets` by tool id while still
+  rendering the section wrapper with zero cards, or clamping `toolView` inside
+  a `useEffect` (`react-hooks/set-state-in-effect`).
+
+### 6. Tests Required
+
+- Rust `settings::tests`: per-key defaults, both-key round-trip, reopen
+  durability, bogus JSON and unknown-tool values → `DatabaseError`.
+- `settings-dialog.test`: default checked states, toggle payload carries full
+  `{ applyMode, enabledTools }` in canonical order.
+- One hide-assertion per surface: app-shell (top bar), mcp/skills (icon column
+  + status card), dashboard (tool card), project-detail (`activeTool` fallback
+  when the selected tool is disabled — assert no unselected intermediate state).
+- Every `getAppSettings` mock must include `enabledTools`; TS enforces it.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+// module-level constant renders disabled tools and never reacts to settings
+const toolLinks = PROFILE_TOOLS.map((tool) => ({ ... }));
+```
+
+#### Correct
+
+```tsx
+function TopBar() {
+  const enabledTools = useEnabledTools();
+  const toolLinks = filterEnabledTools(PROFILE_TOOLS, enabledTools).map(
+    (tool) => ({ ... }),
+  );
+}
+```
+
+### Gotcha: mocking Tauri IPC for browser walkthroughs
+
+> `window.__TAURI_INTERNALS__.invoke(cmd, args)` must return the **raw DTO** —
+> Tauri already unwraps Rust `Result::Ok` (and rejects on `Err`), and the
+> generated `commands` wrapper adds the `{ status: "ok", data }` envelope
+> itself. Returning `{ status, data }` from the mock double-wraps and
+> `unwrapResult` hands pages the envelope, crashing on shapes like
+> `data.tools.filter`. Commands with input receive `{ input: {...} }` in
+> `args`. A root-level `mock.html` (copy of `index.html` plus an inline script
+> defining `__TAURI_INTERNALS__` before the module script) lets the dev server
+> render the real UI with deterministic data without touching the local app
+> database; delete the file before committing.

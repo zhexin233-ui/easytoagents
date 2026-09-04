@@ -14,12 +14,16 @@ import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { profileErrorText, profileKeys, unwrapResult } from "@/lib/profile-api";
-import { PROFILE_TOOLS, toolMetadata } from "@/lib/tool-metadata";
+import {
+  PROFILE_TOOLS,
+  filterEnabledTools,
+  toolMetadata,
+} from "@/lib/tool-metadata";
 
 const storageKey = "easytoagents.onboarding.selections.v1";
-const tools = PROFILE_TOOLS;
 type ProfileTool = (typeof PROFILE_TOOLS)[number];
 
 interface ToolDiscovery {
@@ -60,6 +64,7 @@ export function OnboardingWizard({
 
 function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const tools = filterEnabledTools(PROFILE_TOOLS, useEnabledTools());
   const [step, setStep] = useState<"detect" | "select" | "preview" | "done">(
     "detect",
   );

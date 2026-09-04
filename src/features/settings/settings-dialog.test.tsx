@@ -87,15 +87,24 @@ describe("SettingsDialog", () => {
     vi.mocked(commands.getAppSettings)
       .mockResolvedValueOnce({
         status: "ok",
-        data: { applyMode: "preview_confirm" } satisfies AppSettingsDto,
+        data: {
+          applyMode: "preview_confirm",
+          enabledTools: ["claude", "codex"],
+        } satisfies AppSettingsDto,
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: { applyMode: "direct" } satisfies AppSettingsDto,
+        data: {
+          applyMode: "direct",
+          enabledTools: ["claude", "codex"],
+        } satisfies AppSettingsDto,
       });
     vi.mocked(commands.updateAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" } satisfies AppSettingsDto,
+      data: {
+        applyMode: "direct",
+        enabledTools: ["claude", "codex"],
+      } satisfies AppSettingsDto,
     });
     renderDialog();
 
@@ -105,6 +114,7 @@ describe("SettingsDialog", () => {
     await waitFor(() =>
       expect(commands.updateAppSettings).toHaveBeenCalledWith({
         applyMode: "direct",
+        enabledTools: ["claude", "codex"],
       }),
     );
     await waitFor(() => expect(checkbox).toBeChecked());
@@ -113,11 +123,17 @@ describe("SettingsDialog", () => {
   it("已开启直接应用时勾选框呈选中态，取消勾选保存 preview_confirm", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" } satisfies AppSettingsDto,
+      data: {
+        applyMode: "direct",
+        enabledTools: ["claude", "codex"],
+      } satisfies AppSettingsDto,
     });
     vi.mocked(commands.updateAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm" } satisfies AppSettingsDto,
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
+      } satisfies AppSettingsDto,
     });
     renderDialog();
 
@@ -127,6 +143,7 @@ describe("SettingsDialog", () => {
     await waitFor(() =>
       expect(commands.updateAppSettings).toHaveBeenCalledWith({
         applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
       }),
     );
   });
@@ -149,13 +166,88 @@ describe("SettingsDialog", () => {
   it("点击关闭按钮触发 onClose", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm" } satisfies AppSettingsDto,
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
+      } satisfies AppSettingsDto,
     });
     const onClose = vi.fn();
     renderDialog({ onClose });
 
     fireEvent.click(await screen.findByRole("button", { name: "关闭" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("启用的工具区块默认勾选 Claude 与 Codex，Cursor 未勾选", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
+      } satisfies AppSettingsDto,
+    });
+    renderDialog();
+
+    expect(
+      await screen.findByRole("heading", { name: "启用的工具" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("checkbox", { name: "Claude" }),
+    ).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Codex" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Cursor" })).not.toBeChecked();
+  });
+
+  it("勾选 Cursor 后整包提交 applyMode 与按固定顺序的启用工具", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
+      } satisfies AppSettingsDto,
+    });
+    vi.mocked(commands.updateAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex", "cursor"],
+      } satisfies AppSettingsDto,
+    });
+    renderDialog();
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Cursor" }));
+    await waitFor(() =>
+      expect(commands.updateAppSettings).toHaveBeenCalledWith({
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex", "cursor"],
+      }),
+    );
+  });
+
+  it("取消 Codex 时保持 applyMode 并提交剩余启用工具", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "direct",
+        enabledTools: ["claude", "codex", "cursor"],
+      } satisfies AppSettingsDto,
+    });
+    vi.mocked(commands.updateAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "direct",
+        enabledTools: ["claude", "cursor"],
+      } satisfies AppSettingsDto,
+    });
+    renderDialog();
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Codex" }));
+    await waitFor(() =>
+      expect(commands.updateAppSettings).toHaveBeenCalledWith({
+        applyMode: "direct",
+        enabledTools: ["claude", "cursor"],
+      }),
+    );
   });
 });
 
@@ -164,7 +256,10 @@ describe("SettingsDialog 外观模式切换", () => {
     vi.clearAllMocks();
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm" } satisfies AppSettingsDto,
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
+      } satisfies AppSettingsDto,
     });
   });
 

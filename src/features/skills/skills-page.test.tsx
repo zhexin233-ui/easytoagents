@@ -302,7 +302,10 @@ beforeEach(() => {
   });
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm" },
+    data: {
+      applyMode: "preview_confirm",
+      enabledTools: ["claude", "codex", "cursor"],
+    },
   });
   vi.mocked(commands.previewSkillSync).mockResolvedValue({
     status: "ok",
@@ -1116,7 +1119,7 @@ describe("SkillsPage", () => {
   it("直接应用模式下无冲突 Skills 预览跳过对话框立即 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     renderPage();
     const section = screen
@@ -1150,7 +1153,7 @@ describe("SkillsPage", () => {
   it("直接应用模式下预览与 Apply 失败都只使用失败通知", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.previewSkillSync).mockResolvedValueOnce({
       status: "error",
@@ -1226,6 +1229,30 @@ describe("SkillsPage", () => {
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
+  });
+
+  it("被关闭的工具从平台图标列与状态卡中消失", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
+      },
+    });
+    renderPage();
+
+    expect(
+      await screen.findByRole("button", { name: "Claude 全局已分配" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Cursor 全局未分配" }),
+    ).not.toBeInTheDocument();
+    const statusSection = screen
+      .getByRole("heading", { name: "全局目标状态" })
+      .closest("section");
+    if (!statusSection) throw new Error("未找到全局目标状态");
+    expect(await within(statusSection).findByText("Claude")).toBeVisible();
+    expect(within(statusSection).queryByText("Cursor")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -1340,7 +1367,7 @@ describe("SkillsPage", () => {
   it("直接应用模式下分配切换自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     const updatedSkill: SkillDto = {
       ...skill,
@@ -1993,7 +2020,7 @@ describe("全局 Skills 检测与复制导入", () => {
     });
     vi.mocked(commands.getAppSettings).mockResolvedValueOnce({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     renderPage();
     fireEvent.click(

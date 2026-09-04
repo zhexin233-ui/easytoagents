@@ -26,6 +26,7 @@ import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import {
@@ -34,7 +35,11 @@ import {
   mcpServersQueryOptions,
 } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
-import { MCP_TOOLS, toolMetadata } from "@/lib/tool-metadata";
+import {
+  MCP_TOOLS,
+  filterEnabledTools,
+  toolMetadata,
+} from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
   appSettingsQueryOptions,
@@ -96,6 +101,10 @@ export function McpPage() {
   const statusesQuery = useQuery(globalMcpStatusesQueryOptions());
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
+  const enabledTools = useEnabledTools();
+  const visibleStatuses = statusesQuery.data?.filter((status) =>
+    enabledTools.has(status.tool),
+  );
   const [form, setForm] = useState<McpFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const saveInFlight = useRef(false);
@@ -412,7 +421,7 @@ export function McpPage() {
                   role="group"
                   aria-label={`${server.name} 全局平台分配`}
                 >
-                  {MCP_TOOLS.map((tool) => (
+                  {filterEnabledTools(MCP_TOOLS, enabledTools).map((tool) => (
                     <PlatformAssignmentButton
                       key={tool}
                       tool={tool}
@@ -526,78 +535,87 @@ export function McpPage() {
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {statusesQuery.data?.map((status) => {
-            const presentation = globalTargetStatusPresentation(
-              status.status,
-              status.diagnosticCode,
-            );
-            return (
-              <article
-                key={status.tool}
-                className="rounded-lg border p-4 text-sm"
-              >
-                <p className="font-medium">{toolMetadata(status.tool).label}</p>
-                <code className="mt-2 block text-xs break-all">
-                  {status.targetPath ?? "目标位置未经 capability probe 证明"}
-                </code>
-                <div className="mt-2">
-                  <SyncStatusBadge
-                    label={presentation.label}
-                    status={status.status}
-                    tone={presentation.tone}
-                  />
-                </div>
-                {presentation.description ? (
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    {presentation.description}
-                  </p>
-                ) : null}
-                {status.diagnosticCode ? (
-                  <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
-                    诊断码：<code>{status.diagnosticCode}</code>
-                  </p>
-                ) : null}
-                <Button
-                  className="mt-3 mr-2"
-                  size="sm"
-                  variant="outline"
-                  disabled={presentation.previewBlocked}
-                  onClick={() => {
-                    if (openImport) return;
-                    setOpenImport({
-                      tool: status.tool,
-                      requestId: crypto.randomUUID(),
-                    });
-                  }}
+        {statusesQuery.data != null && visibleStatuses?.length === 0 ? (
+          <p className="text-muted-foreground mt-3 text-sm">
+            当前没有可检查的全局 MCP 目标。
+          </p>
+        ) : null}
+        {visibleStatuses && visibleStatuses.length > 0 ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {visibleStatuses.map((status) => {
+              const presentation = globalTargetStatusPresentation(
+                status.status,
+                status.diagnosticCode,
+              );
+              return (
+                <article
+                  key={status.tool}
+                  className="rounded-lg border p-4 text-sm"
                 >
-                  检测并导入已有 MCP
-                </Button>
-                <Button
-                  className="mt-3"
-                  size="sm"
-                  disabled={
-                    previewMutation.isPending || presentation.previewBlocked
-                  }
-                  onClick={() =>
-                    previewMutation.mutate({
-                      tool: status.tool,
-                      autoApply: directApply,
-                    })
-                  }
-                >
-                  {previewMutation.isPending
-                    ? directApply
-                      ? "正在应用…"
-                      : "正在生成…"
-                    : directApply
-                      ? "直接应用全局同步"
-                      : "生成全局预览"}
-                </Button>
-              </article>
-            );
-          })}
-        </div>
+                  <p className="font-medium">
+                    {toolMetadata(status.tool).label}
+                  </p>
+                  <code className="mt-2 block text-xs break-all">
+                    {status.targetPath ?? "目标位置未经 capability probe 证明"}
+                  </code>
+                  <div className="mt-2">
+                    <SyncStatusBadge
+                      label={presentation.label}
+                      status={status.status}
+                      tone={presentation.tone}
+                    />
+                  </div>
+                  {presentation.description ? (
+                    <p className="text-muted-foreground mt-2 text-xs">
+                      {presentation.description}
+                    </p>
+                  ) : null}
+                  {status.diagnosticCode ? (
+                    <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                      诊断码：<code>{status.diagnosticCode}</code>
+                    </p>
+                  ) : null}
+                  <Button
+                    className="mt-3 mr-2"
+                    size="sm"
+                    variant="outline"
+                    disabled={presentation.previewBlocked}
+                    onClick={() => {
+                      if (openImport) return;
+                      setOpenImport({
+                        tool: status.tool,
+                        requestId: crypto.randomUUID(),
+                      });
+                    }}
+                  >
+                    检测并导入已有 MCP
+                  </Button>
+                  <Button
+                    className="mt-3"
+                    size="sm"
+                    disabled={
+                      previewMutation.isPending || presentation.previewBlocked
+                    }
+                    onClick={() =>
+                      previewMutation.mutate({
+                        tool: status.tool,
+                        autoApply: directApply,
+                      })
+                    }
+                  >
+                    {previewMutation.isPending
+                      ? directApply
+                        ? "正在应用…"
+                        : "正在生成…"
+                      : directApply
+                        ? "直接应用全局同步"
+                        : "生成全局预览"}
+                  </Button>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       <FormDialog

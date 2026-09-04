@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "app_settings KV 写入与迁移/事务约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "TanStack Query key 家族与派生状态（render 时夹逼而非 useEffect）规范"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "设置对话框与 hook 组织方式"}

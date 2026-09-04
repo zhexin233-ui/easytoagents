@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -45,7 +46,7 @@ describe("AppShell 侧边栏设置入口", () => {
     vi.mocked(commands.getAppSettings).mockReset();
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm" },
+      data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
     });
     localStorage.clear();
     document.documentElement.classList.remove("dark");
@@ -113,6 +114,26 @@ describe("AppShell 侧边栏设置入口", () => {
     fireEvent.click(codexLink);
     expect(codexLink).toHaveClass("border-primary-foreground");
     expect(claudeLink).not.toHaveClass("border-primary-foreground");
+  });
+
+  it("顶栏只渲染启用的工具入口", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "preview_confirm", enabledTools: ["claude"] },
+    });
+    renderShell();
+
+    const navigation = screen.getByRole("navigation", { name: "工具入口" });
+    expect(
+      within(navigation).getByRole("link", { name: /Claude/ }),
+    ).toBeVisible();
+    // 加载中先按默认集合渲染，数据到达后 Codex 入口移除。
+    await waitFor(() =>
+      expect(
+        within(navigation).queryByRole("link", { name: /Codex/ }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(within(navigation).getAllByRole("link")).toHaveLength(1);
   });
 
   it("在设置弹窗中切换外观会立即挂 dark class 并持久化", async () => {

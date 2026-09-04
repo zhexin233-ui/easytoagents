@@ -245,7 +245,10 @@ beforeEach(() => {
   });
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm" },
+    data: {
+      applyMode: "preview_confirm",
+      enabledTools: ["claude", "codex", "cursor"],
+    },
   });
   vi.mocked(commands.previewMcpSync).mockResolvedValue({
     status: "ok",
@@ -528,6 +531,34 @@ describe("McpPage", () => {
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
+  it("被关闭的工具从平台图标列与状态卡中消失", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex"],
+      },
+    });
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [server],
+    });
+    renderPage();
+
+    expect(
+      await screen.findByRole("button", { name: "Claude 全局未分配" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Cursor 全局未分配" }),
+    ).not.toBeInTheDocument();
+    const statusSection = screen
+      .getByRole("heading", { name: "全局目标状态" })
+      .closest("section");
+    if (!statusSection) throw new Error("未找到全局目标状态");
+    expect(await within(statusSection).findByText("Claude")).toBeVisible();
+    expect(within(statusSection).queryByText("Cursor")).not.toBeInTheDocument();
+  });
+
   it("删除图标按钮保留版本化删除 payload", async () => {
     vi.mocked(commands.listMcpServers).mockResolvedValue({
       status: "ok",
@@ -584,7 +615,7 @@ describe("McpPage", () => {
   it("直接应用模式下分配切换自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     const assignedServer: McpServerDto = {
       ...server,
@@ -630,7 +661,7 @@ describe("McpPage", () => {
   it("直接应用模式下启停已分配 MCP 自动同步其分配工具", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     const assignedServer: McpServerDto = {
       ...server,
@@ -1056,7 +1087,7 @@ describe("McpPage", () => {
   it("直接应用模式下无冲突预览跳过对话框立即 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     renderPage();
     const previewButton = await globalButton("直接应用全局同步");
@@ -1080,7 +1111,7 @@ describe("McpPage", () => {
   it("直接应用模式下预览与 Apply 失败都只使用失败通知", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.previewMcpSync).mockResolvedValueOnce({
       status: "error",
@@ -1122,7 +1153,7 @@ describe("McpPage", () => {
   it("直接应用模式下冲突预览回退为人工确认且 Apply 禁用", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
@@ -1368,7 +1399,7 @@ describe("McpPage", () => {
   it("直接应用模式下空目标预览使用通知提示无需写入", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct" },
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.previewMcpSync).mockResolvedValue({
       status: "ok",

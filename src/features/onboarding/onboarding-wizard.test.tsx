@@ -30,6 +30,8 @@ vi.mock("@/bindings/commands", () => ({
     previewPromptSync: vi.fn(),
     applyProfilePreview: vi.fn(),
     completeOnboarding: vi.fn(),
+    getAppSettings: vi.fn(),
+    updateAppSettings: vi.fn(),
   },
 }));
 
@@ -138,6 +140,10 @@ describe("OnboardingWizard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
+    });
     vi.mocked(commands.getToolProfileStatus).mockImplementation((tool) =>
       Promise.resolve({
         status: "ok",
