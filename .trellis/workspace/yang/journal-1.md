@@ -913,3 +913,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Next Steps
 
 - 在运行中的应用里实测直接模式全流程反馈。
+
+
+## Session 34: 新增 ZCode 工具全套支持（Provider/Prompt/MCP/Skills）
+
+**Date**: 2026-09-05
+**Task**: 新增 ZCode 工具全套支持（Provider/Prompt/MCP/Skills）
+**Branch**: `feat/zcode-tool-support`
+
+### Summary
+
+在 feat/zcode-tool-support 分支完成 ZCode 作为第四个可选原生工具的全套接入。证据核验：本机 /Applications/ZCode.app（Bundle ID dev.zcode.app）+ 官方 zcode-configuration-guide；Provider=~/.zcode/v2/config.json 的 provider 条目（只接管 name/kind/options/enabled，models/source 等自管字段保留）、Prompt=AGENTS.md、MCP=mcp.servers 嵌套键、Skills=~/.zcode/skills。实现：Tool 枚举加 Zcode、ZcodeAdapter、桌面 bundle 探针（CLI 无官方合同不探测）、DB 迁移 0013（放宽 tool CHECK + is_active_zcode 生效位）、服务层全链路（导入/分配/预览/应用/恢复）、MCP 容器抽象改为路径以支持嵌套键、前端 /zcode 路由与设置启用项（默认不启用，与 Cursor 同为可选）。pnpm check 全绿，新增适配器/探针/迁移/Provider 往返/MCP 跨工具导入专项测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b59c6eb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
