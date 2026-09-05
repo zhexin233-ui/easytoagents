@@ -1397,11 +1397,9 @@ pub(crate) fn split_shell_words(command: &str) -> Option<Vec<String>> {
 /// 相对路径无法安全解析，不接管。
 pub(crate) fn resolve_script_adoption(command: &str, home: &Path) -> Option<(usize, PathBuf)> {
     let words = split_shell_words(command)?;
-    let interpreter = words.first()?.rsplit(['/', '\\']).next()?;
-    if !HOOK_INTERPRETERS.contains(&interpreter) {
-        return None;
-    }
-    for (index, word) in words.iter().enumerate().skip(1) {
+    // `/usr/bin/env <解释器> <脚本>` 形式的脚本扫描起点在解释器之后。
+    let scan_start = interpreter_scan_start(&words)?;
+    for (index, word) in words.iter().enumerate().skip(scan_start) {
         if word.starts_with('-') {
             continue;
         }
@@ -1410,6 +1408,35 @@ pub(crate) fn resolve_script_adoption(command: &str, home: &Path) -> Option<(usi
         }
     }
     None
+}
+
+/// 返回脚本 token 的扫描起点（解释器 token 的下一个下标）。
+/// 支持 `bash …` 与 `/usr/bin/env [-flags] python3 …` 两种形式；
+/// 首个 token（或 env 后首个非 flag token）不是已知解释器则返回 None。
+pub(crate) fn interpreter_scan_start(words: &[String]) -> Option<usize> {
+    let first = words.first()?;
+    let basename = first.rsplit(['/', '\\']).next()?;
+    if basename == "env" {
+        // env 间接层：跳过其 flag（如 -S、-i），下一个 token 必须是已知解释器。
+        let mut index = 1;
+        while words.get(index).is_some_and(|word| word.starts_with('-')) {
+            index += 1;
+        }
+        let interpreter = words.get(index)?.rsplit(['/', '\\']).next()?;
+        if !is_interpreter_basename(interpreter) {
+            return None;
+        }
+        Some(index + 1)
+    } else if is_interpreter_basename(basename) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+/// 解释器名匹配：固定名单 + `python*` 系列（python3.11 等次版本号）。
+fn is_interpreter_basename(basename: &str) -> bool {
+    HOOK_INTERPRETERS.contains(&basename) || basename.starts_with("python")
 }
 
 /// 展开 `~/` 与 `$HOME/` 前缀并校验目标是既有普通文件（拒绝链接/特殊文件）。
@@ -1723,6 +1750,31 @@ mod tests {
         assert!(resolve_script_adoption("bash /missing/hook.sh", &home).is_none());
         // 纯 inline 命令 → 不接管。
         assert!(resolve_script_adoption("echo hello", &home).is_none());
+
+        // /usr/bin/env 间接层：env + 解释器 + 脚本 → 接管（回归 2026-09-05 反馈）。
+        let env_form = resolve_script_adoption(
+            &format!("/usr/bin/env python3 {}", script.to_string_lossy()),
+            &home,
+        )
+        .unwrap();
+        assert_eq!(env_form.1, script);
+        let env_flagged = resolve_script_adoption(
+            &format!("/usr/bin/env -S python3 {}", script.to_string_lossy()),
+            &home,
+        )
+        .unwrap();
+        assert_eq!(env_flagged.1, script);
+        // env 后不是已知解释器 → 不接管。
+        assert!(resolve_script_adoption(
+            &format!("/usr/bin/env {}", script.to_string_lossy()),
+            &home
+        )
+        .is_none());
+        // 带次版本号的解释器（python3.11）→ 接管。
+        let versioned =
+            resolve_script_adoption(&format!("python3.11 {}", script.to_string_lossy()), &home)
+                .unwrap();
+        assert_eq!(versioned.1, script);
     }
 
     #[test]

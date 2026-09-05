@@ -285,12 +285,8 @@ fn unsupported_entry_reason(tool: Tool, entry_type: Option<&str>) -> Option<Stri
 
 fn looks_like_interpreter_command(command: &str) -> bool {
     service::split_shell_words(command)
-        .and_then(|words| words.first().cloned())
-        .map(|first| {
-            let basename = first.rsplit(['/', '\\']).next().unwrap_or_default();
-            service::HOOK_INTERPRETERS.contains(&basename)
-        })
-        .unwrap_or(false)
+        .and_then(|ref words| service::interpreter_scan_start(words))
+        .is_some()
 }
 
 fn suggested_name(native_event: &str, command: &str) -> String {

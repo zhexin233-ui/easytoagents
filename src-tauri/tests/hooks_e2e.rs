@@ -288,11 +288,12 @@ fn hook_import_adopts_script_into_central_storage_and_native_references_it() {
     let mut fixture = Fixture::new();
     seed_native_files(&fixture);
 
-    // 原生脚本 + 全局 hooks 配置引用它（Claude settings.json）。
+    // 原生脚本 + 全局 hooks 配置引用它（/usr/bin/env python3 形式，回归
+    // 2026-09-05 用户反馈：env 间接层命令此前被误判为不可接管）。
     let script_dir = fixture.environment.claude_config_dir().join("hooks");
     fs::create_dir_all(&script_dir).expect("创建原生脚本目录失败");
-    let script_path = script_dir.join("block-rm.sh");
-    fs::write(&script_path, b"#!/bin/bash\necho block-rm\n").expect("写入原脚本失败");
+    let script_path = script_dir.join("deny_dotenv.py");
+    fs::write(&script_path, b"#!/usr/bin/env python3\nprint('deny')\n").expect("写入原脚本失败");
     let claude_settings = fixture.claude_settings();
     let original_settings = fs::read_to_string(&claude_settings).unwrap();
     fs::write(
@@ -301,7 +302,7 @@ fn hook_import_adopts_script_into_central_storage_and_native_references_it() {
             r#"{{
   "env": {{"ANTHROPIC_BASE_URL": "https://keep.example.test"}},
   "hooks": {{"PreToolUse": [{{"matcher": "Bash", "hooks": [
-    {{"type": "command", "command": "bash {script_path}", "timeout": 30}}
+    {{"type": "command", "command": "/usr/bin/env python3 {script_path}", "timeout": 30}}
   ]}}]}}
 }}
 "#,
@@ -360,7 +361,7 @@ fn hook_import_adopts_script_into_central_storage_and_native_references_it() {
     assert_eq!(
         imported.command,
         format!(
-            "bash \"{}\"",
+            "/usr/bin/env python3 \"{}\"",
             fixture
                 .paths
                 .central_hooks()
