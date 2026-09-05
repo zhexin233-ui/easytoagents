@@ -1006,3 +1006,37 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Next Steps
 
 - 真机 smoke 验证四工具对中央脚本路径的执行；如需『移动』语义（删除原脚本）可另立任务评估安全边界
+
+
+## Session 37: 修复 hooks 导入接管漏判 /usr/bin/env 间接层命令
+
+**Date**: 2026-09-05
+**Task**: 修复 hooks 导入接管漏判 /usr/bin/env 间接层命令
+**Branch**: `main`
+
+### Summary
+
+用户反馈 /usr/bin/env python3 <脚本> 导入后仍指向原路径：env 的 basename 不在解释器名单导致整条命令被判 inline。新增 env 间接层解析（跳过 env 与 flag 后要求已知解释器），e2e 改用该形式回归。
+
+### Main Changes
+
+- interpreter_scan_start：env 形式与直接解释器形式统一扫描起点；解释器匹配支持 python* 次版本号
+- 提示判定（looks_like_interpreter_command）与解析共用同一逻辑，env 形式解析失败也会给出直存提示
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `24dc7d3` | (see git log) |
+
+### Testing
+
+- [OK] 单测覆盖 env / env -S / python3.11 / env 后非解释器四种形态；hooks_e2e 导入用例改为 /usr/bin/env python3 并断言中央命令重写；pnpm check 全绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 提醒：已按旧逻辑导入为直存的 hook（如 deny_dotenv）需删除后重新导入即可接管
