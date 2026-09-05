@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
-- **Last Active**: 2026-09-04
+- **Total Sessions**: 33
+- **Last Active**: 2026-09-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~882 | Active |
+| `journal-1.md` | ~915 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-09-05 | 直接应用模式隐藏全局同步手动按钮 | `a17fbce` | `main` |
 | 32 | 2026-09-04 | 设置新增启用的工具配置（enabled tools 显示过滤） | `ccb305e` | `main` |
 | 31 | 2026-09-03 | 管理项目级 Skill、MCP 与提示词 | `583da65`, `63126c4` | `codex/manage-project-resources` |
 | 30 | 2026-09-03 | 中央 Skill 内容变更后同步更改 | `c3d043e` | `main` |

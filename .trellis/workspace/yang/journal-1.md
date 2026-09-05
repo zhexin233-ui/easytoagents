@@ -880,3 +880,36 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: 直接应用模式隐藏全局同步手动按钮
+
+**Date**: 2026-09-05
+**Task**: 直接应用模式隐藏全局同步手动按钮
+**Branch**: `main`
+
+### Summary
+
+直接应用模式下 MCP/Skills/提示词页面隐藏「直接应用全局同步」类手动按钮；MCP 保存/删除/导入与提示词保存/删除改为自动同步，避免按钮隐藏后流程死路。
+
+### Main Changes
+
+- 三处全局同步按钮改为仅 preview_confirm 模式渲染；direct 模式 MCP 保存（同步编辑前 globalTools）、删除（同步删除前 globalTools 清理旧受管条目）、导入（同步导入工具）、提示词保存/删除（同步档案 globalTools）逐工具自动生成持久化预览并按 canAutoApplyPreview 应用，沿用启停自动同步写法；直接引用按钮的通知、Skills 列表脚注、global-target-status-ui 暂态描述与设置页说明改为自动同步语义（按模式区分），Skills 删除因后端拒绝已分配条目、目录导入自带确认流程故无新增自动同步。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a17fbce` | (see git log) |
+
+### Testing
+
+- [OK] 更新 mcp/skills/prompts 三页直接应用模式测试：断言按钮隐藏、保存/删除/导入自动同步的 preview 与 apply 载荷、冲突回退对话框、失败仅共享通知；pnpm check 全绿。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 在运行中的应用里实测直接模式全流程反馈。
