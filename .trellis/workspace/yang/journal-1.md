@@ -970,3 +970,39 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Next Steps
 
 - 真机 smoke：四工具实机 hooks 写入与运行验证；后续可评估 ZCode process 型与 Cursor prompt 型 hook 的接入
+
+
+## Session 36: 导入 Hook 接管脚本到中央目录
+
+**Date**: 2026-09-05
+**Task**: 导入 Hook 接管脚本到中央目录
+**Branch**: `main`
+
+### Summary
+
+导入 Hooks 时把可接管的脚本复制进 central_hooks/<id>（0600），中央命令重写为引用中央副本，同步后原生配置直接引用；初始接管判定推广为认领式；迁移 0015 + e2e 验证，pnpm check 全绿。
+
+### Main Changes
+
+- 迁移 0015（script_name/script_hash 可空列）+ AppPaths::central_hooks
+- 导入分词/解释器门控/文件校验（512KiB、拒绝链接），复制不移动，命令重写引用中央路径，先写文件后插库可回滚
+- 初始接管判定：原生条目全部被中央记录认领（命令一致或脚本内容哈希匹配）才允许合并，否则维持冲突
+- 前端导入对话框与中央列表展示接管标识，确认回传 scriptSourcePath
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `83177b6` | (see git log) |
+
+### Testing
+
+- [OK] 分词/接管/重写单测、迁移 0015 金丝雀、hooks_e2e 导入接管链路（0600、原生引用、env 保留、删除清理）；pnpm check 全绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真机 smoke 验证四工具对中央脚本路径的执行；如需『移动』语义（删除原脚本）可另立任务评估安全边界

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 35
+- **Total Sessions**: 36
 - **Last Active**: 2026-09-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~972 | Active |
+| `journal-1.md` | ~1008 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 36 | 2026-09-05 | 导入 Hook 接管脚本到中央目录 | `83177b6` | `main` |
 | 35 | 2026-09-05 | 新增 Hooks 全局级与项目级管理 | `4689f42` | `main` |
 | 34 | 2026-09-05 | 新增 ZCode 工具全套支持（Provider/Prompt/MCP/Skills） | `b59c6eb` | `feat/zcode-tool-support` |
 | 33 | 2026-09-05 | 直接应用模式隐藏全局同步手动按钮 | `a17fbce` | `main` |
