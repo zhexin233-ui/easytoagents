@@ -443,7 +443,9 @@ export function SkillsPage() {
                     </div>
                     {listLayout === "list" ? (
                       <p className="text-muted-foreground mt-2 text-xs leading-5">
-                        全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。
+                        {directApply
+                          ? "全局分配只更新中央配置；直接应用模式下会自动同步写入工具目录。"
+                          : "全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。"}
                       </p>
                     ) : null}
                   </CentralListCardFooter>
@@ -485,6 +487,7 @@ export function SkillsPage() {
               const presentation = globalTargetStatusPresentation(
                 status.status,
                 status.diagnosticCode,
+                { directApply },
               );
               return (
                 <article
@@ -528,27 +531,26 @@ export function SkillsPage() {
                     >
                       检测并导入已有 Skills
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        previewMutation.isPending || presentation.previewBlocked
-                      }
-                      onClick={() =>
-                        previewMutation.mutate({
-                          tool: status.tool,
-                          autoApply: directApply,
-                        })
-                      }
-                    >
-                      {previewMutation.isPending
-                        ? directApply
-                          ? "正在应用…"
-                          : "正在生成…"
-                        : directApply
-                          ? "直接应用全局同步"
+                    {!directApply ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={
+                          previewMutation.isPending ||
+                          presentation.previewBlocked
+                        }
+                        onClick={() =>
+                          previewMutation.mutate({
+                            tool: status.tool,
+                            autoApply: directApply,
+                          })
+                        }
+                      >
+                        {previewMutation.isPending
+                          ? "正在生成…"
                           : "预览全局同步"}
-                    </Button>
+                      </Button>
+                    ) : null}
                   </div>
                 </article>
               );

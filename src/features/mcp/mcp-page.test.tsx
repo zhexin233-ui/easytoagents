@@ -1084,43 +1084,54 @@ describe("McpPage", () => {
     );
   });
 
-  it("直接应用模式下无冲突预览跳过对话框立即 Apply", async () => {
+  it("直接应用模式下全局目标状态卡隐藏手动同步按钮", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
     renderPage();
-    const previewButton = await globalButton("直接应用全局同步");
-    fireEvent.click(previewButton);
-    await waitFor(() =>
-      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
-        previewId: preview.previewId,
-        tool: "claude",
-        projectId: null,
-      }),
-    );
+    expect(await globalButton("检测并导入已有 MCP")).toBeEnabled();
     expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+      screen.queryByRole("button", { name: "直接应用全局同步" }),
     ).not.toBeInTheDocument();
-    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toHaveAttribute(
-      "role",
-      "status",
-    );
+    expect(
+      screen.queryByRole("button", { name: "生成全局预览" }),
+    ).not.toBeInTheDocument();
+    expect(commands.previewMcpSync).not.toHaveBeenCalled();
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
-  it("直接应用模式下预览与 Apply 失败都只使用失败通知", async () => {
+  it("直接应用模式下自动同步的预览与 Apply 失败都只使用失败通知", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
-    vi.mocked(commands.previewMcpSync).mockResolvedValueOnce({
-      status: "error",
-      error: {
-        code: "DATABASE_ERROR",
-        message: "MCP 预览暂不可用",
-        recoverable: true,
-      },
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [assignedServer],
     });
+    vi.mocked(commands.setMcpEnabled).mockResolvedValue({
+      status: "ok",
+      data: { ...assignedServer, enabled: false },
+    });
+    vi.mocked(commands.deleteMcpServer).mockResolvedValue({
+      status: "ok",
+      data: { id: assignedServer.id, deleted: true },
+    });
+    vi.mocked(commands.previewMcpSync)
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          code: "DATABASE_ERROR",
+          message: "MCP 预览暂不可用",
+          recoverable: true,
+        },
+      })
+      .mockResolvedValue({ status: "ok", data: preview });
     vi.mocked(commands.applyMcpPreview).mockResolvedValue({
       status: "error",
       error: {
@@ -1131,7 +1142,7 @@ describe("McpPage", () => {
     });
     renderPage();
 
-    fireEvent.click(await globalButton("直接应用全局同步"));
+    fireEvent.click(await screen.findByRole("button", { name: "停用" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "DATABASE_ERROR：MCP 预览暂不可用",
     );
@@ -1139,7 +1150,7 @@ describe("McpPage", () => {
       screen.getAllByText("DATABASE_ERROR：MCP 预览暂不可用"),
     ).toHaveLength(1);
 
-    fireEvent.click(await globalButton("直接应用全局同步"));
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
         "ATOMIC_WRITE_FAILED：MCP 应用失败",
@@ -1150,10 +1161,63 @@ describe("McpPage", () => {
     ).toHaveLength(1);
   });
 
-  it("直接应用模式下冲突预览回退为人工确认且 Apply 禁用", async () => {
+  it("直接应用模式下编辑已分配 MCP 保存后自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [assignedServer],
+    });
+    vi.mocked(commands.updateMcpServer).mockResolvedValue({
+      status: "ok",
+      data: assignedServer,
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存中央意图" }));
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
+  });
+
+  it("直接应用模式下保存触发同步遇冲突预览回退为人工确认且 Apply 禁用", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [assignedServer],
+    });
+    vi.mocked(commands.updateMcpServer).mockResolvedValue({
+      status: "ok",
+      data: assignedServer,
     });
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
@@ -1171,8 +1235,16 @@ describe("McpPage", () => {
       },
     });
     renderPage();
-    const previewButton = await globalButton("直接应用全局同步");
-    fireEvent.click(previewButton);
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存中央意图" }));
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
     expect(
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
@@ -1396,10 +1468,62 @@ describe("McpPage", () => {
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
-  it("直接应用模式下空目标预览使用通知提示无需写入", async () => {
+  it("直接应用模式下删除已分配 MCP 自动同步清理并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [assignedServer],
+    });
+    vi.mocked(commands.deleteMcpServer).mockResolvedValue({
+      status: "ok",
+      data: { id: assignedServer.id, deleted: true },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
+  });
+
+  it("直接应用模式下自动同步空目标仅提示无需写入", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    const assignedServer: McpServerDto = {
+      ...server,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [assignedServer],
+    });
+    vi.mocked(commands.deleteMcpServer).mockResolvedValue({
+      status: "ok",
+      data: { id: assignedServer.id, deleted: true },
     });
     vi.mocked(commands.previewMcpSync).mockResolvedValue({
       status: "ok",
@@ -1407,7 +1531,7 @@ describe("McpPage", () => {
     });
     renderPage();
 
-    fireEvent.click(await globalButton("直接应用全局同步"));
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "暂无启用且已分配到该工具的中央 MCP",
@@ -1416,6 +1540,52 @@ describe("McpPage", () => {
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
+  });
+
+  it("直接应用模式下导入成功后自动同步导入工具", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    vi.mocked(commands.confirmMcpImport).mockResolvedValue({
+      status: "ok",
+      data: {
+        tool: "claude",
+        createdCount: 1,
+        reusedCount: 0,
+        assignedCount: 1,
+      },
+    });
+    renderPage();
+    fireEvent.click(await globalButton("检测并导入已有 MCP"));
+    const dialog = await screen.findByRole("dialog", {
+      name: "导入 Claude 全局 MCP",
+    });
+    const checkbox = await within(dialog).findByRole("checkbox", {
+      name: "导入 native-new",
+    });
+    fireEvent.click(checkbox);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "确认导入所选项（1）" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
   });
 
   it.each(["claude", "codex", "cursor"] as const)(

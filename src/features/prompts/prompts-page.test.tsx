@@ -739,10 +739,22 @@ describe("PromptsPage", () => {
     );
   });
 
-  it("直接应用模式下无冲突提示词预览跳过对话框并显示成功通知", async () => {
+  it("直接应用模式下编辑已分配提示词保存后自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    const assignedProfile: PromptProfileDto = {
+      ...promptProfile,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [assignedProfile],
+    });
+    vi.mocked(commands.updatePromptProfile).mockResolvedValue({
+      status: "ok",
+      data: assignedProfile,
     });
     vi.mocked(commands.applyProfilePreview).mockResolvedValue({
       status: "ok",
@@ -755,11 +767,12 @@ describe("PromptsPage", () => {
     });
     renderPromptsPage();
 
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "直接应用 Claude 全局同步",
-      }),
-    );
+    expect(
+      screen.queryByRole("button", { name: "直接应用 Claude 全局同步" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑提示词" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存编辑" }));
     await waitFor(() =>
       expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null),
     );
@@ -779,19 +792,37 @@ describe("PromptsPage", () => {
     ).toHaveAttribute("role", "status");
   });
 
-  it("直接应用模式下提示词预览与 Apply 失败都只使用失败通知", async () => {
+  it("直接应用模式下自动同步的预览与 Apply 失败都只使用失败通知", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
-    vi.mocked(commands.previewPromptSync).mockResolvedValueOnce({
-      status: "error",
-      error: {
-        code: "DATABASE_ERROR",
-        message: "提示词预览暂不可用",
-        recoverable: true,
-      },
+    const assignedProfile: PromptProfileDto = {
+      ...promptProfile,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [assignedProfile],
     });
+    vi.mocked(commands.setGlobalPromptAssignment).mockResolvedValue({
+      status: "ok",
+      data: assignedProfile,
+    });
+    vi.mocked(commands.deletePromptProfile).mockResolvedValue({
+      status: "ok",
+      data: { id: assignedProfile.id, deleted: true },
+    });
+    vi.mocked(commands.previewPromptSync)
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          code: "DATABASE_ERROR",
+          message: "提示词预览暂不可用",
+          recoverable: true,
+        },
+      })
+      .mockResolvedValue({ status: "ok", data: promptPreview });
     vi.mocked(commands.applyProfilePreview).mockResolvedValue({
       status: "error",
       error: {
@@ -800,12 +831,12 @@ describe("PromptsPage", () => {
         recoverable: true,
       },
     });
+    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     renderPromptsPage();
-    const applyButton = await screen.findByRole("button", {
-      name: "直接应用 Claude 全局同步",
-    });
 
-    fireEvent.click(applyButton);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude 全局已分配" }),
+    );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "DATABASE_ERROR：提示词预览暂不可用",
     );
@@ -813,7 +844,7 @@ describe("PromptsPage", () => {
       screen.getAllByText("DATABASE_ERROR：提示词预览暂不可用"),
     ).toHaveLength(1);
 
-    fireEvent.click(applyButton);
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
         "ATOMIC_WRITE_FAILED：提示词应用失败",
@@ -822,6 +853,57 @@ describe("PromptsPage", () => {
     expect(
       screen.getAllByText("ATOMIC_WRITE_FAILED：提示词应用失败"),
     ).toHaveLength(1);
+    confirmSpy.mockRestore();
+  });
+
+  it("直接应用模式下删除已分配提示词自动同步清理并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    const assignedProfile: PromptProfileDto = {
+      ...promptProfile,
+      globalTools: ["claude"],
+    };
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [assignedProfile],
+    });
+    vi.mocked(commands.deletePromptProfile).mockResolvedValue({
+      status: "ok",
+      data: { id: assignedProfile.id, deleted: true },
+    });
+    vi.mocked(commands.applyProfilePreview).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: promptPreview.previewId,
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 1,
+      },
+    });
+    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    renderPromptsPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+    await waitFor(() =>
+      expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: promptPreview.previewId,
+        tool: "claude",
+        artifactKind: "prompt",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("已应用 1 个目标，可从快照恢复。"),
+    ).toBeVisible();
+    confirmSpy.mockRestore();
   });
 
   it("每工具至多一份生效：已启用图标呈选中态，启用新档案走替换语义", async () => {

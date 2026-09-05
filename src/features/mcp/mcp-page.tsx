@@ -69,6 +69,11 @@ interface OpenMcpPreview {
   tool: Tool;
 }
 
+interface McpSaveVariables {
+  state: McpFormState;
+  globalTools: Tool[];
+}
+
 interface McpPreviewRequest {
   tool: Tool;
   autoApply: boolean;
@@ -121,21 +126,33 @@ export function McpPage() {
   };
 
   const saveMutation = useMutation({
-    mutationFn: async (state: McpFormState) => {
+    mutationFn: async ({ state }: McpSaveVariables) => {
       if (state.id && state.rowVersion !== null) {
         return unwrapResult(await commands.updateMcpServer(updateInput(state)));
       }
       return unwrapResult(await commands.createMcpServer(createInput(state)));
     },
-    onSuccess: async () => {
+    onSuccess: async (_result, { globalTools }) => {
       await invalidateMcp();
       setForm(emptyForm);
       setFormError(null);
       setFormOpen(false);
+      if (directApply && globalTools.length > 0) {
+        notify({
+          kind: "success",
+          message: "中央 MCP 已保存；正在自动同步已分配工具。",
+        });
+        for (const tool of globalTools) {
+          await previewMutation
+            .mutateAsync({ tool, autoApply: true })
+            .catch(() => undefined);
+        }
+        return;
+      }
       notify({
         kind: "success",
         message: directApply
-          ? "中央 MCP 已保存；原生配置尚未修改。点击「直接应用全局同步」写入。"
+          ? "中央 MCP 已保存；尚未分配到任何工具，分配后会自动同步。"
           : "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
       });
     },
@@ -194,12 +211,24 @@ export function McpPage() {
           rowVersion: server.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (_result, server) => {
       await invalidateMcp();
+      if (directApply && server.globalTools.length > 0) {
+        notify({
+          kind: "success",
+          message: "中央 MCP 已删除；正在自动清理旧受管条目。",
+        });
+        for (const tool of server.globalTools) {
+          await previewMutation
+            .mutateAsync({ tool, autoApply: true })
+            .catch(() => undefined);
+        }
+        return;
+      }
       notify({
         kind: "success",
         message: directApply
-          ? "中央 MCP 已删除；点击「直接应用全局同步」安全清理旧受管条目。"
+          ? "中央 MCP 已删除；该条目未分配到任何工具，无需同步清理。"
           : "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
       });
     },
@@ -546,6 +575,7 @@ export function McpPage() {
               const presentation = globalTargetStatusPresentation(
                 status.status,
                 status.diagnosticCode,
+                { directApply },
               );
               return (
                 <article
@@ -590,27 +620,23 @@ export function McpPage() {
                   >
                     检测并导入已有 MCP
                   </Button>
-                  <Button
-                    className="mt-3"
-                    size="sm"
-                    disabled={
-                      previewMutation.isPending || presentation.previewBlocked
-                    }
-                    onClick={() =>
-                      previewMutation.mutate({
-                        tool: status.tool,
-                        autoApply: directApply,
-                      })
-                    }
-                  >
-                    {previewMutation.isPending
-                      ? directApply
-                        ? "正在应用…"
-                        : "正在生成…"
-                      : directApply
-                        ? "直接应用全局同步"
-                        : "生成全局预览"}
-                  </Button>
+                  {!directApply ? (
+                    <Button
+                      className="mt-3"
+                      size="sm"
+                      disabled={
+                        previewMutation.isPending || presentation.previewBlocked
+                      }
+                      onClick={() =>
+                        previewMutation.mutate({
+                          tool: status.tool,
+                          autoApply: directApply,
+                        })
+                      }
+                    >
+                      {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
+                    </Button>
+                  ) : null}
                 </article>
               );
             })}
@@ -621,7 +647,11 @@ export function McpPage() {
       <FormDialog
         open={formOpen}
         title={form.id ? "编辑 MCP" : "新增 MCP"}
-        description="保存只更新中央 MCP，不会修改原生配置；原生写入仍需预览后确认 Apply。"
+        description={
+          directApply
+            ? "保存只更新中央 MCP；已分配工具会按直接应用模式自动同步。"
+            : "保存只更新中央 MCP，不会修改原生配置；原生写入仍需预览后确认 Apply。"
+        }
         submitLabel="保存中央意图"
         pending={saveMutation.isPending}
         error={formError ?? profileErrorText(saveMutation.error)}
@@ -634,7 +664,13 @@ export function McpPage() {
           try {
             validateForm(form);
             saveInFlight.current = true;
-            saveMutation.mutate(form);
+            saveMutation.mutate({
+              state: form,
+              globalTools: form.id
+                ? (serversQuery.data?.find((item) => item.id === form.id)
+                    ?.globalTools ?? [])
+                : [],
+            });
           } catch (error) {
             setFormError(
               error instanceof Error ? error.message : "表单内容无效。",
@@ -803,12 +839,21 @@ export function McpPage() {
           onImported={async (result) => {
             setOpenImport(null);
             await invalidateMcp();
+            const summary = `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。`;
+            if (!directApply) {
+              notify({
+                kind: "success",
+                message: `${summary}原生配置未改写，请单独生成全局预览。`,
+              });
+              return;
+            }
             notify({
               kind: "success",
-              message: directApply
-                ? `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。原生配置未改写，可点击「直接应用全局同步」写入。`
-                : `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。原生配置未改写，请单独生成全局预览。`,
+              message: `${summary}正在自动同步写入。`,
             });
+            await previewMutation
+              .mutateAsync({ tool: result.tool, autoApply: true })
+              .catch(() => undefined);
           }}
         />
       ) : null}

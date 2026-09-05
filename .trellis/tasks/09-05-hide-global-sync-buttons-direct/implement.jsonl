@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "direct-apply scenario 契约（自动同步范围、共享通知、autoApply 语义）本次需扩展并遵循"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "设置读取与 mutation 失效后触发自动同步的约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "directApply 是派生服务器状态，不得复制进本地状态"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "按钮渲染与文案变更遵循组件约定"}

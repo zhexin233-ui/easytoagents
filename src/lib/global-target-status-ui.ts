@@ -17,7 +17,9 @@ const globalPreviewBlockingStatuses = new Set<SyncStatus>([
 export function globalTargetStatusPresentation(
   status: SyncStatus,
   diagnosticCode: string | null,
+  options: { directApply?: boolean } = {},
 ): GlobalTargetStatusPresentation {
+  const { directApply = false } = options;
   const previewBlocked = globalPreviewBlockingStatuses.has(status);
   if (
     diagnosticCode === "SKILL_TARGET_INITIAL_SYNC_PENDING" &&
@@ -25,8 +27,9 @@ export function globalTargetStatusPresentation(
   ) {
     return {
       label: "○ 已分配，待同步",
-      description:
-        "分配已写入中央配置，但尚未写入工具目录；点击“预览全局同步”并确认应用。现有非受管内容会保留。",
+      description: directApply
+        ? "分配已写入中央配置，但尚未写入工具目录；重新切换该分配可触发自动同步。现有非受管内容会保留。"
+        : "分配已写入中央配置，但尚未写入工具目录；点击“预览全局同步”并确认应用。现有非受管内容会保留。",
       tone: "warning",
       previewBlocked,
     };
@@ -54,7 +57,9 @@ export function globalTargetStatusPresentation(
   if (status === "missing") {
     return {
       label: "○ 待初始化",
-      description: "尚未写入受管目标；生成预览会在确认后初始化。",
+      description: directApply
+        ? "尚未写入受管目标；分配条目后会自动初始化。"
+        : "尚未写入受管目标；生成预览会在确认后初始化。",
       tone: "warning",
       previewBlocked,
     };

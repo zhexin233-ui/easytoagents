@@ -55,6 +55,10 @@ interface PromptApplyRequest {
   preview: OpenPreview;
 }
 
+interface PromptSaveVariables {
+  globalTools: Tool[];
+}
+
 export function PromptsPage() {
   const queryClient = useQueryClient();
   const profilesQuery = useQuery(promptProfilesQueryOptions());
@@ -80,7 +84,11 @@ export function PromptsPage() {
     await queryClient.invalidateQueries({ queryKey: profileKeys.prompts });
   };
 
-  const saveMutation = useMutation({
+  const saveMutation = useMutation<
+    PromptProfileDto,
+    Error,
+    PromptSaveVariables
+  >({
     mutationFn: async () =>
       editing
         ? unwrapResult(
@@ -92,12 +100,24 @@ export function PromptsPage() {
             }),
           )
         : unwrapResult(await commands.createPromptProfile({ name, body })),
-    onSuccess: async () => {
+    onSuccess: async (_result, { globalTools }) => {
       await refresh();
       setEditing(null);
       setName("");
       setBody("");
       setFormOpen(false);
+      if (directApply && globalTools.length > 0) {
+        notify({
+          kind: "success",
+          message: "中央提示词档案已保存；正在自动同步已分配工具。",
+        });
+        for (const tool of globalTools) {
+          await previewMutation
+            .mutateAsync({ tool, autoApply: true })
+            .catch(() => undefined);
+        }
+        return;
+      }
       notify({
         kind: "success",
         message: "中央提示词档案已保存，原生文件尚未修改。",
@@ -213,11 +233,25 @@ export function PromptsPage() {
           rowVersion: profile.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (_result, profile) => {
       await refresh();
+      if (directApply && profile.globalTools.length > 0) {
+        notify({
+          kind: "success",
+          message: "中央提示词已删除；正在自动清理已接管文件。",
+        });
+        for (const tool of profile.globalTools) {
+          await previewMutation
+            .mutateAsync({ tool, autoApply: true })
+            .catch(() => undefined);
+        }
+        return;
+      }
       notify({
         kind: "success",
-        message: "中央提示词已删除；生成新预览后才会清理已接管文件。",
+        message: directApply
+          ? "中央提示词已删除；该档案未分配到任何工具，无需清理。"
+          : "中央提示词已删除；生成新预览后才会清理已接管文件。",
       });
     },
     onError: (error) => {
@@ -281,7 +315,7 @@ export function PromptsPage() {
     event.preventDefault();
     if (saveInFlight.current || saveMutation.isPending) return;
     saveInFlight.current = true;
-    saveMutation.mutate();
+    saveMutation.mutate({ globalTools: editing?.globalTools ?? [] });
   };
 
   return (
@@ -547,25 +581,23 @@ export function PromptsPage() {
                     >
                       检测并导入已有提示词
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={previewMutation.isPending}
-                      onClick={() =>
-                        previewMutation.mutate({
-                          tool,
-                          autoApply: directApply,
-                        })
-                      }
-                    >
-                      {previewMutation.isPending
-                        ? directApply
-                          ? "正在应用…"
-                          : "正在生成…"
-                        : directApply
-                          ? `直接应用 ${toolLabel} 全局同步`
+                    {!directApply ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={previewMutation.isPending}
+                        onClick={() =>
+                          previewMutation.mutate({
+                            tool,
+                            autoApply: directApply,
+                          })
+                        }
+                      >
+                        {previewMutation.isPending
+                          ? "正在生成…"
                           : `预览 ${toolLabel} 全局同步`}
-                    </Button>
+                      </Button>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -577,7 +609,11 @@ export function PromptsPage() {
       <FormDialog
         open={formOpen}
         title={`${editing ? "编辑" : "新增"}提示词`}
-        description="保存只更新中央提示词档案，不会修改原生文件；原生写入仍需预览后确认 Apply。"
+        description={
+          directApply
+            ? "保存只更新中央提示词档案；已分配工具会按直接应用模式自动同步。"
+            : "保存只更新中央提示词档案，不会修改原生文件；原生写入仍需预览后确认 Apply。"
+        }
         submitLabel={editing ? "保存编辑" : "创建提示词"}
         pending={saveMutation.isPending}
         error={profileErrorText(saveMutation.error)}

@@ -583,8 +583,17 @@ projectAssignmentMutation.mutate(input);
   sync: Skills/MCP global assignment toggles sync that tool, MCP enable/disable
   syncs every tool in the server's `globalTools`, project assignment checkboxes
   sync that project+tool, and Provider/Prompt activation (切换并直接应用)
-  previews then auto-applies. Save/delete/import stay manual; their success
-  notifications still identify the required preview or sync action.
+  previews then auto-applies. MCP save syncs the edited server's current
+  `globalTools` (create has none yet), MCP delete syncs the deleted server's
+  `globalTools` to clean up managed entries, MCP import success syncs the
+  imported tool, and Prompt save/delete sync the profile's `globalTools`.
+  Skill deletion is backend-blocked while assigned and Skills directory import
+  owns its own confirm flow, so neither adds auto-sync.
+- Direct mode hides the manual global-sync buttons entirely (MCP/Skills status
+  cards and the Prompt tool card); default mode keeps 预览/生成全局预览 as the
+  only manual sync entry. The per-tool 检测并导入 buttons render in both modes.
+  Direct-mode notifications announce auto-sync (e.g. 正在自动同步) and must not
+  reference the hidden sync button.
 - The direct-mode branch must run after mutation invalidations so the UI
   reflects committed intent; the backend preview reads committed DB state.
 - Central MCP/Skills/Prompts mutation successes, terminal no-ops, and page-level
@@ -608,6 +617,10 @@ projectAssignmentMutation.mutate(input);
   behavior is unchanged and central toggles never trigger an implicit sync.
 - Assignment/enable toggles under direct mode assert both the preview command
   payload and the auto-applied preview ID.
+- Direct mode asserts the manual global-sync buttons are absent on all three
+  pages, and that MCP save/delete/import plus Prompt save/delete auto-trigger
+  the same preview + apply payloads; a conflicted preview from those flows
+  still falls back to the dialog with Apply disabled.
 - A clean takeover plan under direct mode opens the dialog and asserts zero Apply calls
   until the user explicitly confirms it.
 - A clean project-native disable/restore plan under direct mode opens the dialog and

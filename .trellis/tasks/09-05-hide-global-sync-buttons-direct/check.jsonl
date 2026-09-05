@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查直接应用不绕过持久化预览契约、冲突回退、共享通知与按钮隐藏后无死路"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "确认无新增写入路径，仅复用既有 preview/apply 命令"}

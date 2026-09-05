@@ -1116,7 +1116,7 @@ describe("SkillsPage", () => {
     expect(screen.getAllByText(/已应用 1 个 Skills 目标/)).toHaveLength(1);
   });
 
-  it("直接应用模式下无冲突 Skills 预览跳过对话框立即 Apply", async () => {
+  it("直接应用模式下全局目标状态卡隐藏手动同步按钮", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
@@ -1129,40 +1129,49 @@ describe("SkillsPage", () => {
       ? (await within(section).findByText("Claude")).closest("article")
       : null;
     if (!card) throw new Error("未找到 Claude Skills 状态卡");
-    const applyButton = within(card).getByRole("button", {
-      name: "直接应用全局同步",
-    });
-    expect(applyButton).toBeEnabled();
-    fireEvent.click(applyButton);
-    await waitFor(() =>
-      expect(commands.applySkillPreview).toHaveBeenCalledWith({
-        previewId: preview.previewId,
-        tool: "claude",
-        projectId: null,
-      }),
-    );
     expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+      within(card).getByRole("button", {
+        name: "检测并导入 Claude 全局 Skills",
+      }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "直接应用全局同步" }),
     ).not.toBeInTheDocument();
-    expect(await screen.findByText(/已应用 1 个 Skills 目标/)).toHaveAttribute(
-      "role",
-      "status",
-    );
+    expect(
+      screen.queryByRole("button", { name: "预览全局同步" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await within(card).findByText(
+        "尚未写入受管目标；分配条目后会自动初始化。",
+      ),
+    ).toBeVisible();
+    expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
   });
 
-  it("直接应用模式下预览与 Apply 失败都只使用失败通知", async () => {
+  it("直接应用模式下分配自动同步的预览与 Apply 失败都只使用失败通知", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
     });
-    vi.mocked(commands.previewSkillSync).mockResolvedValueOnce({
-      status: "error",
-      error: {
-        code: "DATABASE_ERROR",
-        message: "Skills 预览暂不可用",
-        recoverable: true,
-      },
+    vi.mocked(commands.listSkills).mockResolvedValue({
+      status: "ok",
+      data: [skill],
     });
+    vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
+      status: "ok",
+      data: skill,
+    });
+    vi.mocked(commands.previewSkillSync)
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          code: "DATABASE_ERROR",
+          message: "Skills 预览暂不可用",
+          recoverable: true,
+        },
+      })
+      .mockResolvedValue({ status: "ok", data: preview });
     vi.mocked(commands.applySkillPreview).mockResolvedValue({
       status: "error",
       error: {
@@ -1172,16 +1181,14 @@ describe("SkillsPage", () => {
       },
     });
     renderPage();
-    const section = screen
-      .getByRole("heading", { name: "全局目标状态" })
-      .closest("section");
-    const card = section
-      ? (await within(section).findByText("Claude")).closest("article")
-      : null;
-    if (!card) throw new Error("未找到 Claude Skills 状态卡");
+    expect(
+      await screen.findByText(
+        "全局分配只更新中央配置；直接应用模式下会自动同步写入工具目录。",
+      ),
+    ).toBeVisible();
 
     fireEvent.click(
-      within(card).getByRole("button", { name: "直接应用全局同步" }),
+      await screen.findByRole("button", { name: "Codex 全局未分配" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "DATABASE_ERROR：Skills 预览暂不可用",
@@ -1191,7 +1198,7 @@ describe("SkillsPage", () => {
     ).toHaveLength(1);
 
     fireEvent.click(
-      within(card).getByRole("button", { name: "直接应用全局同步" }),
+      await screen.findByRole("button", { name: "Claude 全局已分配" }),
     );
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
@@ -2147,6 +2154,39 @@ describe("Skills 首次目标状态展示", () => {
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
+  });
+
+  it("直接应用模式下首次待同步状态引导重新分配自动同步且隐藏手动按钮", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    vi.mocked(commands.listGlobalSkillTargetStatuses).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          tool: "claude",
+          projectId: null,
+          targetPath: "/isolated/home/.claude/skills",
+          status: "missing",
+          diagnosticCode: "SKILL_TARGET_INITIAL_SYNC_PENDING",
+        },
+      ],
+    });
+    renderPage();
+
+    expect(await screen.findByText("○ 已分配，待同步")).toBeVisible();
+    expect(
+      screen.getAllByText(
+        "分配已写入中央配置，但尚未写入工具目录；重新切换该分配可触发自动同步。现有非受管内容会保留。",
+      ),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "直接应用全局同步" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "预览全局同步" }),
+    ).not.toBeInTheDocument();
   });
 
   it.each([
