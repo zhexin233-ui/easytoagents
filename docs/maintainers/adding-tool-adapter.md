@@ -6,12 +6,13 @@ EasyToAgents 以 capability 为先，不要求新工具复制 Claude 或 Codex �
 
 开始改代码前，为每个 `artifact × scope × operation` 记录官方来源、验证日期和结论：
 
-| Artifact       | Global  | Project | Import  | Apply   | 证据与诊断                      |
-| -------------- | ------- | ------- | ------- | ------- | ------------------------------- |
-| Provider       | Unknown | N/A     | Unknown | Unknown | 官方文件路径、schema、优先级    |
-| Prompt / Rules | Unknown | Unknown | Unknown | Unknown | 用户级与项目级分别核验          |
-| MCP            | Unknown | Unknown | Unknown | Unknown | 路径、容器、transport、敏感字段 |
-| Skills         | Unknown | Unknown | Unknown | Unknown | 发现目录、嵌套规则、链接兼容性  |
+| Artifact       | Global  | Project | Import  | Apply   | 证据与诊断                       |
+| -------------- | ------- | ------- | ------- | ------- | -------------------------------- |
+| Provider       | Unknown | N/A     | Unknown | Unknown | 官方文件路径、schema、优先级     |
+| Prompt / Rules | Unknown | Unknown | Unknown | Unknown | 用户级与项目级分别核验           |
+| MCP            | Unknown | Unknown | Unknown | Unknown | 路径、容器、transport、敏感字段  |
+| Skills         | Unknown | Unknown | Unknown | Unknown | 发现目录、嵌套规则、链接兼容性   |
+| Hooks          | Unknown | Unknown | Unknown | Unknown | 事件集合、承载方式、matcher 语义 |
 
 状态只允许：
 
@@ -131,9 +132,26 @@ git diff --check
 Pi 当前只作为待调研候选，不代表已知路径；ZCode 已于 2026-09-05 依据本机核验
 与官方 zcode-configuration-guide 完成证据核验并正式接入（迁移 `0013`）：
 
-| 工具  | Provider  | Prompt/Rules | MCP       | Skills    | 下一步                                                                                                                                                 |
-| ----- | --------- | ------------ | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pi    | Unknown   | Unknown      | Unknown   | Unknown   | 找到官方配置与安装文档，建立版本化 fixture                                                                                                             |
-| ZCode | Supported | Supported    | Supported | Supported | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键 |
+| 工具  | Provider  | Prompt/Rules | MCP       | Skills    | Hooks     | 下一步                                                                                                                                                 |
+| ----- | --------- | ------------ | --------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pi    | Unknown   | Unknown      | Unknown   | Unknown   | Unknown   | 找到官方配置与安装文档，建立版本化 fixture                                                                                                             |
+| ZCode | Supported | Supported    | Supported | Supported | Supported | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键 |
+
+## 10. Hooks 能力矩阵（2026-09-05 官方证据核验）
+
+Hooks 已作为第五类 artifact 接入四工具，统一事件模型见 `domain::HookEvent`
+（canonical PascalCase；Cursor 原生键为 camelCase，由
+`HookEvent::native_key` 映射）。证据来源与合同：
+
+| 工具        | 全局                                     | 项目                           | 事件集              | 备注                                                                                                                                              |
+| ----------- | ---------------------------------------- | ------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `~/.claude/settings.json` 的 `hooks` 键  | `<root>/.claude/settings.json` | 10                  | 与 Provider 共享文件，选择器隔离；https://code.claude.com/docs/en/hooks                                                                           |
+| Codex       | `~/.codex/hooks.json`                    | `<root>/.codex/hooks.json`     | 11                  | 独立文件；官方要求每层只用一种表示，不管理 config.toml 内联 `[hooks]`；信任审查由 CLI `/hooks` 完成；https://developers.openai.com/codex/hooks.md |
+| Cursor      | `~/.cursor/hooks.json`                   | `<root>/.cursor/hooks.json`    | 9（camelCase 映射） | 接管 `version` + `hooks` 两个顶层键；matcher 属于条目；https://cursor.com/docs/agent/hooks                                                        |
+| ZCode       | `~/.zcode/cli/config.json` 的 `hooks` 键 | `<root>/.zcode/config.json`    | 7                   | 恒写 `hooks.enabled: true`（配置文件 hooks 必须 enabled 才运行）；事件嵌套在 `events` 键；官方 zcode-configuration-guide                          |
+
+不在统一事件模型内的工具特有事件（Cursor 的 `beforeShellExecution` 等、
+Claude 的 `PostToolUseFailure`、ZCode 的 `process` 型、Cursor 的 `prompt` 型）
+一律 fail closed：不能分配、不能导入，也不猜测映射。
 
 在官方证据、capability matrix 和回滚边界审核通过前，不为它们新增 Tool 值、猜测目标目录或复制 Cursor 的 Adapter。

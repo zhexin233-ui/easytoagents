@@ -39,6 +39,8 @@ use crate::{
 pub const WARNING_EXTERNAL_NON_OWNED_CHANGE: &str = "EXTERNAL_NON_OWNED_CHANGE";
 pub const WARNING_GIT_TRACKED: &str = "GIT_TRACKED";
 pub const WARNING_GIT_IGNORED: &str = "GIT_IGNORED";
+/// Hooks 初始接管：基线为空且观测到的 hooks 子树没有任何条目。
+pub const HOOK_TARGET_INITIAL_EMPTY_HOOKS: &str = "HOOK_TARGET_INITIAL_EMPTY_HOOKS";
 pub const ERROR_EXTERNAL_OWNED_CHANGE: &str = "EXTERNAL_OWNED_CHANGE";
 pub const ERROR_MANAGED_ITEM_BASELINE_MISMATCH: &str = "MANAGED_ITEM_BASELINE_MISMATCH";
 pub const ERROR_TARGET_TYPE_CHANGED: &str = "TARGET_TYPE_CHANGED";
@@ -512,6 +514,7 @@ pub enum DatabaseEntityType {
     PromptProfile,
     McpServer,
     Skill,
+    Hook,
     Project,
     ManagedTarget,
     ManagedItem,
@@ -525,6 +528,7 @@ impl DatabaseEntityType {
             Self::PromptProfile => "prompt_profile",
             Self::McpServer => "mcp_server",
             Self::Skill => "skill",
+            Self::Hook => "hook",
             Self::Project => "project",
             Self::ManagedTarget => "managed_target",
             Self::ManagedItem => "managed_item",
@@ -538,6 +542,7 @@ impl DatabaseEntityType {
             Self::PromptProfile => "prompt_profiles",
             Self::McpServer => "mcp_servers",
             Self::Skill => "skills",
+            Self::Hook => "hooks",
             Self::Project => "projects",
             Self::ManagedTarget => "managed_targets",
             Self::ManagedItem => "managed_items",
@@ -572,6 +577,11 @@ pub struct PreviewTargetRequest {
     pub skill_takeover_entries: Vec<SkillTakeoverEntry>,
     /// 仅项目原生资源禁用/恢复使用；普通 Preview 必须保持 None。
     pub project_native_action: Option<ProjectNativeResourceEvidence>,
+    /// 仅 Hooks 初始接管使用：目标从未纳入基线且观测到的 hooks 子树没有任何
+    /// 条目（例如仅存在空的 `hooks` 键）。此时允许合并（呈现为新增/更新），
+    /// 而不是把空受管键误判为外部改写。子树已有内容时由服务保持 false，
+    /// 维持 Conflict 以便用户先导入或显式重新接管。
+    pub hook_initial_adopt: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -646,7 +656,18 @@ pub fn build_preview_plan(
                 "Preview 包含其他 scope 的目标",
             ));
         }
-        let assessment = assess_drift(&request.descriptor, &request.baseline, &request.scan);
+        let mut assessment = assess_drift(&request.descriptor, &request.baseline, &request.scan);
+        if request.hook_initial_adopt
+            && assessment.status == SyncStatus::ExternalOwnedChange
+            && request.baseline.full_hash.is_none()
+            && request.baseline.managed_hash.is_none()
+        {
+            assessment = DriftAssessment {
+                status: SyncStatus::ExternalNonOwnedChange,
+                can_merge: true,
+                diagnostic_codes: vec![HOOK_TARGET_INITIAL_EMPTY_HOOKS.to_owned()],
+            };
+        }
         let (current_full_hash, current_managed_hash, before_projection) = match &request.scan {
             TargetScan::Observed(observed) => (
                 Some(observed.full_hash.clone()),
@@ -1767,6 +1788,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
+            hook_initial_adopt: false,
                 descriptor,
                 ownership: ManagedOwnership::WholeDocument,
                 baseline: ManagedTargetBaseline {
@@ -1808,6 +1830,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
+            hook_initial_adopt: false,
                 descriptor,
                 ownership: ManagedOwnership::WholeDocument,
                 baseline: ManagedTargetBaseline {
@@ -1869,6 +1892,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
+            hook_initial_adopt: false,
                 descriptor,
                 ownership,
                 baseline: ManagedTargetBaseline {
@@ -1955,6 +1979,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
+            hook_initial_adopt: false,
                 descriptor: descriptor.clone(),
                 ownership,
                 baseline,
@@ -2072,6 +2097,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
+            hook_initial_adopt: false,
                 descriptor,
                 ownership: ManagedOwnership::WholeDocument,
                 baseline,

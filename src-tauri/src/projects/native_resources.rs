@@ -302,7 +302,8 @@ fn observe_items(
         ArtifactKind::Mcp => observe_mcp_items(database, adapter, descriptor, target_id),
         ArtifactKind::Skill => observe_skill_items(database, adapter, descriptor, target_id),
         ArtifactKind::Prompt => observe_prompt_item(database, adapter, descriptor, target_id),
-        ArtifactKind::Provider => Ok(None),
+        // Hooks 不参与项目原生资源逐条观测（MVP 范围外）。
+        ArtifactKind::Hook | ArtifactKind::Provider => Ok(None),
     }
 }
 
@@ -543,6 +544,7 @@ fn prepare_native_action(
         exclude_from_git: false,
         skill_takeover_entries: Vec::new(),
         project_native_action: Some(evidence),
+        hook_initial_adopt: false,
     };
     Ok(PreparedNativeAction {
         project_id: record.project_id,
@@ -915,9 +917,11 @@ fn native_ownership(
             vec![external_key.to_owned()],
         )),
         ArtifactKind::Prompt => Ok(ManagedOwnership::WholeDocument),
-        ArtifactKind::Provider => Err(AppError::invalid_input(
+        // Hooks 不参与项目原生资源的逐条停用/恢复（MVP 范围外），
+        // 与 Provider 一样 fail closed。
+        ArtifactKind::Hook | ArtifactKind::Provider => Err(AppError::invalid_input(
             "artifactKind",
-            "Provider 不是项目原生资源",
+            "该资源类型不是项目原生资源",
         )),
     }
 }
@@ -1026,7 +1030,7 @@ fn safe_summary(artifact_kind: ArtifactKind, entry_type: ProjectNativeEntryType)
         ArtifactKind::Mcp => json!({ "kind": "mcp" }),
         ArtifactKind::Skill => json!({ "entryType": entry_type.as_str() }),
         ArtifactKind::Prompt => json!({ "kind": "prompt" }),
-        ArtifactKind::Provider => json!({}),
+        ArtifactKind::Hook | ArtifactKind::Provider => json!({}),
     }
 }
 

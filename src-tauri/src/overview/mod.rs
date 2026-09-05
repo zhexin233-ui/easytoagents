@@ -347,6 +347,7 @@ fn global_allowed_root(
         "prompt" => ArtifactKind::Prompt,
         "mcp" => ArtifactKind::Mcp,
         "skill" => ArtifactKind::Skill,
+        "hook" => ArtifactKind::Hook,
         _ => {
             return Err(AppError::conflict("snapshot", "快照包含未知资源身份"));
         }
@@ -356,7 +357,7 @@ fn global_allowed_root(
         (Tool::Claude, _) => environment.claude_config_dir().to_path_buf(),
         // Codex 全局 Skills 目标位于 CODEX_HOME/skills，恢复根与同步写入根一致。
         (Tool::Codex, _) => environment.codex_home().to_path_buf(),
-        (Tool::Cursor, ArtifactKind::Mcp | ArtifactKind::Skill) => {
+        (Tool::Cursor, ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook) => {
             environment.home().join(".cursor")
         }
         (Tool::Cursor, ArtifactKind::Provider | ArtifactKind::Prompt) => {

@@ -9,7 +9,10 @@ use crate::{
         DiscoveryContext, ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor,
         TargetTrustState, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
     },
-    db::{mcp as mcp_repository, projects as repository, skills as skill_repository, Database},
+    db::{
+        hooks as hook_repository, mcp as mcp_repository, projects as repository,
+        skills as skill_repository, Database,
+    },
     domain::{ArtifactKind, ArtifactName, EntityId, SyncStatus, Tool, TrustStatus},
     error::{AppError, ErrorCode},
     git::inspect_path,
@@ -371,7 +374,10 @@ fn project_targets(targets: Vec<TargetDescriptor>) -> Vec<TargetDescriptor> {
             target.scope == crate::domain::Scope::Project
                 && matches!(
                     target.artifact_kind,
-                    ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Prompt
+                    ArtifactKind::Mcp
+                        | ArtifactKind::Skill
+                        | ArtifactKind::Prompt
+                        | ArtifactKind::Hook
                 )
                 && target.path.is_some()
         })
@@ -572,6 +578,29 @@ fn assess_managed_target(
             }
             ManagedOwnership::SymlinkNames(names.into_iter().collect())
         }
+        ArtifactKind::Hook => {
+            let desired = hook_repository::list_assigned_hooks(
+                database,
+                descriptor.tool,
+                Some(&persisted.project_id),
+            )?
+            .into_iter()
+            .filter(|record| record.enabled)
+            .collect::<Vec<_>>();
+            let inherited = hook_repository::list_assigned_hooks(database, descriptor.tool, None)?
+                .into_iter()
+                .filter(|record| record.enabled)
+                .collect::<Vec<_>>();
+            let existing =
+                hook_repository::list_managed_hook_items(database, &persisted.baseline.target_id)?;
+            existing_items_absent = existing.is_empty();
+            let ownership = crate::hooks::build_hook_ownership(descriptor.tool);
+            let has_records = !desired.is_empty() || !inherited.is_empty();
+            if !has_records && existing.is_empty() {
+                return Ok(None);
+            }
+            ownership
+        }
         ArtifactKind::Provider | ArtifactKind::Prompt => return Ok(None),
     };
     let scan = verify_managed_item_baselines(
@@ -643,6 +672,25 @@ fn verify_managed_item_baselines(
                 _ => return Ok(scan),
             }
         }
+        ArtifactKind::Hook => {
+            let existing = hook_repository::list_managed_hook_items(database, target_id)?;
+            if existing.is_empty() {
+                return Ok(scan);
+            }
+            match &scan {
+                TargetScan::Observed(observed) => {
+                    let hashes: BTreeSet<_> = crate::hooks::native_entry_hashes(
+                        observed,
+                        crate::hooks::events_root(descriptor.tool),
+                    );
+                    existing
+                        .iter()
+                        .all(|item| hashes.contains(item.last_applied_item_hash.as_str()))
+                }
+                TargetScan::Missing => false,
+                _ => return Ok(scan),
+            }
+        }
         ArtifactKind::Provider | ArtifactKind::Prompt => return Ok(scan),
     };
     Ok(if matches {
@@ -677,6 +725,7 @@ fn status_from_unmanaged_scan(descriptor: &TargetDescriptor) -> (SyncStatus, Opt
             .first()
             .cloned()
             .unwrap_or_default()]]),
+        ArtifactKind::Hook => crate::hooks::build_hook_ownership(descriptor.tool),
         ArtifactKind::Skill => ManagedOwnership::SymlinkNames(Vec::new()),
         ArtifactKind::Provider | ArtifactKind::Prompt => ManagedOwnership::WholeDocument,
     };

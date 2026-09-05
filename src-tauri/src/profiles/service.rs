@@ -737,7 +737,9 @@ pub fn apply_profile_preview(
     let prepared = match artifact_kind {
         ArtifactKind::Provider => prepare_provider_sync(database, environment, redactor, tool)?,
         ArtifactKind::Prompt => prepare_prompt_sync(database, environment, tool, project_id)?,
-        ArtifactKind::Mcp | ArtifactKind::Skill => unreachable!("已在入口拒绝"),
+        ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
+            unreachable!("已在入口拒绝")
+        }
     };
     let input = ApplyTargetInput {
         descriptor: prepared.descriptor,
@@ -959,6 +961,7 @@ fn persist_prepared_preview(
             exclude_from_git: false,
             skill_takeover_entries: Vec::new(),
             project_native_action: None,
+            hook_initial_adopt: false,
         }],
         redactor,
     )?;
@@ -1787,7 +1790,9 @@ fn cursor_unsupported(artifact_kind: ArtifactKind) -> AppError {
         match artifact_kind {
             ArtifactKind::Provider => "CURSOR_PROVIDER_UNSUPPORTED",
             ArtifactKind::Prompt => "CURSOR_PROMPT_UNSUPPORTED",
-            ArtifactKind::Mcp | ArtifactKind::Skill => "Cursor 仅在 MCP/Skills 中受支持",
+            ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
+                "Cursor 仅在 MCP/Skills/Hooks 中受支持"
+            }
         },
     )
 }

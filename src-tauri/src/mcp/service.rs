@@ -235,6 +235,7 @@ pub fn preview_mcp_sync_with_probes(
                 exclude_from_git: input.exclude_from_git,
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
+                hook_initial_adopt: false,
             }]
         })
         .unwrap_or_default();

@@ -5551,6 +5551,7 @@ mod tests {
             )
             .unwrap();
         PreviewTargetRequest {
+            hook_initial_adopt: false,
             descriptor,
             ownership,
             baseline: ManagedTargetBaseline {
@@ -6236,6 +6237,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
+            hook_initial_adopt: false,
                 descriptor: descriptor.clone(),
                 ownership: ownership.clone(),
                 baseline: ManagedTargetBaseline {
@@ -7260,6 +7262,7 @@ mod tests {
             )
             .unwrap();
         PreviewTargetRequest {
+            hook_initial_adopt: false,
             descriptor,
             ownership,
             baseline: ManagedTargetBaseline {
@@ -7550,6 +7553,7 @@ mod tests {
                 Scope::Global,
                 None,
                 vec![PreviewTargetRequest {
+            hook_initial_adopt: false,
                     descriptor: descriptor.clone(),
                     ownership: ownership.clone(),
                     baseline: ManagedTargetBaseline {
@@ -7802,6 +7806,7 @@ mod tests {
         );
         let baseline = load_managed_target_baseline(&fixture.database, target_id).unwrap();
         let second_request = PreviewTargetRequest {
+            hook_initial_adopt: false,
             descriptor: untracked_descriptor.clone(),
             ownership,
             baseline,

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+pub mod hooks;
 pub mod mcp;
 pub mod overview;
 pub mod profiles;

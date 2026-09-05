@@ -78,6 +78,20 @@ impl ToolAdapter for CursorAdapter {
                 supported_capability.clone(),
                 SymlinkPolicy::ManagedChildrenOnly,
             ),
+            // Hooks：独立 `~/.cursor/hooks.json`（官方合同，2026-09-05 核验），
+            // 事件键为 camelCase；接管结构性的 `version` 与 `hooks` 两个顶层键，
+            // 其余未知顶层键保留为非受管内容。
+            descriptor(
+                ArtifactKind::Hook,
+                Scope::Global,
+                None,
+                Some(path_text(&cursor_home.join("hooks.json"))?),
+                TargetFormat::Json,
+                vec!["version", "hooks"],
+                vec![],
+                supported_capability.clone(),
+                SymlinkPolicy::Reject,
+            ),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -106,8 +120,19 @@ impl ToolAdapter for CursorAdapter {
                     TargetFormat::SymlinkDirectory,
                     vec!["$children"],
                     vec![],
-                    supported_capability,
+                    supported_capability.clone(),
                     SymlinkPolicy::ManagedChildrenOnly,
+                ),
+                descriptor(
+                    ArtifactKind::Hook,
+                    Scope::Project,
+                    Some(project_root.as_str().to_owned()),
+                    Some(path_text(&root.join(".cursor/hooks.json"))?),
+                    TargetFormat::Json,
+                    vec!["version", "hooks"],
+                    vec![],
+                    supported_capability,
+                    SymlinkPolicy::Reject,
                 ),
                 descriptor(
                     ArtifactKind::Prompt,
@@ -205,7 +230,7 @@ mod tests {
         for target in &targets {
             let supported = matches!(
                 target.artifact_kind,
-                ArtifactKind::Mcp | ArtifactKind::Skill
+                ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook
             );
             assert_eq!(
                 target.capability.state == CapabilityState::Supported,

@@ -1254,3 +1254,91 @@ if run_status != "previewed" {
 }
 validate_action_matrix(state, action)?;
 ```
+
+## Scenario: Hooks artifact (array-shaped native entries)
+
+### 1. Scope / Trigger
+- Trigger: any change to `hooks/` service, `domain::HookEvent`, hook adapter
+  descriptors, migration `0014_hooks.sql`, or the shared
+  `PreviewTargetRequest.hook_initial_adopt` flag. Hooks are the first artifact
+  whose native entries live in anonymous JSON arrays (no stable name key), so
+  the per-item machinery differs from MCP despite reusing the same pipeline.
+
+### 2. Signatures
+- `ArtifactKind::Hook` (`"hook"`), `domain::HookEvent` (13 canonical PascalCase
+  events), `HookEvent::supported_for_tool(tool)`, `HookEvent::native_key(tool)`
+  (Cursor → camelCase).
+- Selector roots (`hooks::service::native_selector_root`): claude/codex/zcode
+  `["hooks"]`; cursor `["version", "hooks"]`. Events root
+  (`events_root`): claude/codex/cursor `["hooks"]`; zcode `["hooks", "events"]`.
+- external key: `<Event>|<sha256(name|matcher|command|timeout)[0..16]>|<matcher>`
+  — matcher is LAST because it may contain `|`; parse with `splitn(3, '|')`.
+- `hooks::service::assess_hooks_drift(descriptor, baseline, scan, tool)`.
+
+### 3. Contracts
+- Projections (document-rooted): claude/codex `{"hooks": {<Event>: [{matcher?,
+  hooks: [{type:"command", command, timeout?}]}]}}`; zcode
+  `{"hooks": {"enabled": true, "events": {...}}}` (runner switch always true —
+  config-file hooks do not run otherwise); cursor
+  `{"version": 1, "hooks": {<camelCase event>: [flat entries]}}` (matcher
+  belongs to the entry, no `type` for command hooks).
+- Assignment/import validation rejects event×tool combinations that are not in
+  the per-tool official set (`hook_event_supported`), and event is re-checked
+  during projection (`build_native_events` fails closed).
+- Ownership is the whole selector root per root: unmanaged native hooks inside
+  it surface as preview deletions (explicit confirm), never silent overwrites.
+
+### 4. Validation & Error Matrix
+- Event unsupported for tool → `INVALID_INPUT` "该工具的原生 hooks 合同不支持此事件"
+  (assignment, import, projection).
+- Detectable secret in `command` → `INVALID_INPUT` (same policy as MCP args).
+- Initial target with empty hooks subtree (`hook_initial_adopt == true`,
+  NULL/NULL baseline) → assessed as mergeable `ExternalNonOwnedChange` with
+  diagnostic `HOOK_TARGET_INITIAL_EMPTY_HOOKS`, never Conflict.
+- Initial target with non-empty hooks subtree → stays `ExternalOwnedChange`
+  (readopt_available) until the user imports or readopts.
+- Readopt relocates items by (event, matcher) group + unclaimed entry; groups
+  gone → item removed. Empty hash match alone must NOT be treated as removal.
+
+### 5. Good/Base/Bad Cases
+- Good: codex `hooks.json` = `{"description": "保留我", "hooks": {}}` → first
+  preview merges (Add/Update) and description survives (selectors only).
+- Base: target file missing → `ChangeKind::Add` without any adopt flag.
+- Bad: hashing only name/command/timeout into the identity (matcher left out)
+  collides keys; putting matcher before the identity breaks `splitn` parsing.
+
+### 6. Tests Required
+- `hooks::service::tests` — per-tool projection golden (4 shapes), event
+  support matrix, ownership covers every declared root, unsupported event
+  fails closed.
+- `db::tests::hooks_migration_opens_hook_storage_and_widens_checks` — canary
+  inserts proving every widened CHECK (incl. cursor artifact limit) and the
+  mutual-exclusion triggers.
+- `tests/hooks_e2e.rs` — four-tool Preview → Apply with native coexistence
+  assertions (claude env preserved, codex description preserved, zcode
+  `mcp.servers` preserved), snapshot ledger, external drift → readopt → in_sync.
+- `src/features/hooks/hooks-page.test.tsx` — assignment disabled for
+  event-unsupported tool, preview → apply argument contract.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// 数组条目按 stale hash 找不到就把 item 当作已删除
+let hashes = native_entry_hashes(observed, events_root(tool));
+if hashes.contains(&item.last_applied_item_hash) { updated += 1 } else { removed += 1 }
+```
+
+#### Correct
+
+```rust
+// 外部键自带 (event, matcher) 定位信息；接管时按分组认领未匹配条目，
+// 刷新 last_applied_item_hash，保持与 MCP readopt 相同的语义。
+let mut groups = native_group_hashes(observed, events_root(tool));
+let relocated = if let [event, _identity, matcher] = parts.as_slice() {
+    groups.get_mut(&(event.to_owned(), matcher.to_owned()))
+        .and_then(|entries| entries.iter_mut().find(|(_, claimed)| !*claimed))
+        .map(|(hash, claimed)| { *claimed = true; hash.clone() })
+} else { None };
+```

@@ -26,20 +26,21 @@
 
 EasyToAgents 面向同时使用 Claude、Codex、Cursor 与 ZCode 的开发者。它把散落在工具全局目录和项目目录中的配置整理成中央意图，同时保留对原生目标状态的检查；默认先展示变更计划，再由用户确认是否写入磁盘。
 
-- **中央意图**：在一个界面维护希望启用的 Provider、提示词、MCP 与 Skills。
+- **中央意图**：在一个界面维护希望启用的 Provider、提示词、MCP、Skills 与 Hooks。
 - **原生目标**：继续使用 Claude、Codex、Cursor、ZCode 各自公开支持的配置格式和目录，不引入专有运行时。
 - **Local-first**：中央数据、同步记录与私有恢复点保留在本机，配置管理不依赖独立网站或云端控制台。
 
 ## 核心能力
 
-| 能力                   | 可以做什么                                                                                          | 写入边界                                               |
-| ---------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| **Providers / 提示词** | 检测并导入 Claude、Codex、ZCode 的 Provider 与提示词；Provider 按工具启用，提示词可按工具或项目分配 | 中央档案的编辑与原生配置写入分离；默认先预览再确认应用 |
-| **MCP**                | 在中央库维护 MCP Server，按 Claude、Codex、Cursor、ZCode 或具体项目分配                             | 分配变化先更新中央意图，原生目标通过同步计划写入       |
-| **Skills**             | 将 Skill 复制到中央目录，并通过受管符号链接同步到 Claude、Codex、Cursor 与 ZCode 目标               | 应用前展示目标计划，应用后保留恢复快照                 |
-| **Projects**           | 登记并只读扫描本地项目，在项目维度管理提示词、MCP 与 Skills                                         | 移除项目登记不会删除或改写已有原生配置                 |
+| 能力                   | 可以做什么                                                                                             | 写入边界                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| **Providers / 提示词** | 检测并导入 Claude、Codex、ZCode 的 Provider 与提示词；Provider 按工具启用，提示词可按工具或项目分配    | 中央档案的编辑与原生配置写入分离；默认先预览再确认应用 |
+| **MCP**                | 在中央库维护 MCP Server，按 Claude、Codex、Cursor、ZCode 或具体项目分配                                | 分配变化先更新中央意图，原生目标通过同步计划写入       |
+| **Skills**             | 将 Skill 复制到中央目录，并通过受管符号链接同步到 Claude、Codex、Cursor 与 ZCode 目标                  | 应用前展示目标计划，应用后保留恢复快照                 |
+| **Hooks**              | 在中央库维护生命周期钩子，按 Claude、Codex、Cursor、ZCode 或具体项目分配；事件组合按各工具官方合同校验 | 分配变化先更新中央意图，原生目标通过同步计划写入       |
+| **Projects**           | 登记并只读扫描本地项目，在项目维度管理提示词、MCP 与 Skills                                            | 移除项目登记不会删除或改写已有原生配置                 |
 
-Cursor 当前仅支持全局/项目 MCP 与 Skills；Provider、API Key、模型、Prompt 和项目级 Rules 均不受支持，也不会被读取或写入。ZCode 支持全部四类资源：Provider（接口配置写入 `~/.zcode/v2/config.json` 的 provider 条目，只接管 name/kind/options/enabled，`models` 等应用自管字段原样保留）、Prompt（用户级与项目级 `AGENTS.md`）、MCP（`~/.zcode/cli/config.json` 与项目 `.zcode/config.json` 的 `mcp.servers`）与 Skills（`~/.zcode/skills`）。总览页将中央意图、各工具原生目标状态、同步历史与恢复点放在同一处，便于判断“希望的配置”和“磁盘上的实际配置”是否一致。
+Hooks 采用统一事件模型：Claude（`settings.json` 的 `hooks` 键）与 ZCode（`~/.zcode/cli/config.json`、项目 `.zcode/config.json` 的 `hooks` 键，恒写 `hooks.enabled: true`）为选择器化子树，Codex 与 Cursor 为独立 `hooks.json`（Cursor 事件键为 camelCase 并额外接管 `version`）。Cursor 当前仅支持全局/项目 MCP、Skills 与 Hooks；Provider、API Key、模型、Prompt 和项目级 Rules 均不受支持，也不会被读取或写入。ZCode 支持全部四类资源：Provider（接口配置写入 `~/.zcode/v2/config.json` 的 provider 条目，只接管 name/kind/options/enabled，`models` 等应用自管字段原样保留）、Prompt（用户级与项目级 `AGENTS.md`）、MCP（`~/.zcode/cli/config.json` 与项目 `.zcode/config.json` 的 `mcp.servers`）与 Skills（`~/.zcode/skills`）。总览页将中央意图、各工具原生目标状态、同步历史与恢复点放在同一处，便于判断“希望的配置”和“磁盘上的实际配置”是否一致。
 
 ## 产品实景
 

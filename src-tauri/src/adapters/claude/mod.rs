@@ -124,6 +124,22 @@ impl ToolAdapter for ClaudeAdapter {
                 customization_policy.skill,
                 SymlinkPolicy::ManagedChildrenOnly,
             ),
+            // Hooks 与 Provider 共享 settings.json（官方 hooks 合同，2026-09-05 核验），
+            // 用选择器只接管 `hooks` 子树，保留 `env` 等其他内容。
+            // Claude 的 customization policy 只封锁 mcp/skills 自定义文件，
+            // 不封锁核心 settings.json 合同，因此这里不做策略门禁。
+            descriptor(
+                ArtifactKind::Hook,
+                Scope::Global,
+                None,
+                Some(path_text(&settings_path)?),
+                TargetFormat::Json,
+                vec!["hooks"],
+                vec![],
+                tool_capability.clone(),
+                PolicyState::Allowed,
+                SymlinkPolicy::Reject,
+            ),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -160,6 +176,18 @@ impl ToolAdapter for ClaudeAdapter {
                     Some(path_text(&root.join("CLAUDE.md"))?),
                     TargetFormat::Markdown,
                     vec!["$document"],
+                    vec![],
+                    tool_capability.clone(),
+                    PolicyState::Allowed,
+                    SymlinkPolicy::Reject,
+                ),
+                descriptor(
+                    ArtifactKind::Hook,
+                    Scope::Project,
+                    Some(project_root.as_str().to_owned()),
+                    Some(path_text(&root.join(".claude/settings.json"))?),
+                    TargetFormat::Json,
+                    vec!["hooks"],
                     vec![],
                     tool_capability,
                     PolicyState::Allowed,

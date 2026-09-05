@@ -10,6 +10,7 @@ import {
   type ProjectDto,
   type ProjectNativeResourceAction,
   type ProjectNativeResourceDto,
+  type HookProjectOptionDto,
   type SkillProjectOptionDto,
   type Tool,
 } from "@/bindings/commands";
@@ -32,6 +33,7 @@ import {
   projectQueryOptions,
 } from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
+import { hookProjectOptionsQueryOptions, hooksKeys } from "@/lib/hooks-api";
 import { interruptedRunQueryOptions, syncKeys } from "@/lib/sync-api";
 import {
   MCP_TOOLS,
@@ -51,7 +53,7 @@ interface OpenProjectPreview {
   source: "assignment" | "native";
 }
 
-type ProjectResourceView = "mcp" | "skill" | "prompt";
+type ProjectResourceView = "mcp" | "hook" | "skill" | "prompt";
 
 export function ProjectDetailPage() {
   const { projectId = "" } = useParams();
@@ -140,6 +142,7 @@ export function ProjectDetailPage() {
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
+        queryClient.invalidateQueries({ queryKey: hooksKeys.all }),
       ]);
     },
   });
@@ -380,6 +383,16 @@ export function ProjectDetailPage() {
               <Button
                 type="button"
                 size="sm"
+                variant={resourceView === "hook" ? "default" : "outline"}
+                aria-label="管理项目 Hook"
+                aria-pressed={resourceView === "hook"}
+                onClick={() => changeResourceView("hook")}
+              >
+                Hooks
+              </Button>
+              <Button
+                type="button"
+                size="sm"
                 variant={resourceView === "skill" ? "default" : "outline"}
                 aria-label="管理项目 Skill"
                 aria-pressed={resourceView === "skill"}
@@ -439,9 +452,11 @@ export function ProjectDetailPage() {
             {toolLabel(activeTool)}{" "}
             {resourceView === "mcp"
               ? "MCP"
-              : resourceView === "skill"
-                ? "Skill"
-                : "提示词"}{" "}
+              : resourceView === "hook"
+                ? "Hook"
+                : resourceView === "skill"
+                  ? "Skill"
+                  : "提示词"}{" "}
             项目追加
           </h2>
           {resourceView === "mcp" ? (
@@ -450,6 +465,14 @@ export function ProjectDetailPage() {
               tool={activeTool}
               directApply={directApply}
               onPreview={(plan) => handlePreview(plan, activeTool, "mcp")}
+              onMessage={setMessage}
+            />
+          ) : resourceView === "hook" ? (
+            <ProjectHookAssignments
+              project={project}
+              tool={activeTool}
+              directApply={directApply}
+              onPreview={(plan) => handlePreview(plan, activeTool, "hook")}
               onMessage={setMessage}
             />
           ) : resourceView === "skill" ? (
@@ -835,6 +858,7 @@ function ProjectMcpAssignments({
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
+        queryClient.invalidateQueries({ queryKey: hooksKeys.all }),
       ]);
       if (!viewActive.current) return;
       if (directApply) {
@@ -911,6 +935,123 @@ function ProjectMcpAssignments({
   );
 }
 
+function ProjectHookAssignments({
+  project,
+  tool,
+  directApply,
+  onPreview,
+  onMessage,
+}: {
+  project: ProjectDto;
+  tool: Tool;
+  directApply: boolean;
+  onPreview: (preview: PreviewPlan) => void;
+  onMessage: (message: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const viewActive = useViewActive();
+  const optionsQuery = useQuery(
+    hookProjectOptionsQueryOptions(project.id, tool),
+  );
+  const [excludeFromGit, setExcludeFromGit] = useState(false);
+  const assignmentMutation = useMutation({
+    mutationFn: async ({
+      option,
+      assigned,
+    }: {
+      option: HookProjectOptionDto;
+      assigned: boolean;
+    }) =>
+      unwrapResult(
+        await commands.setProjectHookAssignment({
+          projectId: project.id,
+          tool,
+          hookId: option.hookId,
+          assigned,
+          hookRowVersion: option.rowVersion,
+          projectRowVersion: project.rowVersion,
+        }),
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: hooksKeys.all }),
+      ]);
+      if (!viewActive.current) return;
+      if (directApply) {
+        previewMutation.mutate();
+        return;
+      }
+      onMessage("Hook 项目追加意图已更新；原生配置尚未写入。");
+    },
+  });
+  const previewMutation = useMutation({
+    mutationFn: async () =>
+      unwrapResult(
+        await commands.previewHookSync({
+          tool,
+          projectId: project.id,
+          excludeFromGit,
+        }),
+      ),
+    onSuccess: (preview) => {
+      if (!viewActive.current) return;
+      if (preview.targets.length === 0) {
+        onMessage("该项目只有全局继承 Hook，不需要创建项目配置文件。");
+      } else {
+        onPreview(preview);
+      }
+    },
+  });
+  const blocked = projectBlocked(project, tool);
+  return (
+    <AssignmentCard
+      title="Hooks"
+      description="全局项持续继承且只读；项目只能追加其他中央 Hook。"
+      blocked={blocked}
+      directApply={directApply}
+      error={profileErrorText(
+        optionsQuery.error ?? assignmentMutation.error ?? previewMutation.error,
+      )}
+      pending={optionsQuery.isPending}
+      empty={optionsQuery.data?.length === 0}
+      excludeFromGit={excludeFromGit}
+      onExcludeFromGit={setExcludeFromGit}
+      previewPending={previewMutation.isPending}
+      previewLabel={
+        directApply
+          ? `${toolLabel(tool)} Hooks 直接应用`
+          : `${toolLabel(tool)} Hooks 同步预览`
+      }
+      onPreview={() => previewMutation.mutate()}
+    >
+      {optionsQuery.data?.map((option) => (
+        <ProjectOptionRow
+          key={option.hookId}
+          name={`${option.name}（${option.event}）`}
+          state={option.state}
+          actionLabel={`${option.name} Hook 项目追加`}
+          actionDisabled={
+            option.state === "inherited" ||
+            (option.state === "available" && !option.selectable) ||
+            assignmentMutation.isPending
+          }
+          onToggle={() =>
+            assignmentMutation.mutate({
+              option,
+              assigned: option.state === "available",
+            })
+          }
+        >
+          {!option.enabled ? (
+            <OptionTag tone="warning">已停用</OptionTag>
+          ) : null}
+        </ProjectOptionRow>
+      ))}
+    </AssignmentCard>
+  );
+}
+
 function ProjectSkillAssignments({
   project,
   tool,
@@ -953,6 +1094,7 @@ function ProjectSkillAssignments({
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
+        queryClient.invalidateQueries({ queryKey: hooksKeys.all }),
       ]);
       if (!viewActive.current) return;
       if (directApply) {

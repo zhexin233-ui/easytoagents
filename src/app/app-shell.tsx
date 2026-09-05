@@ -17,6 +17,7 @@ const primaryLinks = [
   { to: "/", label: "总览", end: true },
   { to: "/prompts", label: "提示词", end: false },
   { to: "/mcp", label: "MCP", end: false },
+  { to: "/hooks", label: "Hooks", end: false },
   { to: "/skills", label: "Skills", end: false },
 ] as const;
 

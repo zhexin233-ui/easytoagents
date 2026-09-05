@@ -98,6 +98,110 @@ string_enum! {
         Prompt => "prompt",
         Mcp => "mcp",
         Skill => "skill",
+        Hook => "hook",
+    }
+}
+
+string_enum! {
+    /// Hook 的统一事件名（canonical PascalCase）。各工具的原生键可能不同
+    /// （Cursor 为 camelCase），写入原生文件前必须经
+    /// [`HookEvent::native_key`] 转换；每工具支持的官方事件集合由
+    /// [`HookEvent::supported_for_tool`] 定义，不支持的组合必须 fail closed。
+    pub enum HookEvent {
+        SessionStart => "SessionStart",
+        SessionEnd => "SessionEnd",
+        UserPromptSubmit => "UserPromptSubmit",
+        PreToolUse => "PreToolUse",
+        PermissionRequest => "PermissionRequest",
+        PostToolUse => "PostToolUse",
+        PostToolUseFailure => "PostToolUseFailure",
+        SubagentStart => "SubagentStart",
+        SubagentStop => "SubagentStop",
+        PreCompact => "PreCompact",
+        PostCompact => "PostCompact",
+        Stop => "Stop",
+        Notification => "Notification",
+    }
+}
+
+impl HookEvent {
+    /// 官方 hooks 文档核验（2026-09-05）定义的每工具可配置事件集合：
+    /// - Claude：settings.json `hooks` 键下出现的 10 个配置事件；
+    /// - Codex：hooks.json 的 11 个事件；
+    /// - ZCode：configuration hooks 的 7 个事件；
+    /// - Cursor：与 canonical 语义一一对应的 9 个 camelCase 事件；
+    ///   其余（UserPromptSubmit 等）无对应事件，不得猜测映射。
+    pub fn supported_for_tool(self, tool: Tool) -> bool {
+        match tool {
+            Tool::Claude => matches!(
+                self,
+                Self::SessionStart
+                    | Self::SessionEnd
+                    | Self::UserPromptSubmit
+                    | Self::PreToolUse
+                    | Self::PermissionRequest
+                    | Self::PostToolUse
+                    | Self::Notification
+                    | Self::SubagentStop
+                    | Self::Stop
+                    | Self::PreCompact
+            ),
+            Tool::Codex => matches!(
+                self,
+                Self::SessionStart
+                    | Self::SessionEnd
+                    | Self::UserPromptSubmit
+                    | Self::PreToolUse
+                    | Self::PermissionRequest
+                    | Self::PostToolUse
+                    | Self::PreCompact
+                    | Self::PostCompact
+                    | Self::SubagentStart
+                    | Self::SubagentStop
+                    | Self::Stop
+            ),
+            Tool::Zcode => matches!(
+                self,
+                Self::SessionStart
+                    | Self::UserPromptSubmit
+                    | Self::PreToolUse
+                    | Self::PermissionRequest
+                    | Self::PostToolUse
+                    | Self::PostToolUseFailure
+                    | Self::Stop
+            ),
+            Tool::Cursor => matches!(
+                self,
+                Self::SessionStart
+                    | Self::SessionEnd
+                    | Self::PreToolUse
+                    | Self::PostToolUse
+                    | Self::PostToolUseFailure
+                    | Self::SubagentStart
+                    | Self::SubagentStop
+                    | Self::PreCompact
+                    | Self::Stop
+            ),
+        }
+    }
+
+    /// 该事件在目标工具原生配置中的键名（Cursor 官方为 camelCase）。
+    pub fn native_key(self, tool: Tool) -> &'static str {
+        match tool {
+            Tool::Cursor => match self {
+                Self::SessionStart => "sessionStart",
+                Self::SessionEnd => "sessionEnd",
+                Self::PreToolUse => "preToolUse",
+                Self::PostToolUse => "postToolUse",
+                Self::PostToolUseFailure => "postToolUseFailure",
+                Self::SubagentStart => "subagentStart",
+                Self::SubagentStop => "subagentStop",
+                Self::PreCompact => "preCompact",
+                Self::Stop => "stop",
+                _ => self.as_str(),
+            },
+            _ => self.as_str(),
+        }
     }
 }
 
@@ -402,9 +506,9 @@ mod tests {
 
     use super::{
         validate_global_assignment, validate_project_assignment, validate_single_active_profile,
-        validate_unique_names, ArtifactKind, ArtifactName, ChangeKind, EntityId, McpTransport,
-        ProjectRoot, Scope, SkillStatus, SyncRunKind, SyncRunStatus, SyncStatus, TargetType, Tool,
-        TrustStatus,
+        validate_unique_names, ArtifactKind, ArtifactName, ChangeKind, EntityId, HookEvent,
+        McpTransport, ProjectRoot, Scope, SkillStatus, SyncRunKind, SyncRunStatus, SyncStatus,
+        TargetType, Tool, TrustStatus,
     };
 
     #[test]
@@ -420,6 +524,7 @@ mod tests {
             serde_json::to_value(ArtifactKind::Prompt).unwrap(),
             serde_json::to_value(ArtifactKind::Mcp).unwrap(),
             serde_json::to_value(ArtifactKind::Skill).unwrap(),
+            serde_json::to_value(ArtifactKind::Hook).unwrap(),
             serde_json::to_value(SyncStatus::InSync).unwrap(),
             serde_json::to_value(SyncStatus::ExternalNonOwnedChange).unwrap(),
             serde_json::to_value(SyncStatus::ExternalOwnedChange).unwrap(),
@@ -459,6 +564,19 @@ mod tests {
             serde_json::to_value(TargetType::Directory).unwrap(),
             serde_json::to_value(TargetType::Symlink).unwrap(),
             serde_json::to_value(TargetType::Missing).unwrap(),
+            serde_json::to_value(HookEvent::SessionStart).unwrap(),
+            serde_json::to_value(HookEvent::SessionEnd).unwrap(),
+            serde_json::to_value(HookEvent::UserPromptSubmit).unwrap(),
+            serde_json::to_value(HookEvent::PreToolUse).unwrap(),
+            serde_json::to_value(HookEvent::PermissionRequest).unwrap(),
+            serde_json::to_value(HookEvent::PostToolUse).unwrap(),
+            serde_json::to_value(HookEvent::PostToolUseFailure).unwrap(),
+            serde_json::to_value(HookEvent::SubagentStart).unwrap(),
+            serde_json::to_value(HookEvent::SubagentStop).unwrap(),
+            serde_json::to_value(HookEvent::PreCompact).unwrap(),
+            serde_json::to_value(HookEvent::PostCompact).unwrap(),
+            serde_json::to_value(HookEvent::Stop).unwrap(),
+            serde_json::to_value(HookEvent::Notification).unwrap(),
         ];
         let expected = [
             "claude",
@@ -471,6 +589,7 @@ mod tests {
             "prompt",
             "mcp",
             "skill",
+            "hook",
             "in_sync",
             "external_non_owned_change",
             "external_owned_change",
@@ -510,6 +629,19 @@ mod tests {
             "directory",
             "symlink",
             "missing",
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "SubagentStart",
+            "SubagentStop",
+            "PreCompact",
+            "PostCompact",
+            "Stop",
+            "Notification",
         ];
         assert_eq!(
             values,

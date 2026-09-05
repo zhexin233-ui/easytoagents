@@ -90,6 +90,22 @@ impl ToolAdapter for ZcodeAdapter {
                 supported_capability.clone(),
                 SymlinkPolicy::ManagedChildrenOnly,
             ),
+            // Hooks：与 MCP 同住 `~/.zcode/cli/config.json`，用选择器只接管
+            // `hooks` 子树。官方要求配置文件 hooks 必须 `hooks.enabled: true`
+            // 才会运行，由投影层恒写该开关（见 hooks/service.rs）。
+            descriptor(
+                ArtifactKind::Hook,
+                Scope::Global,
+                None,
+                Some(path_text(
+                    &environment.home().join(".zcode/cli/config.json"),
+                )?),
+                TargetFormat::Json,
+                vec!["hooks"],
+                vec![],
+                supported_capability.clone(),
+                SymlinkPolicy::Reject,
+            ),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -129,8 +145,19 @@ impl ToolAdapter for ZcodeAdapter {
                     TargetFormat::SymlinkDirectory,
                     vec!["$children"],
                     vec![],
-                    supported_capability,
+                    supported_capability.clone(),
                     SymlinkPolicy::ManagedChildrenOnly,
+                ),
+                descriptor(
+                    ArtifactKind::Hook,
+                    Scope::Project,
+                    Some(project_root.as_str().to_owned()),
+                    Some(path_text(&root.join(".zcode/config.json"))?),
+                    TargetFormat::Json,
+                    vec!["hooks"],
+                    vec![],
+                    supported_capability,
+                    SymlinkPolicy::Reject,
                 ),
             ]);
         }

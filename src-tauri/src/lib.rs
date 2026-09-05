@@ -11,6 +11,7 @@ pub mod db;
 pub mod domain;
 pub mod error;
 pub mod git;
+pub mod hooks;
 pub mod mcp;
 pub mod overview;
 pub mod profiles;
@@ -34,6 +35,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<domain::TrustStatus>()
         .typ::<domain::SkillStatus>()
         .typ::<domain::TargetType>()
+        .typ::<domain::HookEvent>()
         .typ::<adapters::TargetFormat>()
         .typ::<adapters::CapabilityState>()
         .typ::<adapters::ToolAvailabilityState>()
@@ -115,6 +117,28 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<skills::PreviewSkillSyncInput>()
         .typ::<skills::ApplySkillPreviewInput>()
         .typ::<skills::SkillTargetStatusDto>()
+        .typ::<hooks::CreateHookInput>()
+        .typ::<hooks::UpdateHookInput>()
+        .typ::<hooks::VersionedHookInput>()
+        .typ::<hooks::DeleteHookResultDto>()
+        .typ::<hooks::HookDto>()
+        .typ::<hooks::SetGlobalHookAssignmentInput>()
+        .typ::<hooks::SetProjectHookAssignmentInput>()
+        .typ::<hooks::HookProjectSelectionState>()
+        .typ::<hooks::HookProjectOptionDto>()
+        .typ::<hooks::HookProjectDto>()
+        .typ::<hooks::HookProjectOptionsInput>()
+        .typ::<hooks::PreviewHookSyncInput>()
+        .typ::<hooks::ApplyHookPreviewInput>()
+        .typ::<hooks::ReadoptHookTargetInput>()
+        .typ::<hooks::ReadoptHookTargetResultDto>()
+        .typ::<hooks::HookTargetStatusDto>()
+        .typ::<hooks::HookImportCandidateStatus>()
+        .typ::<hooks::HookImportCandidateDto>()
+        .typ::<hooks::HookImportPreviewDto>()
+        .typ::<hooks::DiscoverHookImportInput>()
+        .typ::<hooks::ConfirmHookImportInput>()
+        .typ::<hooks::HookImportResultDto>()
         .typ::<projects::ProjectPathStatus>()
         .typ::<projects::GitRepositoryStatus>()
         .typ::<projects::ProjectTargetStatusDto>()
@@ -212,6 +236,22 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::skills::list_global_skill_target_statuses,
             commands::skills::preview_skill_sync,
             commands::skills::apply_skill_preview,
+            commands::hooks::list_hooks,
+            commands::hooks::get_hook,
+            commands::hooks::create_hook,
+            commands::hooks::update_hook,
+            commands::hooks::set_hook_enabled,
+            commands::hooks::delete_hook,
+            commands::hooks::set_global_hook_assignment,
+            commands::hooks::set_project_hook_assignment,
+            commands::hooks::list_hook_projects,
+            commands::hooks::list_hook_project_options,
+            commands::hooks::list_global_hook_target_statuses,
+            commands::hooks::preview_hook_sync,
+            commands::hooks::apply_hook_preview,
+            commands::hooks::readopt_hook_target,
+            commands::hooks::discover_hook_import,
+            commands::hooks::confirm_hook_import,
         ])
 }
 

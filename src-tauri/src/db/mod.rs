@@ -15,6 +15,7 @@ use crate::{
     security::{create_private_file, ensure_private_directory, ensure_private_file},
 };
 
+pub mod hooks;
 pub mod mcp;
 pub(crate) mod mcp_imports;
 pub(crate) mod native_resources;
@@ -88,6 +89,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 13,
         name: "zcode_tool_support",
         sql: include_str!("migrations/0013_zcode_tool_support.sql"),
+    },
+    Migration {
+        version: 14,
+        name: "hooks",
+        sql: include_str!("migrations/0014_hooks.sql"),
     },
 ];
 
@@ -478,7 +484,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 13);
+        assert_eq!(database.schema_version().unwrap(), 14);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1016,7 +1022,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 13);
+            assert_eq!(database.schema_version().unwrap(), 14);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1051,7 +1057,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 13);
+            assert_eq!(database.schema_version().unwrap(), 14);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1106,7 +1112,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 13);
+        assert_eq!(database.schema_version().unwrap(), 14);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1174,7 +1180,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 13);
+            assert_eq!(database.schema_version().unwrap(), 14);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1245,7 +1251,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 13);
+            assert_eq!(database.schema_version().unwrap(), 14);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1332,7 +1338,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 13);
+            assert_eq!(database.schema_version().unwrap(), 14);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1472,7 +1478,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 13);
+            assert_eq!(database.schema_version().unwrap(), 14);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1565,6 +1571,159 @@ mod tests {
                     [ZCODE_PROMPT_PROFILE],
                 )
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn hooks_migration_opens_hook_storage_and_widens_checks() {
+        const HOOK_ONE_ID: &str = "00000000-0000-4000-8000-000000000301";
+        const HOOK_TARGET_GLOBAL: &str = "00000000-0000-4000-8000-000000000302";
+        const HOOK_TARGET_PROJECT: &str = "00000000-0000-4000-8000-000000000303";
+        const HOOK_ITEM_ID: &str = "00000000-0000-4000-8000-000000000304";
+        const CURSOR_HOOK_TARGET: &str = "00000000-0000-4000-8000-000000000305";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v13-hooks-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..13] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/hooks-project");
+        }
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 14);
+            let connection = database.connection();
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+
+            // 中央 hooks 表：合法记录、大小写不重复、事件与超时 CHECK 生效。
+            connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, matcher, command, timeout_seconds, enabled)
+                     VALUES (?1, 'block-rm', 'PreToolUse', 'Bash', 'bash /fixture/block-rm.sh', 30, 1)",
+                    [HOOK_ONE_ID],
+                )
+                .unwrap();
+            assert!(connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command) VALUES ('00000000-0000-4000-8000-000000000306', 'BLOCK-RM', 'PreToolUse', 'true')",
+                    [],
+                )
+                .is_err());
+            assert!(connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command) VALUES ('00000000-0000-4000-8000-000000000307', 'bad-event', 'BeforeToolUse', 'true')",
+                    [],
+                )
+                .is_err());
+            assert!(connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command, timeout_seconds) VALUES ('00000000-0000-4000-8000-000000000308', 'bad-timeout', 'Stop', 'true', 0)",
+                    [],
+                )
+                .is_err());
+            assert!(connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command) VALUES ('00000000-0000-4000-8000-000000000309', 'empty-command', 'Stop', '  ')",
+                    [],
+                )
+                .is_err());
+
+            // managed_targets / managed_items：'hook' 进入 global/project 两类作用域，
+            // Cursor 的 artifact 限制同步放宽。
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                     VALUES (?1, 'claude', 'hook', 'global', '/fixture/home/.claude/settings.json')",
+                    [HOOK_TARGET_GLOBAL],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'codex', 'hook', 'project', ?2, '/fixture/hooks-project/.codex/hooks.json')",
+                    params![HOOK_TARGET_PROJECT, PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                     VALUES (?1, 'cursor', 'hook', 'global', '/fixture/home/.cursor/hooks.json')",
+                    [CURSOR_HOOK_TARGET],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO managed_items(id, target_id, resource_kind, resource_id, external_key, last_applied_item_hash)
+                     VALUES (?1, ?2, 'hook', ?3, 'PreToolUse|Bash|fixture', ?4)",
+                    params![HOOK_ITEM_ID, HOOK_TARGET_GLOBAL, HOOK_ONE_ID, "a".repeat(64)],
+                )
+                .unwrap();
+            assert!(connection
+                .execute(
+                    "INSERT INTO managed_items(id, target_id, resource_kind, resource_id, external_key, last_applied_item_hash)
+                     VALUES ('00000000-0000-4000-8000-000000000310', ?1, 'mcp', ?2, 'fixture', ?3)",
+                    params![HOOK_TARGET_GLOBAL, MCP_ID, "a".repeat(64)],
+                )
+                .is_err());
+
+            // 全局/项目分配互斥触发器与未知工具 CHECK。
+            connection
+                .execute(
+                    "INSERT INTO hook_global_assignments(tool, hook_id) VALUES ('claude', ?1)",
+                    [HOOK_ONE_ID],
+                )
+                .unwrap();
+            assert!(connection
+                .execute(
+                    "INSERT INTO hook_project_assignments(project_id, tool, hook_id) VALUES (?1, 'claude', ?2)",
+                    params![PROJECT_ONE_ID, HOOK_ONE_ID],
+                )
+                .is_err());
+            assert!(connection
+                .execute(
+                    "INSERT INTO hook_global_assignments(tool, hook_id) VALUES ('windsurf', ?1)",
+                    [HOOK_ONE_ID],
+                )
+                .is_err());
+
+            if _round == 0 {
+                connection
+                    .execute("DELETE FROM managed_items WHERE id = ?1", [HOOK_ITEM_ID])
+                    .unwrap();
+                connection
+                    .execute(
+                        "DELETE FROM hook_global_assignments WHERE tool = 'claude'",
+                        [],
+                    )
+                    .unwrap();
+                for target_id in [HOOK_TARGET_GLOBAL, HOOK_TARGET_PROJECT, CURSOR_HOOK_TARGET] {
+                    connection
+                        .execute("DELETE FROM managed_targets WHERE id = ?1", [target_id])
+                        .unwrap();
+                }
+                connection
+                    .execute("DELETE FROM hooks WHERE id = ?1", [HOOK_ONE_ID])
+                    .unwrap();
+            }
         }
     }
 
@@ -1687,7 +1846,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 13);
+            assert_eq!(database.schema_version().unwrap(), 14);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

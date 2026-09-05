@@ -15,6 +15,7 @@ export interface ToolMetadata {
     promptProject: boolean;
     mcp: boolean;
     skills: boolean;
+    hooks: boolean;
   };
 }
 
@@ -30,6 +31,7 @@ export const TOOL_METADATA = {
       promptProject: true,
       mcp: true,
       skills: true,
+      hooks: true,
     },
   },
   codex: {
@@ -43,6 +45,7 @@ export const TOOL_METADATA = {
       promptProject: true,
       mcp: true,
       skills: true,
+      hooks: true,
     },
   },
   cursor: {
@@ -56,6 +59,7 @@ export const TOOL_METADATA = {
       promptProject: false,
       mcp: true,
       skills: true,
+      hooks: true,
     },
   },
   zcode: {
@@ -69,6 +73,7 @@ export const TOOL_METADATA = {
       promptProject: true,
       mcp: true,
       skills: true,
+      hooks: true,
     },
   },
 } as const satisfies Record<Tool, ToolMetadata>;
@@ -85,6 +90,12 @@ export const MCP_TOOLS = [
   "zcode",
 ] as const satisfies readonly Tool[];
 export const SKILL_TOOLS = [
+  "claude",
+  "codex",
+  "cursor",
+  "zcode",
+] as const satisfies readonly Tool[];
+export const HOOK_TOOLS = [
   "claude",
   "codex",
   "cursor",

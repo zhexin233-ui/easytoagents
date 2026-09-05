@@ -107,6 +107,23 @@ impl ToolAdapter for CodexAdapter {
                 PromptOverrideState::NotApplicable,
                 SymlinkPolicy::ManagedChildrenOnly,
             ),
+            // Hooks 使用独立 hooks.json（官方推荐每层只用一种表示，避免与
+            // config.toml 内联 [hooks] 混用触发合并警告）；只接管 `hooks`
+            // 键，保留用户手写的顶层 description 等内容。
+            // 信任审查由 Codex /hooks 完成，这里只呈现既有 trust 语义。
+            descriptor(
+                ArtifactKind::Hook,
+                Scope::Global,
+                None,
+                path_text(&environment.codex_home().join("hooks.json"))?,
+                TargetFormat::Json,
+                vec!["hooks"],
+                vec![],
+                capability.clone(),
+                TargetTrustState::NotRequired,
+                PromptOverrideState::NotApplicable,
+                SymlinkPolicy::Reject,
+            ),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -149,6 +166,21 @@ impl ToolAdapter for CodexAdapter {
                     path_text(&root.join("AGENTS.md"))?,
                     TargetFormat::Markdown,
                     vec!["$document"],
+                    vec![],
+                    capability.clone(),
+                    project_trust,
+                    PromptOverrideState::NotApplicable,
+                    SymlinkPolicy::Reject,
+                ),
+                // 项目级 hooks 只在项目 `.codex/` 层受信任时加载（官方合同），
+                // 与项目 MCP 相同的 trust 语义。
+                descriptor(
+                    ArtifactKind::Hook,
+                    Scope::Project,
+                    Some(project_root.as_str().to_owned()),
+                    path_text(&root.join(".codex/hooks.json"))?,
+                    TargetFormat::Json,
+                    vec!["hooks"],
                     vec![],
                     capability,
                     project_trust,

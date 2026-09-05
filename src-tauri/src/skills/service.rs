@@ -354,6 +354,7 @@ fn build_prepared_skill_preview(
                 exclude_from_git,
                 skill_takeover_entries,
                 project_native_action: None,
+                hook_initial_adopt: false,
             }]
         })
         .unwrap_or_default();

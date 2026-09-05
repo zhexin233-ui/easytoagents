@@ -30,6 +30,8 @@ pub const PROFILE_TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::Zcode];
 pub const ASSIGNABLE_MCP_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 4] =
     [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
+/// Hooks 的可分配工具集合（四工具均有官方 hooks 合同，证据见任务 09-05-add-hooks-management）。
+pub const ASSIGNABLE_HOOK_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -1613,6 +1615,7 @@ mod tests {
                 .map(|target| target.trust)
                 .collect::<Vec<_>>(),
             vec![
+                TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,

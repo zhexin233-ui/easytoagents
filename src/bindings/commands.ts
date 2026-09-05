@@ -567,6 +567,134 @@ async applySkillPreview(input: ApplySkillPreviewInput) : Promise<Result<ApplyRes
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async listHooks() : Promise<Result<HookDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_hooks") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getHook(id: string) : Promise<Result<HookDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_hook", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createHook(input: CreateHookInput) : Promise<Result<HookDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_hook", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateHook(input: UpdateHookInput) : Promise<Result<HookDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_hook", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setHookEnabled(input: VersionedHookInput, enabled: boolean) : Promise<Result<HookDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_hook_enabled", { input, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteHook(input: VersionedHookInput) : Promise<Result<DeleteHookResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_hook", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setGlobalHookAssignment(input: SetGlobalHookAssignmentInput) : Promise<Result<HookDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_global_hook_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setProjectHookAssignment(input: SetProjectHookAssignmentInput) : Promise<Result<HookDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_project_hook_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listHookProjects() : Promise<Result<HookProjectDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_hook_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listHookProjectOptions(input: HookProjectOptionsInput) : Promise<Result<HookProjectOptionDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_hook_project_options", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listGlobalHookTargetStatuses() : Promise<Result<HookTargetStatusDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_global_hook_target_statuses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewHookSync(input: PreviewHookSyncInput) : Promise<Result<PreviewPlan, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_hook_sync", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyHookPreview(input: ApplyHookPreviewInput) : Promise<Result<ApplyResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_hook_preview", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async readoptHookTarget(input: ReadoptHookTargetInput) : Promise<Result<ReadoptHookTargetResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("readopt_hook_target", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverHookImport(input: DiscoverHookImportInput) : Promise<Result<HookImportPreviewDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_hook_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async confirmHookImport(input: ConfirmHookImportInput) : Promise<Result<HookImportResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_hook_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -586,6 +714,7 @@ async applySkillPreview(input: ApplySkillPreviewInput) : Promise<Result<ApplyRes
 export type AppError = { code: ErrorCode; message: string; details?: Partial<{ [key in string]: JsonValue }> | null; recoverable: boolean; action?: RecoveryAction | null }
 export type AppInfoDto = { name: string; version: string }
 export type AppSettingsDto = { applyMode: ApplyMode; enabledTools: Tool[] }
+export type ApplyHookPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 /**
  * 原生配置写入方式：默认保持预览确认，`Direct` 在预览无冲突时跳过确认对话框。
@@ -599,7 +728,7 @@ export type ApplySnapshotRestoreInput = { previewId: string; snapshotId: string 
 /**
  * 受管资源种类。
  */
-export type ArtifactKind = "provider" | "prompt" | "mcp" | "skill"
+export type ArtifactKind = "provider" | "prompt" | "mcp" | "skill" | "hook"
 export type CapabilityState = "supported" | "unsupported" | "tool_not_installed"
 /**
  * 预览中的单目标变化。
@@ -607,25 +736,49 @@ export type CapabilityState = "supported" | "unsupported" | "tool_not_installed"
 export type ChangeKind = "add" | "update" | "delete" | "unchanged" | "warning" | "conflict"
 export type ClaudeCredentialEnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN"
 export type CompleteOnboardingResultDto = { completed: boolean }
+/**
+ * 用户显式确认导入的条目；服务端只做中央校验，不引用持久化预览。
+ */
+export type ConfirmHookImportInput = { tool: Tool; hooks: CreateHookInput[] }
 export type ConfirmImportInput = { previewId: string; name: string }
 export type ConfirmMcpImportInput = { previewId: string; candidateIds: string[] }
 export type ConfirmSkillImportInput = { previewId: string; candidateIds: string[] }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
+export type CreateHookInput = { name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean }
 export type DashboardSummaryDto = { tools: DashboardToolSummaryDto[]; projectCount: number; conflictCount: number; snapshotCount: number; recentSyncRuns: RecentSyncRunDto[]; interruptedRun: InterruptedRunPlan | null; needsOnboarding: boolean }
 export type DashboardToolSummaryDto = { tool: Tool; activeProviderName: string | null; activePromptName: string | null; globalMcpCount: number; globalSkillCount: number }
-export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "project" | "managed_target" | "managed_item" | "project_native_resource"
+export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "hook" | "project" | "managed_target" | "managed_item" | "project_native_resource"
 export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: string; rowVersion: number }
+export type DeleteHookResultDto = { id: string; deleted: boolean }
 export type DeleteMcpResultDto = { id: string; deleted: boolean }
 export type DeleteProfileResultDto = { id: string; deleted: boolean }
 export type DeleteSkillResultDto = { id: string; deleted: boolean }
 export type DeleteSnapshotsInput = { snapshotIds: string[] }
 export type DeleteSnapshotsResultDto = { deletedIds: string[]; failures: SnapshotDeleteFailureDto[] }
+export type DiscoverHookImportInput = { tool: Tool }
 /**
  * RPC、journal 和同步记录共用的稳定错误码。
  */
 export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED"
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
 export type GitRepositoryStatus = "repository" | "not_repository" | "unavailable"
+export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; globalTools: Tool[]; rowVersion: number }
+/**
+ * Hook 的统一事件名（canonical PascalCase）。各工具的原生键可能不同
+ * （Cursor 为 camelCase），写入原生文件前必须经
+ * [`HookEvent::native_key`] 转换；每工具支持的官方事件集合由
+ * [`HookEvent::supported_for_tool`] 定义，不支持的组合必须 fail closed。
+ */
+export type HookEvent = "SessionStart" | "SessionEnd" | "UserPromptSubmit" | "PreToolUse" | "PermissionRequest" | "PostToolUse" | "PostToolUseFailure" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "Stop" | "Notification"
+export type HookImportCandidateDto = { candidateId: string; name: string; event: HookEvent | null; matcher: string | null; command: string; timeoutSeconds: number | null; status: HookImportCandidateStatus; reason: string | null }
+export type HookImportCandidateStatus = "importable" | "already_managed" | "name_conflict" | "unsupported_event" | "invalid"
+export type HookImportPreviewDto = { tool: Tool; targetPath: string; candidates: HookImportCandidateDto[]; message: string | null }
+export type HookImportResultDto = { tool: Tool; createdCount: number }
+export type HookProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
+export type HookProjectOptionDto = { hookId: string; name: string; event: HookEvent; enabled: boolean; state: HookProjectSelectionState; selectable: boolean; rowVersion: number }
+export type HookProjectOptionsInput = { projectId: string; tool: Tool }
+export type HookProjectSelectionState = "inherited" | "selected" | "available"
+export type HookTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type ImportSkillInput = { sourcePath: string }
 export type InterruptedRunPlan = { runId: string; status: string; journalAvailable: boolean; targets: InterruptedTargetPlan[] }
 export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }
@@ -646,6 +799,7 @@ export type McpTargetStatusDto = { tool: Tool; projectId: string | null; targetP
 export type McpTransport = "stdio" | "streamable_http"
 export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PrepareSkillTakeoverInput = { previewId: string; candidateIds: string[] }
+export type PreviewHookSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
 export type PreviewProjectNativeResourceActionInput = { resourceId: string; rowVersion: number; action: ProjectNativeResourceAction }
@@ -671,6 +825,8 @@ export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | nu
 export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null; zcodeKind: string | null }
 export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
 export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
+export type ReadoptHookTargetInput = { tool: Tool; projectId: string | null }
+export type ReadoptHookTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
 export type ReadoptMcpTargetInput = { tool: Tool; projectId: string | null }
 export type ReadoptMcpTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
 export type RecentSyncRunDto = { id: string; kind: SyncRunKind; status: SyncRunStatus; scope: Scope; projectId: string | null; startedAt: string; finishedAt: string | null; errorCode: ErrorCode | null }
@@ -685,6 +841,7 @@ export type Scope = "global" | "project"
 export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: string }
 export type SensitiveJsonUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: JsonValue }
 export type SensitiveMapUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: Partial<{ [key in string]: string }> }
+export type SetGlobalHookAssignmentInput = { tool: Tool; hookId: string; assigned: boolean; rowVersion: number }
 export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned: boolean; rowVersion: number }
 /**
  * 全局启用/停用一份提示词档案到指定工具；每工具至多一份生效，
@@ -692,6 +849,7 @@ export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned:
  */
 export type SetGlobalPromptAssignmentInput = { tool: Tool; promptProfileId: string; assigned: boolean; rowVersion: number }
 export type SetGlobalSkillAssignmentInput = { tool: Tool; skillId: string; assigned: boolean; rowVersion: number }
+export type SetProjectHookAssignmentInput = { projectId: string; tool: Tool; hookId: string; assigned: boolean; hookRowVersion: number; projectRowVersion: number }
 export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
 export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
 export type SetPromptProjectAssignmentInput = { projectId: string; tool: Tool; 
@@ -743,9 +901,11 @@ export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
 export type UpdateAppSettingsInput = { applyMode: ApplyMode; enabledTools: Tool[] }
+export type UpdateHookInput = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; rowVersion: number }
 export type UpdateMcpServerInput = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: SensitiveMapUpdate; env: SensitiveMapUpdate; extra: SensitiveJsonUpdate; enabled: boolean; rowVersion: number }
 export type UpdatePromptProfileInput = { id: string; name: string; body: string; rowVersion: number }
 export type UpdateProviderProfileInput = { id: string; name: string; apiBaseUrl: string; apiKey: SecretUpdate; defaultModel: string; options: ProviderOptionsInput; rowVersion: number }
+export type VersionedHookInput = { id: string; rowVersion: number }
 export type VersionedMcpInput = { id: string; rowVersion: number }
 export type VersionedProfileInput = { id: string; rowVersion: number }
 export type VersionedProjectInput = { id: string; rowVersion: number }
