@@ -30,7 +30,7 @@ pub fn create_hook(
     input: CreateHookInput,
 ) -> Result<HookDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    hooks::create_hook(&mut database, &input)
+    hooks::create_hook(&mut database, state.paths(), &input)
 }
 
 #[tauri::command]
@@ -61,7 +61,7 @@ pub fn delete_hook(
     input: VersionedHookInput,
 ) -> Result<DeleteHookResultDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    hooks::delete_hook(&mut database, &input)
+    hooks::delete_hook(&mut database, state.paths(), &input)
 }
 
 #[tauri::command]
@@ -169,7 +169,7 @@ pub fn confirm_hook_import(
     input: ConfirmHookImportInput,
 ) -> Result<HookImportResultDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    hooks::confirm_hook_import(&mut database, state.environment()?, &input)
+    hooks::confirm_hook_import(&mut database, state.paths(), state.environment()?, &input)
 }
 
 fn state_lock_error() -> AppError {

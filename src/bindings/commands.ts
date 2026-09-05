@@ -744,7 +744,11 @@ export type ConfirmImportInput = { previewId: string; name: string }
 export type ConfirmMcpImportInput = { previewId: string; candidateIds: string[] }
 export type ConfirmSkillImportInput = { previewId: string; candidateIds: string[] }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
-export type CreateHookInput = { name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean }
+/**
+ * 导入接管时 `script_source_path` 为原脚本绝对路径，服务端会二次校验并
+ * 复制到中央目录；手动新增（无脚本接管）传 NULL。
+ */
+export type CreateHookInput = { name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptSourcePath: string | null }
 export type DashboardSummaryDto = { tools: DashboardToolSummaryDto[]; projectCount: number; conflictCount: number; snapshotCount: number; recentSyncRuns: RecentSyncRunDto[]; interruptedRun: InterruptedRunPlan | null; needsOnboarding: boolean }
 export type DashboardToolSummaryDto = { tool: Tool; activeProviderName: string | null; activePromptName: string | null; globalMcpCount: number; globalSkillCount: number }
 export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "hook" | "project" | "managed_target" | "managed_item" | "project_native_resource"
@@ -762,7 +766,7 @@ export type DiscoverHookImportInput = { tool: Tool }
 export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED"
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
 export type GitRepositoryStatus = "repository" | "not_repository" | "unavailable"
-export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; globalTools: Tool[]; rowVersion: number }
+export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptName: string | null; globalTools: Tool[]; rowVersion: number }
 /**
  * Hook 的统一事件名（canonical PascalCase）。各工具的原生键可能不同
  * （Cursor 为 camelCase），写入原生文件前必须经
@@ -770,7 +774,11 @@ export type HookDto = { id: string; name: string; event: HookEvent; matcher: str
  * [`HookEvent::supported_for_tool`] 定义，不支持的组合必须 fail closed。
  */
 export type HookEvent = "SessionStart" | "SessionEnd" | "UserPromptSubmit" | "PreToolUse" | "PermissionRequest" | "PostToolUse" | "PostToolUseFailure" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "Stop" | "Notification"
-export type HookImportCandidateDto = { candidateId: string; name: string; event: HookEvent | null; matcher: string | null; command: string; timeoutSeconds: number | null; status: HookImportCandidateStatus; reason: string | null }
+/**
+ * `script_adopted` 表示找到了可接管的原生脚本，确认后脚本本体复制到
+ * 中央目录；`script_source_path` 仅在接管时存在。
+ */
+export type HookImportCandidateDto = { candidateId: string; name: string; event: HookEvent | null; matcher: string | null; command: string; timeoutSeconds: number | null; status: HookImportCandidateStatus; scriptAdopted: boolean; scriptSourcePath: string | null; reason: string | null }
 export type HookImportCandidateStatus = "importable" | "already_managed" | "name_conflict" | "unsupported_event" | "invalid"
 export type HookImportPreviewDto = { tool: Tool; targetPath: string; candidates: HookImportCandidateDto[]; message: string | null }
 export type HookImportResultDto = { tool: Tool; createdCount: number }

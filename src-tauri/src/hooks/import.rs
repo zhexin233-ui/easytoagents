@@ -1,9 +1,12 @@
-//! 原生全局 Hooks 的只读发现与显式导入（仅创建中央记录，不接管基线）。
+//! 原生全局 Hooks 的只读发现与显式导入。
 //!
 //! 与 MCP 导入的差异：hooks 的原生条目是匿名数组元素（无稳定名称键），
-//! 无法像 MCP 那样在导入事务内精确登记 per-item 基线。因此导入只把原生
-//! 定义转换为中央记录；用户随后通过常规分配 + 预览/Apply 进入受管状态
-//! （内容一致时 Apply 近似 no-op，无删除风险）。
+//! 无法像 MCP 那样在导入事务内精确登记 per-item 基线。因此导入不接管
+//! 目标基线，而是：
+//! 1. 解析命令中的脚本路径，可接管的脚本在确认后**复制到中央目录**
+//!    （`central_hooks/<hook_id>/`，复制不移动，原文件保留），中央命令
+//!    重写为引用中央副本；
+//! 2. 用户分配并同步后，原生配置直接引用中央副本，消除对原路径的依赖。
 
 use std::collections::BTreeSet;
 
@@ -15,7 +18,7 @@ use super::{
 };
 use crate::{
     adapters::{CapabilityState, ExplicitEnvironment, PolicyState, TargetDescriptor},
-    db::Database,
+    db::{hooks as hook_repository, Database},
     domain::{HookEvent, Tool},
     error::{AppError, ErrorCode},
     security::contains_detectable_secret,
@@ -45,7 +48,7 @@ pub fn discover_hook_import(
             Some("未发现该工具的全局 hooks 配置文件。".to_owned()),
         ),
         TargetScan::Observed(observed) => {
-            let rows = native_hook_rows(&observed, tool);
+            let rows = service::native_hook_rows(&observed, tool);
             if rows.is_empty() {
                 (rows, Some("配置文件中没有 hooks 条目。".to_owned()))
             } else {
@@ -74,7 +77,7 @@ pub fn discover_hook_import(
         }
     };
 
-    let existing = service::list_hooks(database)?;
+    let existing = hook_repository::list_hooks(database)?;
     let mut used_names: BTreeSet<String> = existing
         .iter()
         .map(|hook| hook.name.to_lowercase())
@@ -96,6 +99,8 @@ pub fn discover_hook_import(
             command: command.clone(),
             timeout_seconds,
             status: Status::Invalid,
+            script_adopted: false,
+            script_source_path: None,
             reason: None,
         };
         if command.trim().is_empty() {
@@ -124,12 +129,35 @@ pub fn discover_hook_import(
             continue;
         };
         candidate.event = Some(event);
-        if existing.iter().any(|hook| {
+        // 脚本接管解析：可接管时计算脚本内容哈希用于 AlreadyManaged 去重；
+        // 首 token 是解释器却没找到可接管脚本时给出提示（命令将原样保存）。
+        let script_hash = match service::resolve_script_adoption(&command, environment.home()) {
+            Some((_, source_path)) => {
+                candidate.script_adopted = true;
+                candidate.script_source_path = Some(source_path.to_string_lossy().into_owned());
+                Some(service::script_content_hash(&source_path)?)
+            }
+            None => {
+                if looks_like_interpreter_command(&command) {
+                    candidate.reason = Some(
+                        "未找到可解析的脚本文件（如项目级变量路径或相对路径），命令将原样保存。"
+                            .to_owned(),
+                    );
+                }
+                None
+            }
+        };
+        let already_managed = existing.iter().any(|hook| {
             hook.event == event
                 && hook.matcher == candidate.matcher
-                && hook.command == command
                 && hook.timeout_seconds == timeout_seconds
-        }) {
+                && match (&script_hash, &hook.script_hash) {
+                    (Some(hash), Some(existing_hash)) => hash == existing_hash,
+                    (None, None) => hook.command == command,
+                    _ => false,
+                }
+        });
+        if already_managed {
             candidate.status = Status::AlreadyManaged;
             candidate.reason = Some("中央库已存在相同定义的 Hook。".to_owned());
             candidates.push(candidate);
@@ -162,6 +190,7 @@ pub fn discover_hook_import(
 
 pub fn confirm_hook_import(
     database: &mut Database,
+    paths: &crate::app::AppPaths,
     environment: &ExplicitEnvironment,
     input: &ConfirmHookImportInput,
 ) -> Result<HookImportResultDto, AppError> {
@@ -175,7 +204,7 @@ pub fn confirm_hook_import(
     let mut created = 0u32;
     for hook in &input.hooks {
         service::hook_event_supported(input.tool, hook.event)?;
-        service::create_hook(database, hook)?;
+        service::create_hook(database, paths, hook)?;
         created += 1;
     }
     Ok(HookImportResultDto {
@@ -208,39 +237,6 @@ fn ensure_readable(descriptor: &TargetDescriptor, path: &str) -> Result<(), AppE
         ));
     }
     Ok(())
-}
-
-/// 拍平原生投影为 `(原生事件键, matcher, 条目)` 列表；Cursor 的 matcher 属于
-/// 条目本身，其余工具属于 matcher 组。
-fn native_hook_rows(
-    observed: &crate::sync::ObservedTarget,
-    tool: Tool,
-) -> Vec<(String, String, Value)> {
-    let mut rows = Vec::new();
-    let Some(events) =
-        service::projection_value_at(&observed.managed_projection, service::events_root(tool))
-    else {
-        return rows;
-    };
-    for (native_event, groups) in events.as_object().into_iter().flatten() {
-        for group in groups.as_array().into_iter().flatten() {
-            let group_matcher = group.get("matcher").and_then(Value::as_str);
-            let items: &[Value] = match group.get("hooks").and_then(Value::as_array) {
-                Some(hooks) => hooks,
-                None => std::slice::from_ref(group),
-            };
-            for hook in items {
-                let matcher = hook
-                    .get("matcher")
-                    .and_then(Value::as_str)
-                    .or(group_matcher)
-                    .unwrap_or_default()
-                    .to_owned();
-                rows.push((native_event.clone(), matcher, hook.clone()));
-            }
-        }
-    }
-    rows
 }
 
 /// Cursor 原生 camelCase → 统一 PascalCase；无法映射（工具特有事件）返回 None。
@@ -285,6 +281,16 @@ fn unsupported_entry_reason(tool: Tool, entry_type: Option<&str>) -> Option<Stri
         }
         Some(other) => Some(format!("type {other} 暂不支持导入（仅支持 command 型）。")),
     }
+}
+
+fn looks_like_interpreter_command(command: &str) -> bool {
+    service::split_shell_words(command)
+        .and_then(|words| words.first().cloned())
+        .map(|first| {
+            let basename = first.rsplit(['/', '\\']).next().unwrap_or_default();
+            service::HOOK_INTERPRETERS.contains(&basename)
+        })
+        .unwrap_or(false)
 }
 
 fn suggested_name(native_event: &str, command: &str) -> String {

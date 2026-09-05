@@ -6237,7 +6237,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
-            hook_initial_adopt: false,
+                hook_initial_adopt: false,
                 descriptor: descriptor.clone(),
                 ownership: ownership.clone(),
                 baseline: ManagedTargetBaseline {
@@ -7553,7 +7553,7 @@ mod tests {
                 Scope::Global,
                 None,
                 vec![PreviewTargetRequest {
-            hook_initial_adopt: false,
+                    hook_initial_adopt: false,
                     descriptor: descriptor.clone(),
                     ownership: ownership.clone(),
                     baseline: ManagedTargetBaseline {

@@ -95,6 +95,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "hooks",
         sql: include_str!("migrations/0014_hooks.sql"),
     },
+    Migration {
+        version: 15,
+        name: "hooks_scripts",
+        sql: include_str!("migrations/0015_hooks_scripts.sql"),
+    },
 ];
 
 struct Migration {
@@ -484,7 +489,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 14);
+        assert_eq!(database.schema_version().unwrap(), 15);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1022,7 +1027,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1057,7 +1062,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1112,7 +1117,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 14);
+        assert_eq!(database.schema_version().unwrap(), 15);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1180,7 +1185,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1251,7 +1256,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1338,7 +1343,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1478,7 +1483,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1603,7 +1608,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1728,6 +1733,92 @@ mod tests {
     }
 
     #[test]
+    fn hooks_scripts_migration_adds_nullable_script_columns() {
+        const HOOK_LEGACY_ID: &str = "00000000-0000-4000-8000-000000000320";
+        const HOOK_SCRIPT_ID: &str = "00000000-0000-4000-8000-000000000321";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v14-hooks-scripts-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..14] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+        }
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 15);
+            let connection = database.connection();
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+
+            // 旧行保留：script 列为 NULL（inline 命令）。
+            connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command) VALUES (?1, 'legacy-inline', 'Stop', 'echo hi')",
+                    [HOOK_LEGACY_ID],
+                )
+                .unwrap();
+            let script_name: Option<String> = connection
+                .query_row(
+                    "SELECT script_name FROM hooks WHERE id = ?1",
+                    [HOOK_LEGACY_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(script_name, None);
+
+            // 接管型插入：两列同置；非法值被列级 CHECK 拒绝。
+            connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command, script_name, script_hash)
+                     VALUES (?1, 'adopted', 'PreToolUse', 'bash \"/central/x.sh\"', 'x.sh', ?2)",
+                    params![HOOK_SCRIPT_ID, "a".repeat(64)],
+                )
+                .unwrap();
+            assert!(connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command, script_name, script_hash)
+                     VALUES ('00000000-0000-4000-8000-000000000322', 'bad-name', 'Stop', 'true', 'nested/x.sh', ?1)",
+                    ["a".repeat(64)]
+                )
+                .is_err());
+            assert!(connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command, script_name, script_hash)
+                     VALUES ('00000000-0000-4000-8000-000000000323', 'bad-hash', 'Stop', 'true', 'x.sh', 'NOTHEX')",
+                    [],
+                )
+                .is_err());
+
+            if _round == 0 {
+                connection
+                    .execute(
+                        "DELETE FROM hooks WHERE id IN (?1, ?2)",
+                        params![HOOK_LEGACY_ID, HOOK_SCRIPT_ID],
+                    )
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn cursor_tool_support_migration_rejects_a_missing_exact_anchor() {
         let temporary = tempdir().unwrap();
         let root = fs::canonicalize(temporary.path()).unwrap();
@@ -1846,7 +1937,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 14);
+            assert_eq!(database.schema_version().unwrap(), 15);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

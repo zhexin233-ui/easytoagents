@@ -20,6 +20,10 @@ pub struct HookRecord {
     pub command: String,
     pub timeout_seconds: Option<i32>,
     pub enabled: bool,
+    /// 接管脚本在中央目录内的文件名；NULL = inline 命令。
+    pub script_name: Option<String>,
+    /// 中央脚本内容的 SHA-256；与 script_name 同置同空。
+    pub script_hash: Option<String>,
     pub row_version: i64,
 }
 
@@ -32,8 +36,7 @@ pub struct ManagedHookItemRecord {
     pub row_version: i64,
 }
 
-const HOOK_COLUMNS: &str =
-    "id, name, event, matcher, command, timeout_seconds, enabled, row_version";
+const HOOK_COLUMNS: &str = "id, name, event, matcher, command, timeout_seconds, enabled, script_name, script_hash, row_version";
 
 pub fn list_hooks(database: &Database) -> Result<Vec<HookRecord>, AppError> {
     let path = database.path().to_string_lossy();
@@ -75,19 +78,25 @@ pub struct ValidatedHookDefinition {
     pub command: String,
     pub timeout_seconds: Option<i32>,
     pub enabled: bool,
+    pub script_name: Option<String>,
+    pub script_hash: Option<String>,
 }
 
+/// 插入中央 Hook。`id` 由服务层生成（脚本中央目录需要先于 DB 插入确定路径）。
 pub(crate) fn insert_hook(
     database: &mut Database,
+    id: &str,
     value: &ValidatedHookDefinition,
 ) -> Result<HookRecord, AppError> {
     let path = database.path().to_string_lossy().into_owned();
-    let id = EntityId::new().to_string();
+    EntityId::parse(id)?;
     database
         .connection_mut()
         .execute(
-            "INSERT INTO hooks(id, name, event, matcher, command, timeout_seconds, enabled)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO hooks(
+                id, name, event, matcher, command, timeout_seconds, enabled,
+                script_name, script_hash
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 id,
                 value.name,
@@ -96,10 +105,12 @@ pub(crate) fn insert_hook(
                 value.command,
                 value.timeout_seconds,
                 value.enabled,
+                value.script_name,
+                value.script_hash,
             ],
         )
         .map_err(|error| map_hook_write_error(error, &path, "insert_hook"))?;
-    get_hook(database, &id)
+    get_hook(database, id)
 }
 
 pub(crate) fn update_hook(
@@ -351,7 +362,8 @@ pub fn list_assigned_hooks(
     let (sql, project_parameter) = match project_id {
         Some(project_id) => (
             "SELECT hook.id, hook.name, hook.event, hook.matcher, hook.command,
-                    hook.timeout_seconds, hook.enabled, hook.row_version
+                    hook.timeout_seconds, hook.enabled, hook.script_name,
+                    hook.script_hash, hook.row_version
              FROM hooks AS hook
              JOIN hook_project_assignments AS assignment ON assignment.hook_id = hook.id
              WHERE assignment.project_id = ?1 AND assignment.tool = ?2
@@ -360,7 +372,8 @@ pub fn list_assigned_hooks(
         ),
         None => (
             "SELECT hook.id, hook.name, hook.event, hook.matcher, hook.command,
-                    hook.timeout_seconds, hook.enabled, hook.row_version
+                    hook.timeout_seconds, hook.enabled, hook.script_name,
+                    hook.script_hash, hook.row_version
              FROM hooks AS hook
              JOIN hook_global_assignments AS assignment ON assignment.hook_id = hook.id
              WHERE assignment.tool = ?2
@@ -449,7 +462,9 @@ fn hook_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HookRecord> {
             .get::<_, Option<i64>>(5)?
             .and_then(|value| i32::try_from(value).ok()),
         enabled: row.get(6)?,
-        row_version: row.get(7)?,
+        script_name: row.get(7)?,
+        script_hash: row.get(8)?,
+        row_version: row.get(9)?,
     })
 }
 

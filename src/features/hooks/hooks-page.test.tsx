@@ -49,6 +49,7 @@ const hook: HookDto = {
   command: "bash .claude/hooks/block-rm.sh",
   timeoutSeconds: 30,
   enabled: true,
+  scriptName: null,
   globalTools: [],
   rowVersion: 1,
 };
@@ -247,6 +248,7 @@ describe("HooksPage 中央列表", () => {
         command: "bash .claude/hooks/block-rm.sh",
         timeoutSeconds: 30,
         enabled: true,
+        scriptSourcePath: null,
       });
     });
     expect(commands.previewHookSync).not.toHaveBeenCalled();

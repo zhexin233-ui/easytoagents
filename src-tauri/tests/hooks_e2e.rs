@@ -42,10 +42,13 @@ impl Fixture {
         fs::create_dir_all(home.join(".cursor")).expect("创建 .cursor 失败");
         let paths = AppPaths::from_data_root(root.join("app-data")).expect("初始化数据根失败");
         let database = Database::open(&paths).expect("打开数据库失败");
-        let environment =
-            ExplicitEnvironment::new(&home, Some(claude_config), Some(codex_home),
-                easytoagents_lib::adapters::ToolAvailability::all_installed())
-            .expect("构造显式环境失败");
+        let environment = ExplicitEnvironment::new(
+            &home,
+            Some(claude_config),
+            Some(codex_home),
+            easytoagents_lib::adapters::ToolAvailability::all_installed(),
+        )
+        .expect("构造显式环境失败");
         Self {
             _temporary: temporary,
             paths,
@@ -106,6 +109,7 @@ fn hooks_global_chain_applies_each_tool_contract_and_recovers_from_drift() {
     // 中央意图 + 四工具全局分配（分配不隐式 Apply，原生文件此刻未变）。
     let hook = create_hook(
         &mut fixture.database,
+        &fixture.paths,
         &easytoagents_lib::hooks::CreateHookInput {
             name: "block-rm".to_owned(),
             event: HookEvent::PreToolUse,
@@ -113,6 +117,7 @@ fn hooks_global_chain_applies_each_tool_contract_and_recovers_from_drift() {
             command: "bash .claude/hooks/block-rm.sh".to_owned(),
             timeout_seconds: Some(30),
             enabled: true,
+            script_source_path: None,
         },
     )
     .expect("创建中央 Hook 失败");
@@ -129,10 +134,12 @@ fn hooks_global_chain_applies_each_tool_contract_and_recovers_from_drift() {
         )
         .expect("全局分配失败");
     }
-    assert!(!fixture.claude_settings().exists() || {
-        let content = fs::read_to_string(fixture.claude_settings()).unwrap();
-        !content.contains("block-rm")
-    });
+    assert!(
+        !fixture.claude_settings().exists() || {
+            let content = fs::read_to_string(fixture.claude_settings()).unwrap();
+            !content.contains("block-rm")
+        }
+    );
 
     // 逐工具 Preview → Apply，并断言各自的原生合同。
     for tool in [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode] {
@@ -151,7 +158,8 @@ fn hooks_global_chain_applies_each_tool_contract_and_recovers_from_drift() {
         assert!(
             matches!(
                 plan.targets[0].change_kind,
-                easytoagents_lib::domain::ChangeKind::Add | easytoagents_lib::domain::ChangeKind::Update
+                easytoagents_lib::domain::ChangeKind::Add
+                    | easytoagents_lib::domain::ChangeKind::Update
             ),
             "{tool:?} 首次同步应为新增或更新，实际为 {:?}（目标文件可能已预置共存内容）",
             plan.targets[0].change_kind
@@ -267,4 +275,178 @@ fn hooks_global_chain_applies_each_tool_contract_and_recovers_from_drift() {
     )
     .expect("接管后生成预览失败");
     assert_eq!(plan.targets[0].status, SyncStatus::InSync);
+}
+
+/// 导入接管链路：原生全局配置引用的脚本被复制进中央目录，确认后中央命令
+/// 重写为引用中央副本，同步 Apply 后原生配置直接引用中央路径；原文件保留。
+#[test]
+fn hook_import_adopts_script_into_central_storage_and_native_references_it() {
+    use easytoagents_lib::hooks::{
+        confirm_hook_import, discover_hook_import, ConfirmHookImportInput, DiscoverHookImportInput,
+    };
+
+    let mut fixture = Fixture::new();
+    seed_native_files(&fixture);
+
+    // 原生脚本 + 全局 hooks 配置引用它（Claude settings.json）。
+    let script_dir = fixture.environment.claude_config_dir().join("hooks");
+    fs::create_dir_all(&script_dir).expect("创建原生脚本目录失败");
+    let script_path = script_dir.join("block-rm.sh");
+    fs::write(&script_path, b"#!/bin/bash\necho block-rm\n").expect("写入原脚本失败");
+    let claude_settings = fixture.claude_settings();
+    let original_settings = fs::read_to_string(&claude_settings).unwrap();
+    fs::write(
+        &claude_settings,
+        format!(
+            r#"{{
+  "env": {{"ANTHROPIC_BASE_URL": "https://keep.example.test"}},
+  "hooks": {{"PreToolUse": [{{"matcher": "Bash", "hooks": [
+    {{"type": "command", "command": "bash {script_path}", "timeout": 30}}
+  ]}}]}}
+}}
+"#,
+            script_path = script_path.to_string_lossy()
+        ),
+    )
+    .expect("写入引用脚本的 hooks 配置失败");
+
+    // 只读发现：候选标记脚本接管与来源路径。
+    let preview = discover_hook_import(
+        &mut fixture.database,
+        &fixture.environment,
+        &DiscoverHookImportInput { tool: Tool::Claude },
+    )
+    .expect("发现导入候选失败");
+    assert_eq!(preview.candidates.len(), 1);
+    let candidate = &preview.candidates[0];
+    assert_eq!(
+        candidate.status,
+        easytoagents_lib::hooks::HookImportCandidateStatus::Importable
+    );
+    assert!(candidate.script_adopted);
+    assert_eq!(
+        candidate.script_source_path.as_deref(),
+        Some(script_path.to_string_lossy().as_ref())
+    );
+
+    // 确认导入：脚本复制进中央目录（0600），命令重写为引用中央副本。
+    let hook_name = candidate.name.clone();
+    let result = confirm_hook_import(
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &ConfirmHookImportInput {
+            tool: Tool::Claude,
+            hooks: vec![easytoagents_lib::hooks::CreateHookInput {
+                name: hook_name,
+                event: HookEvent::PreToolUse,
+                matcher: Some("Bash".to_owned()),
+                command: candidate.command.clone(),
+                timeout_seconds: candidate.timeout_seconds,
+                enabled: true,
+                script_source_path: candidate.script_source_path.clone(),
+            }],
+        },
+    )
+    .expect("确认导入失败");
+    assert_eq!(result.created_count, 1);
+    // 原脚本文件保持原样（复制不移动）。
+    assert!(script_path.exists());
+
+    let hooks = easytoagents_lib::hooks::list_hooks(&fixture.database).unwrap();
+    assert_eq!(hooks.len(), 1);
+    let imported = &hooks[0];
+    let script_name = imported.script_name.clone().expect("接管型必有脚本名");
+    assert_eq!(
+        imported.command,
+        format!(
+            "bash \"{}\"",
+            fixture
+                .paths
+                .central_hooks()
+                .join(&imported.id)
+                .join(&script_name)
+                .to_string_lossy()
+        )
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let central_script = fixture
+        .paths
+        .central_hooks()
+        .join(&imported.id)
+        .join(&script_name);
+    let permissions = fs::metadata(&central_script).unwrap().permissions();
+    assert_eq!(permissions.mode() & 0o777, 0o600, "中央脚本必须 0600");
+
+    // 分配 + 同步：原生配置直接引用中央副本。
+    let assigned = set_global_hook_assignment(
+        &mut fixture.database,
+        &SetGlobalHookAssignmentInput {
+            tool: Tool::Claude,
+            hook_id: imported.id.clone(),
+            assigned: true,
+            row_version: imported.row_version,
+        },
+    )
+    .expect("全局分配失败");
+    let plan = preview_hook_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewHookSyncInput {
+            tool: Tool::Claude,
+            project_id: None,
+            exclude_from_git: false,
+        },
+    )
+    .expect("生成预览失败");
+    apply_hook_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &ApplyHookPreviewInput {
+            preview_id: plan.preview_id,
+            tool: Tool::Claude,
+            project_id: None,
+        },
+    )
+    .expect("应用预览失败");
+
+    let synced: Value =
+        serde_json::from_str(&fs::read_to_string(&claude_settings).unwrap()).unwrap();
+    assert_eq!(
+        synced["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        assigned.command
+    );
+    assert!(assigned.command.contains("hooks/"), "命令必须引用中央目录");
+    // 非受管内容（env）仍然保留。
+    assert_eq!(
+        synced["env"]["ANTHROPIC_BASE_URL"],
+        "https://keep.example.test"
+    );
+    let _ = original_settings;
+
+    // 删除未分配的 hook 会清理中央目录；分配中的删除被外键阻止，
+    // 这里先取消分配再删除以验证清理路径。
+    let unassigned = set_global_hook_assignment(
+        &mut fixture.database,
+        &SetGlobalHookAssignmentInput {
+            tool: Tool::Claude,
+            hook_id: imported.id.clone(),
+            assigned: false,
+            row_version: assigned.row_version,
+        },
+    )
+    .expect("取消分配失败");
+    easytoagents_lib::hooks::delete_hook(
+        &mut fixture.database,
+        &fixture.paths,
+        &easytoagents_lib::hooks::VersionedHookInput {
+            id: unassigned.id.clone(),
+            row_version: unassigned.row_version,
+        },
+    )
+    .expect("删除 Hook 失败");
+    assert!(!fixture.paths.central_hooks().join(&imported.id).exists());
 }

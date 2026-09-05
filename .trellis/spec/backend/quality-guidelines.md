@@ -1342,3 +1342,29 @@ let relocated = if let [event, _identity, matcher] = parts.as_slice() {
         .map(|(hash, claimed)| { *claimed = true; hash.clone() })
 } else { None };
 ```
+
+### Hook script adoption (migration 0015, central_hooks)
+
+- Central storage: `AppPaths::central_hooks()` = `data_root/hooks` (0700);
+  script file `central_hooks/<hook_id>/<script_name>` (0600). `hooks.script_name`
+  / `script_hash` (SHA-256) are NULL for inline commands; the service layer is
+  the only writer (ALTER cannot add the cross-column CHECK).
+- Adoption rule (fail-closed): only when the first shell word is an interpreter
+  (`HOOK_INTERPRETERS`) and some token resolves to an existing regular file
+  (≤512 KiB, symlinks rejected, `~/` and `$HOME/` expanded). `${CLAUDE_PROJECT_DIR}`
+  and relative paths are NOT adopted — command saved verbatim with a hint.
+  Tokenizer: `split_shell_words` (quotes only; unclosed quote ⇒ no adoption).
+- `create_hook` order: validate → generate id → copy script to central → rewrite
+  command (quoted central absolute path replaces the source token) → insert row;
+  DB failure removes the written folder. `delete_hook` removes
+  `central_hooks/<id>/` best-effort; FK RESTRICT guarantees no native reference
+  remains. Original script file is copied, never moved.
+- Dedup on import: adopted candidates compare (event, matcher, timeout,
+  script_hash); inline candidates compare full command.
+- Initial takeover with a NULL baseline is mergeable only when every observed
+  native entry is claimed by a central record (same event/matcher/timeout and
+  command equal, or the native command's script content hash equals the central
+  `script_hash`); otherwise stay Conflict (`tests/hooks_e2e.rs` covers both).
+- Wrong: hashing/moving the original file during import, or adopting scripts
+  from unresolvable project-variable paths. Correct: copy + rewrite + let the
+  normal sync preview surface the native rewrite to the central path.

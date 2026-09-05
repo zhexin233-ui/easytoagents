@@ -27,6 +27,7 @@ pub struct AppPaths {
     data_root: PathBuf,
     database: PathBuf,
     central_skills: PathBuf,
+    central_hooks: PathBuf,
     snapshots: PathBuf,
     staging: PathBuf,
     journals: PathBuf,
@@ -47,6 +48,7 @@ impl AppPaths {
         Ok(Self {
             database: data_root.join("easytoagents.sqlite3"),
             central_skills: data_root.join("skills"),
+            central_hooks: data_root.join("hooks"),
             snapshots: data_root.join("snapshots"),
             staging: data_root.join("staging"),
             journals: data_root.join("journals"),
@@ -97,6 +99,10 @@ impl AppPaths {
         &self.central_skills
     }
 
+    pub fn central_hooks(&self) -> &Path {
+        &self.central_hooks
+    }
+
     pub fn snapshots(&self) -> &Path {
         &self.snapshots
     }
@@ -113,10 +119,11 @@ impl AppPaths {
         &self.database_backups
     }
 
-    fn private_directories(&self) -> [&Path; 6] {
+    fn private_directories(&self) -> [&Path; 7] {
         [
             &self.data_root,
             &self.central_skills,
+            &self.central_hooks,
             &self.snapshots,
             &self.staging,
             &self.journals,
@@ -321,7 +328,7 @@ mod tests {
         assert_eq!(state.paths(), &paths);
         assert_eq!(
             state.database().lock().unwrap().schema_version().unwrap(),
-            14
+            15
         );
         assert_eq!(state.redactor().read().unwrap().redact_text("safe"), "safe");
     }

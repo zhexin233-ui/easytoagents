@@ -10,6 +10,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -37,10 +38,11 @@ use crate::{
         mcp::{self as mcp_repository, McpProjectRecord},
         Database,
     },
-    domain::{ArtifactKind, HookEvent, ProjectRoot, Scope, SyncStatus, Tool},
+    domain::{ArtifactKind, EntityId, HookEvent, ProjectRoot, Scope, SyncStatus, Tool},
     error::AppError,
     git::inspect_path,
-    security::SecretRedactor,
+    security::{create_private_file, ensure_private_directory, SecretRedactor},
+    sync::hash_bytes,
     sync::{
         apply_persisted_preview, assess_drift, build_preview_plan, hash_json,
         load_managed_target_baseline, load_persisted_preview, persist_preview, scan_target,
@@ -66,7 +68,11 @@ pub fn get_hook(database: &Database, id: &str) -> Result<HookDto, AppError> {
     hook_dto(database, &record)
 }
 
-pub fn create_hook(database: &mut Database, input: &CreateHookInput) -> Result<HookDto, AppError> {
+pub fn create_hook(
+    database: &mut Database,
+    paths: &AppPaths,
+    input: &CreateHookInput,
+) -> Result<HookDto, AppError> {
     let value = validated_definition(
         &input.name,
         input.event,
@@ -75,8 +81,36 @@ pub fn create_hook(database: &mut Database, input: &CreateHookInput) -> Result<H
         input.timeout_seconds,
         input.enabled,
     )?;
-    let record = repository::insert_hook(database, &value)?;
-    hook_dto(database, &record)
+    let id = EntityId::new().to_string();
+    // 脚本接管通道（导入与手动创建共用）：先把脚本本体写入中央目录，
+    // 再插入 DB；DB 失败时回滚已写文件，避免留下无主脚本。
+    let adopted = match input.script_source_path.as_deref() {
+        Some(source) => Some(adopt_script(paths, &id, source)?),
+        None => None,
+    };
+    let value = match &adopted {
+        Some(adopted) => crate::db::hooks::ValidatedHookDefinition {
+            command: rewrite_command_with_script(
+                &value.command,
+                &input.command,
+                &adopted.original_path,
+                &adopted.central_path,
+            )?,
+            script_name: Some(adopted.file_name.clone()),
+            script_hash: Some(adopted.hash.clone()),
+            ..value
+        },
+        None => value,
+    };
+    match repository::insert_hook(database, &id, &value) {
+        Ok(record) => hook_dto(database, &record),
+        Err(error) => {
+            if adopted.is_some() {
+                let _ = fs::remove_dir_all(paths.central_hooks().join(&id));
+            }
+            Err(error)
+        }
+    }
 }
 
 pub fn update_hook(database: &mut Database, input: &UpdateHookInput) -> Result<HookDto, AppError> {
@@ -103,9 +137,13 @@ pub fn set_hook_enabled(
 
 pub fn delete_hook(
     database: &mut Database,
+    paths: &AppPaths,
     input: &VersionedHookInput,
 ) -> Result<DeleteHookResultDto, AppError> {
     repository::delete_hook(database, &input.id, input.row_version)?;
+    // 外键 RESTRICT 保证删除时不存在任何分配（即无原生引用），
+    // 中央脚本目录可安全清理；清理失败仅遗留无主文件，不影响正确性。
+    let _ = fs::remove_dir_all(paths.central_hooks().join(&input.id));
     Ok(DeleteHookResultDto {
         id: input.id.clone(),
         deleted: true,
@@ -265,25 +303,23 @@ pub fn preview_hook_sync(
     let project_id = prepared.project.as_ref().map(|project| project.id.clone());
     let requests = prepared
         .target
-        .map(
-            |target| {
-                vec![PreviewTargetRequest {
-                    descriptor: target.descriptor,
-                    ownership: target.ownership,
-                    baseline: target.baseline,
-                    scan: target.scan,
-                    baseline_mismatched_items: target.baseline_mismatched_items,
-                    readopt_available: target.readopt_available,
-                    desired_projection: target.desired_projection,
-                    row_versions: target.row_versions,
-                    git: target.git,
-                    exclude_from_git: input.exclude_from_git,
-                    skill_takeover_entries: Vec::new(),
-                    project_native_action: None,
-                    hook_initial_adopt: target.hook_initial_adopt,
-                }]
-            },
-        )
+        .map(|target| {
+            vec![PreviewTargetRequest {
+                descriptor: target.descriptor,
+                ownership: target.ownership,
+                baseline: target.baseline,
+                scan: target.scan,
+                baseline_mismatched_items: target.baseline_mismatched_items,
+                readopt_available: target.readopt_available,
+                desired_projection: target.desired_projection,
+                row_versions: target.row_versions,
+                git: target.git,
+                exclude_from_git: input.exclude_from_git,
+                skill_takeover_entries: Vec::new(),
+                project_native_action: None,
+                hook_initial_adopt: target.hook_initial_adopt,
+            }]
+        })
         .unwrap_or_default();
     let plan = build_preview_plan(scope, project_id, requests, redactor)?;
     persist_preview(database, &plan)?;
@@ -420,13 +456,12 @@ fn readopt_with_scan(
                         groups
                             .get_mut(&((*event).to_owned(), (*matcher).to_owned()))
                             .and_then(|entries| {
-                                entries
-                                    .iter_mut()
-                                    .find(|(_, claimed)| !*claimed)
-                                    .map(|(hash, claimed)| {
+                                entries.iter_mut().find(|(_, claimed)| !*claimed).map(
+                                    |(hash, claimed)| {
                                         *claimed = true;
                                         hash.clone()
-                                    })
+                                    },
+                                )
                             })
                     } else {
                         None
@@ -524,6 +559,74 @@ fn native_group_hashes(
         }
     }
     groups
+}
+
+/// 拍平原生投影为 `(原生事件键, matcher, 条目)` 列表；Cursor 的 matcher
+/// 属于条目本身，其余工具属于 matcher 组。供逐条校验、接管与导入解析复用。
+pub(crate) fn native_hook_rows(
+    observed: &ObservedTarget,
+    tool: Tool,
+) -> Vec<(String, String, Value)> {
+    let mut rows = Vec::new();
+    let Some(events) = projection_value_at(&observed.managed_projection, events_root(tool)) else {
+        return rows;
+    };
+    for (native_event, groups) in events.as_object().into_iter().flatten() {
+        for group in groups.as_array().into_iter().flatten() {
+            let group_matcher = group.get("matcher").and_then(Value::as_str);
+            let items: &[Value] = match group.get("hooks").and_then(Value::as_array) {
+                Some(hooks) => hooks,
+                None => std::slice::from_ref(group),
+            };
+            for hook in items {
+                let matcher = hook
+                    .get("matcher")
+                    .and_then(Value::as_str)
+                    .or(group_matcher)
+                    .unwrap_or_default()
+                    .to_owned();
+                rows.push((native_event.clone(), matcher, hook.clone()));
+            }
+        }
+    }
+    rows
+}
+
+/// 初始接管判定：基线为空时，观测到的 hooks 子树要么没有任何条目，要么
+/// 每个条目都能被中央记录认领（同事件 + matcher + 超时，且命令一致或其
+/// 引用脚本的内容哈希等于中央接管脚本的哈希）。认领失败的条目若直接
+/// Apply 会被删除，必须保持 Conflict 由用户先导入或显式重新接管。
+fn initial_adopt_allowed<'a>(
+    desired: impl Iterator<Item = &'a HookRecord>,
+    observed: &ObservedTarget,
+    tool: Tool,
+    home: &Path,
+) -> bool {
+    let desired: Vec<&HookRecord> = desired.collect();
+    let rows = native_hook_rows(observed, tool);
+    if rows.is_empty() {
+        return true;
+    }
+    rows.iter().all(|(native_event, matcher, entry)| {
+        let command = entry
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let timeout = entry
+            .get("timeout")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok());
+        desired.iter().any(|record| {
+            record.event.native_key(tool) == native_event
+                && record.matcher.as_deref().unwrap_or_default() == matcher
+                && record.timeout_seconds == timeout
+                && (record.command == command
+                    || (record.script_hash.is_some()
+                        && resolve_script_adoption(command, home)
+                            .map(|(_, path)| script_content_hash(&path).ok())
+                            .is_some_and(|hash| hash.as_deref() == record.script_hash.as_deref())))
+        })
+    })
 }
 
 /// 全量收集原生投影中的条目内容哈希（跨事件分组、跨 matcher）。
@@ -696,10 +799,20 @@ fn prepare_hooks_sync(
     );
     // 重新接管只对「外部改写了受管内容」这一类冲突有意义；策略、信任、
     // 解析失败等其他阻塞状态必须走各自的恢复路径。
+    let hook_initial_adopt = baseline.full_hash.is_none()
+        && baseline.managed_hash.is_none()
+        && match &scan {
+            TargetScan::Observed(observed) => initial_adopt_allowed(
+                desired_records.iter().chain(inherited_records.iter()),
+                observed,
+                input.tool,
+                environment.home(),
+            ),
+            _ => false,
+        };
     let assessment = assess_hooks_drift(&descriptor, &baseline, &scan, input.tool);
-    let readopt_available = assessment.status == SyncStatus::ExternalOwnedChange;
-    let hook_initial_adopt = assessment.diagnostic_codes
-        == vec![crate::sync::HOOK_TARGET_INITIAL_EMPTY_HOOKS.to_owned()];
+    let readopt_available =
+        assessment.status == SyncStatus::ExternalOwnedChange && !hook_initial_adopt;
     let (managed_items, remove_managed_item_ids) =
         build_managed_item_changes(input.tool, &desired_records, &existing_items)?;
     let row_versions = collect_row_versions(
@@ -1133,6 +1246,7 @@ fn hook_dto(database: &Database, record: &HookRecord) -> Result<HookDto, AppErro
         command: record.command.clone(),
         timeout_seconds: record.timeout_seconds,
         enabled: record.enabled,
+        script_name: record.script_name.clone(),
         global_tools,
         row_version: safe_row_version(record.row_version)?,
     })
@@ -1165,6 +1279,8 @@ pub(crate) fn validated_definition(
         command,
         timeout_seconds,
         enabled,
+        script_name: None,
+        script_hash: None,
     })
 }
 
@@ -1213,6 +1329,198 @@ fn load_target_status(
     status.map(parse_sync_status).transpose()
 }
 
+// ---------------------------------------------------------------------------
+// 脚本接管（导入与手动创建共用）
+// ---------------------------------------------------------------------------
+
+/// 可接管脚本的大小上限。
+const MAX_HOOK_SCRIPT_BYTES: u64 = 512 * 1024;
+/// 首 token 命中解释器才尝试脚本接管；其余命令一律 inline。
+pub(crate) const HOOK_INTERPRETERS: &[&str] = &[
+    "bash", "sh", "zsh", "python", "python3", "perl", "ruby", "node",
+];
+
+/// 计算脚本文件内容 SHA-256（导入去重用）；文件安全性由调用方先校验。
+pub(crate) fn script_content_hash(path: &Path) -> Result<String, AppError> {
+    let bytes =
+        fs::read(path).map_err(|_| AppError::invalid_input("scriptSourcePath", "脚本不可读取"))?;
+    Ok(hash_bytes(&bytes))
+}
+
+struct AdoptedScript {
+    file_name: String,
+    hash: String,
+    original_path: PathBuf,
+    central_path: PathBuf,
+}
+
+/// 极简 shell 分词：按空白切分，尊重单双引号。反引号、`$"` 等复杂语法
+/// 不支持——引用该语法的命令不会被脚本接管（保守不猜测）。
+pub(crate) fn split_shell_words(command: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut has_word = false;
+    let mut quote: Option<char> = None;
+    for character in command.chars() {
+        match quote {
+            Some(quoted) if character == quoted => quote = None,
+            Some(_) => current.push(character),
+            None if character == '\'' || character == '"' => {
+                quote = Some(character);
+                has_word = true;
+            }
+            None if character.is_whitespace() => {
+                if has_word {
+                    words.push(std::mem::take(&mut current));
+                    has_word = false;
+                }
+            }
+            None => {
+                current.push(character);
+                has_word = true;
+            }
+        }
+    }
+    // 未闭合的引号视为复杂语法，拒绝接管。
+    if quote.is_some() {
+        return None;
+    }
+    if has_word {
+        words.push(current);
+    }
+    Some(words)
+}
+
+/// 解析命令中的可接管脚本：返回（token 下标，展开后的绝对路径）。
+/// 仅当首 token 是解释器且某个 token 命中既有普通文件（支持 `~/` 与
+/// `$HOME/` 展开）时返回；`${CLAUDE_PROJECT_DIR}` 等项目级变量路径与
+/// 相对路径无法安全解析，不接管。
+pub(crate) fn resolve_script_adoption(command: &str, home: &Path) -> Option<(usize, PathBuf)> {
+    let words = split_shell_words(command)?;
+    let interpreter = words.first()?.rsplit(['/', '\\']).next()?;
+    if !HOOK_INTERPRETERS.contains(&interpreter) {
+        return None;
+    }
+    for (index, word) in words.iter().enumerate().skip(1) {
+        if word.starts_with('-') {
+            continue;
+        }
+        if let Some(path) = expand_script_path(word, home) {
+            return Some((index, path));
+        }
+    }
+    None
+}
+
+/// 展开 `~/` 与 `$HOME/` 前缀并校验目标是既有普通文件（拒绝链接/特殊文件）。
+fn expand_script_path(word: &str, home: &Path) -> Option<PathBuf> {
+    let expanded = if let Some(rest) = word.strip_prefix("~/") {
+        home.join(rest)
+    } else if let Some(rest) = word.strip_prefix("$HOME/") {
+        home.join(rest)
+    } else {
+        PathBuf::from(word)
+    };
+    if !expanded.is_absolute() {
+        return None;
+    }
+    let metadata = fs::symlink_metadata(&expanded).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    metadata
+        .len()
+        .le(&MAX_HOOK_SCRIPT_BYTES)
+        .then_some(expanded)
+}
+
+/// 把脚本本体复制进中央目录（0600），返回接管结果。失败时清理半成品。
+fn adopt_script(paths: &AppPaths, hook_id: &str, source: &str) -> Result<AdoptedScript, AppError> {
+    let source_path = PathBuf::from(source);
+    let metadata = fs::symlink_metadata(&source_path)
+        .map_err(|_| AppError::invalid_input("scriptSourcePath", "脚本不存在或不可读取"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(AppError::invalid_input(
+            "scriptSourcePath",
+            "脚本必须是普通文件，不能是链接或特殊文件",
+        ));
+    }
+    if metadata.len() > MAX_HOOK_SCRIPT_BYTES {
+        return Err(AppError::invalid_input(
+            "scriptSourcePath",
+            "脚本不能超过 512 KiB",
+        ));
+    }
+    let bytes = fs::read(&source_path)
+        .map_err(|_| AppError::invalid_input("scriptSourcePath", "脚本不可读取"))?;
+    let file_name = sanitize_script_file_name(&source_path);
+    let directory = paths.central_hooks().join(hook_id);
+    ensure_private_directory(&directory)?;
+    let central_path = directory.join(&file_name);
+    let mut file = create_private_file(&central_path)
+        .map_err(|_| AppError::invalid_input("scriptSourcePath", "中央脚本目录不可写"))?;
+    std::io::Write::write_all(&mut file, &bytes)
+        .map_err(|_| AppError::invalid_input("scriptSourcePath", "中央脚本写入失败"))?;
+    drop(file);
+    Ok(AdoptedScript {
+        hash: hash_bytes(&bytes),
+        file_name,
+        original_path: source_path,
+        central_path,
+    })
+}
+
+/// 中央脚本文件名：保留 basename 中的安全字符，其余替换为 `_`。
+fn sanitize_script_file_name(source: &Path) -> String {
+    let basename = source
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("hook.sh");
+    let sanitized: String = basename
+        .chars()
+        .take(100)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches(|c| c == '.' || c == '_');
+    if trimmed.is_empty() {
+        "hook.sh".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// 把命令分词结果中命中原脚本的 token 替换为带引号的中央路径。
+fn rewrite_command_with_script(
+    _validated_command: &str,
+    original_command: &str,
+    original_path: &Path,
+    central_path: &Path,
+) -> Result<String, AppError> {
+    let mut words = split_shell_words(original_command).ok_or_else(|| {
+        AppError::conflict("command", "命令包含不支持的 shell 语法，无法接管脚本")
+    })?;
+    let target = original_path.to_string_lossy();
+    let position = words
+        .iter()
+        .position(|word| word == &target)
+        .ok_or_else(|| AppError::stale_preview("script", "脚本路径与检测时不一致，请重新检测"))?;
+    words[position] = format!("\"{}\"", central_path.to_string_lossy());
+    let rewritten = words.join(" ");
+    if rewritten.len() > 4000 {
+        return Err(AppError::invalid_input(
+            "command",
+            "接管后的命令超过 4000 字符",
+        ));
+    }
+    Ok(rewritten)
+}
+
 fn parse_sync_status(value: String) -> Result<SyncStatus, AppError> {
     crate::domain::SyncStatus::from_stable_str(&value)
         .ok_or_else(|| AppError::database("managed_targets", "解析 last_status 失败"))
@@ -1236,6 +1544,8 @@ mod tests {
             command: "bash /fixture/hook.sh".to_owned(),
             timeout_seconds: Some(30),
             enabled: true,
+            script_name: None,
+            script_hash: None,
             row_version: 1,
         }
     }
@@ -1348,6 +1658,92 @@ mod tests {
                 "空投影应触发 selector 移除"
             );
         }
+    }
+
+    #[test]
+    fn shell_word_splitting_respects_quotes_and_rejects_unclosed() {
+        use super::split_shell_words;
+        assert_eq!(
+            split_shell_words("bash \"/path with space/x.sh\" --flag"),
+            Some(vec![
+                "bash".to_owned(),
+                "/path with space/x.sh".to_owned(),
+                "--flag".to_owned()
+            ])
+        );
+        assert_eq!(
+            split_shell_words("bash 'COST=$1' x.sh"),
+            Some(vec![
+                "bash".to_owned(),
+                "COST=$1".to_owned(),
+                "x.sh".to_owned()
+            ])
+        );
+        assert_eq!(split_shell_words("bash \"unclosed"), None);
+    }
+
+    #[test]
+    fn script_adoption_resolution_is_interpreter_and_file_gated() {
+        use super::resolve_script_adoption;
+        let temporary = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temporary.path()).unwrap();
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join(".claude/hooks")).unwrap();
+        let script = home.join(".claude/hooks/block-rm.sh");
+        std::fs::write(&script, b"#!/bin/bash\ntrue\n").unwrap();
+
+        // 解释器 + 可解析文件 → 接管（支持 ~ 展开）。
+        let adopted = resolve_script_adoption(
+            &format!("bash {} --verbose", script.to_string_lossy()),
+            &home,
+        )
+        .unwrap();
+        assert_eq!(adopted.1, script);
+
+        let tilde = resolve_script_adoption("bash ~/.claude/hooks/block-rm.sh", &home).unwrap();
+        assert_eq!(tilde.1, script);
+
+        // $HOME 展开同样可接管。
+        let dollar =
+            resolve_script_adoption("bash \"$HOME/.claude/hooks/block-rm.sh\"", &home).unwrap();
+        assert_eq!(dollar.1, script);
+
+        // 非 解释器命令 → 不接管。
+        assert!(
+            resolve_script_adoption(&format!("{} --run", script.to_string_lossy()), &home)
+                .is_none()
+        );
+        // 解释器但只有项目级变量路径 → 不接管。
+        assert!(resolve_script_adoption(
+            "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/x.sh\"",
+            &home
+        )
+        .is_none());
+        // 解释器但文件不存在 → 不接管。
+        assert!(resolve_script_adoption("bash /missing/hook.sh", &home).is_none());
+        // 纯 inline 命令 → 不接管。
+        assert!(resolve_script_adoption("echo hello", &home).is_none());
+    }
+
+    #[test]
+    fn command_rewrite_replaces_script_token_with_quoted_central_path() {
+        use super::rewrite_command_with_script;
+        let rewritten = rewrite_command_with_script(
+            "irrelevant",
+            "bash /origin/hooks/x.sh --verbose",
+            std::path::Path::new("/origin/hooks/x.sh"),
+            std::path::Path::new("/central/0001/x.sh"),
+        )
+        .unwrap();
+        assert_eq!(rewritten, "bash \"/central/0001/x.sh\" --verbose");
+        // 检测后原路径变化 → 冲突而非静默错写。
+        assert!(rewrite_command_with_script(
+            "irrelevant",
+            "bash /changed/x.sh",
+            std::path::Path::new("/origin/hooks/x.sh"),
+            std::path::Path::new("/central/0001/x.sh"),
+        )
+        .is_err());
     }
 
     #[test]

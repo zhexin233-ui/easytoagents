@@ -192,6 +192,7 @@ export function HookImportDialog(props: HookImportDialogProps) {
                   command: candidate.command,
                   timeoutSeconds: candidate.timeoutSeconds,
                   enabled: true,
+                  scriptSourcePath: candidate.scriptSourcePath,
                 })),
               });
             }}

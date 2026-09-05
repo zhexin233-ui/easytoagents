@@ -445,6 +445,7 @@ export function HooksPage() {
                         </h3>
                         <p className="text-muted-foreground mt-1 text-xs">
                           {hook.event} · {hook.enabled ? "已启用" : "已停用"}
+                          {hook.scriptName ? " · 受管脚本" : ""}
                         </p>
                       </div>
                       {listLayout === "list" ? hookActions : null}
@@ -464,6 +465,12 @@ export function HooksPage() {
                               : ""}
                           </dd>
                         </div>
+                        {hook.scriptName ? (
+                          <div>
+                            <dt className="text-muted-foreground">受管脚本</dt>
+                            <dd className="break-all">{hook.scriptName}</dd>
+                          </div>
+                        ) : null}
                       </dl>
                     ) : (
                       <div className="mt-4 min-w-0 space-y-3">
@@ -822,6 +829,8 @@ function createInput(form: HookFormState) {
     command: form.command,
     timeoutSeconds: parseTimeout(form.timeout),
     enabled: form.enabled,
+    // 手动新增不做脚本接管；接管仅来自导入流程。
+    scriptSourcePath: null,
   };
 }
 

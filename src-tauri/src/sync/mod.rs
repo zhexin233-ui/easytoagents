@@ -1788,7 +1788,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
-            hook_initial_adopt: false,
+                hook_initial_adopt: false,
                 descriptor,
                 ownership: ManagedOwnership::WholeDocument,
                 baseline: ManagedTargetBaseline {
@@ -1830,7 +1830,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
-            hook_initial_adopt: false,
+                hook_initial_adopt: false,
                 descriptor,
                 ownership: ManagedOwnership::WholeDocument,
                 baseline: ManagedTargetBaseline {
@@ -1892,7 +1892,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
-            hook_initial_adopt: false,
+                hook_initial_adopt: false,
                 descriptor,
                 ownership,
                 baseline: ManagedTargetBaseline {
@@ -1979,7 +1979,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
-            hook_initial_adopt: false,
+                hook_initial_adopt: false,
                 descriptor: descriptor.clone(),
                 ownership,
                 baseline,
@@ -2097,7 +2097,7 @@ mod tests {
             Scope::Global,
             None,
             vec![PreviewTargetRequest {
-            hook_initial_adopt: false,
+                hook_initial_adopt: false,
                 descriptor,
                 ownership: ManagedOwnership::WholeDocument,
                 baseline,

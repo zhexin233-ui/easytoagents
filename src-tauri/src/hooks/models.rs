@@ -13,6 +13,8 @@ const MAX_COMMAND_BYTES: usize = 4000;
 const MAX_MATCHER_BYTES: usize = 500;
 const MAX_TIMEOUT_SECONDS: i32 = 3600;
 
+/// 导入接管时 `script_source_path` 为原脚本绝对路径，服务端会二次校验并
+/// 复制到中央目录；手动新增（无脚本接管）传 NULL。
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateHookInput {
@@ -22,6 +24,7 @@ pub struct CreateHookInput {
     pub command: String,
     pub timeout_seconds: Option<i32>,
     pub enabled: bool,
+    pub script_source_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -61,6 +64,7 @@ pub struct HookDto {
     pub command: String,
     pub timeout_seconds: Option<i32>,
     pub enabled: bool,
+    pub script_name: Option<String>,
     pub global_tools: Vec<Tool>,
     pub row_version: u32,
 }
@@ -173,6 +177,8 @@ pub enum HookImportCandidateStatus {
     Invalid,
 }
 
+/// `script_adopted` 表示找到了可接管的原生脚本，确认后脚本本体复制到
+/// 中央目录；`script_source_path` 仅在接管时存在。
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HookImportCandidateDto {
@@ -183,6 +189,8 @@ pub struct HookImportCandidateDto {
     pub command: String,
     pub timeout_seconds: Option<i32>,
     pub status: HookImportCandidateStatus,
+    pub script_adopted: bool,
+    pub script_source_path: Option<String>,
     pub reason: Option<String>,
 }
 
