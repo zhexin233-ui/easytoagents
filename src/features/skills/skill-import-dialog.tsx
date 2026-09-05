@@ -39,6 +39,8 @@ const sourceLabels: Record<SkillImportSourceDto["kind"], string> = {
   codex_agents: "Codex Agents 通用目录（仅导入来源）",
   cursor_home: "Cursor 官方目录（正式同步目标）",
   cursor_agents: "Cursor Agents 通用目录（仅导入来源）",
+  zcode_home: "ZCode 官方目录（正式同步目标）",
+  zcode_agents: "ZCode Agents 通用目录（仅导入来源）",
 };
 
 const sourceStatusLabels: Record<SkillImportSourceDto["status"], string> = {

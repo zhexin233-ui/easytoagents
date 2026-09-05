@@ -22,12 +22,14 @@ use crate::{
 pub mod claude;
 pub mod codex;
 pub mod cursor;
+pub mod zcode;
 
 /// Provider/Prompt 页面与引导仍只服务有正式文件合同的工具。
-pub const PROFILE_TOOLS: [Tool; 2] = [Tool::Claude, Tool::Codex];
-/// MCP 与 Skills 是 Cursor MVP 唯一可分配、可同步的资源。
-pub const ASSIGNABLE_MCP_TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::Cursor];
-pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::Cursor];
+pub const PROFILE_TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::Zcode];
+/// MCP 与 Skills 的可分配工具集合。
+pub const ASSIGNABLE_MCP_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
+pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 4] =
+    [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -190,6 +192,7 @@ pub struct ToolAvailability {
     pub claude: ToolAvailabilityState,
     pub codex: ToolAvailabilityState,
     pub cursor: ToolAvailabilityState,
+    pub zcode: ToolAvailabilityState,
 }
 
 impl ToolAvailability {
@@ -198,6 +201,7 @@ impl ToolAvailability {
             claude: ToolAvailabilityState::Installed,
             codex: ToolAvailabilityState::Installed,
             cursor: ToolAvailabilityState::Installed,
+            zcode: ToolAvailabilityState::Installed,
         }
     }
 
@@ -206,6 +210,7 @@ impl ToolAvailability {
             claude: ToolAvailabilityState::Unavailable,
             codex: ToolAvailabilityState::Unavailable,
             cursor: ToolAvailabilityState::Unavailable,
+            zcode: ToolAvailabilityState::Unavailable,
         }
     }
 }
@@ -220,6 +225,7 @@ pub struct ExplicitEnvironment {
     claude_installation_version: Option<String>,
     codex_installation_version: Option<String>,
     cursor_installation_version: Option<String>,
+    zcode_installation_version: Option<String>,
     claude_provider_policy: PolicyState,
     availability: ToolAvailability,
     claude_user_mcp_evidence: Option<VerifiedClaudeUserMcpEvidence>,
@@ -249,6 +255,7 @@ impl ExplicitEnvironment {
             claude_installation_version: None,
             codex_installation_version: None,
             cursor_installation_version: None,
+            zcode_installation_version: None,
             claude_provider_policy: PolicyState::Unknown,
             availability,
             claude_user_mcp_evidence: None,
@@ -301,6 +308,21 @@ impl ExplicitEnvironment {
         Ok(self)
     }
 
+    pub fn with_zcode_installation_version(
+        mut self,
+        version: impl Into<String>,
+    ) -> Result<Self, AppError> {
+        let version = version.into();
+        if version.trim().is_empty() {
+            return Err(AppError::invalid_input(
+                "installationVersion",
+                "ZCode 安装版本不能为空",
+            ));
+        }
+        self.zcode_installation_version = Some(version);
+        Ok(self)
+    }
+
     pub fn with_claude_user_mcp_evidence(
         mut self,
         evidence: VerifiedClaudeUserMcpEvidence,
@@ -344,6 +366,7 @@ impl ExplicitEnvironment {
             Tool::Claude => self.availability.claude,
             Tool::Codex => self.availability.codex,
             Tool::Cursor => self.availability.cursor,
+            Tool::Zcode => self.availability.zcode,
         }
     }
 
@@ -359,11 +382,16 @@ impl ExplicitEnvironment {
         self.cursor_installation_version.as_deref()
     }
 
+    pub fn zcode_installation_version(&self) -> Option<&str> {
+        self.zcode_installation_version.as_deref()
+    }
+
     pub fn installation_version(&self, tool: Tool) -> Option<&str> {
         match tool {
             Tool::Claude => self.claude_installation_version(),
             Tool::Codex => self.codex_installation_version(),
             Tool::Cursor => self.cursor_installation_version(),
+            Tool::Zcode => self.zcode_installation_version(),
         }
     }
 
@@ -1487,6 +1515,7 @@ mod tests {
                 claude: ToolAvailabilityState::Unavailable,
                 codex: ToolAvailabilityState::Unavailable,
                 cursor: ToolAvailabilityState::Unavailable,
+                zcode: ToolAvailabilityState::Unavailable,
             },
         )
         .unwrap();

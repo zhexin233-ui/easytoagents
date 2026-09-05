@@ -5,9 +5,9 @@ use rusqlite::OptionalExtension;
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, ClaudeCustomizationPolicyProbe, DiscoveryContext,
-        ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor, TargetTrustState,
-        ToolAdapter, ASSIGNABLE_MCP_TOOLS,
+        cursor::CursorAdapter, zcode::ZcodeAdapter, ClaudeCustomizationPolicyProbe,
+        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor,
+        TargetTrustState, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
     },
     db::{mcp as mcp_repository, projects as repository, skills as skill_repository, Database},
     domain::{ArtifactKind, ArtifactName, EntityId, SyncStatus, Tool, TrustStatus},
@@ -330,9 +330,11 @@ fn observe_project(
     let claude_targets = ClaudeAdapter.discover(&context)?;
     let codex_targets = CodexAdapter.discover(&context)?;
     let cursor_targets = CursorAdapter.discover(&context)?;
+    let zcode_targets = ZcodeAdapter.discover(&context)?;
     let claude_project_targets = project_targets(claude_targets);
     let codex_project_targets = project_targets(codex_targets);
     let cursor_project_targets = project_targets(cursor_targets);
+    let zcode_project_targets = project_targets(zcode_targets);
     let claude_policy_status = claude_project_targets
         .iter()
         .map(|target| target.policy)
@@ -351,6 +353,7 @@ fn observe_project(
         .into_iter()
         .chain(codex_project_targets)
         .chain(cursor_project_targets)
+        .chain(zcode_project_targets)
         .map(|descriptor| target_status(database, project_root.as_str(), descriptor))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ProjectObservation {
@@ -536,11 +539,14 @@ fn assess_managed_target(
             if names.is_empty() {
                 return Ok(None);
             }
-            ManagedOwnership::selectors(
-                names
-                    .into_iter()
-                    .map(|name| vec![native_mcp_container(descriptor.tool).to_owned(), name]),
-            )
+            ManagedOwnership::selectors(names.into_iter().map(|name| {
+                native_mcp_container(descriptor.tool)
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(name.as_str()))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            }))
         }
         ArtifactKind::Skill => {
             let desired = skill_repository::list_assigned_skills(
@@ -601,17 +607,18 @@ fn verify_managed_item_baselines(
                 return Ok(scan);
             }
             match &scan {
-                TargetScan::Observed(observed) => observed
-                    .managed_projection
-                    .get(native_mcp_container(descriptor.tool))
-                    .and_then(serde_json::Value::as_object)
-                    .is_some_and(|items| {
-                        existing.iter().all(|item| {
-                            items.get(&item.external_key).is_some_and(|value| {
-                                hash_json(value) == item.last_applied_item_hash
-                            })
-                        })
-                    }),
+                TargetScan::Observed(observed) => json_value_at(
+                    &observed.managed_projection,
+                    native_mcp_container(descriptor.tool),
+                )
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|items| {
+                    existing.iter().all(|item| {
+                        items
+                            .get(&item.external_key)
+                            .is_some_and(|value| hash_json(value) == item.last_applied_item_hash)
+                    })
+                }),
                 TargetScan::Missing => false,
                 _ => return Ok(scan),
             }
@@ -645,12 +652,22 @@ fn verify_managed_item_baselines(
     })
 }
 
-fn native_mcp_container(tool: Tool) -> &'static str {
+/// MCP 条目在原生文件中的容器路径；ZCode 是官方定义的嵌套键 `mcp.servers`。
+fn native_mcp_container(tool: Tool) -> &'static [&'static str] {
     match tool {
-        Tool::Claude => "mcpServers",
-        Tool::Codex => "mcp_servers",
-        Tool::Cursor => "mcpServers",
+        Tool::Claude => &["mcpServers"],
+        Tool::Codex => &["mcp_servers"],
+        Tool::Cursor => &["mcpServers"],
+        Tool::Zcode => &["mcp", "servers"],
     }
+}
+
+fn json_value_at<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
 }
 
 fn status_from_unmanaged_scan(descriptor: &TargetDescriptor) -> (SyncStatus, Option<String>) {
@@ -697,6 +714,7 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
         Tool::Claude => &ClaudeAdapter,
         Tool::Codex => &CodexAdapter,
         Tool::Cursor => &CursorAdapter,
+        Tool::Zcode => &ZcodeAdapter,
     }
 }
 

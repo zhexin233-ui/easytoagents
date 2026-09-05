@@ -325,6 +325,7 @@ unknown = "preserve"
                 Tool::Claude => self.home.clone(),
                 Tool::Codex => self.codex_home.clone(),
                 Tool::Cursor => self.cursor_home.clone(),
+                Tool::Zcode => self.home.join(".zcode"),
             }
         };
         self.restore_case(&result.run_id, &target_path, allowed_root)
@@ -382,6 +383,7 @@ unknown = "preserve"
                 Tool::Claude => self.claude_config.clone(),
                 Tool::Codex => self.codex_home.clone(),
                 Tool::Cursor => self.cursor_home.clone(),
+                Tool::Zcode => self.home.join(".zcode"),
             }
         };
         self.restore_case(

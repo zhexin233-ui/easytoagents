@@ -1,4 +1,4 @@
-//! Release 启动边界的只读 Claude/Codex/Cursor 安装与 Claude 策略探针。
+//! Release 启动边界的只读 Claude/Codex/Cursor/ZCode 安装与 Claude 策略探针。
 
 use std::{
     ffi::{CString, OsStr, OsString},
@@ -30,6 +30,7 @@ pub const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 pub const CLAUDE_MANAGED_SETTINGS_DIRECTORY: &str =
     "/Library/Application Support/ClaudeCode/managed-settings.d";
 pub const CURSOR_BUNDLE_ID: &str = "com.todesktop.230313mzl4w4u92";
+pub const ZCODE_BUNDLE_ID: &str = "dev.zcode.app";
 
 const MAX_PROCESS_OUTPUT_BYTES: u64 = 1024;
 const MAX_POLICY_BYTES: u64 = 64 * 1024;
@@ -46,6 +47,7 @@ pub struct ReleaseToolProbeInput {
     claude_managed_settings_path: PathBuf,
     claude_managed_settings_directory: PathBuf,
     cursor_app_paths: Vec<PathBuf>,
+    zcode_app_paths: Vec<PathBuf>,
 }
 
 impl ReleaseToolProbeInput {
@@ -60,6 +62,10 @@ impl ReleaseToolProbeInput {
             PathBuf::from("/Applications/Cursor.app"),
             home.join("Applications/Cursor.app"),
         ];
+        let zcode_app_paths = vec![
+            PathBuf::from("/Applications/ZCode.app"),
+            home.join("Applications/ZCode.app"),
+        ];
         Self {
             home,
             claude_config_dir,
@@ -69,6 +75,7 @@ impl ReleaseToolProbeInput {
             claude_managed_settings_path: PathBuf::from(CLAUDE_MANAGED_SETTINGS_PATH),
             claude_managed_settings_directory: PathBuf::from(CLAUDE_MANAGED_SETTINGS_DIRECTORY),
             cursor_app_paths,
+            zcode_app_paths,
         }
     }
 }
@@ -108,6 +115,7 @@ pub struct ReleaseToolProbeResult {
     pub claude: ToolProbeOutcome,
     pub codex: ToolProbeOutcome,
     pub cursor: ToolProbeOutcome,
+    pub zcode: ToolProbeOutcome,
 }
 
 pub fn probe_release_environment(
@@ -122,10 +130,12 @@ pub fn probe_release_environment(
     let claude = probe_tool(ToolBinary::Claude, &path_environment, input);
     let codex = probe_tool(ToolBinary::Codex, &path_environment, input);
     let cursor = probe_cursor(&path_environment, input);
+    let zcode = probe_zcode(&path_environment, input);
     let availability = ToolAvailability {
         claude: claude.state,
         codex: codex.state,
         cursor: cursor.state,
+        zcode: zcode.state,
     };
     let mut environment = ExplicitEnvironment::new(
         path_environment.home(),
@@ -159,12 +169,16 @@ pub fn probe_release_environment(
     if let Some(version) = cursor.version.as_deref() {
         environment = environment.with_cursor_installation_version(version)?;
     }
+    if let Some(version) = zcode.version.as_deref() {
+        environment = environment.with_zcode_installation_version(version)?;
+    }
 
     Ok(ReleaseToolProbeResult {
         environment,
         claude,
         codex,
         cursor,
+        zcode,
     })
 }
 
@@ -217,7 +231,7 @@ fn probe_cursor(
     environment: &ExplicitEnvironment,
     input: &ReleaseToolProbeInput,
 ) -> ToolProbeOutcome {
-    let desktop = probe_cursor_desktop(&input.cursor_app_paths);
+    let desktop = probe_desktop_app(&input.cursor_app_paths, CURSOR_BUNDLE_ID);
     if desktop.state == ToolAvailabilityState::Installed {
         return desktop;
     }
@@ -230,10 +244,18 @@ fn probe_cursor(
     }
 }
 
-fn probe_cursor_desktop(candidates: &[PathBuf]) -> ToolProbeOutcome {
+/// ZCode 只有桌面应用这一条官方安装合同；不存在受支持的 PATH CLI 探针。
+fn probe_zcode(
+    _environment: &ExplicitEnvironment,
+    input: &ReleaseToolProbeInput,
+) -> ToolProbeOutcome {
+    probe_desktop_app(&input.zcode_app_paths, ZCODE_BUNDLE_ID)
+}
+
+fn probe_desktop_app(candidates: &[PathBuf], bundle_id: &str) -> ToolProbeOutcome {
     let mut found_unsafe = false;
     for app_path in candidates {
-        match read_cursor_bundle_version(app_path) {
+        match read_desktop_bundle_version(app_path, bundle_id) {
             Ok(Some(version)) => return ToolProbeOutcome::installed(version),
             Ok(None) => {}
             Err(()) => found_unsafe = true,
@@ -246,7 +268,7 @@ fn probe_cursor_desktop(candidates: &[PathBuf]) -> ToolProbeOutcome {
     }
 }
 
-fn read_cursor_bundle_version(app_path: &Path) -> Result<Option<String>, ()> {
+fn read_desktop_bundle_version(app_path: &Path, bundle_id: &str) -> Result<Option<String>, ()> {
     match open_absolute_nofollow(app_path, true) {
         SecureOpen::Missing => return Ok(None),
         SecureOpen::Unsafe => return Err(()),
@@ -273,7 +295,7 @@ fn read_cursor_bundle_version(app_path: &Path) -> Result<Option<String>, ()> {
     if dictionary
         .get("CFBundleIdentifier")
         .and_then(plist::Value::as_string)
-        != Some(CURSOR_BUNDLE_ID)
+        != Some(bundle_id)
     {
         return Err(());
     }
@@ -869,7 +891,15 @@ mod tests {
         }
 
         fn write_cursor_app(&self, bundle_id: &str, version: &str) -> PathBuf {
-            let app = self.home.join("Applications/Cursor.app");
+            self.write_desktop_app("Cursor.app", bundle_id, version)
+        }
+
+        fn write_zcode_app(&self, bundle_id: &str, version: &str) -> PathBuf {
+            self.write_desktop_app("ZCode.app", bundle_id, version)
+        }
+
+        fn write_desktop_app(&self, name: &str, bundle_id: &str, version: &str) -> PathBuf {
+            let app = self.home.join("Applications").join(name);
             fs::create_dir_all(app.join("Contents")).unwrap();
             fs::write(
                 app.join("Contents/Info.plist"),
@@ -896,6 +926,7 @@ mod tests {
                 claude_managed_settings_path: self.policy.clone(),
                 claude_managed_settings_directory: self.policy_directory.clone(),
                 cursor_app_paths: vec![self.home.join("Applications/Cursor.app")],
+                zcode_app_paths: vec![self.home.join("Applications/ZCode.app")],
             }
         }
 
@@ -1075,6 +1106,36 @@ mod tests {
         let result = probe_release_environment(&invalid.input()).unwrap();
         assert_eq!(result.cursor.state, ToolAvailabilityState::Unsupported);
         assert!(result.cursor.version.is_none());
+    }
+
+    #[test]
+    fn zcode_desktop_bundle_is_the_only_installation_evidence() {
+        let _process_fixture = isolate_process_fixture();
+
+        let missing = Fixture::new();
+        let result = probe_release_environment(&missing.input()).unwrap();
+        assert_eq!(result.zcode.state, ToolAvailabilityState::Unavailable);
+        assert_eq!(result.environment.zcode_installation_version(), None);
+
+        let installed = Fixture::new();
+        installed.write_zcode_app(super::ZCODE_BUNDLE_ID, "3.11.2");
+        let result = probe_release_environment(&installed.input()).unwrap();
+        assert_eq!(result.zcode.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.zcode.version.as_deref(), Some("3.11.2"));
+        assert_eq!(
+            result.environment.zcode_installation_version(),
+            Some("3.11.2")
+        );
+
+        let wrong_bundle = Fixture::new();
+        wrong_bundle.write_zcode_app("com.example.not-zcode", "3.11.2");
+        let result = probe_release_environment(&wrong_bundle.input()).unwrap();
+        assert_eq!(result.zcode.state, ToolAvailabilityState::Unsupported);
+
+        let malformed = Fixture::new();
+        malformed.write_zcode_app(super::ZCODE_BUNDLE_ID, "3.preview");
+        let result = probe_release_environment(&malformed.input()).unwrap();
+        assert_eq!(result.zcode.state, ToolAvailabilityState::Unsupported);
     }
 
     #[test]

@@ -2,6 +2,7 @@ import type { Tool } from "@/bindings/commands";
 import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
 import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import cursorIconUrl from "@/assets/brand/cursor-icon.svg";
+import zcodeIconUrl from "@/assets/brand/zcode-icon.svg";
 
 export interface ToolMetadata {
   id: Tool;
@@ -57,21 +58,37 @@ export const TOOL_METADATA = {
       skills: true,
     },
   },
+  zcode: {
+    id: "zcode",
+    label: "ZCode",
+    icon: zcodeIconUrl,
+    profileRoute: "/zcode",
+    capabilities: {
+      provider: true,
+      promptGlobal: true,
+      promptProject: true,
+      mcp: true,
+      skills: true,
+    },
+  },
 } as const satisfies Record<Tool, ToolMetadata>;
 
 export const PROFILE_TOOLS = [
   "claude",
   "codex",
+  "zcode",
 ] as const satisfies readonly Tool[];
 export const MCP_TOOLS = [
   "claude",
   "codex",
   "cursor",
+  "zcode",
 ] as const satisfies readonly Tool[];
 export const SKILL_TOOLS = [
   "claude",
   "codex",
   "cursor",
+  "zcode",
 ] as const satisfies readonly Tool[];
 
 export const DEFAULT_ENABLED_TOOLS = [

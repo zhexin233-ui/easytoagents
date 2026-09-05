@@ -40,6 +40,7 @@ pub struct ProviderOptionsInput {
     pub credential_env_key: Option<ClaudeCredentialEnvKey>,
     pub extra_env: BTreeMap<String, String>,
     pub wire_api: Option<String>,
+    pub zcode_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -111,6 +112,7 @@ pub struct ProviderOptionsDto {
     pub extra_env: BTreeMap<String, String>,
     pub provider_id: Option<String>,
     pub wire_api: Option<String>,
+    pub zcode_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -242,6 +244,8 @@ pub(crate) struct StoredProviderConfig {
     pub provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wire_api: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zcode_kind: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra_provider_fields: BTreeMap<String, Value>,
 }
@@ -277,6 +281,7 @@ impl StoredProviderConfig {
                     extra_env: options.extra_env,
                     provider_id: None,
                     wire_api: None,
+                    zcode_kind: None,
                     extra_provider_fields: BTreeMap::new(),
                 })
             }
@@ -287,6 +292,12 @@ impl StoredProviderConfig {
                         "Codex Provider 不支持 Claude env 选项",
                     ));
                 }
+                if options.zcode_kind.is_some() {
+                    return Err(AppError::invalid_input(
+                        "providerOptions",
+                        "Codex Provider 不支持 ZCode API 格式",
+                    ));
+                }
                 validate_wire_api(options.wire_api.as_deref())?;
                 validate_codex_extra_provider_fields(&extra_provider_fields)?;
                 Ok(Self {
@@ -294,7 +305,38 @@ impl StoredProviderConfig {
                     extra_env: BTreeMap::new(),
                     provider_id: Some(provider_id.to_owned()),
                     wire_api: options.wire_api,
+                    zcode_kind: None,
                     extra_provider_fields,
+                })
+            }
+            Tool::Zcode => {
+                if options.credential_env_key.is_some() || !options.extra_env.is_empty() {
+                    return Err(AppError::invalid_input(
+                        "providerOptions",
+                        "ZCode Provider 不支持 Claude env 选项",
+                    ));
+                }
+                if options.wire_api.is_some() {
+                    return Err(AppError::invalid_input(
+                        "providerOptions",
+                        "ZCode Provider 不支持 Codex wire_api",
+                    ));
+                }
+                if !extra_provider_fields.is_empty() {
+                    return Err(AppError::invalid_input(
+                        "providerOptions",
+                        "ZCode Provider 不能保留 Codex 扩展字段",
+                    ));
+                }
+                let kind = options.zcode_kind.unwrap_or_else(|| "anthropic".to_owned());
+                validate_zcode_provider_kind(&kind)?;
+                Ok(Self {
+                    credential_env_key: None,
+                    extra_env: BTreeMap::new(),
+                    provider_id: Some(provider_id.to_owned()),
+                    wire_api: None,
+                    zcode_kind: Some(kind),
+                    extra_provider_fields: BTreeMap::new(),
                 })
             }
             Tool::Cursor => Err(AppError::invalid_input(
@@ -310,7 +352,21 @@ impl StoredProviderConfig {
             extra_env: self.extra_env.clone(),
             provider_id: self.provider_id.clone(),
             wire_api: self.wire_api.clone(),
+            zcode_kind: self.zcode_kind.clone(),
         }
+    }
+}
+
+/// ZCode provider entry 的 kind 来自应用自身的 API 格式枚举
+/// （`~/.zcode/v2/config.json` 实测取值 anthropic；应用端点建议包含 openai/gemini）。
+fn validate_zcode_provider_kind(kind: &str) -> Result<(), AppError> {
+    if matches!(kind, "anthropic" | "openai" | "gemini") {
+        Ok(())
+    } else {
+        Err(AppError::invalid_input(
+            "providerOptions",
+            "ZCode Provider API 格式只支持 anthropic、openai 或 gemini",
+        ))
     }
 }
 

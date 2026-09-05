@@ -42,6 +42,7 @@ pub struct PromptProfileRecord {
     pub body: String,
     pub is_active_claude: bool,
     pub is_active_codex: bool,
+    pub is_active_zcode: bool,
     pub imported_from_path: Option<String>,
     pub row_version: i64,
 }
@@ -53,6 +54,7 @@ pub struct NewPromptProfileRecord {
     pub body: String,
     pub is_active_claude: bool,
     pub is_active_codex: bool,
+    pub is_active_zcode: bool,
     pub imported_from_path: Option<String>,
 }
 
@@ -219,14 +221,15 @@ pub fn adopt_imported_prompt(
     transaction
         .execute(
             "INSERT INTO prompt_profiles(id, tool, name, body, is_active_claude,
-                                        is_active_codex, imported_from_path)
-             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6)",
+                                        is_active_codex, is_active_zcode, imported_from_path)
+             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 profile.id,
                 profile.name,
                 profile.body,
                 i64::from(profile.is_active_claude),
                 i64::from(profile.is_active_codex),
+                i64::from(profile.is_active_zcode),
                 profile.imported_from_path,
             ],
         )
@@ -450,7 +453,7 @@ pub fn list_prompt_profiles(database: &Database) -> Result<Vec<PromptProfileReco
     let mut statement = database
         .connection()
         .prepare(
-            "SELECT id, name, body, is_active_claude, is_active_codex, imported_from_path,
+            "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode, imported_from_path,
                     row_version
              FROM prompt_profiles
              ORDER BY name COLLATE NOCASE, id",
@@ -476,10 +479,10 @@ pub fn find_active_prompt_profile(
     database
         .connection()
         .query_row(
-            "SELECT id, name, body, is_active_claude, is_active_codex, imported_from_path,
+            "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode, imported_from_path,
                     row_version
              FROM prompt_profiles
-             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1",
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude WHEN ?1 = 'zcode' THEN is_active_zcode ELSE is_active_codex END) = 1",
             [tool.as_str()],
             prompt_from_row,
         )
@@ -498,7 +501,7 @@ pub fn find_prompt_project_assignment(
         .connection()
         .query_row(
             "SELECT profile.id, profile.name, profile.body, profile.is_active_claude,
-                    profile.is_active_codex, profile.imported_from_path, profile.row_version
+                    profile.is_active_codex, profile.is_active_zcode, profile.imported_from_path, profile.row_version
              FROM prompt_project_assignments AS assignment
              JOIN prompt_profiles AS profile ON profile.id = assignment.prompt_profile_id
              WHERE assignment.project_id = ?1 AND assignment.tool = ?2",
@@ -548,19 +551,20 @@ pub fn set_prompt_project_assignment(
         // 档案必须存在；对该工具全局生效的档案不允许写入项目记忆文件
         // （同一份指令不应同时进入全局与项目记忆文件）；
         // 已是本项目当前分配的档案例外，重复写入保持无操作语义。
-        let profile_state: Option<(bool, bool)> = transaction
+        let profile_state: Option<(bool, bool, bool)> = transaction
             .query_row(
-                "SELECT is_active_claude, is_active_codex
+                "SELECT is_active_claude, is_active_codex, is_active_zcode
                  FROM prompt_profiles WHERE id = ?1",
                 [profile_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(|_| AppError::database(&database_path, "read_prompt_profile_state"))?;
         let globally_enabled = match profile_state {
-            Some((claude, codex)) => match tool {
+            Some((claude, codex, zcode)) => match tool {
                 Tool::Claude => claude,
                 Tool::Codex => codex,
+                Tool::Zcode => zcode,
                 Tool::Cursor => {
                     return Err(AppError::invalid_input("tool", "CURSOR_PROMPT_UNSUPPORTED"))
                 }
@@ -668,14 +672,15 @@ pub fn insert_prompt_profile(
     transaction
         .execute(
             "INSERT INTO prompt_profiles(id, tool, name, body, is_active_claude,
-                                        is_active_codex, imported_from_path)
-             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6)",
+                                        is_active_codex, is_active_zcode, imported_from_path)
+             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 record.id,
                 record.name,
                 record.body,
                 record.is_active_claude,
                 record.is_active_codex,
+                record.is_active_zcode,
                 record.imported_from_path,
             ],
         )
@@ -738,6 +743,7 @@ pub fn set_global_prompt_assignment(
     let already_assigned = match tool {
         Tool::Claude => current.is_active_claude,
         Tool::Codex => current.is_active_codex,
+        Tool::Zcode => current.is_active_zcode,
         Tool::Cursor => return Err(AppError::invalid_input("tool", "CURSOR_PROMPT_UNSUPPORTED")),
     };
     if already_assigned == assigned {
@@ -772,6 +778,21 @@ pub fn set_global_prompt_assignment(
             .execute(
                 "UPDATE prompt_profiles SET is_active_codex = ?4
                  WHERE id = ?1 AND row_version = ?3 AND is_active_codex = ?5",
+                params![
+                    id,
+                    tool.as_str(),
+                    expected_row_version,
+                    i64::from(assigned),
+                    i64::from(!assigned),
+                ],
+            )
+            .map_err(|error| {
+                map_profile_write_error(error, &database_path, "set_global_prompt_assignment")
+            })?,
+        Tool::Zcode => transaction
+            .execute(
+                "UPDATE prompt_profiles SET is_active_zcode = ?4
+                 WHERE id = ?1 AND row_version = ?3 AND is_active_zcode = ?5",
                 params![
                     id,
                     tool.as_str(),
@@ -837,7 +858,7 @@ fn find_prompt_profile(
     database
         .connection()
         .query_row(
-            "SELECT id, name, body, is_active_claude, is_active_codex, imported_from_path,
+            "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode, imported_from_path,
                     row_version
              FROM prompt_profiles WHERE id = ?1",
             [id],
@@ -869,8 +890,9 @@ fn prompt_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromptProfileRec
         body: row.get(2)?,
         is_active_claude: row.get(3)?,
         is_active_codex: row.get(4)?,
-        imported_from_path: row.get(5)?,
-        row_version: row.get(6)?,
+        is_active_zcode: row.get(5)?,
+        imported_from_path: row.get(6)?,
+        row_version: row.get(7)?,
     })
 }
 
@@ -878,6 +900,8 @@ fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
     match value.as_str() {
         "claude" => Ok(Tool::Claude),
         "codex" => Ok(Tool::Codex),
+        "cursor" => Ok(Tool::Cursor),
+        "zcode" => Ok(Tool::Zcode),
         _ => Err(rusqlite::Error::InvalidQuery),
     }
 }
@@ -1088,7 +1112,7 @@ pub fn prompt_import_blocked(
         .connection()
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM prompt_profiles
-             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude WHEN ?1 = 'zcode' THEN is_active_zcode ELSE is_active_codex END) = 1
                 OR imported_from_path = ?2)",
             params![tool.as_str(), target_path],
             |row| row.get::<_, bool>(0),
@@ -1106,7 +1130,7 @@ fn reject_prompt_import_blocked(
     let exists = transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM prompt_profiles
-             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude WHEN ?1 = 'zcode' THEN is_active_zcode ELSE is_active_codex END) = 1
                 OR imported_from_path = ?2)",
             params![tool.as_str(), target_path],
             |row| row.get::<_, bool>(0),
@@ -1147,6 +1171,7 @@ fn deactivate_prompt_profiles(
     let column = match tool {
         Tool::Claude => "is_active_claude",
         Tool::Codex => "is_active_codex",
+        Tool::Zcode => "is_active_zcode",
         Tool::Cursor => return Err(AppError::invalid_input("tool", "CURSOR_PROMPT_UNSUPPORTED")),
     };
     let query = format!(
@@ -1298,6 +1323,7 @@ mod tests {
                 body: "第一份".to_owned(),
                 is_active_claude: false,
                 is_active_codex: false,
+                is_active_zcode: false,
                 imported_from_path: None,
             },
         )
@@ -1310,6 +1336,7 @@ mod tests {
                 body: "第二份".to_owned(),
                 is_active_claude: false,
                 is_active_codex: false,
+                is_active_zcode: false,
                 imported_from_path: None,
             },
         )
@@ -1406,6 +1433,7 @@ mod tests {
                 body: "原正文".to_owned(),
                 is_active_claude: false,
                 is_active_codex: false,
+                is_active_zcode: false,
                 imported_from_path: None,
             },
         )

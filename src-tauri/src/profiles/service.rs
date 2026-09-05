@@ -24,8 +24,8 @@ use super::models::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
-        PolicyState, TargetDescriptor, ToolAdapter,
+        cursor::CursorAdapter, zcode::ZcodeAdapter, DiscoveryContext, ExplicitEnvironment,
+        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -121,6 +121,9 @@ pub fn update_provider_profile(
         Tool::Codex => current_config.provider_id.clone().ok_or_else(|| {
             AppError::invalid_input("providerOptions", "Codex Provider 缺少稳定 provider id")
         })?,
+        Tool::Zcode => current_config.provider_id.clone().ok_or_else(|| {
+            AppError::invalid_input("providerOptions", "ZCode Provider 缺少稳定 provider id")
+        })?,
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     let allow_missing_api_key =
@@ -191,8 +194,15 @@ pub fn copy_provider_profile(
             credential_env_key: Some(ClaudeCredentialEnvKey::ApiKey),
             extra_env: BTreeMap::new(),
             wire_api: None,
+            zcode_kind: None,
         },
         Tool::Codex => ProviderOptionsInput::default(),
+        Tool::Zcode => ProviderOptionsInput {
+            credential_env_key: None,
+            extra_env: BTreeMap::new(),
+            wire_api: None,
+            zcode_kind: Some("anthropic".to_owned()),
+        },
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     let config = StoredProviderConfig::from_input(
@@ -266,6 +276,7 @@ pub fn create_prompt_profile(
             body: input.body,
             is_active_claude: false,
             is_active_codex: false,
+            is_active_zcode: false,
             imported_from_path: None,
         },
     )?)
@@ -493,11 +504,24 @@ pub fn confirm_provider_import(
             credential_env_key: Some(discovered.credential_env_key),
             extra_env: discovered.extra_env,
             wire_api: None,
+            zcode_kind: None,
         },
         Tool::Codex => ProviderOptionsInput {
             credential_env_key: None,
             extra_env: BTreeMap::new(),
             wire_api: discovered.wire_api,
+            zcode_kind: None,
+        },
+        Tool::Zcode => ProviderOptionsInput {
+            credential_env_key: None,
+            extra_env: BTreeMap::new(),
+            wire_api: None,
+            zcode_kind: Some(
+                discovered
+                    .zcode_kind
+                    .clone()
+                    .unwrap_or_else(|| "anthropic".to_owned()),
+            ),
         },
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
@@ -640,6 +664,7 @@ pub fn confirm_prompt_import(
             body: body.clone(),
             is_active_claude: preview.tool == Tool::Claude,
             is_active_codex: preview.tool == Tool::Codex,
+            is_active_zcode: preview.tool == Tool::Zcode,
             imported_from_path: Some(preview.target_path.clone()),
         },
         &ImportedBaselineRecord {
@@ -1031,6 +1056,7 @@ struct DiscoveredProvider {
     extra_env: BTreeMap<String, String>,
     provider_id: Option<String>,
     wire_api: Option<String>,
+    zcode_kind: Option<String>,
     extra_provider_fields: BTreeMap<String, Value>,
     suggested_name: Option<String>,
 }
@@ -1044,11 +1070,19 @@ fn validate_discovered_provider_config(
             credential_env_key: Some(discovered.credential_env_key),
             extra_env: discovered.extra_env.clone(),
             wire_api: None,
+            zcode_kind: None,
         },
         Tool::Codex => ProviderOptionsInput {
             credential_env_key: None,
             extra_env: BTreeMap::new(),
             wire_api: discovered.wire_api.clone(),
+            zcode_kind: None,
+        },
+        Tool::Zcode => ProviderOptionsInput {
+            credential_env_key: None,
+            extra_env: BTreeMap::new(),
+            wire_api: None,
+            zcode_kind: discovered.zcode_kind.clone(),
         },
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
@@ -1086,6 +1120,7 @@ fn discover_native_provider(
             vec!["model_provider"],
             vec!["model_providers"],
         ]),
+        Tool::Zcode => ManagedOwnership::selectors([["provider"]]),
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
     };
     let scan = scan_target(tool_adapter(tool), &descriptor, &broad_ownership);
@@ -1096,7 +1131,7 @@ fn discover_native_provider(
             return Err(AppError::parse(
                 &descriptor_path(&descriptor)?,
                 match tool {
-                    Tool::Claude => "json",
+                    Tool::Claude | Tool::Zcode => "json",
                     Tool::Codex => "toml",
                     Tool::Cursor => "json",
                 },
@@ -1107,8 +1142,102 @@ fn discover_native_provider(
     match tool {
         Tool::Claude => discover_claude_provider(&descriptor, &observed),
         Tool::Codex => discover_codex_provider(&descriptor, &observed),
+        Tool::Zcode => discover_zcode_provider(&descriptor, &observed),
         Tool::Cursor => Err(cursor_unsupported(ArtifactKind::Provider)),
     }
+}
+
+/// ZCode 的 `~/.zcode/v2/config.json` 可包含多个 provider 条目。导入面向单一
+/// 配置：只有「恰好一个 enabled 条目」或「唯一条目且无 enabled 标记」时可发现，
+/// 其余情况保持 fail closed。`models`、`source`、`systemDisabledReason` 是 ZCode
+/// 自管字段，不进入受管选择器，也不参与写入。
+fn discover_zcode_provider(
+    descriptor: &TargetDescriptor,
+    observed: &crate::sync::ObservedTarget,
+) -> Result<Option<DiscoveredProvider>, AppError> {
+    const ZCODE_PROVIDER_KINDS: &[&str] = &["anthropic", "openai", "gemini"];
+    let entries = observed
+        .managed_projection
+        .get("provider")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AppError::parse("~/.zcode/v2/config.json", "json"))?;
+    let enabled: Vec<&String> = entries
+        .iter()
+        .filter(|(_, value)| value.get("enabled").and_then(Value::as_bool) == Some(true))
+        .map(|(key, _)| key)
+        .collect();
+    let selected = match (enabled.len(), entries.len()) {
+        (1, _) => (enabled[0], &entries[enabled[0]]),
+        (0, 1) => entries
+            .iter()
+            .next()
+            .ok_or_else(|| AppError::parse("~/.zcode/v2/config.json", "json"))?,
+        _ => return Ok(None),
+    };
+    let (provider_id, entry) = selected;
+    if entry
+        .get("kind")
+        .and_then(Value::as_str)
+        .map_or(true, |kind| !ZCODE_PROVIDER_KINDS.contains(&kind))
+    {
+        return Ok(None);
+    }
+    let kind = entry
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("anthropic")
+        .to_owned();
+    let options = entry.get("options").and_then(Value::as_object);
+    let api_base_url = options
+        .and_then(|options| options.get("baseURL"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    if api_base_url.is_empty() {
+        return Ok(None);
+    }
+    let api_key = options
+        .and_then(|options| options.get("apiKey"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let default_model = entry
+        .get("models")
+        .and_then(Value::as_object)
+        .map(|models| {
+            models
+                .keys()
+                .min_by(|a, b| a.cmp(b))
+                .cloned()
+                .unwrap_or_else(|| "unspecified".to_owned())
+        })
+        .unwrap_or_else(|| "unspecified".to_owned());
+    // 导入基线只记录受管子键（name/kind/options/enabled），与同步阶段的
+    // provider_ownership 粒度一致；models/source 等自管字段不进入基线。
+    let mut managed_entry = Map::new();
+    for leaf in ["name", "kind", "options", "enabled"] {
+        if let Some(value) = entry.get(leaf) {
+            managed_entry.insert(leaf.to_owned(), value.clone());
+        }
+    }
+    Ok(Some(DiscoveredProvider {
+        target_path: descriptor_path(descriptor)?,
+        full_hash: observed.full_hash.clone(),
+        projection: json!({ "provider": { provider_id: Value::Object(managed_entry) } }),
+        api_base_url,
+        api_key,
+        default_model,
+        credential_env_key: ClaudeCredentialEnvKey::ApiKey,
+        extra_env: BTreeMap::new(),
+        provider_id: Some(provider_id.clone()),
+        wire_api: None,
+        zcode_kind: Some(kind),
+        extra_provider_fields: BTreeMap::new(),
+        suggested_name: entry
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| Some(provider_id.clone())),
+    }))
 }
 
 fn ensure_tool_is_available(descriptor: &TargetDescriptor) -> Result<(), AppError> {
@@ -1203,6 +1332,7 @@ fn discover_claude_provider(
         extra_env,
         provider_id: None,
         wire_api: None,
+        zcode_kind: None,
         extra_provider_fields: BTreeMap::new(),
         suggested_name: None,
     }))
@@ -1333,6 +1463,7 @@ fn discover_codex_provider(
         extra_env: BTreeMap::new(),
         provider_id: Some(provider_id.to_owned()),
         wire_api,
+        zcode_kind: None,
         extra_provider_fields,
         suggested_name,
     }))
@@ -1363,6 +1494,7 @@ fn discover_codex_openai_provider(
         extra_env: BTreeMap::new(),
         provider_id: Some(CODEX_OPENAI_PROVIDER_ID.to_owned()),
         wire_api: None,
+        zcode_kind: None,
         extra_provider_fields: BTreeMap::new(),
         suggested_name: Some("Codex OAuth 登录".to_owned()),
     }))
@@ -1461,6 +1593,27 @@ fn provider_projection(profile: &ProviderProfileRecord) -> Result<Value, AppErro
             );
             Ok(Value::Object(root))
         }
+        // 只写有证据的 name/kind/options/enabled；`models`、`source`、
+        // `systemDisabledReason` 等 ZCode 自管字段通过子选择器保留在原地。
+        Tool::Zcode => {
+            let provider_id = config.provider_id.ok_or_else(|| {
+                AppError::invalid_input("providerOptions", "ZCode Provider 缺少稳定 provider id")
+            })?;
+            let mut options = Map::new();
+            if let Some(value) = &profile.api_base_url {
+                options.insert("baseURL".to_owned(), Value::String(value.clone()));
+            }
+            if let Some(value) = &profile.api_key {
+                options.insert("apiKey".to_owned(), Value::String(value.clone()));
+            }
+            let entry = json!({
+                "name": profile.name,
+                "kind": config.zcode_kind.unwrap_or_else(|| "anthropic".to_owned()),
+                "options": Value::Object(options),
+                "enabled": true,
+            });
+            Ok(json!({ "provider": { provider_id: entry } }))
+        }
         Tool::Cursor => Err(cursor_unsupported(ArtifactKind::Provider)),
     }
 }
@@ -1495,6 +1648,22 @@ fn provider_ownership(
                             .keys()
                             .map(|key| vec!["model_providers".to_owned(), key.clone()]),
                     );
+                }
+            }
+        }
+        Tool::Zcode => {
+            for projection in [baseline, Some(desired)].into_iter().flatten() {
+                let Some(providers) = projection.get("provider").and_then(Value::as_object) else {
+                    continue;
+                };
+                for provider_id in providers.keys() {
+                    for leaf in ["name", "kind", "options", "enabled"] {
+                        selectors.insert(vec![
+                            "provider".to_owned(),
+                            provider_id.clone(),
+                            leaf.to_owned(),
+                        ]);
+                    }
                 }
             }
         }
@@ -1585,10 +1754,12 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
+    static ZCODE: ZcodeAdapter = ZcodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
+        Tool::Zcode => &ZCODE,
     }
 }
 
@@ -1597,6 +1768,7 @@ fn allowed_root(environment: &ExplicitEnvironment, tool: Tool) -> PathBuf {
         Tool::Claude => environment.claude_config_dir().to_owned(),
         Tool::Codex => environment.codex_home().to_owned(),
         Tool::Cursor => environment.home().join(".cursor"),
+        Tool::Zcode => environment.home().join(".zcode"),
     }
 }
 
@@ -1670,6 +1842,9 @@ fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError
     }
     if record.is_active_codex {
         global_tools.push(Tool::Codex);
+    }
+    if record.is_active_zcode {
+        global_tools.push(Tool::Zcode);
     }
     Ok(PromptProfileDto {
         id: record.id.clone(),
@@ -1793,6 +1968,7 @@ mod tests {
         let home = fs::canonicalize(temporary.path()).unwrap();
         fs::create_dir(home.join(".claude")).unwrap();
         fs::create_dir(home.join(".codex")).unwrap();
+        fs::create_dir_all(home.join(".zcode/v2")).unwrap();
         let paths = AppPaths::from_data_root(home.join("private/app/data")).unwrap();
         let database = Database::open(&paths).unwrap();
         let environment =
@@ -1879,6 +2055,146 @@ mod tests {
     }
 
     #[test]
+    fn zcode_provider_import_and_sync_preserve_app_owned_fields() {
+        let mut fixture = fixture();
+        let config = fixture.home.join(".zcode/v2/config.json");
+        fs::write(
+            &config,
+            r#"{
+  "provider": {
+    "builtin:fixture": {
+      "name": "Fixture Plan",
+      "kind": "anthropic",
+      "options": {
+        "apiKey": "fixture-native-secret",
+        "baseURL": "https://fixture.invalid/v1"
+      },
+      "enabled": true,
+      "source": "custom",
+      "models": {
+        "GLM-5.3": {"zcode": {"priority": 1}}
+      }
+    }
+  },
+  "unrelated": {"keep": true}
+}
+"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview_dto = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Zcode,
+        )
+        .unwrap()
+        .expect("fixture 配置应包含一个可导入的 provider");
+        assert_eq!(preview_dto.suggested_name, "Fixture Plan");
+        assert_eq!(preview_dto.api_base_url, "https://fixture.invalid/v1");
+        assert!(preview_dto.api_key_configured);
+        let serialized = serde_json::to_string(&preview_dto).unwrap();
+        assert!(!serialized.contains("fixture-native-secret"));
+
+        let created = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            crate::profiles::ConfirmImportInput {
+                preview_id: preview_dto.preview_id,
+                name: "Fixture Plan".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            created.options.provider_id.as_deref(),
+            Some("builtin:fixture")
+        );
+        assert_eq!(created.options.zcode_kind.as_deref(), Some("anthropic"));
+
+        let sync_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Zcode,
+        )
+        .unwrap();
+        assert!(!serde_json::to_string(&sync_preview)
+            .unwrap()
+            .contains("fixture-native-secret"));
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &sync_preview.preview_id,
+            Tool::Zcode,
+            ArtifactKind::Provider,
+            None,
+        )
+        .unwrap();
+
+        let document: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+        let entry = &document["provider"]["builtin:fixture"];
+        assert_eq!(entry["name"], "Fixture Plan");
+        assert_eq!(entry["kind"], "anthropic");
+        assert_eq!(entry["options"]["apiKey"], "fixture-native-secret");
+        assert_eq!(entry["options"]["baseURL"], "https://fixture.invalid/v1");
+        assert_eq!(entry["enabled"], true);
+        // ZCode 自管字段与无关键必须原样保留。
+        assert_eq!(entry["source"], "custom");
+        assert_eq!(entry["models"]["GLM-5.3"]["zcode"]["priority"], 1);
+        assert_eq!(document["unrelated"]["keep"], true);
+
+        // 切换到新档案后，旧条目的受管子键被移除，models/source 保留。
+        let second = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            ProviderProfileInput {
+                options: ProviderOptionsInput {
+                    zcode_kind: Some("openai".to_owned()),
+                    ..ProviderOptionsInput::default()
+                },
+                ..provider(Tool::Zcode, "第二渠道", "fixture-second-secret", true)
+            },
+        )
+        .unwrap();
+        let second_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Zcode,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &second_preview.preview_id,
+            Tool::Zcode,
+            ArtifactKind::Provider,
+            None,
+        )
+        .unwrap();
+        let document: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+        assert!(document["provider"]["builtin:fixture"]
+            .get("name")
+            .is_none());
+        assert_eq!(
+            document["provider"]["builtin:fixture"]["models"]["GLM-5.3"]["zcode"]["priority"],
+            1
+        );
+        let new_entry = &document["provider"][second.options.provider_id.unwrap().as_str()];
+        assert_eq!(new_entry["name"], "第二渠道");
+        assert_eq!(new_entry["kind"], "openai");
+        assert_eq!(new_entry["options"]["apiKey"], "fixture-second-secret");
+        assert_eq!(document["unrelated"]["keep"], true);
+    }
+
+    #[test]
     fn codex_provider_rename_preserves_stable_provider_id_and_delete_removes_profile() {
         let mut fixture = fixture();
         let mut redactor = SecretRedactor::default();
@@ -1952,6 +2268,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                     wire_api: None,
+                    zcode_kind: None,
                 },
                 ..provider(Tool::Claude, "第一档", "fixture-first-secret", true)
             },
@@ -2497,6 +2814,7 @@ base_url = "https://external.example.com/v1"
                 claude: ToolAvailabilityState::Unavailable,
                 codex: ToolAvailabilityState::Unsupported,
                 cursor: ToolAvailabilityState::Unavailable,
+                zcode: ToolAvailabilityState::Unavailable,
             },
         )
         .unwrap()

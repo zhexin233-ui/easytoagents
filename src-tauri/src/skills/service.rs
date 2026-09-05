@@ -28,8 +28,8 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, ClaudeCustomizationPolicyProbe, DiscoveryContext, ManagedOwnership,
-        TargetDescriptor, ToolAdapter, ASSIGNABLE_SKILL_TOOLS,
+        cursor::CursorAdapter, zcode::ZcodeAdapter, ClaudeCustomizationPolicyProbe,
+        DiscoveryContext, ManagedOwnership, TargetDescriptor, ToolAdapter, ASSIGNABLE_SKILL_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -707,6 +707,7 @@ fn prepare_skill_sync_in_connection(
             // Codex 全局 Skills 目标位于 CODEX_HOME/skills，写入根必须跟随。
             Tool::Codex => environment.codex_home().to_path_buf(),
             Tool::Cursor => environment.home().join(".cursor"),
+            Tool::Zcode => environment.home().join(".zcode"),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -759,10 +760,12 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
+    static ZCODE: ZcodeAdapter = ZcodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
+        Tool::Zcode => &ZCODE,
     }
 }
 
@@ -1462,6 +1465,8 @@ mod tests {
             // Cursor 的写入根保持为窄边界 ~/.cursor；fixture 显式模拟已安装
             // Cursor 创建过配置根，但仍让同步管线自行创建 skills 子目录。
             fs::create_dir(home.join(".cursor")).unwrap();
+            // ZCode 同理：安装后自带 ~/.zcode 配置根。
+            fs::create_dir(home.join(".zcode")).unwrap();
             let home = fs::canonicalize(home).unwrap();
             let project = fs::canonicalize(project).unwrap();
             fs::write(
@@ -1815,11 +1820,22 @@ mod tests {
             },
         )
         .unwrap();
-        set_global_skill_assignment(
+        let assigned = set_global_skill_assignment(
             &mut fixture.database,
             &fixture.paths,
             &SetGlobalSkillAssignmentInput {
                 tool: Tool::Cursor,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: assigned.row_version,
+            },
+        )
+        .unwrap();
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Zcode,
                 skill_id: skill.id.clone(),
                 assigned: true,
                 row_version: assigned.row_version,
@@ -1903,6 +1919,19 @@ mod tests {
             &policy,
         )
         .unwrap();
+        let zcode_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Zcode,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
         let previewed_statuses = super::list_global_skill_target_statuses_with_policy_probe(
             &fixture.database,
             &fixture.paths,
@@ -1918,6 +1947,7 @@ mod tests {
             (Tool::Claude, claude_preview),
             (Tool::Codex, codex_preview),
             (Tool::Cursor, cursor_preview),
+            (Tool::Zcode, zcode_preview),
         ] {
             apply_skill_preview_with_policy_probe(
                 &Mutex::new(()),
@@ -1947,6 +1977,7 @@ mod tests {
                 .codex_home()
                 .join("skills/first-sync-skill"),
             fixture.home.join(".cursor/skills/first-sync-skill"),
+            fixture.home.join(".zcode/skills/first-sync-skill"),
         ] {
             assert!(link.is_symlink());
             assert_eq!(

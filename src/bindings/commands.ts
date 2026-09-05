@@ -667,8 +667,8 @@ export type PromptProfileDto = { id: string; name: string; body: string; globalT
 export type PromptProfileInput = { name: string; body: string }
 export type PromptProjectAssignmentDto = { projectId: string; tool: Tool; profileId: string | null }
 export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue }
-export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null }
-export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null }
+export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null }
+export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null; zcodeKind: string | null }
 export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
 export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
 export type ReadoptMcpTargetInput = { tool: Tool; projectId: string | null }
@@ -706,7 +706,7 @@ export type SkillImportCandidateStatus = "importable" | "already_imported" | "na
 export type SkillImportPreviewDto = { previewId: string | null; tool: Tool; sources: SkillImportSourceDto[]; candidates: SkillImportCandidateDto[]; message: string | null }
 export type SkillImportResultDto = { tool: Tool; createdCount: number }
 export type SkillImportSourceDto = { kind: SkillImportSourceKind; path: string; status: SkillImportSourceStatus; diagnosticCode: string | null; message: string | null }
-export type SkillImportSourceKind = "claude_global" | "codex_home" | "codex_agents" | "cursor_home" | "cursor_agents"
+export type SkillImportSourceKind = "claude_global" | "codex_home" | "codex_agents" | "cursor_home" | "cursor_agents" | "zcode_home" | "zcode_agents"
 export type SkillImportSourceStatus = "ready" | "missing" | "empty" | "unavailable"
 export type SkillProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
 export type SkillProjectOptionDto = { skillId: string; name: string; status: SkillStatus; state: SkillProjectSelectionState; selectable: boolean; rowVersion: number }
@@ -738,7 +738,7 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
 /**
  * 正式支持的原生工具。
  */
-export type Tool = "claude" | "codex" | "cursor"
+export type Tool = "claude" | "codex" | "cursor" | "zcode"
 export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"

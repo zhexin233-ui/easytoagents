@@ -128,11 +128,12 @@ git diff --check
 
 ## 9. Pi 与 ZCode 示例
 
-Pi、ZCode 当前只作为待调研候选，不代表已知路径：
+Pi 当前只作为待调研候选，不代表已知路径；ZCode 已于 2026-09-05 依据本机核验
+与官方 zcode-configuration-guide 完成证据核验并正式接入（迁移 `0013`）：
 
-| 工具  | Provider | Prompt/Rules | MCP     | Skills  | 下一步                                         |
-| ----- | -------- | ------------ | ------- | ------- | ---------------------------------------------- |
-| Pi    | Unknown  | Unknown      | Unknown | Unknown | 找到官方配置与安装文档，建立版本化 fixture     |
-| ZCode | Unknown  | Unknown      | Unknown | Unknown | 核验官方路径、格式、优先级、链接发现和安装身份 |
+| 工具  | Provider  | Prompt/Rules | MCP       | Skills    | 下一步                                                                                                                                                 |
+| ----- | --------- | ------------ | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pi    | Unknown   | Unknown      | Unknown   | Unknown   | 找到官方配置与安装文档，建立版本化 fixture                                                                                                             |
+| ZCode | Supported | Supported    | Supported | Supported | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键 |
 
 在官方证据、capability matrix 和回滚边界审核通过前，不为它们新增 Tool 值、猜测目标目录或复制 Cursor 的 Adapter。

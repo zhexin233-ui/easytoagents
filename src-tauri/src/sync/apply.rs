@@ -29,8 +29,8 @@ use super::{
 };
 use crate::{
     adapters::{
-        claude::ClaudeAdapter, codex::CodexAdapter, cursor::CursorAdapter, ManagedOwnership,
-        RenderedTarget, TargetDescriptor, TargetFormat, ToolAdapter,
+        claude::ClaudeAdapter, codex::CodexAdapter, cursor::CursorAdapter, zcode::ZcodeAdapter,
+        ManagedOwnership, RenderedTarget, TargetDescriptor, TargetFormat, ToolAdapter,
     },
     app::AppPaths,
     db::Database,
@@ -1310,10 +1310,12 @@ fn adapter_for(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
+    static ZCODE: ZcodeAdapter = ZcodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
+        Tool::Zcode => &ZCODE,
     }
 }
 

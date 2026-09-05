@@ -170,11 +170,11 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
             .map_err(|_| AppError::database(&database_path, "read_dashboard_provider"))?
     };
     let active_prompt_name = match tool {
-        Tool::Claude | Tool::Codex => database
+        Tool::Claude | Tool::Codex | Tool::Zcode => database
             .connection()
             .query_row(
                 "SELECT name FROM prompt_profiles
-                 WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude ELSE is_active_codex END) = 1",
+                 WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude WHEN ?1 = 'zcode' THEN is_active_zcode ELSE is_active_codex END) = 1",
                 [tool.as_str()],
                 |row| row.get::<_, String>(0),
             )
@@ -337,6 +337,7 @@ fn global_allowed_root(
         "claude" => Tool::Claude,
         "codex" => Tool::Codex,
         "cursor" => Tool::Cursor,
+        "zcode" => Tool::Zcode,
         _ => {
             return Err(AppError::conflict("snapshot", "快照包含未知工具身份"));
         }
@@ -364,6 +365,8 @@ fn global_allowed_root(
                 "Cursor 不支持 Provider/Prompt 快照恢复",
             ));
         }
+        // ZCode 全局目标都位于 ~/.zcode 之下（v2、cli、AGENTS.md、skills）。
+        (Tool::Zcode, _) => environment.home().join(".zcode"),
     })
 }
 

@@ -27,6 +27,10 @@ const router = createHashRouter([
         element: <ToolProfilesPage tool="codex" />,
       },
       {
+        path: "zcode",
+        element: <ToolProfilesPage tool="zcode" />,
+      },
+      {
         path: "mcp",
         element: <McpPage />,
       },

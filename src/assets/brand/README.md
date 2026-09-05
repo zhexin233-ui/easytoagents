@@ -11,3 +11,7 @@ redraw, optimize, recolor, or replace them with runtime CDN resources.
 - `cursor-icon.svg`: official Cursor website favicon,
   `https://www.cursor.com/favicon.svg`, retrieved 2026-08-31 and copied
   unchanged.
+- `zcode-icon.svg`: self-drawn placeholder mark (a "Z" stroke on the same
+  rounded-square canvas as the other icons). ZCode has not published an
+  official press-kit asset to bundle; replace it if an official asset with a
+  permissive license becomes available.

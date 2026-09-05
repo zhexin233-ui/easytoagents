@@ -39,6 +39,7 @@ interface ToolDiscovery {
 interface Choices {
   claude: { provider: boolean; prompt: boolean; skip: boolean };
   codex: { provider: boolean; prompt: boolean; skip: boolean };
+  zcode: { provider: boolean; prompt: boolean; skip: boolean };
 }
 
 interface WizardPreview {
@@ -50,6 +51,7 @@ interface WizardPreview {
 const emptyChoices: Choices = {
   claude: { provider: false, prompt: false, skip: false },
   codex: { provider: false, prompt: false, skip: false },
+  zcode: { provider: false, prompt: false, skip: false },
 };
 
 export function OnboardingWizard({
@@ -141,6 +143,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
           errors: [],
         },
         codex: {
+          availability: "unsupported",
+          installationVersion: null,
+          provider: null,
+          prompt: null,
+          providerManaged: false,
+          promptManaged: false,
+          errors: [],
+        },
+        zcode: {
           availability: "unsupported",
           installationVersion: null,
           provider: null,
@@ -589,6 +600,7 @@ function readChoices(): Choices {
     return {
       claude: readToolChoice(parsed.claude),
       codex: readToolChoice(parsed.codex),
+      zcode: readToolChoice(parsed.zcode),
     };
   } catch {
     return emptyChoices;

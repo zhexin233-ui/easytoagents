@@ -20,9 +20,9 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, ClaudeCustomizationPolicyProbe, ClaudeUserMcpCapabilityProbe,
-        DiscoveryContext, ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
-        ASSIGNABLE_MCP_TOOLS,
+        cursor::CursorAdapter, zcode::ZcodeAdapter, ClaudeCustomizationPolicyProbe,
+        ClaudeUserMcpCapabilityProbe, DiscoveryContext, ManagedOwnership, PolicyState,
+        TargetDescriptor, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -403,7 +403,7 @@ fn readopt_with_scan(
     baseline: &ManagedTargetBaseline,
     existing_items: &[ManagedMcpItemRecord],
     scan: &TargetScan,
-    container: &str,
+    container: &[&str],
     descriptor: &TargetDescriptor,
 ) -> Result<ReadoptMcpTargetResultDto, AppError> {
     let database_path = database.path().to_string_lossy().into_owned();
@@ -424,9 +424,7 @@ fn readopt_with_scan(
                     ],
                 )
                 .map_err(|_| AppError::database(&database_path, "readopt_target_baseline"))?;
-            let projection = observed
-                .managed_projection
-                .get(container)
+            let projection = projection_value_at(&observed.managed_projection, container)
                 .and_then(Value::as_object);
             let mut updated = 0u32;
             let mut removed = 0u32;
@@ -694,6 +692,7 @@ fn prepare_mcp_sync(
             Tool::Claude => environment.home().to_path_buf(),
             Tool::Codex => environment.codex_home().to_path_buf(),
             Tool::Cursor => environment.home().join(".cursor"),
+            Tool::Zcode => environment.home().join(".zcode"),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -717,17 +716,17 @@ fn prepare_mcp_sync(
     })
 }
 
-fn inherited_projection_is_absent(scan: &TargetScan, container: &str) -> bool {
+fn inherited_projection_is_absent(scan: &TargetScan, container: &[&str]) -> bool {
     match scan {
         TargetScan::Missing => true,
-        TargetScan::Observed(observed) => match observed
-            .managed_projection
-            .get(container)
-            .and_then(Value::as_object)
-        {
-            Some(items) => items.is_empty(),
-            None => true,
-        },
+        TargetScan::Observed(observed) => {
+            match projection_value_at(&observed.managed_projection, container)
+                .and_then(Value::as_object)
+            {
+                Some(items) => items.is_empty(),
+                None => true,
+            }
+        }
         TargetScan::ManagedItemBaselineMismatch
         | TargetScan::ParseError
         | TargetScan::PermissionDenied
@@ -769,24 +768,47 @@ pub(super) fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
+    static ZCODE: ZcodeAdapter = ZcodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
+        Tool::Zcode => &ZCODE,
     }
 }
 
-pub(super) fn native_container(tool: Tool) -> &'static str {
+/// MCP 条目在原生文件中的容器路径；ZCode 是官方定义的嵌套键 `mcp.servers`。
+pub(super) fn native_container(tool: Tool) -> &'static [&'static str] {
     match tool {
-        Tool::Claude => "mcpServers",
-        Tool::Codex => "mcp_servers",
-        Tool::Cursor => "mcpServers",
+        Tool::Claude => &["mcpServers"],
+        Tool::Codex => &["mcp_servers"],
+        Tool::Cursor => &["mcpServers"],
+        Tool::Zcode => &["mcp", "servers"],
     }
+}
+
+#[cfg(test)]
+pub(super) fn service_projection_get<'a>(value: &'a Value, path: &[&str]) -> &'a Value {
+    projection_value_at(value, path).unwrap_or(&Value::Null)
+}
+
+pub(super) fn projection_value_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
+}
+
+fn nest_at(path: &[&str], leaf: Value) -> Value {
+    path.iter().rev().fold(leaf, |child, segment| {
+        Value::Object(Map::from_iter([(segment.to_string(), child)]))
+    })
 }
 
 fn build_desired_projection(
     tool: Tool,
-    container: &str,
+    container: &[&str],
     records: &[McpServerRecord],
     redactor: &mut SecretRedactor,
 ) -> Result<Value, AppError> {
@@ -799,10 +821,7 @@ fn build_desired_projection(
     if servers.is_empty() {
         Ok(Value::Object(Map::new()))
     } else {
-        Ok(Value::Object(Map::from_iter([(
-            container.to_owned(),
-            Value::Object(servers),
-        )])))
+        Ok(nest_at(container, Value::Object(servers)))
     }
 }
 
@@ -813,7 +832,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
         .cloned()
         .ok_or_else(|| AppError::invalid_input("extra", "MCP 扩展字段必须是对象"))?;
     match (tool, value.transport) {
-        (Tool::Claude | Tool::Cursor, McpTransport::Stdio) => {
+        (Tool::Claude | Tool::Cursor | Tool::Zcode, McpTransport::Stdio) => {
             object.insert("type".to_owned(), Value::String("stdio".to_owned()));
             object.insert(
                 "command".to_owned(),
@@ -829,7 +848,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
                 object.insert("env".to_owned(), serde_json::to_value(&value.env).unwrap());
             }
         }
-        (Tool::Claude | Tool::Cursor, McpTransport::StreamableHttp) => {
+        (Tool::Claude | Tool::Cursor | Tool::Zcode, McpTransport::StreamableHttp) => {
             object.insert("type".to_owned(), Value::String("http".to_owned()));
             object.insert(
                 "url".to_owned(),
@@ -876,7 +895,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
 }
 
 fn build_mcp_ownership(
-    container: &str,
+    container: &[&str],
     desired: &[McpServerRecord],
     inherited: &[McpServerRecord],
     existing: &[ManagedMcpItemRecord],
@@ -887,45 +906,48 @@ fn build_mcp_ownership(
         .map(|record| record.name.clone())
         .chain(existing.iter().map(|item| item.external_key.clone()))
         .collect::<BTreeSet<_>>();
-    ManagedOwnership::selectors(
-        names
-            .into_iter()
-            .map(|name| vec![container.to_owned(), name]),
-    )
+    ManagedOwnership::selectors(names.into_iter().map(|name| {
+        container
+            .iter()
+            .copied()
+            .chain(std::iter::once(name.as_str()))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    }))
 }
 
 fn verify_managed_item_baselines(
     scan: TargetScan,
-    container: &str,
+    container: &[&str],
     existing: &[ManagedMcpItemRecord],
 ) -> (TargetScan, Vec<String>) {
     if existing.is_empty() {
         return (scan, Vec::new());
     }
     let mismatched = match &scan {
-        TargetScan::Observed(observed) => observed
-            .managed_projection
-            .get(container)
-            .and_then(Value::as_object)
-            .map_or_else(
-                || {
-                    existing
-                        .iter()
-                        .map(|item| item.external_key.clone())
-                        .collect()
-                },
-                |items| {
-                    existing
-                        .iter()
-                        .filter(|item| {
-                            items.get(&item.external_key).map_or(true, |value| {
-                                hash_json(value) != item.last_applied_item_hash
+        TargetScan::Observed(observed) => {
+            projection_value_at(&observed.managed_projection, container)
+                .and_then(Value::as_object)
+                .map_or_else(
+                    || {
+                        existing
+                            .iter()
+                            .map(|item| item.external_key.clone())
+                            .collect()
+                    },
+                    |items| {
+                        existing
+                            .iter()
+                            .filter(|item| {
+                                items.get(&item.external_key).map_or(true, |value| {
+                                    hash_json(value) != item.last_applied_item_hash
+                                })
                             })
-                        })
-                        .map(|item| item.external_key.clone())
-                        .collect()
-                },
-            ),
+                            .map(|item| item.external_key.clone())
+                            .collect()
+                    },
+                )
+        }
         TargetScan::Missing => existing
             .iter()
             .map(|item| item.external_key.clone())
@@ -946,7 +968,7 @@ fn verify_managed_item_baselines(
 
 fn build_managed_item_changes(
     tool: Tool,
-    _container: &str,
+    _container: &[&str],
     desired: &[McpServerRecord],
     existing: &[ManagedMcpItemRecord],
 ) -> Result<(Vec<ManagedItemApply>, Vec<String>), AppError> {
@@ -1369,8 +1391,10 @@ mod tests {
             fs::create_dir(home.join(".claude")).unwrap();
             fs::create_dir(home.join(".codex")).unwrap();
             fs::create_dir(home.join(".cursor")).unwrap();
+            fs::create_dir_all(home.join(".zcode/cli")).unwrap();
             fs::create_dir(project.join(".codex")).unwrap();
             fs::create_dir(project.join(".cursor")).unwrap();
+            fs::create_dir(project.join(".zcode")).unwrap();
             let home = fs::canonicalize(home).unwrap();
             let project = fs::canonicalize(project).unwrap();
             let environment =
@@ -2361,13 +2385,25 @@ enabled = true
             Tool::Claude => fixture.home.join(".claude.json"),
             Tool::Codex => fixture.home.join(".codex/config.toml"),
             Tool::Cursor => fixture.home.join(".cursor/mcp.json"),
+            Tool::Zcode => fixture.home.join(".zcode/cli/config.json"),
         };
-        let document =
-            json!({super::native_container(tool): items, "unrelated": {"keep": "outside"}});
+        let mut document =
+            super::native_container(tool)
+                .iter()
+                .rev()
+                .fold(items, |child, segment| {
+                    let segment: &str = segment;
+                    json!({ segment: child })
+                });
+        document
+            .as_object_mut()
+            .unwrap()
+            .insert("unrelated".to_owned(), json!({ "keep": "outside" }));
         let text = match tool {
             Tool::Claude => serde_json::to_string_pretty(&document).unwrap(),
             Tool::Codex => toml_edit::ser::to_string(&document).unwrap(),
             Tool::Cursor => serde_json::to_string_pretty(&document).unwrap(),
+            Tool::Zcode => serde_json::to_string_pretty(&document).unwrap(),
         };
         fs::write(&path, text).unwrap();
         path
@@ -2530,8 +2566,12 @@ enabled = true
                 Tool::Claude => serde_json::from_str(&contents).unwrap(),
                 Tool::Codex => toml_edit::de::from_str(&contents).unwrap(),
                 Tool::Cursor => serde_json::from_str(&contents).unwrap(),
+                Tool::Zcode => serde_json::from_str(&contents).unwrap(),
             };
-            assert_eq!(after[super::native_container(tool)]["disabled"], disabled);
+            assert_eq!(
+                super::service_projection_get(&after, super::native_container(tool))["disabled"],
+                disabled
+            );
             assert_eq!(after["unrelated"]["keep"], "outside");
             let records = crate::db::mcp::list_mcp_servers(&fixture.database).unwrap();
             assert!(records
@@ -2585,7 +2625,7 @@ enabled = true
         };
         let mut fixture = Fixture::new();
         let mut redactor = SecretRedactor::default();
-        for tool in [Tool::Claude, Tool::Codex, Tool::Cursor] {
+        for tool in [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode] {
             let mut native = import_item(tool, &stdio_input("shared"));
             if tool == Tool::Codex {
                 native["type"] = json!("stdio");
@@ -2610,11 +2650,11 @@ enabled = true
             )
             .unwrap();
         }
-        assert_eq!(import_counts(&fixture.database), (1, 3, 3, 3));
+        assert_eq!(import_counts(&fixture.database), (1, 4, 4, 4));
         let central = super::list_mcp_servers(&fixture.database, &redactor).unwrap();
         assert_eq!(
             central[0].global_tools,
-            vec![Tool::Claude, Tool::Codex, Tool::Cursor]
+            vec![Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode]
         );
         let mut conflict_fixture = Fixture::new();
         super::create_mcp_server(

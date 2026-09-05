@@ -84,6 +84,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "project_native_resources",
         sql: include_str!("migrations/0012_project_native_resources.sql"),
     },
+    Migration {
+        version: 13,
+        name: "zcode_tool_support",
+        sql: include_str!("migrations/0013_zcode_tool_support.sql"),
+    },
 ];
 
 struct Migration {
@@ -473,7 +478,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 12);
+        assert_eq!(database.schema_version().unwrap(), 13);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1011,7 +1016,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 12);
+            assert_eq!(database.schema_version().unwrap(), 13);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1046,7 +1051,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 12);
+            assert_eq!(database.schema_version().unwrap(), 13);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1101,7 +1106,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 12);
+        assert_eq!(database.schema_version().unwrap(), 13);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1169,7 +1174,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 12);
+            assert_eq!(database.schema_version().unwrap(), 13);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1240,7 +1245,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 12);
+            assert_eq!(database.schema_version().unwrap(), 13);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1327,7 +1332,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 12);
+            assert_eq!(database.schema_version().unwrap(), 13);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1423,6 +1428,141 @@ mod tests {
                 .execute(
                     "DELETE FROM mcp_project_assignments WHERE project_id = ?1 AND tool = 'cursor'",
                     [PROJECT_ONE_ID],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn zcode_tool_support_migration_opens_full_capability_storage() {
+        const ZCODE_TARGET_PROVIDER: &str = "00000000-0000-4000-8000-000000000230";
+        const ZCODE_TARGET_PROMPT: &str = "00000000-0000-4000-8000-000000000231";
+        const ZCODE_TARGET_MCP: &str = "00000000-0000-4000-8000-000000000232";
+        const ZCODE_TARGET_SKILL: &str = "00000000-0000-4000-8000-000000000233";
+        const ZCODE_PROVIDER_ID: &str = "00000000-0000-4000-8000-000000000234";
+        const ZCODE_PROFILE_IMPORT: &str = "00000000-0000-4000-8000-000000000235";
+        const ZCODE_PROMPT_PROFILE: &str = "00000000-0000-4000-8000-000000000237";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v12-zcode-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..12] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/zcode-project");
+            insert_mcp(&connection, MCP_ID, "ZCode MCP");
+            insert_skill(&connection, SKILL_ID, "zcode-skill");
+            connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body) VALUES (?1, 'claude', '可供外键验证的提示词', 'fixture')",
+                    ["00000000-0000-4000-8000-000000000227"],
+                )
+                .unwrap();
+        }
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 13);
+            let connection = database.connection();
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+
+            // ZCode 四类 artifact 都可写入 managed_targets，并走完整的分配与导入链路。
+            connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'zcode', 'provider', 'global', '/fixture/home/.zcode/v2/config.json')", [ZCODE_TARGET_PROVIDER]).unwrap();
+            connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'zcode', 'prompt', 'global', '/fixture/home/.zcode/AGENTS.md')", [ZCODE_TARGET_PROMPT]).unwrap();
+            connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'zcode', 'mcp', 'global', '/fixture/home/.zcode/cli/config.json')", [ZCODE_TARGET_MCP]).unwrap();
+            connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'zcode', 'skill', 'global', '/fixture/home/.zcode/skills')", [ZCODE_TARGET_SKILL]).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO mcp_global_assignments(tool, mcp_id) VALUES ('zcode', ?1)",
+                    [MCP_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO skill_global_assignments(tool, skill_id) VALUES ('zcode', ?1)",
+                    [SKILL_ID],
+                )
+                .unwrap();
+            connection.execute("INSERT INTO provider_profiles(id, tool, name, api_base_url, api_key, default_model, config_json, is_active) VALUES (?1, 'zcode', 'ZCode Provider', 'https://provider.example.com/v1', 'fixture-key', 'GLM-5.3', '{}', 1)", [ZCODE_PROVIDER_ID]).unwrap();
+            connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES (?1, 'zcode', 'provider', '/fixture/home/.zcode/v2/config.json', ?2, 'ZCode', '{}')", params![ZCODE_PROFILE_IMPORT, "a".repeat(64)]).unwrap();
+            connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'zcode', '00000000-0000-4000-8000-000000000227')", [PROJECT_ONE_ID]).unwrap();
+
+            // 每工具至多一份生效的 ZCode 提示词索引：第二份被拒绝。
+            connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_zcode) VALUES (?1, 'central', 'ZCode 生效提示词', '', 1)", [ZCODE_PROMPT_PROFILE]).unwrap();
+            assert!(connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_zcode) VALUES ('00000000-0000-4000-8000-000000000238', 'central', 'ZCode 第二份生效', '', 1)", []).is_err());
+
+            // 未支持工具的金丝雀仍被所有表拒绝。
+            assert!(connection
+                .execute(
+                    "INSERT INTO mcp_global_assignments(tool, mcp_id) VALUES ('windsurf', ?1)",
+                    [MCP_ID]
+                )
+                .is_err());
+            assert!(connection.execute("INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000239', 'windsurf', 'Windsurf Provider')", []).is_err());
+            assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000240', 'windsurf', 'mcp', 'global', '/fixture/windsurf.json')", []).is_err());
+            assert!(connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'windsurf', '00000000-0000-4000-8000-000000000227')", [PROJECT_ONE_ID]).is_err());
+
+            connection
+                .execute(
+                    "DELETE FROM prompt_project_assignments WHERE project_id = ?1 AND tool = 'zcode'",
+                    [PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM profile_import_previews WHERE id = ?1",
+                    [ZCODE_PROFILE_IMPORT],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM provider_profiles WHERE id = ?1",
+                    [ZCODE_PROVIDER_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM mcp_global_assignments WHERE tool = 'zcode'",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM skill_global_assignments WHERE tool = 'zcode'",
+                    [],
+                )
+                .unwrap();
+            for target_id in [
+                ZCODE_TARGET_PROVIDER,
+                ZCODE_TARGET_PROMPT,
+                ZCODE_TARGET_MCP,
+                ZCODE_TARGET_SKILL,
+            ] {
+                connection
+                    .execute("DELETE FROM managed_targets WHERE id = ?1", [target_id])
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    "DELETE FROM prompt_profiles WHERE id = ?1",
+                    [ZCODE_PROMPT_PROFILE],
                 )
                 .unwrap();
         }
@@ -1547,7 +1687,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 12);
+            assert_eq!(database.schema_version().unwrap(), 13);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

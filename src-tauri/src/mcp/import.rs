@@ -335,10 +335,17 @@ fn verified_existing_items(
 }
 
 fn item_projection(tool: Tool, items: Map<String, Value>) -> Value {
+    let container = service::native_container(tool);
     if items.is_empty() {
         json!({})
     } else {
-        json!({service::native_container(tool): items})
+        container
+            .iter()
+            .rev()
+            .fold(Value::Object(items), |child, segment| {
+                let segment: &str = segment;
+                json!({ segment: child })
+            })
     }
 }
 
@@ -376,7 +383,11 @@ fn read_native(environment: &ExplicitEnvironment, tool: Tool) -> Result<NativeMc
     let scan = scan_target(
         service::tool_adapter(tool),
         &descriptor,
-        &ManagedOwnership::selectors([[container]]),
+        &ManagedOwnership::selectors([container
+            .iter()
+            .copied()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()]),
     );
     match scan {
         TargetScan::Missing => Ok(NativeMcp {
@@ -385,7 +396,8 @@ fn read_native(environment: &ExplicitEnvironment, tool: Tool) -> Result<NativeMc
             items: Map::new(),
         }),
         TargetScan::Observed(observed) => {
-            let items = match observed.managed_projection.get(container) {
+            let items = match service::projection_value_at(&observed.managed_projection, container)
+            {
                 None => Map::new(),
                 Some(Value::Object(items)) => items.clone(),
                 Some(_) => return Err(AppError::parse(path, "MCP")),

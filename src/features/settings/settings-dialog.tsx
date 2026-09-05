@@ -14,11 +14,12 @@ import { appSettingsQueryOptions, settingsKeys } from "@/lib/settings-api";
 import { filterEnabledTools, toolMetadata } from "@/lib/tool-metadata";
 import { cn } from "@/lib/utils";
 
-// 启用的工具固定按 claude → codex → cursor 顺序展示与提交。
+// 启用的工具固定按 claude → codex → cursor → zcode 顺序展示与提交。
 const ENABLED_TOOL_ORDER = [
   "claude",
   "codex",
   "cursor",
+  "zcode",
 ] as const satisfies readonly Tool[];
 
 interface SettingsDialogProps {

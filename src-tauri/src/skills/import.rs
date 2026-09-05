@@ -58,7 +58,10 @@ struct CandidateEvidence {
 fn is_managed_source(kind: SourceKind) -> bool {
     matches!(
         kind,
-        SourceKind::ClaudeGlobal | SourceKind::CodexHome | SourceKind::CursorHome
+        SourceKind::ClaudeGlobal
+            | SourceKind::CodexHome
+            | SourceKind::CursorHome
+            | SourceKind::ZcodeHome
     )
 }
 
@@ -87,6 +90,18 @@ fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKin
             ),
             (
                 SourceKind::CursorAgents,
+                environment.home().join(".agents/skills"),
+            ),
+        ],
+        Tool::Zcode => vec![
+            (
+                // 官方目录，正式同步目标，优先展示。
+                SourceKind::ZcodeHome,
+                environment.home().join(".zcode/skills"),
+            ),
+            (
+                // 跨工具通用目录，仅作为导入来源，不再是同步目标。
+                SourceKind::ZcodeAgents,
                 environment.home().join(".agents/skills"),
             ),
         ],
@@ -1371,6 +1386,7 @@ mod tests {
                 Tool::Codex => compat.clone(),
                 Tool::Claude => fixture.environment.claude_config_dir().join("skills"),
                 Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
+                Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
             };
             fixture.skill(&compat.join(".system/builtin"), "builtin");
             fs::create_dir_all(&source).unwrap();
@@ -1407,6 +1423,7 @@ mod tests {
                     Tool::Codex => compat.clone(),
                     Tool::Claude => fixture.environment.claude_config_dir().join("skills"),
                     Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
+                    Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
                 };
                 let actual = fixture.root.join("external");
                 fixture.skill(&actual.join("one"), "one");

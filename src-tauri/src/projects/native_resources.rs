@@ -18,9 +18,9 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, DirectoryEntry, DiscoveryContext, ExplicitEnvironment,
-        ManagedOwnership, ObservedDocument, PolicyState, TargetDescriptor, TargetFormat,
-        TargetTrustState, ToolAdapter,
+        cursor::CursorAdapter, zcode::ZcodeAdapter, DirectoryEntry, DiscoveryContext,
+        ExplicitEnvironment, ManagedOwnership, ObservedDocument, PolicyState, TargetDescriptor,
+        TargetFormat, TargetTrustState, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -313,7 +313,11 @@ fn observe_mcp_items(
     target_id: &str,
 ) -> Result<Option<Vec<ObservedNativeItem>>, AppError> {
     let container = native_mcp_container(descriptor.tool);
-    let ownership = ManagedOwnership::selectors([[container]]);
+    let ownership = ManagedOwnership::selectors([container
+        .iter()
+        .copied()
+        .map(str::to_owned)
+        .collect::<Vec<_>>()]);
     let scan = scan_target(adapter, descriptor, &ownership);
     let TargetScan::Observed(observed) = scan else {
         return Ok(match scan {
@@ -321,10 +325,8 @@ fn observe_mcp_items(
             _ => None,
         });
     };
-    let Some(servers) = observed
-        .managed_projection
-        .get(container)
-        .and_then(Value::as_object)
+    let Some(servers) =
+        json_value_at(&observed.managed_projection, container).and_then(Value::as_object)
     else {
         return Ok(Some(Vec::new()));
     };
@@ -492,12 +494,13 @@ fn prepare_native_action(
     validate_live_occupancy(input.action, entry_type, &scan, &descriptor, &record)?;
     if descriptor.artifact_kind == ArtifactKind::Mcp {
         if let TargetScan::Observed(observed) = &scan {
-            let value = observed
-                .managed_projection
-                .get(native_mcp_container(descriptor.tool))
-                .and_then(Value::as_object)
-                .and_then(|servers| servers.get(&record.external_key))
-                .unwrap_or(&observed.managed_projection);
+            let value = json_value_at(
+                &observed.managed_projection,
+                native_mcp_container(descriptor.tool),
+            )
+            .and_then(Value::as_object)
+            .and_then(|servers| servers.get(&record.external_key))
+            .unwrap_or(&observed.managed_projection);
             register_native_projection_secrets(redactor, value);
         }
     }
@@ -510,8 +513,7 @@ fn prepare_native_action(
         &scan,
     )?;
     if descriptor.artifact_kind == ArtifactKind::Mcp {
-        if let Some(item) = desired
-            .get(native_mcp_container(descriptor.tool))
+        if let Some(item) = json_value_at(&desired, native_mcp_container(descriptor.tool))
             .and_then(Value::as_object)
             .and_then(|servers| servers.get(&record.external_key))
         {
@@ -678,17 +680,16 @@ fn restore_desired_projection(
                 .map_err(|_| AppError::not_found("snapshot", &snapshot.snapshot_path))?;
             let document = parse_config_value(descriptor.format, &bytes)?;
             let container = native_mcp_container(descriptor.tool);
-            let item = document
-                .get(container)
+            let item = json_value_at(&document, container)
                 .and_then(Value::as_object)
                 .and_then(|servers| servers.get(&record.external_key))
                 .cloned()
                 .ok_or_else(|| AppError::conflict("snapshot", "禁用快照中找不到原 MCP 条目"))?;
-            let mut servers = Map::new();
-            servers.insert(record.external_key.clone(), item);
-            let mut root = Map::new();
-            root.insert(container.to_owned(), Value::Object(servers));
-            Ok(Value::Object(root))
+            let servers = Value::Object(Map::from_iter([(record.external_key.clone(), item)]));
+            let root = container.iter().rev().fold(servers, |child, segment| {
+                Value::Object(Map::from_iter([(segment.to_string(), child)]))
+            });
+            Ok(root)
         }
         ProjectNativeEntryType::PromptFile => {
             let bytes = fs::read(&snapshot.snapshot_path)
@@ -780,13 +781,13 @@ fn item_hash_from_scan(
 ) -> Result<String, AppError> {
     match entry_type {
         ProjectNativeEntryType::McpEntry => {
-            let container = native_mcp_container(descriptor.tool);
-            let value = observed
-                .managed_projection
-                .get(container)
-                .and_then(Value::as_object)
-                .and_then(|servers| servers.get(external_key))
-                .ok_or_else(|| AppError::conflict("projectNativeResource", "MCP 条目已不存在"))?;
+            let value = json_value_at(
+                &observed.managed_projection,
+                native_mcp_container(descriptor.tool),
+            )
+            .and_then(Value::as_object)
+            .and_then(|servers| servers.get(external_key))
+            .ok_or_else(|| AppError::conflict("projectNativeResource", "MCP 条目已不存在"))?;
             Ok(hash_json(value))
         }
         ProjectNativeEntryType::Directory | ProjectNativeEntryType::Symlink => {
@@ -860,11 +861,12 @@ fn validate_live_occupancy(
 
 fn projection_key_absent(scan: &TargetScan, descriptor: &TargetDescriptor, key: &str) -> bool {
     match scan {
-        TargetScan::Observed(observed) => observed
-            .managed_projection
-            .get(native_mcp_container(descriptor.tool))
-            .and_then(Value::as_object)
-            .map_or(true, |servers| !servers.contains_key(key)),
+        TargetScan::Observed(observed) => json_value_at(
+            &observed.managed_projection,
+            native_mcp_container(descriptor.tool),
+        )
+        .and_then(Value::as_object)
+        .map_or(true, |servers| !servers.contains_key(key)),
         TargetScan::Missing => true,
         _ => false,
     }
@@ -904,10 +906,11 @@ fn native_ownership(
     external_key: &str,
 ) -> Result<ManagedOwnership, AppError> {
     match artifact_kind {
-        ArtifactKind::Mcp => Ok(ManagedOwnership::selectors([[
-            native_mcp_container(tool),
-            external_key,
-        ]])),
+        ArtifactKind::Mcp => Ok(ManagedOwnership::selectors([native_mcp_container(tool)
+            .iter()
+            .copied()
+            .chain(std::iter::once(external_key))
+            .collect::<Vec<_>>()])),
         ArtifactKind::Skill => Ok(ManagedOwnership::SymlinkNames(
             vec![external_key.to_owned()],
         )),
@@ -1037,6 +1040,7 @@ fn parse_tool(value: &str) -> Result<Tool, AppError> {
         "claude" => Ok(Tool::Claude),
         "codex" => Ok(Tool::Codex),
         "cursor" => Ok(Tool::Cursor),
+        "zcode" => Ok(Tool::Zcode),
         _ => Err(AppError::invalid_input("tool", "工具类型无效")),
     }
 }
@@ -1110,11 +1114,21 @@ fn skill_entry_item_hash(
     }
 }
 
-fn native_mcp_container(tool: Tool) -> &'static str {
+/// MCP 条目在原生文件中的容器路径；ZCode 是官方定义的嵌套键 `mcp.servers`。
+fn native_mcp_container(tool: Tool) -> &'static [&'static str] {
     match tool {
-        Tool::Claude | Tool::Cursor => "mcpServers",
-        Tool::Codex => "mcp_servers",
+        Tool::Claude | Tool::Cursor => &["mcpServers"],
+        Tool::Codex => &["mcp_servers"],
+        Tool::Zcode => &["mcp", "servers"],
     }
+}
+
+fn json_value_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
 }
 
 fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
@@ -1122,11 +1136,12 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
         Tool::Claude => &ClaudeAdapter,
         Tool::Codex => &CodexAdapter,
         Tool::Cursor => &CursorAdapter,
+        Tool::Zcode => &ZcodeAdapter,
     }
 }
 
-fn tool_adapters() -> [&'static dyn ToolAdapter; 3] {
-    [&ClaudeAdapter, &CodexAdapter, &CursorAdapter]
+fn tool_adapters() -> [&'static dyn ToolAdapter; 4] {
+    [&ClaudeAdapter, &CodexAdapter, &CursorAdapter, &ZcodeAdapter]
 }
 
 #[cfg(test)]
@@ -2427,6 +2442,7 @@ mod tests {
                 Tool::Codex => ".codex/skills",
                 Tool::Cursor => ".cursor/skills",
                 Tool::Claude => unreachable!(),
+                Tool::Zcode => unreachable!(),
             };
             let project = fixture.register_project_with(|root| {
                 write_skill(&root.join(relative), "native-dir", "platform-bytes");

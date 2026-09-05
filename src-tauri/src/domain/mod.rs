@@ -50,6 +50,7 @@ string_enum! {
         Claude => "claude",
         Codex => "codex",
         Cursor => "cursor",
+        Zcode => "zcode",
     }
 }
 
@@ -412,6 +413,7 @@ mod tests {
             serde_json::to_value(Tool::Claude).unwrap(),
             serde_json::to_value(Tool::Codex).unwrap(),
             serde_json::to_value(Tool::Cursor).unwrap(),
+            serde_json::to_value(Tool::Zcode).unwrap(),
             serde_json::to_value(Scope::Global).unwrap(),
             serde_json::to_value(Scope::Project).unwrap(),
             serde_json::to_value(ArtifactKind::Provider).unwrap(),
@@ -462,6 +464,7 @@ mod tests {
             "claude",
             "codex",
             "cursor",
+            "zcode",
             "global",
             "project",
             "provider",

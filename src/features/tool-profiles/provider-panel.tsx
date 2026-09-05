@@ -34,6 +34,7 @@ interface ProviderFormState {
   credentialEnvKey: ClaudeCredentialEnvKey;
   extraEnvText: string;
   wireApi: string;
+  zcodeKind: string;
 }
 
 const emptyForm: ProviderFormState = {
@@ -44,6 +45,7 @@ const emptyForm: ProviderFormState = {
   credentialEnvKey: "ANTHROPIC_API_KEY",
   extraEnvText: "",
   wireApi: "",
+  zcodeKind: "anthropic",
 };
 
 export function ProviderPanel({
@@ -76,6 +78,7 @@ export function ProviderPanel({
         credentialEnvKey: tool === "claude" ? form.credentialEnvKey : null,
         extraEnv: tool === "claude" ? extraEnv : {},
         wireApi: tool === "codex" && form.wireApi ? form.wireApi : null,
+        zcodeKind: tool === "zcode" ? form.zcodeKind : null,
       };
       if (editing) {
         return unwrapResult(
@@ -436,7 +439,22 @@ export function ProviderPanel({
             }
           />
         </Field>
-        {tool === "claude" ? (
+        {tool === "zcode" ? (
+          <Field label="API 格式" id={`${tool}-zcode-kind`}>
+            <select
+              id={`${tool}-zcode-kind`}
+              className="field"
+              value={form.zcodeKind}
+              onChange={(event) =>
+                setForm({ ...form, zcodeKind: event.currentTarget.value })
+              }
+            >
+              <option value="anthropic">anthropic</option>
+              <option value="openai">openai</option>
+              <option value="gemini">gemini</option>
+            </select>
+          </Field>
+        ) : tool === "claude" ? (
           <>
             <Field label="认证 env key" id={`${tool}-credential-key`}>
               <select
@@ -540,6 +558,7 @@ function editProfile(
       .map(([key, value]) => `${key}=${value}`)
       .join("\n"),
     wireApi: profile.options.wireApi ?? "",
+    zcodeKind: profile.options.zcodeKind ?? "anthropic",
   });
 }
 
