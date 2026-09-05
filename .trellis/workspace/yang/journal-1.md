@@ -934,3 +934,39 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
+
+
+## Session 35: 新增 Hooks 全局级与项目级管理
+
+**Date**: 2026-09-05
+**Task**: 新增 Hooks 全局级与项目级管理
+**Branch**: `main`
+
+### Summary
+
+按 MCP/Skills 同构管线接入 Hooks 作为第五类 artifact：四工具官方 hooks 合同核验后，落地 domain::HookEvent 统一事件模型、0014 迁移、hooks service/import/commands、前端 Hooks 页面与项目页签，pnpm check 与 hooks_e2e 全绿。
+
+### Main Changes
+
+- 领域与适配器：ArtifactKind::Hook + 13 个 canonical 事件 + 四工具事件矩阵（Cursor camelCase 映射），四 adapter 新增全局/项目 descriptor
+- 迁移 0014：hooks/分配表/互斥触发器，writable_schema 放宽 managed_targets 与 managed_items 的 artifact CHECK（含 Cursor 限制）
+- 服务与命令：投影/ownership/逐条基线/导入发现全套 RPC；数组条目用 事件|身份|matcher 外部键，readopt 按分组重定位；初始空子树判定为可合并接管
+- 前端：侧边栏 Hooks 页面（CRUD/分配按钮按事件兼容禁用/导入对话框/目标状态/预览 Apply）+ 项目详情 Hooks 页签
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4689f42` | (see git log) |
+
+### Testing
+
+- [OK] pnpm check 全绿（238 前端 + 262 Rust 库测试）；hooks_e2e 覆盖四工具原生合同共存断言与漂移→接管→in_sync；迁移金丝雀与互斥触发器断言
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真机 smoke：四工具实机 hooks 写入与运行验证；后续可评估 ZCode process 型与 Cursor prompt 型 hook 的接入
