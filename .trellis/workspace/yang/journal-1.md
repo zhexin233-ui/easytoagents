@@ -1075,3 +1075,24 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Next Steps
 
 - 已知限制：同 (tool, hook) 双事件并存需复制中央记录（managed item 身份模型改造后可支持）
+
+
+## Session 39: Hooks 工具事件分组页签改为图标按钮
+
+**Date**: 2026-09-06
+**Task**: Hooks 工具事件分组页签改为图标按钮
+**Branch**: `main`
+
+### Summary
+
+Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项目页 ProjectToolViewButton 样式：未选中置灰），aria-label 不变，测试全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b7b2cc9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
