@@ -1096,3 +1096,28 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 40: Hook 项目追加对齐全局事件分组视图
+
+**Date**: 2026-09-06
+**Task**: Hook 项目追加对齐全局事件分组视图
+**Branch**: `main`
+
+### Summary
+
+项目详情页 Hook 项目追加改为与全局 Hooks 管理一致的事件分组结构：HookProjectOptionDto 回填 assigned_event，抽取共享事件常量模块，分组内经 ProjectHookPickerDialog 添加/移除，继承项只读摘要；项目页补 3 个分组交互测试，pnpm check 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eac5339` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 如需分组内直接切换事件（同 Hook 换组）可在选择器中扩展确认切换流
