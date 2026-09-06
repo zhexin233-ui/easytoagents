@@ -24,8 +24,9 @@ pub mod codex;
 pub mod cursor;
 pub mod zcode;
 
-/// Provider/Prompt 页面与引导仍只服务有正式文件合同的工具。
-pub const PROFILE_TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::Zcode];
+/// Provider/Prompt 页面与引导服务有正式文件合同的工具；Cursor Provider 仍不
+/// 支持，但 Prompt 已按官方规则文件合同接入（任务 09-06-cursor-prompt-support）。
+pub const PROFILE_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 /// MCP 与 Skills 的可分配工具集合。
 pub const ASSIGNABLE_MCP_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 4] =
@@ -39,6 +40,10 @@ pub enum TargetFormat {
     Json,
     Toml,
     Markdown,
+    /// Cursor 规则文件（`.cursor/rules/*.mdc`）：Markdown + 固定
+    /// `alwaysApply: true` frontmatter。渲染时包装、观测时剥离，
+    /// 受管投影域与其他工具的纯 Markdown 正文保持同构。
+    CursorMdc,
     SymlinkDirectory,
 }
 
@@ -48,13 +53,14 @@ impl TargetFormat {
             Self::Json => "json",
             Self::Toml => "toml",
             Self::Markdown => "markdown",
+            Self::CursorMdc => "cursor_mdc",
             Self::SymlinkDirectory => "symlink_directory",
         }
     }
 
     pub const fn expected_type(self) -> TargetType {
         match self {
-            Self::Json | Self::Toml | Self::Markdown => TargetType::File,
+            Self::Json | Self::Toml | Self::Markdown | Self::CursorMdc => TargetType::File,
             Self::SymlinkDirectory => TargetType::Directory,
         }
     }
@@ -960,6 +966,11 @@ fn parse_document(
                 .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
             Ok(ObservedDocument::Markdown(text))
         }
+        (TargetFormat::CursorMdc, ObservedRaw::File(bytes)) => {
+            let text = String::from_utf8(bytes)
+                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            Ok(ObservedDocument::Markdown(strip_mdc_frontmatter(&text)))
+        }
         (TargetFormat::SymlinkDirectory, ObservedRaw::Directory(entries)) => {
             Ok(ObservedDocument::SymlinkDirectory(entries))
         }
@@ -1092,6 +1103,12 @@ fn render_document(
             })?;
             Ok(RenderedTarget::File(text.as_bytes().to_vec()))
         }
+        (TargetFormat::CursorMdc, _, ManagedOwnership::WholeDocument) => {
+            let body = desired_projection.as_str().ok_or_else(|| {
+                AppError::invalid_input("desiredProjection", "Markdown 投影必须是字符串")
+            })?;
+            Ok(RenderedTarget::File(render_cursor_mdc(body).into_bytes()))
+        }
         (TargetFormat::SymlinkDirectory, _, _) => Err(AppError::invalid_input(
             "targetFormat",
             "Phase 2 不渲染或写入 Skills 链接",
@@ -1101,6 +1118,51 @@ fn render_document(
             "受管选择器与目标格式不匹配",
         )),
     }
+}
+
+/// Cursor `.mdc` 规则文件的固定 frontmatter：官方要求规则带 `alwaysApply: true`
+/// 才会作为常驻指令进入每次会话（cursor.com/docs/rules，2026-09-06 核验）。
+/// frontmatter 由应用固定产出，档案正文保持工具无关。
+const CURSOR_MDC_FRONTMATTER: &str = "---\nalwaysApply: true\n---\n\n";
+
+fn render_cursor_mdc(body: &str) -> String {
+    format!("{CURSOR_MDC_FRONTMATTER}{body}")
+}
+
+/// 剥离 `.mdc` 首部的 frontmatter 块，得到与档案正文同域的纯正文。
+/// 与 [`render_cursor_mdc`] 严格互逆：渲染在闭合 `---` 后写 `\n\n` 分隔，
+/// 剥离去掉块尾换行后仅吞掉后续的空行分隔。无 frontmatter 的文件按原文返回。
+fn strip_mdc_frontmatter(text: &str) -> String {
+    let after_open = match text
+        .strip_prefix("---\r\n")
+        .or_else(|| text.strip_prefix("---\n"))
+    {
+        Some(rest) => rest,
+        None => return text.to_owned(),
+    };
+    let mut offset = 0usize;
+    for line in after_open.lines() {
+        let line_len = line.len();
+        let rest_starts = offset + line_len;
+        let eol_len = if after_open[rest_starts..].starts_with("\r\n") {
+            2
+        } else if after_open[rest_starts..].starts_with('\n') {
+            1
+        } else {
+            0
+        };
+        let is_closing = line == "---";
+        offset = rest_starts + eol_len;
+        if is_closing {
+            return after_open[offset..]
+                .trim_start_matches(['\n', '\r'])
+                .to_owned();
+        }
+        if eol_len == 0 {
+            break;
+        }
+    }
+    text.to_owned()
 }
 
 fn get_json_path<'a>(value: &'a Value, path: &[String]) -> Result<Option<&'a Value>, AppError> {
@@ -1282,11 +1344,12 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        canonicalize_project_root, CapabilityState, ConservativeClaudeCustomizationPolicyProbe,
-        ConservativeClaudeUserMcpProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
-        ObservedRaw, PolicyState, PromptOverrideState, RenderedTarget, TargetTrustState,
-        ToolAdapter, ToolAvailability, ToolAvailabilityState,
-        VerifiedClaudeCustomizationPolicyEvidence, VerifiedClaudeUserMcpEvidence,
+        canonicalize_project_root, render_cursor_mdc, strip_mdc_frontmatter, CapabilityState,
+        ConservativeClaudeCustomizationPolicyProbe, ConservativeClaudeUserMcpProbe,
+        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, ObservedRaw, PolicyState,
+        PromptOverrideState, RenderedTarget, TargetTrustState, ToolAdapter, ToolAvailability,
+        ToolAvailabilityState, VerifiedClaudeCustomizationPolicyEvidence,
+        VerifiedClaudeUserMcpEvidence,
     };
     use crate::{
         adapters::{claude::ClaudeAdapter, codex::CodexAdapter},
@@ -1297,6 +1360,41 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/phase2")
             .join(name)
+    }
+
+    #[test]
+    fn cursor_mdc_frontmatter_strip_is_inverse_of_render() {
+        let body = "# 团队规范\n\n- 使用简体中文回复\n";
+        let rendered = render_cursor_mdc(body);
+        assert_eq!(
+            rendered,
+            "---\nalwaysApply: true\n---\n\n# 团队规范\n\n- 使用简体中文回复\n"
+        );
+        assert_eq!(strip_mdc_frontmatter(&rendered), body);
+
+        // 正文以 `---` 开头：只剥离首个 frontmatter 块，正文原样保留。
+        let tricky_body = "---\nother: yaml\n---\n\n正文";
+        assert_eq!(
+            strip_mdc_frontmatter(&render_cursor_mdc(tricky_body)),
+            tricky_body
+        );
+
+        // 无 frontmatter 的文件按原文返回。
+        assert_eq!(strip_mdc_frontmatter("# 纯规则\n"), "# 纯规则\n");
+        assert_eq!(strip_mdc_frontmatter(""), "");
+
+        // 未闭合的 frontmatter 不剥除（可能是正文的一部分）。
+        assert_eq!(
+            strip_mdc_frontmatter("---\nalwaysApply: true\n"),
+            "---\nalwaysApply: true\n"
+        );
+
+        // CRLF 文件：剥离 frontmatter 后正文保留（正文自身的行尾不被改写）。
+        let crlf = "---\r\nalwaysApply: true\r\n---\r\n\r\n规则正文\r\n";
+        assert_eq!(strip_mdc_frontmatter(crlf), "规则正文\r\n");
+
+        // 空正文渲染为仅含 frontmatter 的文件，剥离后得到空串。
+        assert_eq!(strip_mdc_frontmatter(&render_cursor_mdc("")), "");
     }
 
     fn environment(

@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ArtifactKind, PreviewPlan, Tool } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { Button } from "@/components/ui/button";
 import { ProviderPanel } from "@/features/tool-profiles/provider-panel";
 import {
   profileErrorText,
@@ -62,7 +63,9 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   const title = metadata.label;
   const applyError = profileErrorText(applyMutation.error);
 
-  if (!metadata.capabilities.provider) {
+  // Provider 与提示词均不支持的工具整页 fail closed；Cursor 这类「仅 Provider
+  // 不支持」的工具仍进入正常布局（状态区 + 提示词入口），但不渲染 Provider 面板。
+  if (!metadata.capabilities.provider && !metadata.capabilities.promptGlobal) {
     return (
       <main className="p-6 lg:p-8">
         <div className="mx-auto max-w-6xl">
@@ -170,11 +173,36 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
       </div>
 
       <div className="mx-auto mt-6 max-w-6xl">
-        <ProviderPanel
-          tool={tool}
-          directApply={directApply}
-          onPreview={(plan) => handlePreview(plan, "provider")}
-        />
+        {metadata.capabilities.provider ? (
+          <ProviderPanel
+            tool={tool}
+            directApply={directApply}
+            onPreview={(plan) => handlePreview(plan, "provider")}
+          />
+        ) : null}
+        {!metadata.capabilities.provider &&
+        metadata.capabilities.promptGlobal ? (
+          <section
+            className="bg-card rounded-lg border p-4 text-sm"
+            aria-labelledby="tool-prompt-entry-title"
+          >
+            <h2 id="tool-prompt-entry-title" className="font-semibold">
+              {title} 提示词
+            </h2>
+            <p className="text-muted-foreground mt-2">
+              全局与项目提示词使用官方规则文件合同管理，正文会在应用时写入受管
+              <code className="mx-1">.mdc</code> 文件。
+            </p>
+            {statusQuery.data?.promptTargetPath ? (
+              <code className="mt-2 block text-xs break-all">
+                {statusQuery.data.promptTargetPath}
+              </code>
+            ) : null}
+            <Button asChild className="mt-3" size="sm" variant="outline">
+              <a href="#/prompts">管理提示词</a>
+            </Button>
+          </section>
+        ) : null}
       </div>
 
       <ChangePreviewDialog

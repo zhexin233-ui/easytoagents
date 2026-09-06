@@ -277,6 +277,7 @@ pub fn create_prompt_profile(
             is_active_claude: false,
             is_active_codex: false,
             is_active_zcode: false,
+            is_active_cursor: false,
             imported_from_path: None,
         },
     )?)
@@ -665,6 +666,7 @@ pub fn confirm_prompt_import(
             is_active_claude: preview.tool == Tool::Claude,
             is_active_codex: preview.tool == Tool::Codex,
             is_active_zcode: preview.tool == Tool::Zcode,
+            is_active_cursor: preview.tool == Tool::Cursor,
             imported_from_path: Some(preview.target_path.clone()),
         },
         &ImportedBaselineRecord {
@@ -1254,7 +1256,6 @@ fn ensure_tool_is_available(descriptor: &TargetDescriptor) -> Result<(), AppErro
             "capability",
             match descriptor.capability.diagnostic_code.as_deref() {
                 Some("CURSOR_PROVIDER_UNSUPPORTED") => "CURSOR_PROVIDER_UNSUPPORTED",
-                Some("CURSOR_PROMPT_UNSUPPORTED") => "CURSOR_PROMPT_UNSUPPORTED",
                 _ => "工具安装探针未能安全确认版本",
             },
         )),
@@ -1776,9 +1777,9 @@ fn allowed_root(environment: &ExplicitEnvironment, tool: Tool) -> PathBuf {
 }
 
 fn ensure_profile_capability(tool: Tool, artifact_kind: ArtifactKind) -> Result<(), AppError> {
-    if tool == Tool::Cursor
-        && matches!(artifact_kind, ArtifactKind::Provider | ArtifactKind::Prompt)
-    {
+    // Cursor Prompt 已按官方规则文件合同开放（任务 09-06-cursor-prompt-support）；
+    // Provider / API Key / 模型仍无官方文件合同，保持拒绝。
+    if tool == Tool::Cursor && artifact_kind == ArtifactKind::Provider {
         return Err(cursor_unsupported(artifact_kind));
     }
     Ok(())
@@ -1789,9 +1790,8 @@ fn cursor_unsupported(artifact_kind: ArtifactKind) -> AppError {
         "capability",
         match artifact_kind {
             ArtifactKind::Provider => "CURSOR_PROVIDER_UNSUPPORTED",
-            ArtifactKind::Prompt => "CURSOR_PROMPT_UNSUPPORTED",
-            ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
-                "Cursor 仅在 MCP/Skills/Hooks 中受支持"
+            ArtifactKind::Prompt | ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
+                "Cursor 该能力不受支持"
             }
         },
     )
@@ -1850,6 +1850,9 @@ fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError
     }
     if record.is_active_zcode {
         global_tools.push(Tool::Zcode);
+    }
+    if record.is_active_cursor {
+        global_tools.push(Tool::Cursor);
     }
     Ok(PromptProfileDto {
         id: record.id.clone(),
@@ -2735,24 +2738,29 @@ base_url = "https://external.example.com/v1"
     }
 
     #[test]
-    fn cursor_profile_and_prompt_capabilities_fail_closed_before_storage() {
+    fn cursor_provider_stays_fail_closed_while_prompt_opens() {
         let mut fixture = fixture();
         let status = get_tool_profile_status(&fixture.environment, Tool::Cursor).unwrap();
         assert_eq!(
             status.provider_capability.state,
             CapabilityState::Unsupported
         );
-        assert_eq!(status.prompt_capability.state, CapabilityState::Unsupported);
+        assert_eq!(status.prompt_capability.state, CapabilityState::Supported);
         assert_eq!(
             status.provider_capability.diagnostic_code.as_deref(),
             Some("CURSOR_PROVIDER_UNSUPPORTED")
         );
-        assert_eq!(
-            status.prompt_capability.diagnostic_code.as_deref(),
-            Some("CURSOR_PROMPT_UNSUPPORTED")
-        );
         assert!(status.provider_target_path.is_none());
-        assert!(status.prompt_target_path.is_none());
+        assert_eq!(
+            status.prompt_target_path.as_deref(),
+            Some(
+                fixture
+                    .home
+                    .join(".cursor/rules/easytoagents.mdc")
+                    .to_str()
+                    .unwrap()
+            )
+        );
 
         assert_eq!(
             list_provider_profiles(&fixture.database, Tool::Cursor)
@@ -2771,11 +2779,11 @@ base_url = "https://external.example.com/v1"
             .code(),
             crate::error::ErrorCode::InvalidInput
         );
+        // 提示词导入在无原生规则文件时返回 None（不再因 capability 拒绝）。
         assert_eq!(
             discover_prompt_import(&mut fixture.database, &fixture.environment, Tool::Cursor)
-                .unwrap_err()
-                .code(),
-            crate::error::ErrorCode::InvalidInput
+                .unwrap(),
+            None
         );
         assert_eq!(
             preview_provider_sync(
@@ -3270,6 +3278,140 @@ tenant = "fixture"
             .unwrap_err()
             .code(),
             crate::error::ErrorCode::InvalidInput
+        );
+    }
+
+    #[test]
+    fn cursor_prompt_writes_official_mdc_contract_and_import_strips_frontmatter() {
+        let mut fixture = fixture();
+        // 导入路径：预置带 frontmatter 的官方 `.mdc` 规则文件。
+        fs::create_dir_all(fixture.home.join(".cursor/rules")).unwrap();
+        fs::write(
+            fixture.home.join(".cursor/rules/easytoagents.mdc"),
+            "---\nalwaysApply: false\n---\n\n# 既有规则\n\n- 保持精确\n",
+        )
+        .unwrap();
+        let preview_dto =
+            discover_prompt_import(&mut fixture.database, &fixture.environment, Tool::Cursor)
+                .unwrap()
+                .expect("Cursor 全局规则文件应可发现");
+        assert_eq!(
+            preview_dto.body, "# 既有规则\n\n- 保持精确\n",
+            "导入正文必须剥离 frontmatter"
+        );
+        let imported = confirm_prompt_import(
+            &mut fixture.database,
+            &fixture.environment,
+            ConfirmImportInput {
+                preview_id: preview_dto.preview_id,
+                name: "导入的 Cursor 规则".to_owned(),
+            },
+        )
+        .unwrap();
+        assert!(imported.global_tools.contains(&Tool::Cursor));
+        // 无损导入合同：导入本身不修改原生文件（frontmatter 保持用户现状）。
+        assert_eq!(
+            fs::read_to_string(fixture.home.join(".cursor/rules/easytoagents.mdc")).unwrap(),
+            "---\nalwaysApply: false\n---\n\n# 既有规则\n\n- 保持精确\n"
+        );
+
+        // 全局启用走完整预览/应用链路；应用发起的任何写入都归一化为
+        // 固定 alwaysApply: true frontmatter + 档案正文。
+        update_prompt_profile(
+            &mut fixture.database,
+            UpdatePromptProfileInput {
+                id: imported.id.clone(),
+                name: imported.name.clone(),
+                body: "# 既有规则\n\n- 保持精确\n- 新增条款\n".to_owned(),
+                row_version: imported.row_version,
+            },
+        )
+        .unwrap();
+        let first_preview = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Cursor,
+            None,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut SecretRedactor::default(),
+            &first_preview.preview_id,
+            Tool::Cursor,
+            ArtifactKind::Prompt,
+            None,
+        )
+        .unwrap();
+        let prompt_path = fixture.home.join(".cursor/rules/easytoagents.mdc");
+        assert_eq!(
+            fs::read_to_string(&prompt_path).unwrap(),
+            "---\nalwaysApply: true\n---\n\n# 既有规则\n\n- 保持精确\n- 新增条款\n"
+        );
+
+        // 项目分配：正文写入项目规则目录；对该工具全局生效的档案不能分配到项目。
+        let project = register_demo_project(&mut fixture);
+        let other = create_prompt_profile(
+            &mut fixture.database,
+            PromptProfileInput {
+                name: "项目级 Cursor 规则".to_owned(),
+                body: "# 项目规则\n".to_owned(),
+            },
+        )
+        .unwrap();
+        let error = crate::profiles::set_prompt_project_assignment(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::profiles::SetPromptProjectAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Cursor,
+                prompt_profile_id: Some(imported.id.clone()),
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), crate::error::ErrorCode::Conflict);
+        crate::profiles::set_prompt_project_assignment(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::profiles::SetPromptProjectAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Cursor,
+                prompt_profile_id: Some(other.id),
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap();
+        let project_preview = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Cursor,
+            Some(project.id.clone()),
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut SecretRedactor::default(),
+            &project_preview.preview_id,
+            Tool::Cursor,
+            ArtifactKind::Prompt,
+            Some(&project.id),
+        )
+        .unwrap();
+        let project_mdc = fixture
+            .home
+            .join("projects/demo/.cursor/rules/easytoagents.mdc");
+        assert_eq!(
+            fs::read_to_string(&project_mdc).unwrap(),
+            "---\nalwaysApply: true\n---\n\n# 项目规则\n"
         );
     }
 

@@ -214,13 +214,21 @@ afterEach(() => {
 });
 
 describe("ToolProfilesPage", () => {
-  it("Cursor 渠道组件边界 fail closed，且不读取或写入 Provider", () => {
+  it("Cursor 渠道渲染状态区但不渲染 Provider 面板，且不读取或写入 Provider", async () => {
     renderPage("cursor");
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Cursor 仅支持 MCP 与 Skills",
+    // 状态区正常渲染（提示词能力已开放，页面不再整页 fail closed）。
+    expect(
+      await screen.findByText("已安全检测到 Cursor 2.1.217"),
+    ).toBeVisible();
+    // Provider 面板与其表单、导入入口均不存在。
+    expect(
+      screen.queryByRole("button", { name: "新增渠道" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "管理提示词" })).toHaveAttribute(
+      "href",
+      "#/prompts",
     );
-    expect(screen.getByText("CURSOR_PROVIDER_UNSUPPORTED")).toBeVisible();
     expect(commands.listProviderProfiles).not.toHaveBeenCalled();
     expect(commands.createProviderProfile).not.toHaveBeenCalled();
     expect(commands.previewProviderSync).not.toHaveBeenCalled();

@@ -20,9 +20,10 @@ only to hang that observation; they must not relax ordinary Apply.
 
 - Reading `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or equivalent process state from
   adapters. Resolve every target from an explicit discovery context.
-- Treating a tool enum as capability evidence. Cursor currently supports only global
-  and project MCP/Skills; Provider, Prompt, API Key/model, and project Rules must return
-  explicit unsupported descriptors with no path and must never reach native reads.
+- Treating a tool enum as capability evidence. Cursor supports global/project MCP,
+  Skills, and its single managed Prompt/Rules `.mdc` file; Provider, API Key/model,
+  and any other unverified target must return explicit unsupported descriptors and
+  must never reach native reads.
 - Guessing Claude MCP targets for a non-default config root, or treating stale policy
   and trust evidence as allowed.
 - Following a symlinked target or a symlink introduced in an ancestor after discovery.
@@ -77,8 +78,9 @@ only to hang that observation; they must not relax ordinary Apply.
 
 - The Claude/Codex/Cursor × global/project × provider/prompt/MCP/skill descriptor matrix is
   complete and reports capability, policy, trust, and prompt-override state accurately.
-  Cursor Provider/Prompt/project Rules entries are always unsupported and pathless;
-  only its MCP/Skill entries are assignable.
+  Cursor Provider entries remain unsupported and pathless; its Prompt/Rules entries
+  use the explicit `~/.cursor/rules/easytoagents.mdc` and
+  `<root>/.cursor/rules/easytoagents.mdc` contracts and are assignable.
 - Sensitive selectors match the current native field names and are document-relative.
 - JSON/TOML rendering preserves unmanaged fields, tables, and comments; Markdown and
   skill-link handling do not follow unmanaged links.
@@ -111,8 +113,10 @@ only to hang that observation; they must not relax ordinary Apply.
   `CODEX_HOME` affects Codex config, prompt, and user skills targets (Codex user
   Skills resolve from `$CODEX_HOME/skills`, following `CODEX_HOME`).
 - Cursor targets are resolved only from explicit HOME/project roots: user/project MCP
-  use `.cursor/mcp.json`, and user/project Skills use `.cursor/skills`. Cursor has no
-  Provider or Prompt target and no project Rules target.
+  use `.cursor/mcp.json`, user/project Skills use `.cursor/skills`, and the managed
+  global/project Prompt target is `.cursor/rules/easytoagents.mdc`. Cursor has no
+  Provider target. `TargetFormat::CursorMdc` renders fixed `alwaysApply: true`
+  frontmatter and projects the body without frontmatter on observation/import.
 - Non-default Claude user MCP requires version-bound capability evidence. Codex
   project MCP/skills require trusted evidence. Unknown evidence blocks.
 - A preview binds descriptor identity, full/managed hashes, managed target
@@ -129,7 +133,7 @@ only to hang that observation; they must not relax ordinary Apply.
 | Only full hash changes | `external_non_owned_change`; deterministic merge allowed |
 | Managed hash changes or hash pair is incomplete | conflict; block |
 | Unknown Claude policy/capability or Codex trust | policy/untrusted/unsupported; block |
-| Cursor Provider, Prompt, API Key/model, or project Rules | unsupported and pathless; zero native reads/writes |
+| Cursor Provider, API Key/model, or unverified target | unsupported and pathless; zero native reads/writes |
 | Duplicate target or contradictory row version | `INVALID_INPUT`; persist nothing |
 
 ### 5. Good/Base/Bad Cases
@@ -143,7 +147,7 @@ only to hang that observation; they must not relax ordinary Apply.
 ### 6. Tests Required
 
 - Cover the complete Claude/Codex/Cursor × global/project × artifact descriptor matrix,
-  including fail-closed Cursor Provider/Prompt cases.
+  including fail-closed Cursor Provider cases and CursorMdc Prompt round-trips.
 - Use isolated homes/config roots/projects for missing, empty, malformed,
   permission, symlink, trust, policy, override, and drift fixtures.
 - Search serialized preview rows, RPC DTOs, errors, and journals for every fixture
@@ -430,8 +434,10 @@ let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind
   `get_prompt_project_assignment(projectId, tool)`。
 - 目标矩阵补全：Claude 项目 `<root>/CLAUDE.md`、Codex 项目
   `<root>/AGENTS.md`（均为 `TargetFormat::Markdown` + `$document` +
-  `WholeDocument`）。全局与项目分配**互不排斥**（与 mcp/skill 的互斥触发器
-  有意不同）；每 (项目, 工具) 至多一份（`prompt_project_assignments` PK）。
+  `WholeDocument`），以及 Cursor 项目
+  `<root>/.cursor/rules/easytoagents.mdc`（`TargetFormat::CursorMdc` +
+  `$document` + `WholeDocument`）。全局与项目分配**互不排斥**（与 mcp/skill
+  的互斥触发器有意不同）；每 (项目, 工具) 至多一份（`prompt_project_assignments` PK）。
 
 #### 3. Contracts
 
@@ -770,7 +776,7 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
   persisted so the app does not loop forever while both tools remain unmanaged.
 - A global snapshot restore derives its allowed root from the exact tool/artifact
   matrix (`HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or Cursor's
-  `$HOME/.cursor`). Cursor accepts only MCP/Skill snapshots; Provider/Prompt restore
+  `$HOME/.cursor`). Cursor accepts MCP/Skill/Prompt snapshots; Provider restore
   remains rejected. A removed-project snapshot is not restorable until the project
   identity is active again.
 
@@ -1153,8 +1159,9 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
 - Register/get/rescan reuse adapter `discover` + `scan_target`. Classification:
   matching managed item hash → central-owned (hidden from operable native list);
   managed key with drifted hash → central drift (not a native disable target);
-  no ownership evidence → project-native. Cursor project Prompt stays unsupported
-  and pathless.
+  no ownership evidence → project-native. Cursor project Prompt uses the managed
+  single-file `.cursor/rules/easytoagents.mdc` descriptor; other Cursor `.mdc` files
+  remain outside the application-owned target.
 - Reconciliation: new native keys upsert `active`; vanished `active` rows become
   `missing` (no snapshot, unrestorable); `disabled` stays disabled while the
   snapshot is valid and the key is absent; a disabled key that reappears becomes
@@ -1174,9 +1181,9 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
   uses a same-parent temp entry and exclusive rename. Occupancy keeps the
   snapshot. Observed Skill hash is `inspect_skill_takeover_entry` content hash
   (directory) or fingerprint (symlink), not a type/link-target-only hash.
-- Prompt disable: Claude `CLAUDE.md` and Codex `AGENTS.md` exact descriptors
-  only. Snapshot as `payload_file`, remove the file, restore original bytes and
-  Unix mode onto an empty path.
+- Prompt disable: Claude `CLAUDE.md`, Codex `AGENTS.md`, and Cursor
+  `.cursor/rules/easytoagents.mdc` exact descriptors. Snapshot as `payload_file`,
+  remove the file, restore original bytes and Unix mode onto an empty path.
 - Rollback of a native Skill mutation must restore an external symlink without
   `central_root` (`restore_external_symlink_without_central`). If restore created
   an empty parent directory, rollback may `remove_dir` that empty directory.
@@ -1213,14 +1220,16 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
 ### 6. Tests Required
 
 - Registration discovers items without rewriting bytes, trees, or symlink text.
-  Cursor project Prompt is absent; Claude/Codex Prompt are present.
+  Cursor project Prompt is present as the managed `.mdc` file; other Cursor rules
+  remain outside the managed target, while Claude/Codex Prompt are also present.
 - Empty-baseline identity: after register, `preview_mcp_sync` with no assignment
   has zero targets and does not create `.mcp.json`.
 - MCP selector-only disable/restore; unknown siblings and out-of-target TOML
   comments preserved; restore preview JSON has zero fixture-secret matches.
 - Skill Claude/Codex/Cursor directory and external-symlink disable/restore;
   occupancy keeps the snapshot; content-hash CAS sees directory edits.
-- Prompt Claude/Codex exact bytes and mode; Cursor Prompt unsupported.
+- Prompt Claude/Codex exact bytes/mode and CursorMdc frontmatter/body projection;
+  Cursor restore preserves the complete `.mdc` bytes and mode.
 - Consumed preview, active writer, occupancy, and action-matrix rejects.
 - Native Apply fault: MCP `CrashBeforeTarget` keeps bytes and blocks the writer;
   Skill symlink/directory `FailAfterTarget` with `central_root = None` rolls back.

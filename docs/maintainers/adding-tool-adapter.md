@@ -23,7 +23,17 @@ EasyToAgents 以 capability 为先，不要求新工具复制 Claude 或 Codex �
 
 证据表至少包含官方 URL、页面标题、访问日期、稳定路径/格式、版本或渠道限制。第三方博客、论坛和逆向得到的私有存储不能单独授权写入。
 
-Cursor 的当前矩阵是一个非对称示例：全局/项目 MCP 与 Skills 为 Supported；Provider、API Key、模型、全部 Prompt/Rules 为 Unsupported。不要因为 `Tool` 已存在就自动开放所有页面或数据库表。
+Cursor 的当前矩阵是一个非对称示例：全局/项目 MCP、Skills 与 Prompt/Rules 为 Supported；Provider、API Key、模型为 Unsupported（Prompt 依据 2026-09-06 官方核验开放：全局 `~/.cursor/rules` 与项目 `.cursor/rules/*.mdc`，见 cursor.com/docs/rules 与 cursor.com/help/customization/rules；应用只接管自有单文件 `rules/easytoagents.mdc`，由 `TargetFormat::CursorMdc` 包装/剥离 `alwaysApply: true` frontmatter）。不要因为 `Tool` 已存在就自动开放所有页面或数据库表。
+
+Cursor Prompt/Rules 证据矩阵（2026-09-06）：
+
+| Tool   | Artifact     | Global    | Project   | Import    | Apply     | 官方证据                                                                                                      | 核验日期   |
+| ------ | ------------ | --------- | --------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------- | ---------- |
+| Cursor | Prompt/Rules | Supported | Supported | Supported | Supported | [User rule files](https://cursor.com/help/customization/rules)；[`.mdc` rules](https://cursor.com/docs/rules) | 2026-09-06 |
+
+合同：全局目标为 `~/.cursor/rules/easytoagents.mdc`，项目目标为
+`<root>/.cursor/rules/easytoagents.mdc`；应用固定写入 `alwaysApply: true` frontmatter，
+导入/观测剥离该 frontmatter，只把正文纳入档案投影。规则目录中的其他文件不属于受管范围。
 
 ## 2. 领域合同与 Adapter
 
@@ -136,6 +146,13 @@ Pi 当前只作为待调研候选，不代表已知路径；ZCode 已于 2026-09
 | ----- | --------- | ------------ | --------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Pi    | Unknown   | Unknown      | Unknown   | Unknown   | Unknown   | 找到官方配置与安装文档，建立版本化 fixture                                                                                                             |
 | ZCode | Supported | Supported    | Supported | Supported | Supported | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键 |
+
+Cursor 的 Prompt/Rules 已于 2026-09-06 依据官方证据接入（迁移 `0017`）：全局
+`~/.cursor/rules/easytoagents.mdc`（cursor.com/help/customization/rules 的
+"User rule files" 段落）与项目 `<root>/.cursor/rules/easytoagents.mdc`
+（cursor.com/docs/rules，`.mdc` 必须带 frontmatter 才会被规则系统识别）；
+`TargetFormat::CursorMdc` 在写入时包装固定 `alwaysApply: true`、观测/导入时
+剥离 frontmatter，规则目录内其余用户文件不受纳管。
 
 ## 10. Hooks 能力矩阵（2026-09-05 官方证据核验）
 

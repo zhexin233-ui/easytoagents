@@ -737,7 +737,7 @@ describe("ProjectDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("默认选择 Claude MCP，可切换 Cursor MCP/Skills 且 Cursor 不渲染提示词", async () => {
+  it("默认选择 Claude MCP，可切换 Cursor 的 MCP/Skills 与项目提示词", async () => {
     renderPage();
 
     const resourceGroup = await screen.findByRole("group", {
@@ -884,16 +884,24 @@ describe("ProjectDetailPage", () => {
       await screen.findByRole("heading", { name: "Claude 提示词 项目追加" }),
     ).toBeVisible();
     fireEvent.click(cursorButton);
+    // Cursor 支持项目提示词：视图保持在提示词并查询项目分配。
+    expect(
+      await screen.findByRole("heading", { name: "Cursor 提示词 项目追加" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/\.cursor\/rules\/easytoagents\.mdc/),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(commands.getPromptProjectAssignment).toHaveBeenCalledWith(
+        project.id,
+        "cursor",
+      ),
+    );
+    // 可切回 MCP 视图，继续管理 Cursor 的项目 MCP。
+    fireEvent.click(mcpButton);
     expect(
       await screen.findByRole("heading", { name: "Cursor MCP 项目追加" }),
     ).toBeVisible();
-    expect(
-      within(resourceGroup).queryByRole("button", { name: "管理项目提示词" }),
-    ).not.toBeInTheDocument();
-    expect(commands.getPromptProjectAssignment).not.toHaveBeenCalledWith(
-      project.id,
-      "cursor",
-    );
     await waitFor(() =>
       expect(commands.listMcpProjectOptions).toHaveBeenLastCalledWith({
         projectId: project.id,

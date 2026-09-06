@@ -87,8 +87,10 @@ they always open `ChangePreviewDialog` and never auto-Apply.
   `activePromptProfile`, render an actionable empty state instead of the generic error
   code text.
 - Provider/Prompt surfaces are restricted to the shared `PROFILE_TOOLS` set
-  (`claude`/`codex`). Cursor has no profile route, tab, query, form, onboarding option,
-  or command payload; a stale/manual Cursor profile request must remain backend-rejected.
+  (`claude`/`codex`/`cursor`/`zcode`). Cursor has a profile route, status query,
+  Prompt tab/import/assignment flow, and onboarding Prompt option, but no Provider
+  form/query/apply path; capability metadata must keep that Provider surface hidden
+  and backend rejection fail-closed.
 
 ### 4. Validation & Error Matrix
 
@@ -400,8 +402,9 @@ const adopted = unwrapResult(
   technology. Mount only the active tool/resource assignment view and key that subtree
   by project, tool, and resource so unsubmitted child state cannot leak across
   combinations. Inside the active combination, render a "项目原生资源" heading
-  **above** "中央追加". Cursor Prompt has no native list. Native `safeSummary` and
-  diagnostics never render MCP secrets.
+  **above** "中央追加". Cursor Prompt uses the managed single-file `.mdc` native
+  target; other Cursor rule files are not listed. Native `safeSummary` and diagnostics
+  never render MCP secrets.
 - Native disable/restore always call `previewProjectNativeResourceAction` then open
   `ChangePreviewDialog`. `applyMode: "direct"` must not call
   `applyProjectNativeResourcePreview` until the user confirms. Success invalidates

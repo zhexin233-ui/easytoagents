@@ -2781,6 +2781,12 @@ fn atomic_replace_file(
         }
     }
     let parent = path.parent().expect("已验证的目标必须有父目录");
+    // Cursor 规则文件位于 `rules/` 子目录，父目录可能尚不存在；逐分量安全
+    // 创建（拒绝 symlink 祖先），已存在的父目录维持既有行为不动。
+    if fs::symlink_metadata(parent).is_err() {
+        crate::security::ensure_private_directory(parent)
+            .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_parent"))?;
+    }
     let temporary = parent.join(format!(".easytoagents-{}.tmp", Uuid::new_v4()));
     let mut file = OpenOptions::new()
         .write(true)

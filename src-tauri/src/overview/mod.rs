@@ -170,17 +170,19 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
             .map_err(|_| AppError::database(&database_path, "read_dashboard_provider"))?
     };
     let active_prompt_name = match tool {
-        Tool::Claude | Tool::Codex | Tool::Zcode => database
+        Tool::Claude | Tool::Codex | Tool::Zcode | Tool::Cursor => database
             .connection()
             .query_row(
                 "SELECT name FROM prompt_profiles
-                 WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude WHEN ?1 = 'zcode' THEN is_active_zcode ELSE is_active_codex END) = 1",
+                 WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
+                             WHEN ?1 = 'zcode' THEN is_active_zcode
+                             WHEN ?1 = 'cursor' THEN is_active_cursor
+                             ELSE is_active_codex END) = 1",
                 [tool.as_str()],
                 |row| row.get::<_, String>(0),
             )
             .optional()
             .map_err(|_| AppError::database(&database_path, "read_dashboard_prompt"))?,
-        Tool::Cursor => None,
     };
     let global_mcp_count = database
         .connection()
@@ -357,13 +359,14 @@ fn global_allowed_root(
         (Tool::Claude, _) => environment.claude_config_dir().to_path_buf(),
         // Codex 全局 Skills 目标位于 CODEX_HOME/skills，恢复根与同步写入根一致。
         (Tool::Codex, _) => environment.codex_home().to_path_buf(),
-        (Tool::Cursor, ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook) => {
-            environment.home().join(".cursor")
-        }
-        (Tool::Cursor, ArtifactKind::Provider | ArtifactKind::Prompt) => {
+        (
+            Tool::Cursor,
+            ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook | ArtifactKind::Prompt,
+        ) => environment.home().join(".cursor"),
+        (Tool::Cursor, ArtifactKind::Provider) => {
             return Err(AppError::invalid_input(
                 "capability",
-                "Cursor 不支持 Provider/Prompt 快照恢复",
+                "Cursor 不支持 Provider 快照恢复",
             ));
         }
         // ZCode 全局目标都位于 ~/.zcode 之下（v2、cli、AGENTS.md、skills）。
@@ -571,5 +574,57 @@ mod tests {
 
         let context = snapshot_restore_context(&database, &environment, snapshot_id).unwrap();
         assert_eq!(context.allowed_root, codex_root);
+    }
+
+    #[test]
+    fn cursor_prompt_restore_context_uses_cursor_root() {
+        let temporary = tempdir().unwrap();
+        let home = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(home.join("app-data")).unwrap();
+        let database = Database::open(&paths).unwrap();
+        let environment =
+            ExplicitEnvironment::new(&home, None, None, ToolAvailability::all_installed()).unwrap();
+        let target_id = "00000000-0000-4000-8000-000000000771";
+        let run_id = "00000000-0000-4000-8000-000000000772";
+        let snapshot_id = "00000000-0000-4000-8000-000000000773";
+        let target_path = home.join(".cursor/rules/easytoagents.mdc");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO managed_targets(
+                    id, tool, artifact_kind, scope, target_path
+                 ) VALUES (?1, 'cursor', 'prompt', 'global', ?2)",
+                params![target_id, target_path.to_string_lossy()],
+            )
+            .unwrap();
+        database
+            .connection()
+            .execute(
+                "INSERT INTO sync_runs(id, kind, status, scope, db_version)
+                 VALUES (?1, 'apply', 'succeeded', 'global', 1)",
+                [run_id],
+            )
+            .unwrap();
+        database
+            .connection()
+            .execute(
+                "INSERT INTO snapshots(
+                    id, run_id, target_id, target_path, snapshot_path, target_type
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'missing')",
+                params![
+                    snapshot_id,
+                    run_id,
+                    target_id,
+                    target_path.to_string_lossy(),
+                    paths
+                        .snapshots()
+                        .join("cursor-prompt.snapshot")
+                        .to_string_lossy(),
+                ],
+            )
+            .unwrap();
+
+        let context = snapshot_restore_context(&database, &environment, snapshot_id).unwrap();
+        assert_eq!(context.allowed_root, home.join(".cursor"));
     }
 }

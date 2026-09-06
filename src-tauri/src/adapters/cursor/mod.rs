@@ -1,4 +1,12 @@
-//! Cursor 官方 MCP/Skills 路径与能力矩阵。
+//! Cursor 官方 MCP/Skills/Prompt/Hooks 路径与能力矩阵。
+//!
+//! Prompt/Rules 官方合同（2026-09-06 核验）：
+//! - 项目规则：`<root>/.cursor/rules/*.mdc`（cursor.com/docs/rules）；
+//! - 全局规则文件：`~/.cursor/rules`（cursor.com/help/customization/rules，
+//!   "User rule files in ~/.cursor/rules ... stay on the machine and do not sync"）。
+//!   规则文件必须带 `alwaysApply: true` frontmatter 才会常驻生效，由
+//!   `TargetFormat::CursorMdc` 在渲染/观测时包装/剥离；本应用只接管自己的单一
+//!   规则文件 `easytoagents.mdc`，规则目录内其余用户文件不受纳管。
 
 use std::path::Path;
 
@@ -41,15 +49,16 @@ impl ToolAdapter for CursorAdapter {
                 TargetCapability::unsupported("CURSOR_PROVIDER_UNSUPPORTED"),
                 SymlinkPolicy::Reject,
             ),
+            // 全局规则：官方 `~/.cursor/rules` 目录内的受管单文件。
             descriptor(
                 ArtifactKind::Prompt,
                 Scope::Global,
                 None,
-                None,
-                TargetFormat::Markdown,
+                Some(path_text(&cursor_home.join("rules/easytoagents.mdc"))?),
+                TargetFormat::CursorMdc,
+                vec!["$document"],
                 vec![],
-                vec![],
-                TargetCapability::unsupported("CURSOR_PROMPT_UNSUPPORTED"),
+                supported_capability.clone(),
                 SymlinkPolicy::Reject,
             ),
             descriptor(
@@ -131,18 +140,19 @@ impl ToolAdapter for CursorAdapter {
                     TargetFormat::Json,
                     vec!["version", "hooks"],
                     vec![],
-                    supported_capability,
+                    supported_capability.clone(),
                     SymlinkPolicy::Reject,
                 ),
                 descriptor(
+                    // 项目规则：官方 `.cursor/rules/*.mdc`；只接管本应用文件。
                     ArtifactKind::Prompt,
                     Scope::Project,
                     Some(project_root.as_str().to_owned()),
-                    None,
-                    TargetFormat::Markdown,
+                    Some(path_text(&root.join(".cursor/rules/easytoagents.mdc"))?),
+                    TargetFormat::CursorMdc,
+                    vec!["$document"],
                     vec![],
-                    vec![],
-                    TargetCapability::unsupported("CURSOR_PROMPT_UNSUPPORTED"),
+                    supported_capability,
                     SymlinkPolicy::Reject,
                 ),
             ]);
@@ -208,7 +218,7 @@ mod tests {
     use super::CursorAdapter;
 
     #[test]
-    fn descriptor_matrix_only_supports_mcp_and_skills() {
+    fn descriptor_matrix_supports_prompt_mcp_skills_and_hooks() {
         let temporary = tempdir().unwrap();
         let root = fs::canonicalize(temporary.path()).unwrap();
         let home = root.join("home");
@@ -230,7 +240,7 @@ mod tests {
         for target in &targets {
             let supported = matches!(
                 target.artifact_kind,
-                ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook
+                ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook | ArtifactKind::Prompt
             );
             assert_eq!(
                 target.capability.state == CapabilityState::Supported,
@@ -267,5 +277,28 @@ mod tests {
             project_skill.path.as_deref(),
             project.join(".cursor/skills").to_str()
         );
+        // 提示词（官方规则文件合同）：全局与项目均为受管单文件 `.mdc`。
+        let global_prompt = targets
+            .iter()
+            .find(|target| {
+                target.artifact_kind == ArtifactKind::Prompt && target.scope == Scope::Global
+            })
+            .unwrap();
+        assert_eq!(
+            global_prompt.path.as_deref(),
+            home.join(".cursor/rules/easytoagents.mdc").to_str()
+        );
+        assert_eq!(global_prompt.managed_selector_roots, ["$document"]);
+        let project_prompt = targets
+            .iter()
+            .find(|target| {
+                target.artifact_kind == ArtifactKind::Prompt && target.scope == Scope::Project
+            })
+            .unwrap();
+        assert_eq!(
+            project_prompt.path.as_deref(),
+            project.join(".cursor/rules/easytoagents.mdc").to_str()
+        );
+        assert_eq!(project_prompt.managed_selector_roots, ["$document"]);
     }
 }

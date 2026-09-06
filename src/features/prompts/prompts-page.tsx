@@ -65,6 +65,7 @@ export function PromptsPage() {
   const statusQueries = {
     claude: useQuery(toolProfileStatusQueryOptions("claude")),
     codex: useQuery(toolProfileStatusQueryOptions("codex")),
+    cursor: useQuery(toolProfileStatusQueryOptions("cursor")),
     zcode: useQuery(toolProfileStatusQueryOptions("zcode")),
   };
   const settingsQuery = useQuery(appSettingsQueryOptions());

@@ -285,7 +285,6 @@ pub fn set_global_assignment(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn set_project_assignment(
     database: &mut Database,
     project_id: &str,

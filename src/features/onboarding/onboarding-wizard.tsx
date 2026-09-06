@@ -39,6 +39,7 @@ interface ToolDiscovery {
 interface Choices {
   claude: { provider: boolean; prompt: boolean; skip: boolean };
   codex: { provider: boolean; prompt: boolean; skip: boolean };
+  cursor: { provider: boolean; prompt: boolean; skip: boolean };
   zcode: { provider: boolean; prompt: boolean; skip: boolean };
 }
 
@@ -51,6 +52,7 @@ interface WizardPreview {
 const emptyChoices: Choices = {
   claude: { provider: false, prompt: false, skip: false },
   codex: { provider: false, prompt: false, skip: false },
+  cursor: { provider: false, prompt: false, skip: false },
   zcode: { provider: false, prompt: false, skip: false },
 };
 
@@ -84,6 +86,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
       const entries = await Promise.all(
         tools.map(async (tool): Promise<[ProfileTool, ToolDiscovery]> => {
           const errors: string[] = [];
+          const providerSupported = toolMetadata(tool).capabilities.provider;
           const [
             statusResult,
             providerResult,
@@ -92,9 +95,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             promptsResult,
           ] = await Promise.allSettled([
             commands.getToolProfileStatus(tool).then(unwrapResult),
-            commands.discoverProviderImport(tool).then(unwrapResult),
+            // Provider 不受支持的工具（Cursor）不发起 Provider 导入发现，保持
+            // fail closed：原生 Provider 目标不会被读取。
+            providerSupported
+              ? commands.discoverProviderImport(tool).then(unwrapResult)
+              : Promise.resolve(null),
             commands.discoverPromptImport(tool).then(unwrapResult),
-            commands.listProviderProfiles(tool).then(unwrapResult),
+            providerSupported
+              ? commands.listProviderProfiles(tool).then(unwrapResult)
+              : Promise.resolve(null),
             commands.listPromptProfiles().then(unwrapResult),
           ]);
           const status = settledValue(
@@ -143,6 +152,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
           errors: [],
         },
         codex: {
+          availability: "unsupported",
+          installationVersion: null,
+          provider: null,
+          prompt: null,
+          providerManaged: false,
+          promptManaged: false,
+          errors: [],
+        },
+        cursor: {
           availability: "unsupported",
           installationVersion: null,
           provider: null,
@@ -351,7 +369,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
 
         {step === "detect" ? (
           <p role="status" className="mt-6 text-sm">
-            正在只读检测 Claude 与 Codex 的 Provider 和全局提示词…
+            正在只读检测各工具的 Provider 与全局提示词…
           </p>
         ) : null}
 
@@ -360,8 +378,10 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             {tools.map((tool) => {
               const found = discovery[tool];
               const choice = choices[tool];
-              const providerDisabledReason =
-                providerChoiceDisabledReason(found);
+              const providerDisabledReason = toolMetadata(tool).capabilities
+                .provider
+                ? providerChoiceDisabledReason(found)
+                : "渠道不受支持；本应用不会读取或写入该工具的 Provider 配置。";
               const promptDisabledReason = promptChoiceDisabledReason(found);
               const providerReasonId = `${tool}-provider-choice-reason`;
               const promptReasonId = `${tool}-prompt-choice-reason`;
@@ -600,6 +620,7 @@ function readChoices(): Choices {
     return {
       claude: readToolChoice(parsed.claude),
       codex: readToolChoice(parsed.codex),
+      cursor: readToolChoice(parsed.cursor),
       zcode: readToolChoice(parsed.zcode),
     };
   } catch {

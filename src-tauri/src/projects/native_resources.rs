@@ -1094,10 +1094,9 @@ fn parse_config_value(format: TargetFormat, bytes: &[u8]) -> Result<Value, AppEr
                 .map_err(|_| AppError::parse("snapshot", format.as_str()))?;
             toml_edit::de::from_str(text).map_err(|_| AppError::parse("snapshot", format.as_str()))
         }
-        TargetFormat::Markdown | TargetFormat::SymlinkDirectory => Err(AppError::invalid_input(
-            "snapshot",
-            "该快照格式不是 MCP 配置",
-        )),
+        TargetFormat::Markdown | TargetFormat::CursorMdc | TargetFormat::SymlinkDirectory => Err(
+            AppError::invalid_input("snapshot", "该快照格式不是 MCP 配置"),
+        ),
     }
 }
 
@@ -1290,10 +1289,16 @@ mod tests {
     }
 
     #[test]
-    fn cursor_project_prompt_is_not_discovered() {
+    fn cursor_project_prompt_uses_official_mdc_target() {
         let mut fixture = Fixture::new();
         let project = fixture.register_project_with(|root| {
             fs::write(root.join("AGENTS.md"), "# codex prompt\n").unwrap();
+            fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+            fs::write(
+                root.join(".cursor/rules/easytoagents.mdc"),
+                "---\nalwaysApply: true\n---\n\n# cursor prompt\n",
+            )
+            .unwrap();
         });
         let cursor_prompts = list_project_native_resources(
             &mut fixture.database,
@@ -1305,7 +1310,12 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(cursor_prompts.is_empty());
+        assert_eq!(cursor_prompts.len(), 1);
+        assert_eq!(cursor_prompts[0].display_name, "easytoagents.mdc");
+        assert_eq!(
+            cursor_prompts[0].target_path,
+            project.root_path.clone() + "/.cursor/rules/easytoagents.mdc"
+        );
         let codex_prompts = list_project_native_resources(
             &mut fixture.database,
             &fixture.environment,

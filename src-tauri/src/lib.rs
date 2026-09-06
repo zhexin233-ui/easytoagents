@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use specta_typescript::Typescript;
 use tauri::Manager;
@@ -259,6 +262,23 @@ pub fn export_typescript_bindings(path: &Path) {
     create_command_builder::<tauri::Wry>()
         .export(Typescript::default(), path)
         .unwrap_or_else(|error| panic!("生成 TypeScript 命令绑定失败：{error}"));
+    // specta 在拆分较长 union 类型时可能留下尾随空格；规范化生成产物，
+    // 让 `git diff --check` 与绑定一致性检查同时保持可用。
+    let generated = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("读取生成的 TypeScript 命令绑定失败：{error}"));
+    let normalized = generated
+        .split_inclusive('\n')
+        .map(|line| {
+            let (content, newline) = line
+                .strip_suffix('\n')
+                .map_or((line, ""), |content| (content, "\n"));
+            format!("{}{}", content.trim_end_matches([' ', '\t']), newline)
+        })
+        .collect::<String>();
+    if generated != normalized {
+        fs::write(path, normalized)
+            .unwrap_or_else(|error| panic!("写入规范化 TypeScript 命令绑定失败：{error}"));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

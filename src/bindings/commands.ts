@@ -875,7 +875,7 @@ export type SetGlobalSkillAssignmentInput = { tool: Tool; skillId: string; assig
 export type SetProjectHookAssignmentInput = { projectId: string; tool: Tool; hookId: string; event: HookEvent; assigned: boolean; hookRowVersion: number; projectRowVersion: number }
 export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
 export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
-export type SetPromptProjectAssignmentInput = { projectId: string; tool: Tool; 
+export type SetPromptProjectAssignmentInput = { projectId: string; tool: Tool;
 /**
  * `None` 表示解除分配：项目文件保留，应用停止纳管。
  */
@@ -913,7 +913,13 @@ export type TargetCapability = { state: CapabilityState; diagnosticCode: string 
  * Adapter 对一个原生目标的完整只读合同。
  */
 export type TargetDescriptor = { tool: Tool; artifactKind: ArtifactKind; scope: Scope; projectRoot: string | null; path: string | null; format: TargetFormat; managedSelectorRoots: string[]; sensitiveSelectors: string[]; capability: TargetCapability; policy: PolicyState; trust: TargetTrustState; promptOverride: PromptOverrideState; symlinkPolicy: SymlinkPolicy }
-export type TargetFormat = "json" | "toml" | "markdown" | "symlink_directory"
+export type TargetFormat = "json" | "toml" | "markdown" |
+/**
+ * Cursor 规则文件（`.cursor/rules/*.mdc`）：Markdown + 固定
+ * `alwaysApply: true` frontmatter。渲染时包装、观测时剥离，
+ * 受管投影域与其他工具的纯 Markdown 正文保持同构。
+ */
+"cursor_mdc" | "symlink_directory"
 export type TargetTrustState = "not_required" | "trusted" | "untrusted" | "unknown"
 export type TargetType = "file" | "directory" | "symlink" | "missing"
 /**

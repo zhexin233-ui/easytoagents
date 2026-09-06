@@ -52,11 +52,11 @@ export const TOOL_METADATA = {
     id: "cursor",
     label: "Cursor",
     icon: cursorIconUrl,
-    profileRoute: null,
+    profileRoute: "/cursor",
     capabilities: {
       provider: false,
-      promptGlobal: false,
-      promptProject: false,
+      promptGlobal: true,
+      promptProject: true,
       mcp: true,
       skills: true,
       hooks: true,
@@ -81,6 +81,7 @@ export const TOOL_METADATA = {
 export const PROFILE_TOOLS = [
   "claude",
   "codex",
+  "cursor",
   "zcode",
 ] as const satisfies readonly Tool[];
 export const MCP_TOOLS = [

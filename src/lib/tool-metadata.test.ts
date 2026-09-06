@@ -16,16 +16,16 @@ describe("tool metadata", () => {
       "cursor",
       "zcode",
     ]);
-    expect(PROFILE_TOOLS).toEqual(["claude", "codex", "zcode"]);
+    expect(PROFILE_TOOLS).toEqual(["claude", "codex", "cursor", "zcode"]);
     expect(MCP_TOOLS).toEqual(["claude", "codex", "cursor", "zcode"]);
     expect(SKILL_TOOLS).toEqual(["claude", "codex", "cursor", "zcode"]);
     expect(toolMetadata("cursor")).toMatchObject({
       label: "Cursor",
-      profileRoute: null,
+      profileRoute: "/cursor",
       capabilities: {
         provider: false,
-        promptGlobal: false,
-        promptProject: false,
+        promptGlobal: true,
+        promptProject: true,
         mcp: true,
         skills: true,
       },

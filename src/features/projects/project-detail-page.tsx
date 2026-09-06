@@ -500,8 +500,8 @@ export function ProjectDetailPage() {
           ) : (
             <BlockingState
               title={`${toolLabel(activeTool)} 项目提示词不受支持`}
-              description={`${toolLabel(activeTool)} 项目视图只支持 MCP 与 Skills，不会读取或写入 Rules、Prompt 或 AGENTS.md。`}
-              code="CURSOR_PROMPT_UNSUPPORTED"
+              description={`${toolLabel(activeTool)} 不会读取或写入项目 Rules 或 Prompt 文件。`}
+              code="PROMPT_UNSUPPORTED"
             />
           )}
         </section>
@@ -1350,18 +1350,23 @@ function ProjectPromptAssignments({
     return (
       <BlockingState
         title={`${toolLabel(tool)} 项目提示词不受支持`}
-        description={`${toolLabel(tool)} 不会读取或写入项目 Rules、Prompt 或 AGENTS.md。`}
-        code="CURSOR_PROMPT_UNSUPPORTED"
+        description={`${toolLabel(tool)} 不会读取或写入项目 Rules 或 Prompt 文件。`}
+        code="PROMPT_UNSUPPORTED"
       />
     );
   }
-  const targetFile = tool === "claude" ? "CLAUDE.md" : "AGENTS.md";
+  const targetFile =
+    tool === "claude"
+      ? "CLAUDE.md"
+      : tool === "cursor"
+        ? ".cursor/rules/easytoagents.mdc"
+        : "AGENTS.md";
 
   return (
     <article className="bg-card rounded-xl border p-5">
       <h3 className="font-semibold">提示词</h3>
       <p className="text-muted-foreground mt-1 text-sm leading-6">
-        分配后会把所选档案硬拷贝为项目根 {targetFile}
+        分配后会把所选档案硬拷贝为项目目标 {targetFile}
         ；此后文件归项目所有、可随时自行修改，重新应用会以档案内容覆盖。解除分配会保留项目文件、仅停止纳管。
       </p>
       {assignmentQuery.isPending || profilesQuery.isPending ? (
@@ -1464,7 +1469,7 @@ function ProjectPromptAssignments({
             onClick={() => {
               if (
                 globalThis.confirm(
-                  `解除分配将保留项目根 ${targetFile} 的当前内容，仅停止纳管。确认解除？`,
+                  `解除分配将保留项目目标 ${targetFile} 的当前内容，仅停止纳管。确认解除？`,
                 )
               ) {
                 assignmentMutation.mutate(null);

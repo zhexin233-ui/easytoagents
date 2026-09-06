@@ -28,6 +28,10 @@ const router = createHashRouter([
         element: <ToolProfilesPage tool="codex" />,
       },
       {
+        path: "cursor",
+        element: <ToolProfilesPage tool="cursor" />,
+      },
+      {
         path: "zcode",
         element: <ToolProfilesPage tool="zcode" />,
       },

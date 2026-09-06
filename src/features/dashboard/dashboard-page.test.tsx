@@ -105,10 +105,12 @@ describe("DashboardPage", () => {
     const cursorHeading = screen.getByRole("heading", { name: "Cursor" });
     const cursorCard = cursorHeading.closest("article");
     if (!cursorCard) throw new Error("未找到 Cursor 总览卡片");
-    expect(within(cursorCard).getAllByText("不支持")).toHaveLength(2);
+    // Cursor Provider 仍不支持；提示词已按官方规则文件合同开放。
+    expect(within(cursorCard).getAllByText("不支持")).toHaveLength(1);
+    expect(within(cursorCard).getByText("未接管")).toBeInTheDocument();
     expect(
-      within(cursorCard).getByRole("link", { name: "管理 MCP/Skills" }),
-    ).toHaveAttribute("href", "/mcp");
+      within(cursorCard).getByRole("link", { name: "管理" }),
+    ).toHaveAttribute("href", "/cursor");
     expect(screen.getByText("最近同步")).toBeInTheDocument();
     expect(screen.getByText("apply · global")).toBeInTheDocument();
     expect(screen.getByText("待处理冲突")).toBeInTheDocument();

@@ -105,6 +105,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "hook_assignment_events",
         sql: include_str!("migrations/0016_hook_assignment_events.sql"),
     },
+    Migration {
+        version: 17,
+        name: "cursor_prompt_support",
+        sql: include_str!("migrations/0017_cursor_prompt_support.sql"),
+    },
 ];
 
 pub(crate) struct Migration {
@@ -494,7 +499,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 16);
+        assert_eq!(database.schema_version().unwrap(), 17);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1032,7 +1037,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1067,7 +1072,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1122,7 +1127,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 16);
+        assert_eq!(database.schema_version().unwrap(), 17);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1190,7 +1195,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1261,7 +1266,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1305,11 +1310,12 @@ mod tests {
     }
 
     #[test]
-    fn cursor_tool_support_migration_only_opens_mcp_and_skill_storage() {
+    fn cursor_tool_support_migration_opens_mcp_skill_and_prompt_storage() {
         const CURSOR_TARGET_ID: &str = "00000000-0000-4000-8000-000000000220";
         const CURSOR_MCP_IMPORT_ID: &str = "00000000-0000-4000-8000-000000000221";
         const CURSOR_SKILL_IMPORT_ID: &str = "00000000-0000-4000-8000-000000000222";
         const CLAUDE_PROMPT_ID: &str = "00000000-0000-4000-8000-000000000227";
+        const CURSOR_PROMPT_IMPORT_ID: &str = "00000000-0000-4000-8000-000000000269";
         let temporary = tempdir().unwrap();
         let root = fs::canonicalize(temporary.path()).unwrap();
         let paths = AppPaths::from_data_root(root.join("v9-cursor-data")).unwrap();
@@ -1348,7 +1354,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1416,10 +1422,13 @@ mod tests {
 
             assert!(connection.execute("INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000223', 'cursor', 'Cursor Provider')", []).is_err());
             assert!(connection.execute("INSERT INTO prompt_profiles(id, tool, name, body) VALUES ('00000000-0000-4000-8000-000000000224', 'cursor', 'Cursor Prompt', '')", []).is_err());
-            assert!(connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000225', 'cursor', 'provider', '/fixture/provider.json', ?1, 'Cursor', '{}')", ["b".repeat(64)]).is_err());
-            assert!(connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, CLAUDE_PROMPT_ID]).is_err());
+            // 0017 放宽后：cursor 项目分配、cursor×prompt 受管目标与 cursor×prompt
+            // 导入预览被接受；cursor×provider 的导入预览仍被 tool×artifact 组合 CHECK 拒绝。
+            connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, CLAUDE_PROMPT_ID]).unwrap();
+            connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'cursor', 'prompt', 'global', '/fixture/home/.cursor/rules/easytoagents.mdc')", ["00000000-0000-4000-8000-000000000268"]).unwrap();
+            connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES (?1, 'cursor', 'prompt', '/fixture/home/.cursor/rules/easytoagents.mdc', ?2, 'Cursor', '{}')", params![CURSOR_PROMPT_IMPORT_ID, "b".repeat(64)]).unwrap();
             assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000226', 'cursor', 'provider', 'global', '/fixture/provider.json')", []).is_err());
-            assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000228', 'cursor', 'prompt', 'global', '/fixture/prompt.md')", []).is_err());
+            assert!(connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000225', 'cursor', 'provider', '/fixture/provider.json', ?1, 'Cursor', '{}')", ["b".repeat(64)]).is_err());
 
             connection
                 .execute(
@@ -1427,6 +1436,19 @@ mod tests {
                     [CURSOR_SKILL_IMPORT_ID],
                 )
                 .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM profile_import_previews WHERE id = ?1",
+                    [CURSOR_PROMPT_IMPORT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM managed_targets WHERE id = ?1",
+                    ["00000000-0000-4000-8000-000000000268"],
+                )
+                .unwrap();
+            connection.execute("DELETE FROM prompt_project_assignments WHERE project_id = ?1 AND tool = 'cursor'", [PROJECT_ONE_ID]).unwrap();
             connection
                 .execute(
                     "DELETE FROM mcp_import_previews WHERE id = ?1",
@@ -1488,7 +1510,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1585,6 +1607,91 @@ mod tests {
     }
 
     #[test]
+    fn cursor_prompt_migration_widens_checks_and_adds_active_flag() {
+        const PROMPT_PROFILE_ID: &str = "00000000-0000-4000-8000-000000000261";
+        const CURSOR_PROMPT_TARGET: &str = "00000000-0000-4000-8000-000000000262";
+        const CURSOR_IMPORT_PREVIEW: &str = "00000000-0000-4000-8000-000000000263";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v16-cursor-prompt-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..16] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(
+                &connection,
+                PROJECT_ONE_ID,
+                "/fixture/cursor-prompt-project",
+            );
+        }
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 17);
+            let connection = database.connection();
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+
+            // Cursor×prompt 进入 managed_targets；cursor×provider 仍被 artifact 限制拒绝。
+            connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'cursor', 'prompt', 'global', '/fixture/home/.cursor/rules/easytoagents.mdc')", [CURSOR_PROMPT_TARGET]).unwrap();
+            assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000264', 'cursor', 'provider', 'global', '/fixture/home/.cursor/provider.json')", []).is_err());
+
+            // 每工具至多一份生效的 Cursor 索引：第二份被拒绝。
+            connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_cursor) VALUES (?1, 'central', 'Cursor 生效提示词', '', 1)", [PROMPT_PROFILE_ID]).unwrap();
+            assert!(connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_cursor) VALUES ('00000000-0000-4000-8000-000000000265', 'central', 'Cursor 第二份生效', '', 1)", []).is_err());
+
+            // 项目分配与导入预览接受 'cursor'；cursor×provider 导入预览仍被组合 CHECK 拒绝。
+            connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, PROMPT_PROFILE_ID]).unwrap();
+            connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES (?1, 'cursor', 'prompt', '/fixture/home/.cursor/rules/easytoagents.mdc', ?2, 'Cursor', '{}')", params![CURSOR_IMPORT_PREVIEW, "b".repeat(64)]).unwrap();
+            assert!(connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000267', 'cursor', 'provider', '/fixture/provider.json', ?1, 'Cursor', '{}')", ["b".repeat(64)]).is_err());
+
+            // Cursor Provider 仍被 provider_profiles 的 tool CHECK 拒绝（0017 刻意不放宽）。
+            assert!(connection.execute("INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000266', 'cursor', 'Cursor Provider')", []).is_err());
+
+            connection
+                .execute(
+                    "DELETE FROM prompt_project_assignments WHERE project_id = ?1 AND tool = 'cursor'",
+                    [PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM profile_import_previews WHERE id = ?1",
+                    [CURSOR_IMPORT_PREVIEW],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM managed_targets WHERE id = ?1",
+                    [CURSOR_PROMPT_TARGET],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM prompt_profiles WHERE id = ?1",
+                    [PROMPT_PROFILE_ID],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
     fn hooks_migration_opens_hook_storage_and_widens_checks() {
         const HOOK_ONE_ID: &str = "00000000-0000-4000-8000-000000000301";
         const HOOK_TARGET_GLOBAL: &str = "00000000-0000-4000-8000-000000000302";
@@ -1613,7 +1720,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1762,7 +1869,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1874,7 +1981,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2050,7 +2157,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 16);
+            assert_eq!(database.schema_version().unwrap(), 17);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
