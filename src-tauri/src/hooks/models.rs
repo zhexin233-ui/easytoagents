@@ -54,6 +54,14 @@ pub struct DeleteHookResultDto {
     pub deleted: bool,
 }
 
+/// 全局分配上的生效事件（可因工具而异）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HookGlobalAssignmentDto {
+    pub tool: Tool,
+    pub event: HookEvent,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HookDto {
@@ -65,25 +73,30 @@ pub struct HookDto {
     pub timeout_seconds: Option<i32>,
     pub enabled: bool,
     pub script_name: Option<String>,
-    pub global_tools: Vec<Tool>,
+    pub global_assignments: Vec<HookGlobalAssignmentDto>,
     pub row_version: u32,
 }
 
+/// 分配时 `event` 为生效事件（可不同于中央建议事件）；取消分配时忽略。
+/// 同一 (tool, hook) 已分配时传入不同 event 即切换事件。
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SetGlobalHookAssignmentInput {
     pub tool: Tool,
     pub hook_id: String,
+    pub event: HookEvent,
     pub assigned: bool,
     pub row_version: u32,
 }
 
+/// 事件语义同全局分配（随分配存储，可切换）。
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SetProjectHookAssignmentInput {
     pub project_id: String,
     pub tool: Tool,
     pub hook_id: String,
+    pub event: HookEvent,
     pub assigned: bool,
     pub hook_row_version: u32,
     pub project_row_version: u32,

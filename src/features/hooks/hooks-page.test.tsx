@@ -50,7 +50,7 @@ const hook: HookDto = {
   timeoutSeconds: 30,
   enabled: true,
   scriptName: null,
-  globalTools: [],
+  globalAssignments: [],
   rowVersion: 1,
 };
 
@@ -108,14 +108,30 @@ function renderPage() {
   );
 }
 
-async function statusCard(tool: Tool) {
+/// 工具事件分组区当前激活工具的状态卡；需要其他工具时先切换页签。
+async function statusCard(tool: Tool = "claude") {
+  if (tool !== "claude") {
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `查看 ${toolMetadata(tool).label} Hooks`,
+      }),
+    );
+  }
   const section = screen
-    .getByRole("heading", { name: "全局目标状态" })
+    .getByRole("heading", { name: "工具事件分组" })
     .closest("section");
-  if (!section) throw new Error("未找到全局目标状态");
-  const card = (
-    await within(section).findByText(toolMetadata(tool).label)
-  ).closest("article");
+  if (!section) throw new Error("未找到工具事件分组");
+  const targetPath =
+    tool === "claude"
+      ? "/isolated/home/.claude/settings.json"
+      : tool === "codex"
+        ? "/isolated/home/.codex/hooks.json"
+        : tool === "cursor"
+          ? "/isolated/home/.cursor/hooks.json"
+          : "/isolated/home/.zcode/cli/config.json";
+  const card = (await within(section).findByText(targetPath)).closest(
+    "article",
+  );
   if (!card) throw new Error("未找到工具状态卡");
   return card;
 }
@@ -222,7 +238,7 @@ describe("HooksPage 中央列表", () => {
       data: hook,
     });
     renderPage();
-    await screen.findByText("全局目标状态");
+    await screen.findByText("工具事件分组");
     fireEvent.click(screen.getByRole("button", { name: "新增 Hook" }));
     const dialog = screen.getByRole("dialog", { name: "新增 Hook" });
     fireEvent.change(within(dialog).getByLabelText("名称"), {
@@ -257,14 +273,19 @@ describe("HooksPage 中央列表", () => {
   it("删除 Hook 只更新中央意图并提示单独预览", async () => {
     vi.mocked(commands.listHooks).mockResolvedValue({
       status: "ok",
-      data: [{ ...hook, globalTools: ["claude"] }],
+      data: [
+        {
+          ...hook,
+          globalAssignments: [{ tool: "claude", event: "PreToolUse" as const }],
+        },
+      ],
     });
     vi.mocked(commands.deleteHook).mockResolvedValue({
       status: "ok",
       data: { id: hook.id, deleted: true },
     });
     renderPage();
-    await screen.findByText("block-rm");
+    await screen.findByRole("heading", { name: "block-rm" });
     const deleteButtons = screen.getAllByRole("button", { name: "删除" });
     if (!deleteButtons[0]) throw new Error("未找到删除按钮");
     fireEvent.click(deleteButtons[0]);
@@ -275,46 +296,139 @@ describe("HooksPage 中央列表", () => {
   });
 });
 
-describe("HooksPage 全局分配", () => {
-  it("按分配状态切换平台按钮并调用 setGlobalHookAssignment", async () => {
+describe("HooksPage 事件分组分配", () => {
+  it("从事件分组添加中央 Hook，按分组事件调用分配", async () => {
     vi.mocked(commands.listHooks).mockResolvedValue({
       status: "ok",
       data: [hook],
     });
     vi.mocked(commands.setGlobalHookAssignment).mockResolvedValue({
       status: "ok",
-      data: { ...hook, globalTools: ["claude"] },
+      data: {
+        ...hook,
+        globalAssignments: [{ tool: "claude", event: "PreToolUse" }],
+      },
     });
     renderPage();
-    await screen.findByText("block-rm");
+    await screen.findByRole("heading", { name: "block-rm" });
     fireEvent.click(
-      await screen.findByRole("button", { name: "Claude 全局未分配" }),
+      await screen.findByRole("button", {
+        name: "往 工具调用前 分组添加 Hook",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "添加到 工具调用前（PreToolUse）",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "添加 block-rm 到 工具调用前",
+      }),
     );
     await waitFor(() => {
       expect(commands.setGlobalHookAssignment).toHaveBeenCalledWith({
         tool: "claude",
         hookId: hook.id,
+        event: "PreToolUse",
         assigned: true,
         rowVersion: hook.rowVersion,
       });
     });
   });
 
-  it("事件不被工具支持时禁用分配按钮（Cursor 不支持 UserPromptSubmit）", async () => {
+  it("同一 Hook 可在其他工具分配为不同事件", async () => {
     vi.mocked(commands.listHooks).mockResolvedValue({
       status: "ok",
-      data: [{ ...hook, event: "UserPromptSubmit" }],
+      data: [
+        {
+          ...hook,
+          globalAssignments: [{ tool: "claude", event: "PreToolUse" as const }],
+        },
+      ],
+    });
+    vi.mocked(commands.setGlobalHookAssignment).mockResolvedValue({
+      status: "ok",
+      data: hook,
     });
     renderPage();
-    await screen.findByText("block-rm");
-    const cursorButton = await screen.findByRole("button", {
-      name: "Cursor 全局未分配",
+    await screen.findByRole("heading", { name: "block-rm" });
+    // 切换到 Codex 工具页签，把同一 Hook 添加到「会话开始」分组。
+    fireEvent.click(
+      await screen.findByRole("button", { name: "查看 Codex Hooks" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "往 会话开始 分组添加 Hook",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "添加到 会话开始（SessionStart）",
     });
-    expect(cursorButton).toBeDisabled();
-    const claudeButton = screen.getByRole("button", {
-      name: "Claude 全局未分配",
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "添加 block-rm 到 会话开始",
+      }),
+    );
+    await waitFor(() => {
+      expect(commands.setGlobalHookAssignment).toHaveBeenCalledWith({
+        tool: "codex",
+        hookId: hook.id,
+        event: "SessionStart",
+        assigned: true,
+        rowVersion: hook.rowVersion,
+      });
     });
-    expect(claudeButton).toBeEnabled();
+  });
+
+  it("已分配 Hook 出现在对应事件分组并可移除", async () => {
+    vi.mocked(commands.listHooks).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          ...hook,
+          globalAssignments: [{ tool: "claude", event: "PreToolUse" as const }],
+        },
+      ],
+    });
+    vi.mocked(commands.setGlobalHookAssignment).mockResolvedValue({
+      status: "ok",
+      data: hook,
+    });
+    renderPage();
+    await screen.findByRole("heading", { name: "block-rm" });
+    const group = screen.getByRole("article", {
+      name: "工具调用前（PreToolUse）分组",
+    });
+    expect(within(group).getByText("block-rm")).toBeInTheDocument();
+    fireEvent.click(
+      within(group).getByRole("button", {
+        name: "从 工具调用前 分组移除 block-rm",
+      }),
+    );
+    await waitFor(() => {
+      expect(commands.setGlobalHookAssignment).toHaveBeenCalledWith({
+        tool: "claude",
+        hookId: hook.id,
+        event: "PreToolUse",
+        assigned: false,
+        rowVersion: hook.rowVersion,
+      });
+    });
+  });
+
+  it("工具不支持的事件分组不展示（Cursor 无提示词提交）", async () => {
+    renderPage();
+    await screen.findByRole("button", { name: "查看 Cursor Hooks" });
+    fireEvent.click(screen.getByRole("button", { name: "查看 Cursor Hooks" }));
+    expect(
+      await screen.findByRole("article", {
+        name: "工具调用前（PreToolUse）分组",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("article", {
+        name: "提示词提交（UserPromptSubmit）分组",
+      }),
+    ).not.toBeInTheDocument();
   });
 });
 

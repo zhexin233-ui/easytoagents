@@ -766,7 +766,7 @@ export type DiscoverHookImportInput = { tool: Tool }
 export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED"
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
 export type GitRepositoryStatus = "repository" | "not_repository" | "unavailable"
-export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptName: string | null; globalTools: Tool[]; rowVersion: number }
+export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptName: string | null; globalAssignments: HookGlobalAssignmentDto[]; rowVersion: number }
 /**
  * Hook 的统一事件名（canonical PascalCase）。各工具的原生键可能不同
  * （Cursor 为 camelCase），写入原生文件前必须经
@@ -774,6 +774,10 @@ export type HookDto = { id: string; name: string; event: HookEvent; matcher: str
  * [`HookEvent::supported_for_tool`] 定义，不支持的组合必须 fail closed。
  */
 export type HookEvent = "SessionStart" | "SessionEnd" | "UserPromptSubmit" | "PreToolUse" | "PermissionRequest" | "PostToolUse" | "PostToolUseFailure" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "Stop" | "Notification"
+/**
+ * 全局分配上的生效事件（可因工具而异）。
+ */
+export type HookGlobalAssignmentDto = { tool: Tool; event: HookEvent }
 /**
  * `script_adopted` 表示找到了可接管的原生脚本，确认后脚本本体复制到
  * 中央目录；`script_source_path` 仅在接管时存在。
@@ -849,7 +853,11 @@ export type Scope = "global" | "project"
 export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: string }
 export type SensitiveJsonUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: JsonValue }
 export type SensitiveMapUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: Partial<{ [key in string]: string }> }
-export type SetGlobalHookAssignmentInput = { tool: Tool; hookId: string; assigned: boolean; rowVersion: number }
+/**
+ * 分配时 `event` 为生效事件（可不同于中央建议事件）；取消分配时忽略。
+ * 同一 (tool, hook) 已分配时传入不同 event 即切换事件。
+ */
+export type SetGlobalHookAssignmentInput = { tool: Tool; hookId: string; event: HookEvent; assigned: boolean; rowVersion: number }
 export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned: boolean; rowVersion: number }
 /**
  * 全局启用/停用一份提示词档案到指定工具；每工具至多一份生效，
@@ -857,7 +865,10 @@ export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned:
  */
 export type SetGlobalPromptAssignmentInput = { tool: Tool; promptProfileId: string; assigned: boolean; rowVersion: number }
 export type SetGlobalSkillAssignmentInput = { tool: Tool; skillId: string; assigned: boolean; rowVersion: number }
-export type SetProjectHookAssignmentInput = { projectId: string; tool: Tool; hookId: string; assigned: boolean; hookRowVersion: number; projectRowVersion: number }
+/**
+ * 事件语义同全局分配（随分配存储，可切换）。
+ */
+export type SetProjectHookAssignmentInput = { projectId: string; tool: Tool; hookId: string; event: HookEvent; assigned: boolean; hookRowVersion: number; projectRowVersion: number }
 export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
 export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
 export type SetPromptProjectAssignmentInput = { projectId: string; tool: Tool; 

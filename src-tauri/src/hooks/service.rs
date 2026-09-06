@@ -166,14 +166,15 @@ pub fn set_global_hook_assignment(
     database: &mut Database,
     input: &SetGlobalHookAssignmentInput,
 ) -> Result<HookDto, AppError> {
-    let record = repository::get_hook(database, &input.hook_id)?;
     if input.assigned {
-        hook_event_supported(input.tool, record.event)?;
+        // 生效事件随分配指定，可不同于中央建议事件；仍按工具 fail-closed。
+        hook_event_supported(input.tool, input.event)?;
     }
     let record = repository::set_global_assignment(
         database,
         input.tool,
         &input.hook_id,
+        input.event,
         input.assigned,
         input.row_version,
     )?;
@@ -184,15 +185,15 @@ pub fn set_project_hook_assignment(
     database: &mut Database,
     input: &SetProjectHookAssignmentInput,
 ) -> Result<HookDto, AppError> {
-    let record = repository::get_hook(database, &input.hook_id)?;
     if input.assigned {
-        hook_event_supported(input.tool, record.event)?;
+        hook_event_supported(input.tool, input.event)?;
     }
     let record = repository::set_project_assignment(
         database,
         &input.project_id,
         input.tool,
         &input.hook_id,
+        input.event,
         input.assigned,
         input.hook_row_version,
         input.project_row_version,
@@ -1237,7 +1238,10 @@ pub(super) fn find_hook_target_baseline(
 // ---------------------------------------------------------------------------
 
 fn hook_dto(database: &Database, record: &HookRecord) -> Result<HookDto, AppError> {
-    let global_tools = repository::global_tools_for_hook(database, &record.id)?;
+    let global_assignments = repository::global_assignments_for_hook(database, &record.id)?
+        .into_iter()
+        .map(|(tool, event)| super::HookGlobalAssignmentDto { tool, event })
+        .collect();
     Ok(HookDto {
         id: record.id.clone(),
         name: record.name.clone(),
@@ -1247,7 +1251,7 @@ fn hook_dto(database: &Database, record: &HookRecord) -> Result<HookDto, AppErro
         timeout_seconds: record.timeout_seconds,
         enabled: record.enabled,
         script_name: record.script_name.clone(),
-        global_tools,
+        global_assignments,
         row_version: safe_row_version(record.row_version)?,
     })
 }

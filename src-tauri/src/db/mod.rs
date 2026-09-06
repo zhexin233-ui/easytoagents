@@ -24,7 +24,7 @@ pub mod projects;
 pub(crate) mod skill_imports;
 pub mod skills;
 
-const MIGRATIONS: &[Migration] = &[
+pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
         name: "initial",
@@ -100,9 +100,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "hooks_scripts",
         sql: include_str!("migrations/0015_hooks_scripts.sql"),
     },
+    Migration {
+        version: 16,
+        name: "hook_assignment_events",
+        sql: include_str!("migrations/0016_hook_assignment_events.sql"),
+    },
 ];
 
-struct Migration {
+pub(crate) struct Migration {
     version: i64,
     name: &'static str,
     sql: &'static str,
@@ -489,7 +494,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 15);
+        assert_eq!(database.schema_version().unwrap(), 16);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1027,7 +1032,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1062,7 +1067,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1117,7 +1122,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 15);
+        assert_eq!(database.schema_version().unwrap(), 16);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1185,7 +1190,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1256,7 +1261,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1343,7 +1348,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1483,7 +1488,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1608,7 +1613,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1693,7 +1698,7 @@ mod tests {
             // 全局/项目分配互斥触发器与未知工具 CHECK。
             connection
                 .execute(
-                    "INSERT INTO hook_global_assignments(tool, hook_id) VALUES ('claude', ?1)",
+                    "INSERT INTO hook_global_assignments(tool, hook_id, event) VALUES ('claude', ?1, 'PreToolUse')",
                     [HOOK_ONE_ID],
                 )
                 .unwrap();
@@ -1757,7 +1762,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1812,6 +1817,114 @@ mod tests {
                     .execute(
                         "DELETE FROM hooks WHERE id IN (?1, ?2)",
                         params![HOOK_LEGACY_ID, HOOK_SCRIPT_ID],
+                    )
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn hook_assignment_events_migration_backfills_and_allows_event_switch() {
+        const HOOK_ID: &str = "00000000-0000-4000-8000-000000000330";
+        const PROJECT_HOOK_ID: &str = "00000000-0000-4000-8000-000000000331";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v15-assignment-events-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..15] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/event-project");
+            // v15：事件在中央记录上，分配行无事件列。
+            connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command) VALUES (?1, 'legacy-event', 'PreToolUse', 'true')",
+                    [HOOK_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command) VALUES (?1, 'project-event', 'Stop', 'true')",
+                    [PROJECT_HOOK_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO hook_global_assignments(tool, hook_id) VALUES ('claude', ?1)",
+                    [HOOK_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO hook_project_assignments(project_id, tool, hook_id) VALUES (?1, 'codex', ?2)",
+                    params![PROJECT_ONE_ID, PROJECT_HOOK_ID],
+                )
+                .unwrap();
+        }
+        for _round in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 16);
+            let connection = database.connection();
+            assert_eq!(
+                connection
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0
+            );
+            // 回填：分配行的 event 取自 hooks.event（仅首轮有 v15 旧数据）。
+            if _round == 0 {
+                let backfilled: String = connection
+                    .query_row(
+                        "SELECT event FROM hook_global_assignments WHERE hook_id = ?1",
+                        [HOOK_ID],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(backfilled, "PreToolUse");
+            }
+
+            // 切换事件：ON CONFLICT 更新；非法事件被 CHECK 拒绝。
+            connection
+                .execute(
+                    "INSERT INTO hook_global_assignments(tool, hook_id, event) VALUES ('claude', ?1, 'SessionStart')
+                     ON CONFLICT(tool, hook_id) DO UPDATE SET event = excluded.event",
+                    [HOOK_ID],
+                )
+                .unwrap();
+            let switched: String = connection
+                .query_row(
+                    "SELECT event FROM hook_global_assignments WHERE hook_id = ?1",
+                    [HOOK_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(switched, "SessionStart");
+            assert!(connection
+                .execute(
+                    "INSERT INTO hook_global_assignments(tool, hook_id, event) VALUES ('claude', ?1, 'BeforeToolUse')",
+                    [HOOK_ID]
+                )
+                .is_err());
+
+            if _round == 0 {
+                // 重开轮保留数据：验证幂等与触发器在既有数据上仍然生效。
+                connection
+                    .execute(
+                        "UPDATE hook_global_assignments SET event = 'Stop' WHERE hook_id = ?1",
+                        [HOOK_ID],
                     )
                     .unwrap();
             }
@@ -1937,7 +2050,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 15);
+            assert_eq!(database.schema_version().unwrap(), 16);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

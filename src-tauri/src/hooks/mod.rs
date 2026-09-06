@@ -7,11 +7,12 @@ mod service;
 pub use import::{confirm_hook_import, discover_hook_import};
 pub use models::{
     ApplyHookPreviewInput, ConfirmHookImportInput, CreateHookInput, DeleteHookResultDto,
-    DiscoverHookImportInput, HookDto, HookImportCandidateDto, HookImportCandidateStatus,
-    HookImportPreviewDto, HookImportResultDto, HookProjectDto, HookProjectOptionDto,
-    HookProjectOptionsInput, HookProjectSelectionState, HookTargetStatusDto, PreviewHookSyncInput,
-    ReadoptHookTargetInput, ReadoptHookTargetResultDto, SetGlobalHookAssignmentInput,
-    SetProjectHookAssignmentInput, UpdateHookInput, VersionedHookInput,
+    DiscoverHookImportInput, HookDto, HookGlobalAssignmentDto, HookImportCandidateDto,
+    HookImportCandidateStatus, HookImportPreviewDto, HookImportResultDto, HookProjectDto,
+    HookProjectOptionDto, HookProjectOptionsInput, HookProjectSelectionState, HookTargetStatusDto,
+    PreviewHookSyncInput, ReadoptHookTargetInput, ReadoptHookTargetResultDto,
+    SetGlobalHookAssignmentInput, SetProjectHookAssignmentInput, UpdateHookInput,
+    VersionedHookInput,
 };
 pub use service::{
     apply_hook_preview, create_hook, delete_hook, get_hook, hook_event_supported,

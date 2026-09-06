@@ -1368,3 +1368,27 @@ let relocated = if let [event, _identity, matcher] = parts.as_slice() {
 - Wrong: hashing/moving the original file during import, or adopting scripts
   from unresolvable project-variable paths. Correct: copy + rewrite + let the
   normal sync preview surface the native rewrite to the central path.
+
+### Hook events live on assignments (migration 0016)
+
+- `hooks.event` is now only the SUGGESTED/default event (import source, UI
+  preselect). The EFFECTIVE event is stored on `hook_global_assignments` /
+  `hook_project_assignments` (NOT NULL, canonical 13-value CHECK; tables were
+  rebuilt and backfilled from `hooks.event`, mutual-exclusion triggers recreated).
+- Assignment RPCs take `event`; `assigned=true` validates
+  `hook_event_supported(tool, event)` and upserts (`ON CONFLICT … DO UPDATE SET
+  event`) so re-assigning to another event switches it. One event per
+  (tool, hook) — two simultaneous events require duplicating the central hook.
+- `list_assigned_hooks` returns `HookRecord` with the event from the assignment
+  row; projection/native-key/external-key/claim-check all consume the effective
+  event unchanged. `HookDto.globalTools` became `globalAssignments: [{tool,
+  event}]`.
+- Migration lesson: rebuild table pairs that reference each other via triggers
+  — DROP the triggers FIRST. `DROP TABLE` re-parses the schema and fails with
+  "no such table" when a trigger on the sibling table still points at the
+  dropped table (`db::tests::hook_assignment_events_migration_backfills_and_allows_event_switch`
+  covers backfill + event switch).
+- Frontend: Hooks page is tool-tabbed with event-group cards (session/prompt/
+  tool-call/subagent/compaction categories, only tool-supported events rendered);
+  `HookAssignmentPickerDialog` assigns a central hook into a group and shows
+  cross-event switch warnings. Project hooks tab adds an event `<select>`.

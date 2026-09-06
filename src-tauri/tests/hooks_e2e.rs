@@ -128,6 +128,7 @@ fn hooks_global_chain_applies_each_tool_contract_and_recovers_from_drift() {
             &SetGlobalHookAssignmentInput {
                 tool,
                 hook_id: assigned.id.clone(),
+                event: HookEvent::PreToolUse,
                 assigned: true,
                 row_version: assigned.row_version,
             },
@@ -385,6 +386,7 @@ fn hook_import_adopts_script_into_central_storage_and_native_references_it() {
         &SetGlobalHookAssignmentInput {
             tool: Tool::Claude,
             hook_id: imported.id.clone(),
+            event: HookEvent::PreToolUse,
             assigned: true,
             row_version: imported.row_version,
         },
@@ -435,6 +437,7 @@ fn hook_import_adopts_script_into_central_storage_and_native_references_it() {
         &SetGlobalHookAssignmentInput {
             tool: Tool::Claude,
             hook_id: imported.id.clone(),
+            event: HookEvent::PreToolUse,
             assigned: false,
             row_version: assigned.row_version,
         },

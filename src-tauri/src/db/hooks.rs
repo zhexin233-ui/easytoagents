@@ -187,21 +187,34 @@ pub fn delete_hook(
     Ok(())
 }
 
-pub fn global_tools_for_hook(database: &Database, hook_id: &str) -> Result<Vec<Tool>, AppError> {
+/// 该 Hook 的全局分配列表：(工具, 生效事件)。事件随分配存储（迁移 0016）。
+pub fn global_assignments_for_hook(
+    database: &Database,
+    hook_id: &str,
+) -> Result<Vec<(Tool, HookEvent)>, AppError> {
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
         .prepare(
-            "SELECT tool FROM hook_global_assignments
+            "SELECT tool, event FROM hook_global_assignments
              WHERE hook_id = ?1 ORDER BY tool",
         )
         .map_err(|_| AppError::database(&path, "prepare_hook_global_tools"))?;
-    let tools = statement
-        .query_map([hook_id], |row| tool_from_database(row.get(0)?))
+    let assignments = statement
+        .query_map([hook_id], |row| {
+            Ok((
+                tool_from_database(row.get(0)?)?,
+                event_from_database(row.get(1)?)?,
+            ))
+        })
         .map_err(|_| AppError::database(&path, "query_hook_global_tools"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AppError::database(&path, "decode_hook_global_tools"))?;
-    Ok(tools)
+    Ok(assignments)
+}
+
+fn event_from_database(value: String) -> rusqlite::Result<HookEvent> {
+    HookEvent::from_stable_str(&value).ok_or(rusqlite::Error::InvalidQuery)
 }
 
 fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
@@ -218,6 +231,7 @@ pub fn set_global_assignment(
     database: &mut Database,
     tool: Tool,
     hook_id: &str,
+    event: HookEvent,
     assigned: bool,
     expected_row_version: u32,
 ) -> Result<HookRecord, AppError> {
@@ -245,10 +259,12 @@ pub fn set_global_assignment(
             )
             .map_err(|_| AppError::database(&path, "count_hook_project_assignments"))?;
         validate_global_assignment(project_count > 0)?;
+        // 已分配时更新事件（同 (tool, hook) 一工具一事件；切换 = UPDATE）。
         transaction
             .execute(
-                "INSERT OR IGNORE INTO hook_global_assignments(tool, hook_id) VALUES (?1, ?2)",
-                params![tool.as_str(), hook_id],
+                "INSERT INTO hook_global_assignments(tool, hook_id, event) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(tool, hook_id) DO UPDATE SET event = excluded.event",
+                params![tool.as_str(), hook_id, event.as_str()],
             )
             .map_err(|error| map_hook_write_error(error, &path, "insert_hook_global_assignment"))?
     } else {
@@ -269,11 +285,13 @@ pub fn set_global_assignment(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn set_project_assignment(
     database: &mut Database,
     project_id: &str,
     tool: Tool,
     hook_id: &str,
+    event: HookEvent,
     assigned: bool,
     expected_hook_row_version: u32,
     expected_project_row_version: u32,
@@ -317,9 +335,10 @@ pub fn set_project_assignment(
     let changed = if assigned {
         transaction
             .execute(
-                "INSERT OR IGNORE INTO hook_project_assignments(project_id, tool, hook_id)
-                 VALUES (?1, ?2, ?3)",
-                params![project_id, tool.as_str(), hook_id],
+                "INSERT INTO hook_project_assignments(project_id, tool, hook_id, event)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(project_id, tool, hook_id) DO UPDATE SET event = excluded.event",
+                params![project_id, tool.as_str(), hook_id, event.as_str()],
             )
             .map_err(|error| map_hook_write_error(error, &path, "insert_hook_project_assignment"))?
     } else {
@@ -359,11 +378,12 @@ pub fn list_assigned_hooks(
     project_id: Option<&str>,
 ) -> Result<Vec<HookRecord>, AppError> {
     let path = database.path().to_string_lossy();
+    // 生效事件取自分配行（迁移 0016）；hooks.event 仅是建议事件。
     let (sql, project_parameter) = match project_id {
         Some(project_id) => (
-            "SELECT hook.id, hook.name, hook.event, hook.matcher, hook.command,
+            "SELECT hook.id, hook.name, hook.matcher, hook.command,
                     hook.timeout_seconds, hook.enabled, hook.script_name,
-                    hook.script_hash, hook.row_version
+                    hook.script_hash, hook.row_version, assignment.event
              FROM hooks AS hook
              JOIN hook_project_assignments AS assignment ON assignment.hook_id = hook.id
              WHERE assignment.project_id = ?1 AND assignment.tool = ?2
@@ -371,9 +391,9 @@ pub fn list_assigned_hooks(
             Some(project_id),
         ),
         None => (
-            "SELECT hook.id, hook.name, hook.event, hook.matcher, hook.command,
+            "SELECT hook.id, hook.name, hook.matcher, hook.command,
                     hook.timeout_seconds, hook.enabled, hook.script_name,
-                    hook.script_hash, hook.row_version
+                    hook.script_hash, hook.row_version, assignment.event
              FROM hooks AS hook
              JOIN hook_global_assignments AS assignment ON assignment.hook_id = hook.id
              WHERE assignment.tool = ?2
@@ -386,7 +406,10 @@ pub fn list_assigned_hooks(
         .prepare(sql)
         .map_err(|_| AppError::database(&path, "prepare_list_assigned_hooks"))?;
     let records = statement
-        .query_map(params![project_parameter, tool.as_str()], hook_from_row)
+        .query_map(
+            params![project_parameter, tool.as_str()],
+            assigned_hook_from_row,
+        )
         .map_err(|_| AppError::database(&path, "query_list_assigned_hooks"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AppError::database(&path, "decode_list_assigned_hooks"))?;
@@ -450,6 +473,25 @@ fn stale_or_missing_hook(database: &Database, id: &str) -> Result<HookRecord, Ap
     }
 }
 
+/// 分配列表行：event 列来自分配表（生效事件）。
+fn assigned_hook_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HookRecord> {
+    Ok(HookRecord {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        matcher: row.get(2)?,
+        command: row.get(3)?,
+        timeout_seconds: row
+            .get::<_, Option<i64>>(4)?
+            .and_then(|value| i32::try_from(value).ok()),
+        enabled: row.get(5)?,
+        script_name: row.get(6)?,
+        script_hash: row.get(7)?,
+        row_version: row.get(8)?,
+        event: event_from_database(row.get(9)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
+    })
+}
+
+/// 中央列表行：event 为建议事件（hooks.event）。
 fn hook_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HookRecord> {
     Ok(HookRecord {
         id: row.get(0)?,

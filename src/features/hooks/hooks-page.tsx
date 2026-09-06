@@ -8,6 +8,7 @@ import {
   type HookDto,
   type HookEvent,
   type PreviewPlan,
+  type SyncStatus,
   type Tool,
   type UpdateHookInput,
 } from "@/bindings/commands";
@@ -21,7 +22,6 @@ import {
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
 import { Notify } from "@/components/notify";
-import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useEnabledTools } from "@/components/use-enabled-tools";
@@ -44,6 +44,7 @@ import {
   canAutoApplyPreview,
 } from "@/lib/settings-api";
 import { HookImportDialog } from "@/features/hooks/hook-import-dialog";
+import { HookAssignmentPickerDialog } from "@/features/hooks/hook-assignment-picker-dialog";
 
 interface HookFormState {
   id: string | null;
@@ -97,6 +98,51 @@ const HOOK_EVENT_OPTIONS: HookEvent[] = [
   "Notification",
 ];
 
+/// 事件分组（分类标题 → 事件 + 中文名）；只向各工具展示其官方支持的事件。
+const HOOK_EVENT_GROUPS: {
+  label: string;
+  events: { event: HookEvent; label: string }[];
+}[] = [
+  {
+    label: "会话生命周期",
+    events: [
+      { event: "SessionStart", label: "会话开始" },
+      { event: "SessionEnd", label: "会话结束" },
+      { event: "Stop", label: "会话停止" },
+    ],
+  },
+  {
+    label: "提示词与通知",
+    events: [
+      { event: "UserPromptSubmit", label: "提示词提交" },
+      { event: "Notification", label: "通知" },
+    ],
+  },
+  {
+    label: "工具调用",
+    events: [
+      { event: "PreToolUse", label: "工具调用前" },
+      { event: "PermissionRequest", label: "权限请求" },
+      { event: "PostToolUse", label: "工具调用后" },
+      { event: "PostToolUseFailure", label: "工具调用失败" },
+    ],
+  },
+  {
+    label: "子代理",
+    events: [
+      { event: "SubagentStart", label: "子代理启动" },
+      { event: "SubagentStop", label: "子代理结束" },
+    ],
+  },
+  {
+    label: "上下文压缩",
+    events: [
+      { event: "PreCompact", label: "压缩前" },
+      { event: "PostCompact", label: "压缩后" },
+    ],
+  },
+];
+
 export function HooksPage() {
   const queryClient = useQueryClient();
   const hooksQuery = useQuery(hooksQueryOptions());
@@ -104,9 +150,8 @@ export function HooksPage() {
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
   const enabledTools = useEnabledTools();
-  const visibleStatuses = statusesQuery.data?.filter((status) =>
-    enabledTools.has(status.tool),
-  );
+  const visibleTools = filterEnabledTools(HOOK_TOOLS, enabledTools);
+  const [activeTool, setActiveTool] = useState<Tool>("claude");
   const [form, setForm] = useState<HookFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const saveInFlight = useRef(false);
@@ -117,6 +162,11 @@ export function HooksPage() {
   const [openImport, setOpenImport] = useState<{
     tool: Tool;
     requestId: string;
+  } | null>(null);
+  const [openPicker, setOpenPicker] = useState<{
+    tool: Tool;
+    event: HookEvent;
+    eventLabel: string;
   } | null>(null);
   const invalidateHooks = async () => {
     await queryClient.invalidateQueries({ queryKey: hooksKeys.all });
@@ -137,8 +187,8 @@ export function HooksPage() {
       notify({
         kind: "success",
         message: directApply
-          ? "中央 Hook 已保存；已分配工具会在下次同步时生效。"
-          : "中央 Hook 已保存；原生配置尚未修改。请分配工具并生成预览后再 Apply。",
+          ? "中央 Hook 已保存；在下方事件分组添加后自动同步。"
+          : "中央 Hook 已保存；在下方事件分组添加后生成预览再 Apply。",
       });
     },
     onSettled: () => {
@@ -206,13 +256,24 @@ export function HooksPage() {
     },
   });
 
-  const globalAssignmentMutation = useMutation({
-    mutationFn: async ({ hook, tool }: { hook: HookDto; tool: Tool }) =>
+  const assignmentMutation = useMutation({
+    mutationFn: async ({
+      hook,
+      tool,
+      event,
+      assigned,
+    }: {
+      hook: HookDto;
+      tool: Tool;
+      event: HookEvent;
+      assigned: boolean;
+    }) =>
       unwrapResult(
         await commands.setGlobalHookAssignment({
           tool,
           hookId: hook.id,
-          assigned: !hook.globalTools.includes(tool),
+          event,
+          assigned,
           rowVersion: hook.rowVersion,
         }),
       ),
@@ -222,7 +283,7 @@ export function HooksPage() {
     onError: (error) => {
       notify({
         kind: "error",
-        message: profileErrorText(error) ?? "更新 Hook 全局分配失败。",
+        message: profileErrorText(error) ?? "更新 Hook 分配失败。",
       });
     },
   });
@@ -243,7 +304,7 @@ export function HooksPage() {
         notify({
           kind: "success",
           message:
-            "暂无启用且已分配到该工具的中央 Hook。已有原生配置可通过“检测并导入已有 Hooks”纳入中央库，也可先创建并分配 Hook。",
+            "暂无启用且已分配到该工具的中央 Hook。可先在事件分组中添加，或通过“检测并导入已有 Hooks”纳入已有配置。",
         });
         setOpenPreview(null);
         return;
@@ -305,6 +366,17 @@ export function HooksPage() {
     },
   });
 
+  const toolStatus = statusesQuery.data?.find(
+    (status) => status.tool === activeTool,
+  );
+  const toolPresentation = toolStatus
+    ? globalTargetStatusPresentation(
+        toolStatus.status,
+        toolStatus.diagnosticCode,
+        { directApply },
+      )
+    : undefined;
+
   return (
     <main className="p-6 lg:p-8">
       <Notify notification={notification} />
@@ -312,10 +384,9 @@ export function HooksPage() {
         <p className="text-muted-foreground text-sm">中央配置库</p>
         <h1 className="mt-1 text-2xl font-semibold">Hooks</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          生命周期钩子的 CRUD、启停和分配只更新中央意图。四工具的 hooks
-          原生合同不同（Claude/ZCode 为 settings/config 内的 hooks
-          子树，Codex/Cursor 为独立 hooks.json，Cursor 事件为
-          camelCase）；不兼容的事件组合会被拒绝，原生写入必须经过持久化预览。
+          中央 Hook 不绑定单一事件：在下方选择工具，把中央 Hook
+          添加到具体的事件分组（同一 Hook 在不同工具可以使用不同事件）。
+          分配只更新中央意图，原生写入必须经过持久化预览。
         </p>
       </header>
 
@@ -354,8 +425,7 @@ export function HooksPage() {
           {hooksQuery.data?.length === 0 ? (
             <p className="text-muted-foreground mt-4 text-sm">
               中央库尚无 Hook。点击“新增
-              Hook”创建，或通过全局目标中的“检测并导入已有
-              Hooks”纳入已有工具配置。
+              Hook”创建，或在下方工具事件分组中“检测并导入已有 Hooks”。
             </p>
           ) : null}
           <CentralList layout={listLayout}>
@@ -399,35 +469,15 @@ export function HooksPage() {
                   </Button>
                 </div>
               );
-              const platformActions = (
-                <div
-                  className={
-                    listLayout === "grid"
-                      ? "ml-auto flex shrink-0 items-center gap-2"
-                      : "flex items-center gap-2"
-                  }
-                  role="group"
-                  aria-label={`${hook.name} 全局平台分配`}
-                >
-                  {filterEnabledTools(HOOK_TOOLS, enabledTools).map((tool) => {
-                    const eventSupported = hookEventSupportedByTool(tool, hook);
-                    return (
-                      <PlatformAssignmentButton
-                        key={tool}
-                        tool={tool}
-                        assigned={hook.globalTools.includes(tool)}
-                        disabled={
-                          !eventSupported || globalAssignmentMutation.isPending
-                        }
-                        onClick={() =>
-                          globalAssignmentMutation.mutate({ hook, tool })
-                        }
-                      />
-                    );
-                  })}
-                </div>
-              );
-
+              const assignmentSummary =
+                hook.globalAssignments.length === 0
+                  ? "未分配"
+                  : hook.globalAssignments
+                      .map(
+                        (assignment) =>
+                          `${toolMetadata(assignment.tool).label} · ${assignment.event}`,
+                      )
+                      .join("，");
               return (
                 <CentralListCard key={hook.id} layout={listLayout}>
                   <CentralListCardBody layout={listLayout}>
@@ -444,7 +494,8 @@ export function HooksPage() {
                           {hook.name}
                         </h3>
                         <p className="text-muted-foreground mt-1 text-xs">
-                          {hook.event} · {hook.enabled ? "已启用" : "已停用"}
+                          默认 {hook.event} ·{" "}
+                          {hook.enabled ? "已启用" : "已停用"}
                           {hook.scriptName ? " · 受管脚本" : ""}
                         </p>
                       </div>
@@ -492,7 +543,9 @@ export function HooksPage() {
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       {listLayout === "grid" ? hookActions : null}
-                      {platformActions}
+                      <p className="text-muted-foreground text-xs">
+                        全局生效：{assignmentSummary}
+                      </p>
                     </div>
                   </CentralListCardFooter>
                 </CentralListCard>
@@ -507,8 +560,27 @@ export function HooksPage() {
         aria-labelledby="hooks-target-title"
       >
         <h2 id="hooks-target-title" className="text-lg font-semibold">
-          全局目标状态
+          工具事件分组
         </h2>
+        <div
+          className="mt-3 flex items-center gap-2"
+          role="group"
+          aria-label="Hooks 工具视图"
+        >
+          {visibleTools.map((tool) => (
+            <Button
+              key={tool}
+              type="button"
+              size="sm"
+              variant={activeTool === tool ? "default" : "outline"}
+              aria-label={`查看 ${toolMetadata(tool).label} Hooks`}
+              aria-pressed={activeTool === tool}
+              onClick={() => setActiveTool(tool)}
+            >
+              {toolMetadata(tool).label}
+            </Button>
+          ))}
+        </div>
         {statusesQuery.isPending ? (
           <p role="status" className="mt-3 text-sm">
             正在检测全局 Hooks 目标…
@@ -522,83 +594,159 @@ export function HooksPage() {
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
-        {statusesQuery.data != null && visibleStatuses?.length === 0 ? (
-          <p className="text-muted-foreground mt-3 text-sm">
-            当前没有可检查的全局 Hooks 目标。
-          </p>
+        {toolStatus ? (
+          <article className="mt-4 rounded-lg border p-4 text-sm">
+            <p className="font-medium">{toolMetadata(activeTool).label}</p>
+            <code className="mt-2 block text-xs break-all">
+              {toolStatus.targetPath ?? "目标位置未经 capability probe 证明"}
+            </code>
+            <div className="mt-2">
+              <SyncStatusBadge
+                label={toolPresentation?.label}
+                status={toolStatus.status}
+                tone={toolPresentation?.tone}
+              />
+            </div>
+            {toolPresentation?.description ? (
+              <p className="text-muted-foreground mt-2 text-xs">
+                {toolPresentation.description}
+              </p>
+            ) : null}
+            {toolStatus.diagnosticCode ? (
+              <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                诊断码：<code>{toolStatus.diagnosticCode}</code>
+              </p>
+            ) : null}
+            <Button
+              className="mt-3 mr-2"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (openImport) return;
+                setOpenImport({
+                  tool: activeTool,
+                  requestId: crypto.randomUUID(),
+                });
+              }}
+            >
+              检测并导入已有 Hooks
+            </Button>
+            {!directApply ? (
+              <Button
+                className="mt-3"
+                size="sm"
+                disabled={
+                  previewMutation.isPending || toolPresentation?.previewBlocked
+                }
+                onClick={() =>
+                  previewMutation.mutate({
+                    tool: activeTool,
+                    autoApply: directApply,
+                  })
+                }
+              >
+                {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
+              </Button>
+            ) : null}
+          </article>
         ) : null}
-        {visibleStatuses && visibleStatuses.length > 0 ? (
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {visibleStatuses.map((status) => {
-              const presentation = globalTargetStatusPresentation(
-                status.status,
-                status.diagnosticCode,
-                { directApply },
-              );
-              return (
-                <article
-                  key={status.tool}
-                  className="rounded-lg border p-4 text-sm"
-                >
-                  <p className="font-medium">
-                    {toolMetadata(status.tool).label}
-                  </p>
-                  <code className="mt-2 block text-xs break-all">
-                    {status.targetPath ?? "目标位置未经 capability probe 证明"}
-                  </code>
-                  <div className="mt-2">
-                    <SyncStatusBadge
-                      label={presentation.label}
-                      status={status.status}
-                      tone={presentation.tone}
-                    />
-                  </div>
-                  {presentation.description ? (
-                    <p className="text-muted-foreground mt-2 text-xs">
-                      {presentation.description}
-                    </p>
-                  ) : null}
-                  {status.diagnosticCode ? (
-                    <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
-                      诊断码：<code>{status.diagnosticCode}</code>
-                    </p>
-                  ) : null}
-                  <Button
-                    className="mt-3 mr-2"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      if (openImport) return;
-                      setOpenImport({
-                        tool: status.tool,
-                        requestId: crypto.randomUUID(),
-                      });
-                    }}
-                  >
-                    检测并导入已有 Hooks
-                  </Button>
-                  {!directApply ? (
-                    <Button
-                      className="mt-3"
-                      size="sm"
-                      disabled={
-                        previewMutation.isPending || presentation.previewBlocked
-                      }
-                      onClick={() =>
-                        previewMutation.mutate({
-                          tool: status.tool,
-                          autoApply: directApply,
-                        })
-                      }
-                    >
-                      {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
-                    </Button>
-                  ) : null}
-                </article>
-              );
-            })}
-          </div>
-        ) : null}
+        <div className="mt-5 space-y-5">
+          {HOOK_EVENT_GROUPS.map((group) => {
+            const supportedEvents = group.events.filter((item) =>
+              hookEventSupportedByTool(activeTool, item.event),
+            );
+            if (supportedEvents.length === 0) return null;
+            return (
+              <div key={group.label}>
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+                  {group.label}
+                </h3>
+                <div className="mt-2 space-y-3">
+                  {supportedEvents.map(({ event, label }) => {
+                    const assigned = (hooksQuery.data ?? []).filter((hook) =>
+                      hook.globalAssignments.some(
+                        (assignment) =>
+                          assignment.tool === activeTool &&
+                          assignment.event === event,
+                      ),
+                    );
+                    return (
+                      <article
+                        key={event}
+                        className="rounded-lg border p-4 text-sm"
+                        aria-label={`${label}（${event}）分组`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-medium">
+                            {label}
+                            <span className="text-muted-foreground ml-2 text-xs">
+                              {event}
+                            </span>
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            aria-label={`往 ${label} 分组添加 Hook`}
+                            onClick={() =>
+                              setOpenPicker({
+                                tool: activeTool,
+                                event,
+                                eventLabel: label,
+                              })
+                            }
+                          >
+                            从中央列表添加
+                          </Button>
+                        </div>
+                        {assigned.length === 0 ? (
+                          <p className="text-muted-foreground mt-2 text-xs">
+                            该分组暂无 Hook。
+                          </p>
+                        ) : (
+                          <ul className="mt-3 space-y-2">
+                            {assigned.map((hook) => (
+                              <li
+                                key={hook.id}
+                                className="flex items-center justify-between gap-3 rounded border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900"
+                              >
+                                <span
+                                  className="min-w-0 truncate"
+                                  title={hook.command}
+                                >
+                                  {hook.name}
+                                  {!hook.enabled ? "（已停用）" : ""}
+                                  <span className="text-muted-foreground ml-2 break-all">
+                                    {hook.command}
+                                  </span>
+                                </span>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  aria-label={`从 ${label} 分组移除 ${hook.name}`}
+                                  disabled={assignmentMutation.isPending}
+                                  onClick={() =>
+                                    assignmentMutation.mutate({
+                                      hook,
+                                      tool: activeTool,
+                                      event,
+                                      assigned: false,
+                                    })
+                                  }
+                                >
+                                  移除
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <FormDialog
@@ -606,8 +754,8 @@ export function HooksPage() {
         title={form.id ? "编辑 Hook" : "新增 Hook"}
         description={
           directApply
-            ? "保存只更新中央 Hook；已分配工具会按直接应用模式自动同步。"
-            : "保存只更新中央 Hook，不会修改原生配置；原生写入仍需预览后确认 Apply。"
+            ? "保存只更新中央 Hook；在事件分组添加后会按直接应用模式自动同步。"
+            : "保存只更新中央 Hook，不会修改原生配置；事件在分配时选择。"
         }
         submitLabel="保存中央意图"
         pending={saveMutation.isPending}
@@ -642,7 +790,7 @@ export function HooksPage() {
             required
           />
         </Field>
-        <Field label="事件">
+        <Field label="默认事件（添加到分组时的预选项）">
           <select
             className="field"
             value={form.event}
@@ -734,8 +882,25 @@ export function HooksPage() {
             await invalidateHooks();
             notify({
               kind: "success",
-              message: `已导入 ${result.createdCount} 个 Hook 到中央库；分配后请生成全局预览。`,
+              message: `已导入 ${result.createdCount} 个 Hook 到中央库；在事件分组中添加后生成全局预览。`,
             });
+          }}
+        />
+      ) : null}
+
+      {openPicker ? (
+        <HookAssignmentPickerDialog
+          tool={openPicker.tool}
+          event={openPicker.event}
+          eventLabel={openPicker.eventLabel}
+          hooks={hooksQuery.data ?? []}
+          onClose={() => setOpenPicker(null)}
+          onAssigned={(message) => {
+            setOpenPicker(null);
+            notify({ kind: "success", message });
+            if (directApply) {
+              previewMutation.mutate({ tool: activeTool, autoApply: true });
+            }
           }}
         />
       ) : null}
@@ -762,15 +927,15 @@ export function HooksPage() {
   );
 }
 
-/// 前端侧事件支持矩阵（与后端 HookEvent::supported_for_tool 同一口径），
-/// 用于禁用不兼容工具的分配按钮。
 const HOOK_EVENT_SET: ReadonlySet<string> = new Set(HOOK_EVENT_OPTIONS);
 
 function isHookEvent(value: string): value is HookEvent {
   return HOOK_EVENT_SET.has(value);
 }
 
-function hookEventSupportedByTool(tool: Tool, hook: HookDto): boolean {
+/// 前端侧事件支持矩阵（与后端 HookEvent::supported_for_tool 同一口径），
+/// 用于过滤每个工具可见的事件分组。
+function hookEventSupportedByTool(tool: Tool, event: HookEvent): boolean {
   const supported: Record<Tool, HookEvent[]> = {
     claude: [
       "SessionStart",
@@ -818,7 +983,7 @@ function hookEventSupportedByTool(tool: Tool, hook: HookDto): boolean {
       "Stop",
     ],
   };
-  return supported[tool].includes(hook.event);
+  return supported[tool].includes(event);
 }
 
 function createInput(form: HookFormState) {

@@ -10,6 +10,7 @@ import {
   type ProjectDto,
   type ProjectNativeResourceAction,
   type ProjectNativeResourceDto,
+  type HookEvent,
   type HookProjectOptionDto,
   type SkillProjectOptionDto,
   type Tool,
@@ -935,6 +936,30 @@ function ProjectMcpAssignments({
   );
 }
 
+const PROJECT_HOOK_EVENT_OPTIONS: HookEvent[] = [
+  "SessionStart",
+  "SessionEnd",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "PermissionRequest",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "SubagentStart",
+  "SubagentStop",
+  "PreCompact",
+  "PostCompact",
+  "Stop",
+  "Notification",
+];
+
+const PROJECT_HOOK_EVENT_SET: ReadonlySet<string> = new Set(
+  PROJECT_HOOK_EVENT_OPTIONS,
+);
+
+function isHookEventValue(value: string): value is HookEvent {
+  return PROJECT_HOOK_EVENT_SET.has(value);
+}
+
 function ProjectHookAssignments({
   project,
   tool,
@@ -954,12 +979,18 @@ function ProjectHookAssignments({
     hookProjectOptionsQueryOptions(project.id, tool),
   );
   const [excludeFromGit, setExcludeFromGit] = useState(false);
+  // 事件随分配指定：默认预选中央建议事件，可在添加时调整。
+  const [selectedEvents, setSelectedEvents] = useState<
+    Record<string, HookEvent>
+  >({});
   const assignmentMutation = useMutation({
     mutationFn: async ({
       option,
+      event,
       assigned,
     }: {
       option: HookProjectOptionDto;
+      event: HookEvent;
       assigned: boolean;
     }) =>
       unwrapResult(
@@ -967,6 +998,7 @@ function ProjectHookAssignments({
           projectId: project.id,
           tool,
           hookId: option.hookId,
+          event,
           assigned,
           hookRowVersion: option.rowVersion,
           projectRowVersion: project.rowVersion,
@@ -1025,29 +1057,56 @@ function ProjectHookAssignments({
       }
       onPreview={() => previewMutation.mutate()}
     >
-      {optionsQuery.data?.map((option) => (
-        <ProjectOptionRow
-          key={option.hookId}
-          name={`${option.name}（${option.event}）`}
-          state={option.state}
-          actionLabel={`${option.name} Hook 项目追加`}
-          actionDisabled={
-            option.state === "inherited" ||
-            (option.state === "available" && !option.selectable) ||
-            assignmentMutation.isPending
-          }
-          onToggle={() =>
-            assignmentMutation.mutate({
-              option,
-              assigned: option.state === "available",
-            })
-          }
-        >
-          {!option.enabled ? (
-            <OptionTag tone="warning">已停用</OptionTag>
-          ) : null}
-        </ProjectOptionRow>
-      ))}
+      {optionsQuery.data?.map((option) => {
+        const selectedEvent = selectedEvents[option.hookId] ?? option.event;
+        return (
+          <ProjectOptionRow
+            key={option.hookId}
+            name={`${option.name}（${option.event}）`}
+            state={option.state}
+            actionLabel={`${option.name} Hook 项目追加`}
+            actionDisabled={
+              option.state === "inherited" ||
+              (option.state === "available" && !option.selectable) ||
+              assignmentMutation.isPending
+            }
+            onToggle={() =>
+              assignmentMutation.mutate({
+                option,
+                event: selectedEvent,
+                assigned: option.state === "available",
+              })
+            }
+          >
+            {option.state !== "inherited" ? (
+              <select
+                className="field text-xs"
+                aria-label={`${option.name} 项目生效事件`}
+                value={selectedEvent}
+                disabled={assignmentMutation.isPending}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setSelectedEvents((current) => ({
+                    ...current,
+                    [option.hookId]: isHookEventValue(next)
+                      ? next
+                      : selectedEvent,
+                  }));
+                }}
+              >
+                {PROJECT_HOOK_EVENT_OPTIONS.map((event) => (
+                  <option key={event} value={event}>
+                    {event}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {!option.enabled ? (
+              <OptionTag tone="warning">已停用</OptionTag>
+            ) : null}
+          </ProjectOptionRow>
+        );
+      })}
     </AssignmentCard>
   );
 }
