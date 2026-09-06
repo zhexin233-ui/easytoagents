@@ -221,6 +221,11 @@ pub fn list_hook_project_options(
         .into_iter()
         .map(|record| record.id)
         .collect::<BTreeSet<_>>();
+    // state=selected 的选项回填分配行上的生效事件（迁移 0016 起事件随分配）。
+    let assigned_events: BTreeMap<String, HookEvent> =
+        repository::project_assignment_events(database, &input.project_id, input.tool)?
+            .into_iter()
+            .collect();
     repository::list_hooks(database)?
         .into_iter()
         .map(|record| {
@@ -232,6 +237,7 @@ pub fn list_hook_project_options(
                 HookProjectSelectionState::Available
             };
             Ok(HookProjectOptionDto {
+                assigned_event: assigned_events.get(&record.id).cloned(),
                 hook_id: record.id,
                 name: record.name,
                 event: record.event,

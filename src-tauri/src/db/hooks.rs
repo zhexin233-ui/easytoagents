@@ -416,6 +416,33 @@ pub fn list_assigned_hooks(
     Ok(records)
 }
 
+/// 项目分配的生效事件映射：hook_id -> event（供项目选项 DTO 回填）。
+pub fn project_assignment_events(
+    database: &Database,
+    project_id: &str,
+    tool: Tool,
+) -> Result<Vec<(String, HookEvent)>, AppError> {
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare(
+            "SELECT hook_id, event FROM hook_project_assignments
+             WHERE project_id = ?1 AND tool = ?2",
+        )
+        .map_err(|_| AppError::database(&path, "prepare_project_assignment_events"))?;
+    let rows = statement
+        .query_map(params![project_id, tool.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                event_from_database(row.get(1)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
+            ))
+        })
+        .map_err(|_| AppError::database(&path, "query_project_assignment_events"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::database(&path, "decode_project_assignment_events"))?;
+    Ok(rows)
+}
+
 pub fn project_assignment_exists(
     database: &Database,
     project_id: &str,

@@ -787,7 +787,11 @@ export type HookImportCandidateStatus = "importable" | "already_managed" | "name
 export type HookImportPreviewDto = { tool: Tool; targetPath: string; candidates: HookImportCandidateDto[]; message: string | null }
 export type HookImportResultDto = { tool: Tool; createdCount: number }
 export type HookProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
-export type HookProjectOptionDto = { hookId: string; name: string; event: HookEvent; enabled: boolean; state: HookProjectSelectionState; selectable: boolean; rowVersion: number }
+/**
+ * `event` 为中央建议事件（分配预选默认值）；`assigned_event` 仅在
+ * state=selected 时存在，为项目分配行上的生效事件。
+ */
+export type HookProjectOptionDto = { hookId: string; name: string; event: HookEvent; enabled: boolean; state: HookProjectSelectionState; selectable: boolean; assignedEvent: HookEvent | null; rowVersion: number }
 export type HookProjectOptionsInput = { projectId: string; tool: Tool }
 export type HookProjectSelectionState = "inherited" | "selected" | "available"
 export type HookTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }

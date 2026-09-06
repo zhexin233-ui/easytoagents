@@ -110,6 +110,8 @@ pub enum HookProjectSelectionState {
     Available,
 }
 
+/// `event` 为中央建议事件（分配预选默认值）；`assigned_event` 仅在
+/// state=selected 时存在，为项目分配行上的生效事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HookProjectOptionDto {
@@ -119,6 +121,7 @@ pub struct HookProjectOptionDto {
     pub enabled: bool,
     pub state: HookProjectSelectionState,
     pub selectable: bool,
+    pub assigned_event: Option<HookEvent>,
     pub row_version: u32,
 }
 

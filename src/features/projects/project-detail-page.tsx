@@ -35,6 +35,11 @@ import {
 } from "@/lib/projects-api";
 import { skillKeys, skillProjectOptionsQueryOptions } from "@/lib/skills-api";
 import { hookProjectOptionsQueryOptions, hooksKeys } from "@/lib/hooks-api";
+import {
+  HOOK_EVENT_GROUPS,
+  hookEventSupportedByTool,
+} from "@/features/hooks/hook-events";
+import { ProjectHookPickerDialog } from "@/features/projects/project-hook-picker-dialog";
 import { interruptedRunQueryOptions, syncKeys } from "@/lib/sync-api";
 import {
   MCP_TOOLS,
@@ -936,30 +941,6 @@ function ProjectMcpAssignments({
   );
 }
 
-const PROJECT_HOOK_EVENT_OPTIONS: HookEvent[] = [
-  "SessionStart",
-  "SessionEnd",
-  "UserPromptSubmit",
-  "PreToolUse",
-  "PermissionRequest",
-  "PostToolUse",
-  "PostToolUseFailure",
-  "SubagentStart",
-  "SubagentStop",
-  "PreCompact",
-  "PostCompact",
-  "Stop",
-  "Notification",
-];
-
-const PROJECT_HOOK_EVENT_SET: ReadonlySet<string> = new Set(
-  PROJECT_HOOK_EVENT_OPTIONS,
-);
-
-function isHookEventValue(value: string): value is HookEvent {
-  return PROJECT_HOOK_EVENT_SET.has(value);
-}
-
 function ProjectHookAssignments({
   project,
   tool,
@@ -979,18 +960,16 @@ function ProjectHookAssignments({
     hookProjectOptionsQueryOptions(project.id, tool),
   );
   const [excludeFromGit, setExcludeFromGit] = useState(false);
-  // 事件随分配指定：默认预选中央建议事件，可在添加时调整。
-  const [selectedEvents, setSelectedEvents] = useState<
-    Record<string, HookEvent>
-  >({});
+  const [openPicker, setOpenPicker] = useState<{
+    event: HookEvent;
+    eventLabel: string;
+  } | null>(null);
   const assignmentMutation = useMutation({
     mutationFn: async ({
       option,
-      event,
       assigned,
     }: {
       option: HookProjectOptionDto;
-      event: HookEvent;
       assigned: boolean;
     }) =>
       unwrapResult(
@@ -998,7 +977,7 @@ function ProjectHookAssignments({
           projectId: project.id,
           tool,
           hookId: option.hookId,
-          event,
+          event: option.assignedEvent ?? option.event,
           assigned,
           hookRowVersion: option.rowVersion,
           projectRowVersion: project.rowVersion,
@@ -1036,17 +1015,19 @@ function ProjectHookAssignments({
     },
   });
   const blocked = projectBlocked(project, tool);
+  const options = optionsQuery.data ?? [];
+  const inherited = options.filter((option) => option.state === "inherited");
   return (
     <AssignmentCard
       title="Hooks"
-      description="全局项持续继承且只读；项目只能追加其他中央 Hook。"
+      description="事件随项目追加指定，分组方式与全局 Hooks 管理一致；全局项持续继承且只读。"
       blocked={blocked}
       directApply={directApply}
       error={profileErrorText(
         optionsQuery.error ?? assignmentMutation.error ?? previewMutation.error,
       )}
       pending={optionsQuery.isPending}
-      empty={optionsQuery.data?.length === 0}
+      empty={options.length === 0}
       excludeFromGit={excludeFromGit}
       onExcludeFromGit={setExcludeFromGit}
       previewPending={previewMutation.isPending}
@@ -1057,56 +1038,112 @@ function ProjectHookAssignments({
       }
       onPreview={() => previewMutation.mutate()}
     >
-      {optionsQuery.data?.map((option) => {
-        const selectedEvent = selectedEvents[option.hookId] ?? option.event;
-        return (
-          <ProjectOptionRow
-            key={option.hookId}
-            name={`${option.name}（${option.event}）`}
-            state={option.state}
-            actionLabel={`${option.name} Hook 项目追加`}
-            actionDisabled={
-              option.state === "inherited" ||
-              (option.state === "available" && !option.selectable) ||
-              assignmentMutation.isPending
+      {inherited.length > 0 ? (
+        <p className="text-muted-foreground text-xs">
+          全局继承（只读）：
+          {inherited.map((option) => option.name).join("、")}
+        </p>
+      ) : null}
+      <div className="space-y-4">
+        {HOOK_EVENT_GROUPS.map((group) => {
+          const supportedEvents = group.events.filter((item) =>
+            hookEventSupportedByTool(tool, item.event),
+          );
+          if (supportedEvents.length === 0) return null;
+          return (
+            <div key={group.label}>
+              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                {group.label}
+              </h4>
+              <div className="mt-2 space-y-2">
+                {supportedEvents.map(({ event, label }) => {
+                  const assigned = options.filter(
+                    (option) =>
+                      option.state === "selected" &&
+                      option.assignedEvent === event,
+                  );
+                  return (
+                    <article
+                      key={event}
+                      className="rounded-lg border p-3 text-sm"
+                      aria-label={`项目 ${label}（${event}）分组`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-medium">
+                          {label}
+                          <span className="text-muted-foreground ml-2">
+                            {event}
+                          </span>
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          aria-label={`往项目 ${label} 分组添加 Hook`}
+                          onClick={() =>
+                            setOpenPicker({ event, eventLabel: label })
+                          }
+                        >
+                          从中央列表添加
+                        </Button>
+                      </div>
+                      {assigned.length === 0 ? (
+                        <p className="text-muted-foreground mt-2 text-xs">
+                          该分组暂无项目追加。
+                        </p>
+                      ) : (
+                        <ul className="mt-2 space-y-2">
+                          {assigned.map((option) => (
+                            <li
+                              key={option.hookId}
+                              className="flex items-center justify-between gap-3 rounded border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900"
+                            >
+                              <span className="min-w-0 truncate">
+                                {option.name}
+                                {!option.enabled ? "（已停用）" : ""}
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                aria-label={`从项目 ${label} 分组移除 ${option.name}`}
+                                disabled={assignmentMutation.isPending}
+                                onClick={() =>
+                                  assignmentMutation.mutate({
+                                    option,
+                                    assigned: false,
+                                  })
+                                }
+                              >
+                                移除
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {openPicker ? (
+        <ProjectHookPickerDialog
+          project={project}
+          tool={tool}
+          event={openPicker.event}
+          eventLabel={openPicker.eventLabel}
+          options={options}
+          onClose={() => setOpenPicker(null)}
+          onAssigned={(message) => {
+            setOpenPicker(null);
+            onMessage(message);
+            if (directApply) {
+              previewMutation.mutate();
             }
-            onToggle={() =>
-              assignmentMutation.mutate({
-                option,
-                event: selectedEvent,
-                assigned: option.state === "available",
-              })
-            }
-          >
-            {option.state !== "inherited" ? (
-              <select
-                className="field text-xs"
-                aria-label={`${option.name} 项目生效事件`}
-                value={selectedEvent}
-                disabled={assignmentMutation.isPending}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setSelectedEvents((current) => ({
-                    ...current,
-                    [option.hookId]: isHookEventValue(next)
-                      ? next
-                      : selectedEvent,
-                  }));
-                }}
-              >
-                {PROJECT_HOOK_EVENT_OPTIONS.map((event) => (
-                  <option key={event} value={event}>
-                    {event}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            {!option.enabled ? (
-              <OptionTag tone="warning">已停用</OptionTag>
-            ) : null}
-          </ProjectOptionRow>
-        );
-      })}
+          }}
+        />
+      ) : null}
     </AssignmentCard>
   );
 }
