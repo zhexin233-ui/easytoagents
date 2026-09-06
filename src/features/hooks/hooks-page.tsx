@@ -8,7 +8,6 @@ import {
   type HookDto,
   type HookEvent,
   type PreviewPlan,
-  type SyncStatus,
   type Tool,
   type UpdateHookInput,
 } from "@/bindings/commands";
@@ -43,6 +42,7 @@ import {
   appSettingsQueryOptions,
   canAutoApplyPreview,
 } from "@/lib/settings-api";
+import { cn } from "@/lib/utils";
 import { HookImportDialog } from "@/features/hooks/hook-import-dialog";
 import { HookAssignmentPickerDialog } from "@/features/hooks/hook-assignment-picker-dialog";
 
@@ -568,17 +568,12 @@ export function HooksPage() {
           aria-label="Hooks 工具视图"
         >
           {visibleTools.map((tool) => (
-            <Button
+            <HookToolViewButton
               key={tool}
-              type="button"
-              size="sm"
-              variant={activeTool === tool ? "default" : "outline"}
-              aria-label={`查看 ${toolMetadata(tool).label} Hooks`}
-              aria-pressed={activeTool === tool}
+              tool={tool}
+              selected={activeTool === tool}
               onClick={() => setActiveTool(tool)}
-            >
-              {toolMetadata(tool).label}
-            </Button>
+            />
           ))}
         </div>
         {statusesQuery.isPending ? (
@@ -924,6 +919,51 @@ export function HooksPage() {
         }}
       />
     </main>
+  );
+}
+
+interface HookToolViewButtonProps {
+  tool: Tool;
+  selected: boolean;
+  onClick: () => void;
+}
+
+/// 工具事件分组的图标页签（与项目详情页的工具视图按钮同款样式）。
+function HookToolViewButton({
+  tool,
+  selected,
+  onClick,
+}: HookToolViewButtonProps) {
+  const metadata = toolMetadata(tool);
+  const label = `查看 ${metadata.label} Hooks`;
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      className={cn(
+        "size-8 p-0 shadow-none",
+        selected
+          ? "border-slate-300 bg-slate-50 shadow-sm dark:border-slate-600 dark:bg-slate-800"
+          : "border-slate-200 bg-transparent dark:border-slate-700",
+      )}
+      aria-label={label}
+      aria-pressed={selected}
+      title={label}
+      onClick={onClick}
+    >
+      <img
+        src={metadata.icon}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className={cn(
+          "size-5 object-contain transition-[opacity,filter]",
+          selected ? "opacity-100" : "opacity-25 grayscale",
+        )}
+      />
+    </Button>
   );
 }
 
