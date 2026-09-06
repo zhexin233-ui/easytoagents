@@ -1121,3 +1121,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Next Steps
 
 - 如需分组内直接切换事件（同 Hook 换组）可在选择器中扩展确认切换流
+
+
+## Session 41: Cursor 全局与项目级提示词支持
+
+**Date**: 2026-09-06
+**Task**: Cursor 全局与项目级提示词支持
+**Branch**: `main`
+
+### Summary
+
+完成 Cursor Prompt/Rules 全链路支持：新增 CursorMdc 与官方 .mdc 文件合同、全局/项目提示词同步与导入、0017 数据库迁移、前端能力与项目入口、恢复与原生资源测试；更新能力矩阵和 backend/frontend 规范。质量门 pnpm check、pnpm bindings:check、git diff --check 全部通过；提交 e7f15b9，随后归档任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e7f15b9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
