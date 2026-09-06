@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
-- **Last Active**: 2026-09-05
+- **Total Sessions**: 38
+- **Last Active**: 2026-09-06
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1042 | Active |
+| `journal-1.md` | ~1077 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-09-06 | Hook 事件移到分配维度并按工具事件分组管理 | `06b6a1f` | `main` |
 | 37 | 2026-09-05 | 修复 hooks 导入接管漏判 /usr/bin/env 间接层命令 | `24dc7d3` | `main` |
 | 36 | 2026-09-05 | 导入 Hook 接管脚本到中央目录 | `83177b6` | `main` |
 | 35 | 2026-09-05 | 新增 Hooks 全局级与项目级管理 | `4689f42` | `main` |

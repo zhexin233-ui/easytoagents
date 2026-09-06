@@ -1040,3 +1040,38 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Next Steps
 
 - 提醒：已按旧逻辑导入为直存的 hook（如 deny_dotenv）需删除后重新导入即可接管
+
+
+## Session 38: Hook 事件移到分配维度并按工具事件分组管理
+
+**Date**: 2026-09-06
+**Task**: Hook 事件移到分配维度并按工具事件分组管理
+**Branch**: `main`
+
+### Summary
+
+事件从中央记录的固定属性改为分配属性（迁移 0016 重建分配表回填），同一 Hook 可在不同工具用不同事件；Hooks 页重构为工具页签 + 事件分组卡（从中央列表往分组添加/移除），项目页签添加时选事件。
+
+### Main Changes
+
+- 迁移 0016：分配表新增 NOT NULL event（重建回填）；教训：DROP TABLE 会重解析 schema，须先删兄弟表上的触发器
+- 分配 RPC 带 event（ON CONFLICT 切换事件）；list_assigned_hooks 取生效事件，投影/外部键/认领判定无需改动；HookDto.globalAssignments 替换 globalTools
+- 前端：工具页签 + 五类事件分组（仅渲染工具支持的事件）+ HookAssignmentPickerDialog；项目页签事件下拉；中央列表展示各工具生效事件
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `06b6a1f` | (see git log) |
+
+### Testing
+
+- [OK] 迁移 0016 回填/切换金丝雀 + 事件分组/跨工具不同事件/移除/不支持分组隐藏前端用例；pnpm check 全绿（243 前端 + 269 Rust）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 已知限制：同 (tool, hook) 双事件并存需复制中央记录（managed item 身份模型改造后可支持）
