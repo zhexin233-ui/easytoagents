@@ -1184,3 +1184,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 44: 完成 OpenCode 支持接入
+
+**Date**: 2026-09-07
+**Task**: 完成 OpenCode 支持接入
+**Branch**: `main`
+
+### Summary
+
+完成 OpenCode Provider、全局 Prompt、MCP、Skills 的显式发现、导入、同步与恢复；JSON/JSONC 保留式编辑、v19 迁移、UI/绑定和 Hooks fail-closed 诊断；通过 pnpm check、Rust 集成测试与隔离 CLI smoke。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bfc6a92` | (see git log) |
+
+### Status
+
+[OK] **Completed**
