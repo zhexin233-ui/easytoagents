@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核对直接应用仍先持久化预览、冲突禁用 Apply、默认模式无隐式写入及精确 RPC 测试要求。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用项目 MCP/Skills/Hooks 已有 assignment-success direct 分支，避免提示词逻辑分叉。"}

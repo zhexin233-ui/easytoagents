@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"项目详情页 direct-apply、持久化预览、冲突回退与项目提示词硬拷贝的前端契约。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"项目级提示词 preview/apply、目标矩阵、解除分配保留文件及硬拷贝语义，确认本任务不改后端契约。"}
