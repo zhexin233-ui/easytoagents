@@ -1163,3 +1163,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 43: 移除项目级提示词功能
+
+**Date**: 2026-09-07
+**Task**: 移除项目级提示词功能
+**Branch**: `main`
+
+### Summary
+
+完成项目级 Prompt 的前后端移除与 v18 数据库迁移；保留全局 Prompt，收窄项目资源与绑定，更新现行规范和维护文档。通过 pnpm check、Rust 全量测试、绑定检查与残留审计后提交并归档任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc76c93` | (see git log) |
+
+### Status
+
+[OK] **Completed**
