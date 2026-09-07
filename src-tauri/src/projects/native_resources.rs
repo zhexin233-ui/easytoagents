@@ -268,6 +268,12 @@ fn reconcile_descriptor(
         let existing =
             repository::find_by_target_key(database, &identity.target_id, &item.external_key)?;
         if item.centrally_owned {
+            // 项目 Prompt 与中央档案共用同一个整文件目标。中央 Apply 重新写入
+            // 已停用的原生文件时，应保留原生快照及其状态，等解除中央分配后再
+            // 重新判断占用；否则每次对账都会把这条记录重新推进到 conflict。
+            if descriptor.artifact_kind == ArtifactKind::Prompt {
+                continue;
+            }
             if existing.is_some() {
                 repository::upsert_observed_active(
                     database,
@@ -435,11 +441,23 @@ fn prompt_target_is_managed(database: &Database, target_id: &str) -> Result<bool
     let count: i64 = database
         .connection()
         .query_row(
-            "SELECT COUNT(*) FROM managed_items WHERE target_id = ?1 AND resource_kind = 'prompt'",
+            "SELECT COUNT(*)
+             FROM managed_targets AS target
+             WHERE target.id = ?1
+               AND target.scope = 'project'
+               AND target.artifact_kind = 'prompt'
+               AND target.baseline_full_hash IS NOT NULL
+               AND target.baseline_managed_hash IS NOT NULL
+               AND EXISTS (
+                   SELECT 1
+                   FROM prompt_project_assignments AS assignment
+                   WHERE assignment.project_id = target.project_id
+                     AND assignment.tool = target.tool
+               )",
             [target_id],
             |row| row.get(0),
         )
-        .map_err(|_| AppError::database(&path, "count_prompt_managed_items"))?;
+        .map_err(|_| AppError::database(&path, "check_prompt_target_managed"))?;
     Ok(count > 0)
 }
 
@@ -950,9 +968,6 @@ fn should_hide_centralized(
     record: &repository::NativeResourceRecord,
     database: &Database,
 ) -> Result<bool, AppError> {
-    if record.state == "disabled" || record.state == "conflict" {
-        return Ok(false);
-    }
     let owned = match record.artifact_kind.as_str() {
         "mcp" => mcp_repository::list_managed_mcp_items(database, &record.target_id)?
             .into_iter()
@@ -963,6 +978,15 @@ fn should_hide_centralized(
         "prompt" => prompt_target_is_managed(database, &record.target_id)?,
         _ => false,
     };
+    // 项目 Prompt 的中央 Apply 会重新占用原生文件路径。即使旧原生记录
+    // 仍是 disabled/conflict，也应从原生资源列表隐藏；快照由记录继续保留，
+    // 解除分配后下一次对账再恢复普通原生资源语义。
+    if record.artifact_kind == "prompt" && owned {
+        return Ok(true);
+    }
+    if record.state == "disabled" || record.state == "conflict" {
+        return Ok(false);
+    }
     Ok(owned)
 }
 
@@ -1328,6 +1352,147 @@ mod tests {
         .unwrap();
         assert_eq!(codex_prompts.len(), 1);
         assert_eq!(codex_prompts[0].display_name, "AGENTS.md");
+    }
+
+    #[test]
+    fn centrally_owned_project_prompt_hides_reappeared_native_resource() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".cursor/rules")).unwrap();
+            fs::write(
+                root.join(".cursor/rules/easytoagents.mdc"),
+                "---\nalwaysApply: true\n---\n\n# native prompt\n",
+            )
+            .unwrap();
+        });
+        let native = list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project.id.clone(),
+                tool: Tool::Cursor,
+                artifact_kind: ArtifactKind::Prompt,
+            },
+        )
+        .unwrap()
+        .remove(0);
+        let mut redactor = SecretRedactor::default();
+        let disable = preview_project_native_resource_action(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewProjectNativeResourceActionInput {
+                resource_id: native.id.clone(),
+                row_version: native.row_version,
+                action: ProjectNativeResourceAction::Disable,
+            },
+        )
+        .unwrap();
+        apply_project_native_resource_preview(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &ApplyProjectNativeResourcePreviewInput {
+                preview_id: disable.preview_id,
+            },
+        )
+        .unwrap();
+        let disabled = list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project.id.clone(),
+                tool: Tool::Cursor,
+                artifact_kind: ArtifactKind::Prompt,
+            },
+        )
+        .unwrap()
+        .remove(0);
+        assert_eq!(disabled.state, ProjectNativeResourceState::Disabled);
+        let disabled_snapshot_id = repository::get_by_id(&fixture.database, &disabled.id)
+            .unwrap()
+            .disabled_snapshot_id
+            .clone();
+        assert!(disabled_snapshot_id.is_some());
+
+        let profile = crate::profiles::create_prompt_profile(
+            &mut fixture.database,
+            crate::profiles::PromptProfileInput {
+                name: "中央 Cursor 规则".to_owned(),
+                body: "# centrally managed prompt\n".to_owned(),
+            },
+        )
+        .unwrap();
+        let current_project =
+            crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
+                .unwrap();
+        crate::profiles::set_prompt_project_assignment(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::profiles::SetPromptProjectAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Cursor,
+                prompt_profile_id: Some(profile.id),
+                project_row_version: current_project.row_version,
+            },
+        )
+        .unwrap();
+        let central_preview = crate::profiles::preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Cursor,
+            Some(project.id.clone()),
+        )
+        .unwrap();
+        crate::profiles::apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut SecretRedactor::default(),
+            &central_preview.preview_id,
+            Tool::Cursor,
+            ArtifactKind::Prompt,
+            Some(&project.id),
+        )
+        .unwrap();
+
+        let native_items = list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project.id.clone(),
+                tool: Tool::Cursor,
+                artifact_kind: ArtifactKind::Prompt,
+            },
+        )
+        .unwrap();
+        assert!(native_items.is_empty());
+        let preserved = repository::get_by_id(&fixture.database, &disabled.id).unwrap();
+        assert_eq!(preserved.state, "disabled");
+        assert_eq!(preserved.disabled_snapshot_id, disabled_snapshot_id);
+
+        let summary =
+            crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
+                .unwrap()
+                .native_resources;
+        assert_eq!(summary.disabled, 0);
+        assert_eq!(summary.conflict, 0);
+
+        // 中央托管中的旧原生快照不应再阻塞项目登记移除。
+        let current_project =
+            crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
+                .unwrap();
+        crate::projects::remove_project(
+            &mut fixture.database,
+            &crate::projects::VersionedProjectInput {
+                id: project.id,
+                row_version: current_project.row_version,
+            },
+        )
+        .unwrap();
     }
 
     #[test]

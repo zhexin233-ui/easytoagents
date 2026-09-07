@@ -413,6 +413,9 @@ const adopted = unwrapResult(
 - `active` shows disable; `disabled` shows restore and `disabledAt`; `missing` is
   unrestorable; `conflict` keeps restore materials but blocks the write. An active
   writer or `rollback_failed` is a page-level block, not a per-item conflict.
+- 项目 Prompt 被中央 assignment 且已应用出基线后，中央与原生共用同一目标路径；
+  后端会隐藏旧的 `disabled/conflict` 原生记录并保留快照，项目移除不再被它阻塞。
+  解除分配后若文件仍在，下一次对账重新显示 `conflict`，前端继续使用普通恢复/冲突语义。
 - Project cards/register feedback render `ProjectDto.nativeResources` counts. Remove
   is disabled while `disabled + conflict > 0`.
 - Changing either project-detail view axis clears the open preview, operation message,
