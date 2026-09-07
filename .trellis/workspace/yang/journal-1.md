@@ -1142,3 +1142,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 42: 修复项目级提示词直接应用
+
+**Date**: 2026-09-07
+**Task**: 修复项目级提示词直接应用
+**Branch**: `main`
+
+### Summary
+
+修复直接应用模式下项目级提示词分配与解除分配：查询失效后自动生成提示词预览，并对安全计划自动 Apply；冲突回退现有预览对话框，默认模式保持显式预览/Apply。补充 Claude、Cursor、解除分配与冲突回归测试，更新前端 direct-apply 契约。定向测试、全量前端测试、Rust 检查、lint、typecheck 与 pnpm check 全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `72dec60` | (see git log) |
+
+### Status
+
+[OK] **Completed**

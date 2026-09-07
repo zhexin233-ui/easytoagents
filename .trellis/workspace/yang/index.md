@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 41
-- **Last Active**: 2026-09-06
+- **Total Sessions**: 42
+- **Last Active**: 2026-09-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1144 | Active |
+| `journal-1.md` | ~1165 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-09-07 | 修复项目级提示词直接应用 | `72dec60` | `main` |
 | 41 | 2026-09-06 | Cursor 全局与项目级提示词支持 | `e7f15b9` | `main` |
 | 40 | 2026-09-06 | Hook 项目追加对齐全局事件分组视图 | `eac5339` | `main` |
 | 39 | 2026-09-06 | Hooks 工具事件分组页签改为图标按钮 | `b7b2cc9` | `main` |
