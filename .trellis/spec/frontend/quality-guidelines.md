@@ -589,7 +589,11 @@ projectAssignmentMutation.mutate(input);
   previews then auto-applies. MCP save syncs the edited server's current
   `globalTools` (create has none yet), MCP delete syncs the deleted server's
   `globalTools` to clean up managed entries, MCP import success syncs the
-  imported tool, and Prompt save/delete sync the profile's `globalTools`.
+  imported tool, and Prompt save/delete sync the profile's `globalTools`. Project
+  Prompt assignment and unassignment also trigger `previewPromptSync(tool,
+  projectId)` after the assignment invalidations; safe non-empty plans auto-apply,
+  conflicts/errors open the preview dialog, and empty plans remain no-ops. The
+  project file remains a hard copy when an assignment is removed.
   Skill deletion is backend-blocked while assigned and Skills directory import
   owns its own confirm flow, so neither adds auto-sync.
 - Direct mode hides the manual global-sync buttons entirely (MCP/Skills status
@@ -620,6 +624,9 @@ projectAssignmentMutation.mutate(input);
   behavior is unchanged and central toggles never trigger an implicit sync.
 - Assignment/enable toggles under direct mode assert both the preview command
   payload and the auto-applied preview ID.
+- Project Prompt assignment and unassignment under direct mode assert the exact
+  `previewPromptSync` tool/project arguments, the `applyProfilePreview` preview
+  ID/tool/artifact/project payload, and the conflict-dialog fallback.
 - Direct mode asserts the manual global-sync buttons are absent on all three
   pages, and that MCP save/delete/import plus Prompt save/delete auto-trigger
   the same preview + apply payloads; a conflicted preview from those flows

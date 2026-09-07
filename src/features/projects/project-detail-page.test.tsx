@@ -684,6 +684,307 @@ describe("ProjectDetailPage", () => {
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
+  it("直接应用模式下项目提示词分配自动预览并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    vi.mocked(commands.getPromptProjectAssignment)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { projectId: project.id, tool: "claude", profileId: null },
+      })
+      .mockResolvedValue({
+        status: "ok",
+        data: {
+          projectId: project.id,
+          tool: "claude",
+          profileId: promptProfileFixture.id,
+        },
+      });
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfileFixture],
+    });
+    vi.mocked(commands.setPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        projectId: project.id,
+        tool: "claude",
+        profileId: promptProfileFixture.id,
+      },
+    });
+    vi.mocked(commands.previewPromptSync).mockResolvedValue({
+      status: "ok",
+      data: promptPreview,
+    });
+    vi.mocked(commands.applyProfilePreview).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: "run-prompt-1",
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 1,
+      },
+    });
+
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目提示词" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "分配 项目提示词 为项目提示词",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(commands.setPromptProjectAssignment).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        promptProfileId: promptProfileFixture.id,
+        projectRowVersion: project.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewPromptSync).toHaveBeenCalledWith(
+        "claude",
+        project.id,
+      ),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: promptPreview.previewId,
+        tool: "claude",
+        artifactKind: "prompt",
+        projectId: project.id,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("直接应用模式下 Cursor 项目提示词使用当前工具预览并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "direct",
+        enabledTools: ["claude", "codex", "cursor"],
+      },
+    });
+    vi.mocked(commands.getPromptProjectAssignment).mockImplementation(
+      (_projectId, tool) =>
+        Promise.resolve({
+          status: "ok",
+          data: { projectId: project.id, tool, profileId: null },
+        }),
+    );
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfileFixture],
+    });
+    vi.mocked(commands.setPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        projectId: project.id,
+        tool: "cursor",
+        profileId: promptProfileFixture.id,
+      },
+    });
+    vi.mocked(commands.previewPromptSync).mockResolvedValue({
+      status: "ok",
+      data: promptPreview,
+    });
+    vi.mocked(commands.applyProfilePreview).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: "run-prompt-cursor",
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 1,
+      },
+    });
+
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目提示词" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理 Cursor 项目资源" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "分配 项目提示词 为项目提示词",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(commands.setPromptProjectAssignment).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "cursor",
+        promptProfileId: promptProfileFixture.id,
+        projectRowVersion: project.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewPromptSync).toHaveBeenCalledWith(
+        "cursor",
+        project.id,
+      ),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: promptPreview.previewId,
+        tool: "cursor",
+        artifactKind: "prompt",
+        projectId: project.id,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("直接应用模式下项目提示词冲突回退到预览对话框且不 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    vi.mocked(commands.getPromptProjectAssignment)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { projectId: project.id, tool: "claude", profileId: null },
+      })
+      .mockResolvedValue({
+        status: "ok",
+        data: {
+          projectId: project.id,
+          tool: "claude",
+          profileId: promptProfileFixture.id,
+        },
+      });
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfileFixture],
+    });
+    vi.mocked(commands.setPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        projectId: project.id,
+        tool: "claude",
+        profileId: promptProfileFixture.id,
+      },
+    });
+    const target = promptPreview.targets[0];
+    if (!target) throw new Error("提示词预览 fixture 缺少目标");
+    vi.mocked(commands.previewPromptSync).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...promptPreview,
+        targets: [
+          {
+            ...target,
+            changeKind: "conflict",
+            status: "external_owned_change",
+            errorCode: "CONFLICT",
+          },
+        ],
+      },
+    });
+
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目提示词" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "分配 项目提示词 为项目提示词",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "应用这份预览" })).toBeDisabled();
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
+
+  it("直接应用模式下解除项目提示词分配也自动预览并 Apply", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    vi.mocked(commands.getPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        projectId: project.id,
+        tool: "claude",
+        profileId: promptProfileFixture.id,
+      },
+    });
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [promptProfileFixture],
+    });
+    vi.mocked(commands.setPromptProjectAssignment).mockResolvedValue({
+      status: "ok",
+      data: { projectId: project.id, tool: "claude", profileId: null },
+    });
+    vi.mocked(commands.previewPromptSync).mockResolvedValue({
+      status: "ok",
+      data: promptPreview,
+    });
+    vi.mocked(commands.applyProfilePreview).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: "run-prompt-unassign",
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 1,
+      },
+    });
+
+    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    try {
+      renderPage();
+      fireEvent.click(
+        await screen.findByRole("button", { name: "管理项目提示词" }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "解除项目提示词分配" }),
+      );
+
+      await waitFor(() =>
+        expect(commands.setPromptProjectAssignment).toHaveBeenCalledWith({
+          projectId: project.id,
+          tool: "claude",
+          promptProfileId: null,
+          projectRowVersion: project.rowVersion,
+        }),
+      );
+      await waitFor(() =>
+        expect(commands.previewPromptSync).toHaveBeenCalledWith(
+          "claude",
+          project.id,
+        ),
+      );
+      await waitFor(() =>
+        expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+          previewId: promptPreview.previewId,
+          tool: "claude",
+          artifactKind: "prompt",
+          projectId: project.id,
+        }),
+      );
+      expect(
+        screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
   it("冲突项目预览展示不匹配条目并支持以当前内容重新接管", async () => {
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
@@ -921,6 +1222,10 @@ describe("ProjectDetailPage", () => {
       await screen.findByRole("heading", { name: "Cursor MCP 项目追加" }),
     ).toBeVisible();
 
+    // 确保初始设置请求已完成，再替换设置响应验证渲染期回落。
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["settings"] });
+    });
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "preview_confirm", enabledTools: ["codex"] },
@@ -932,11 +1237,13 @@ describe("ProjectDetailPage", () => {
     const platformGroup = screen.getByRole("group", {
       name: "项目平台管理视图",
     });
-    expect(
-      within(platformGroup).queryByRole("button", {
-        name: "管理 Cursor 项目资源",
-      }),
-    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(platformGroup).queryByRole("button", {
+          name: "管理 Cursor 项目资源",
+        }),
+      ).not.toBeInTheDocument(),
+    );
     const codexButton = within(platformGroup).getByRole("button", {
       name: "管理 Codex 项目资源",
     });
@@ -1430,7 +1737,9 @@ describe("ProjectDetailPage", () => {
         projectRowVersion: 7,
       }),
     );
+    await waitFor(() => expect(commands.getProject).toHaveBeenCalledTimes(2));
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["profiles"] });
+    expect(commands.previewPromptSync).not.toHaveBeenCalled();
 
     // 分配成功后由失效刷新取回已分配状态。
     await screen.findByRole("button", { name: "解除项目提示词分配" });

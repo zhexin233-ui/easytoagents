@@ -1317,6 +1317,10 @@ function ProjectPromptAssignments({
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
       ]);
       if (!viewActive.current) return;
+      if (directApply) {
+        previewMutation.mutate();
+        return;
+      }
       onMessage("项目提示词分配已更新；项目记忆文件尚未写入。");
     },
   });
