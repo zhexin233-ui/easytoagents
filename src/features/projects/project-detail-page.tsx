@@ -761,7 +761,9 @@ function NativeResourceRow({
           ) : null}
           {resource.state === "conflict" ? (
             <p className="text-muted-foreground text-xs">
-              生效位置被重新占用或发生外部变化。恢复材料已保留，请先处理冲突。
+              {resource.artifactKind === "prompt"
+                ? "原有提示词的禁用快照仍已保留。请先解除项目提示词分配，将当前文件移到其他位置，再重新扫描并恢复原有提示词。"
+                : "生效位置被重新占用或发生外部变化。恢复材料已保留，请先处理冲突。"}
             </p>
           ) : null}
         </div>
@@ -1309,7 +1311,7 @@ function ProjectPromptAssignments({
           projectRowVersion: project.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (_assignment, promptProfileId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: profileKeys.all }),
@@ -1317,6 +1319,12 @@ function ProjectPromptAssignments({
         queryClient.invalidateQueries({ queryKey: skillKeys.all }),
       ]);
       if (!viewActive.current) return;
+      previewMutation.reset();
+      // 解除分配只停止纳管，后端已清空分配与基线，不能继续预览同步。
+      if (promptProfileId === null) {
+        onMessage("项目提示词分配已解除；当前文件已保留。");
+        return;
+      }
       if (directApply) {
         previewMutation.mutate();
         return;

@@ -71,19 +71,7 @@ pub fn count_blocking_native_resources(
              FROM project_native_resources AS resource
              JOIN managed_targets AS target ON target.id = resource.target_id
              WHERE target.project_id = ?1
-               AND resource.state IN ('disabled', 'conflict')
-               AND NOT (
-                   target.scope = 'project'
-                   AND target.artifact_kind = 'prompt'
-                   AND target.baseline_full_hash IS NOT NULL
-                   AND target.baseline_managed_hash IS NOT NULL
-                   AND EXISTS (
-                       SELECT 1
-                       FROM prompt_project_assignments AS assignment
-                       WHERE assignment.project_id = target.project_id
-                         AND assignment.tool = target.tool
-                   )
-               )",
+               AND resource.state IN ('disabled', 'conflict')",
             [project_id],
             |row| row.get::<_, u32>(0),
         )

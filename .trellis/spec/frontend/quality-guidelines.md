@@ -414,8 +414,8 @@ const adopted = unwrapResult(
   unrestorable; `conflict` keeps restore materials but blocks the write. An active
   writer or `rollback_failed` is a page-level block, not a per-item conflict.
 - 项目 Prompt 被中央 assignment 且已应用出基线后，中央与原生共用同一目标路径；
-  后端会隐藏旧的 `disabled/conflict` 原生记录并保留快照，项目移除不再被它阻塞。
-  解除分配后若文件仍在，下一次对账重新显示 `conflict`，前端继续使用普通恢复/冲突语义。
+  旧禁用记录必须保持可见并显示 `conflict`，保留快照且阻止移除项目。
+  解除分配保留当前文件；移走占用文件并重新扫描后才允许恢复原有提示词。
 - Project cards/register feedback render `ProjectDto.nativeResources` counts. Remove
   is disabled while `disabled + conflict > 0`.
 - Changing either project-detail view axis clears the open preview, operation message,
@@ -593,10 +593,12 @@ projectAssignmentMutation.mutate(input);
   `globalTools` (create has none yet), MCP delete syncs the deleted server's
   `globalTools` to clean up managed entries, MCP import success syncs the
   imported tool, and Prompt save/delete sync the profile's `globalTools`. Project
-  Prompt assignment and unassignment also trigger `previewPromptSync(tool,
-  projectId)` after the assignment invalidations; safe non-empty plans auto-apply,
-  conflicts/errors open the preview dialog, and empty plans remain no-ops. The
-  project file remains a hard copy when an assignment is removed.
+  Prompt assignment also triggers `previewPromptSync(tool, projectId)` after
+  the assignment invalidations; safe non-empty plans auto-apply,
+  conflicts/errors open the preview dialog, and empty plans remain no-ops.
+  项目 Prompt 解除分配只刷新查询、清除旧预览错误并提示文件保留，任何模式下都不能
+  调用 `previewPromptSync` / `applyProfilePreview`；后端已经清空分配与基线，继续同步
+  会返回 `NOT_FOUND`。
   Skill deletion is backend-blocked while assigned and Skills directory import
   owns its own confirm flow, so neither adds auto-sync.
 - Direct mode hides the manual global-sync buttons entirely (MCP/Skills status
@@ -627,9 +629,11 @@ projectAssignmentMutation.mutate(input);
   behavior is unchanged and central toggles never trigger an implicit sync.
 - Assignment/enable toggles under direct mode assert both the preview command
   payload and the auto-applied preview ID.
-- Project Prompt assignment and unassignment under direct mode assert the exact
+- Project Prompt assignment under direct mode asserts the exact
   `previewPromptSync` tool/project arguments, the `applyProfilePreview` preview
   ID/tool/artifact/project payload, and the conflict-dialog fallback.
+- Claude/Codex/Cursor 直接模式解除项目 Prompt 分配后，应显示成功且移除解除按钮；
+  断言预览与 Apply 均未调用。测试用真实的无分配 `NOT_FOUND` 响应，不能伪造删除预览。
 - Direct mode asserts the manual global-sync buttons are absent on all three
   pages, and that MCP save/delete/import plus Prompt save/delete auto-trigger
   the same preview + apply payloads; a conflicted preview from those flows

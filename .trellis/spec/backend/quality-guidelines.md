@@ -1170,9 +1170,9 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
   `missing` (no snapshot, unrestorable); `disabled` stays disabled while the
   snapshot is valid and the key is absent; a disabled key that reappears becomes
   `conflict` and keeps the snapshot until a later scan proves the occupancy is
-  gone. 项目 Prompt 被中央 assignment + 已填基线接管后属于例外：中央 Apply
-  会重新占用同一路径，对账必须保留旧原生记录及快照、隐藏该 `disabled/conflict`
-  记录且不把它计入项目移除阻塞；解除分配后下一次扫描恢复普通占用/冲突规则。
+  gone. 项目 Prompt 中央 Apply 重新占用同一路径时也必须遵循上述规则：旧原生
+  记录转为 `conflict`，保留快照、保持列表可见并阻止移除项目；中央所有权不能
+  隐藏另一份待恢复的原生内容。解除分配并移走占用文件后，扫描回到 `disabled`。
 - Native writes reuse `sync` writer, `claim_preview`, journal, snapshot, and
   `finish_failed_apply`. Success updates native state via
   `apply_native_resource_changes` and must not fill ownership baselines or create
@@ -1204,7 +1204,7 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
 | `active` + `restore`, or `disabled` + `disable` | `INVALID_INPUT` |
 | `missing` or `conflict` + any action | `CONFLICT` |
 | Central-owned or central-drift item presented as native disable | `NOT_FOUND` / `CONFLICT`; no native write |
-| 项目 Prompt 有 assignment 且两项基线均非空，旧原生记录为 `disabled/conflict` | 原生列表隐藏；保留快照；不阻塞项目移除 |
+| 项目 Prompt 有 assignment 且两项基线均非空，旧原生记录为 `disabled/conflict` | 占用路径时显示 `conflict`；保留快照并阻塞项目移除 |
 | 上述项目 Prompt 解除分配后文件仍在 | 重新按普通原生资源对账；旧 `disabled` 记录变为 `conflict` 并保留快照 |
 | Apply when `sync_runs.status != "previewed"` | `PREVIEW_ALREADY_CONSUMED` **before** the action matrix |
 | Stale resource/target `row_version` or target identity change | `STALE_PREVIEW` / `CONFLICT`; no overwrite |
@@ -1243,8 +1243,9 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
   Skill symlink/directory `FailAfterTarget` with `central_root = None` rolls back.
 - `soft_remove_project` and `delete_snapshots` refuse while a disabled native
   resource references the snapshot.
-- 项目 Prompt 原生文件先停用再由中央 Apply 写回同一路径：原生记录仍保留快照、
-  列表与项目移除均不显示/阻塞；解除分配后重新扫描应显示 `conflict`。
+- Claude/Codex/Cursor 原生 Prompt 先停用再由中央 Apply 写回同一路径：旧记录显示
+  `conflict`，保留快照并阻塞项目移除；解除分配并移走当前文件后可恢复原文及权限。
+  Cursor 恢复必须直接写回快照字节，预览投影通过适配器解析；不能重新渲染文件头。
 
 ### 7. Wrong vs Correct
 
@@ -1276,17 +1277,9 @@ validate_action_matrix(state, action)?;
 
 #### Central Prompt takeover
 
-```rust
-// Wrong: WholeDocument Prompt 没有 managed_items，却用 managed_items 判断所有权；
-// 中央 Apply 写回同一路径后会把旧 disabled 记录反复推进到 conflict。
-let owned = count_managed_items(target_id, "prompt")? > 0;
-
-// Correct: assignment + 两项已落库基线才代表中央接管；保留快照并隐藏旧记录，
-// 解除分配后再让普通对账把仍占用的文件标为 conflict。
-let owned = prompt_assignment_exists(target_id)?
-    && baseline_full_hash.is_some()
-    && baseline_managed_hash.is_some();
-```
+中央所有权仍由 assignment + 两项已填基线判断，但它只能隐藏没有待恢复快照的
+普通原生记录。`disabled/conflict` 记录必须可见；中央 Apply 占用同一路径后按普通
+占用规则对账为 `conflict`。不能因为当前文件已由中央托管而隐藏旧快照或放行项目移除。
 
 ## Scenario: Hooks artifact (array-shaped native entries)
 

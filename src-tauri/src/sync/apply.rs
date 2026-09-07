@@ -1466,12 +1466,37 @@ fn build_file_native_mutations(
         TargetScan::Missing => None,
         _ => return Err(AppError::stale_preview("persisted", &item.target_id)),
     };
-    let RenderedTarget::File(bytes) = adapter.render(
-        &input.descriptor,
-        current,
-        &input.desired_projection,
-        &input.ownership,
-    )?;
+    let bytes = if evidence.entry_type == super::NativeResourceEntryType::PromptFile
+        && evidence.action == NativeResourceActionKind::Restore
+    {
+        // 原生提示词按快照原样恢复，避免 Cursor 渲染器重复生成或改写文件头。
+        let snapshot_path = evidence.restore_snapshot_path.as_deref().ok_or_else(|| {
+            AppError::invalid_input("projectNativeAction", "提示词恢复缺少快照路径")
+        })?;
+        let bytes =
+            fs::read(snapshot_path).map_err(|_| AppError::not_found("snapshot", snapshot_path))?;
+        let document = adapter.parse(
+            &input.descriptor,
+            crate::adapters::ObservedRaw::File(bytes.clone()),
+        )?;
+        if adapter.project_managed(&document, &input.ownership)? != input.desired_projection
+            || evidence
+                .content_hash
+                .as_ref()
+                .is_some_and(|hash| hash != &hash_bytes(&bytes))
+        {
+            return Err(AppError::stale_preview("persisted", &item.target_id));
+        }
+        bytes
+    } else {
+        let RenderedTarget::File(bytes) = adapter.render(
+            &input.descriptor,
+            current,
+            &input.desired_projection,
+            &input.ownership,
+        )?;
+        bytes
+    };
     let current_state = capture_path_state(&path)?;
     let mode = evidence.restore_file_mode.unwrap_or(match &current_state {
         PathState::File { mode, .. } => *mode,

@@ -268,12 +268,8 @@ fn reconcile_descriptor(
         let existing =
             repository::find_by_target_key(database, &identity.target_id, &item.external_key)?;
         if item.centrally_owned {
-            // 项目 Prompt 与中央档案共用同一个整文件目标。中央 Apply 重新写入
-            // 已停用的原生文件时，应保留原生快照及其状态，等解除中央分配后再
-            // 重新判断占用；否则每次对账都会把这条记录重新推进到 conflict。
-            if descriptor.artifact_kind == ArtifactKind::Prompt {
-                continue;
-            }
+            // 中央资源占用同一路径时，旧禁用记录仍需对账为冲突并保留快照。
+            // 没有原生记录的中央资源不应被登记为新的原生资源。
             if existing.is_some() {
                 repository::upsert_observed_active(
                     database,
@@ -714,9 +710,9 @@ fn restore_desired_projection(
         ProjectNativeEntryType::PromptFile => {
             let bytes = fs::read(&snapshot.snapshot_path)
                 .map_err(|_| AppError::not_found("snapshot", &snapshot.snapshot_path))?;
-            let text = String::from_utf8(bytes)
-                .map_err(|_| AppError::invalid_input("snapshot", "提示词快照不是 UTF-8"))?;
-            Ok(Value::String(text))
+            let adapter = tool_adapter(descriptor.tool);
+            let document = adapter.parse(descriptor, crate::adapters::ObservedRaw::File(bytes))?;
+            adapter.project_managed(&document, &ManagedOwnership::WholeDocument)
         }
         ProjectNativeEntryType::Directory | ProjectNativeEntryType::Symlink => {
             let entry = match entry_type {
@@ -978,12 +974,7 @@ fn should_hide_centralized(
         "prompt" => prompt_target_is_managed(database, &record.target_id)?,
         _ => false,
     };
-    // 项目 Prompt 的中央 Apply 会重新占用原生文件路径。即使旧原生记录
-    // 仍是 disabled/conflict，也应从原生资源列表隐藏；快照由记录继续保留，
-    // 解除分配后下一次对账再恢复普通原生资源语义。
-    if record.artifact_kind == "prompt" && owned {
-        return Ok(true);
-    }
+    // 禁用快照代表另一份待恢复的原生内容，不能因中央资源占用路径而隐藏。
     if record.state == "disabled" || record.state == "conflict" {
         return Ok(false);
     }
@@ -1355,22 +1346,50 @@ mod tests {
     }
 
     #[test]
-    fn centrally_owned_project_prompt_hides_reappeared_native_resource() {
+    fn centrally_owned_project_prompt_preserves_native_recovery() {
+        for (tool, relative_path, original) in [
+            (
+                Tool::Claude,
+                "CLAUDE.md",
+                "# 原有 Claude 指令\n\n保留空格  \n",
+            ),
+            (Tool::Codex, "AGENTS.md", "# 原有 Codex 指令\r\n"),
+            (
+                Tool::Cursor,
+                ".cursor/rules/easytoagents.mdc",
+                "---\ndescription: 保留自定义文件头\nalwaysApply: false\n---\n\n# 原有 Cursor 指令  \n",
+            ),
+        ] {
+            assert_central_prompt_preserves_native_recovery(tool, relative_path, original);
+        }
+    }
+
+    fn assert_central_prompt_preserves_native_recovery(
+        tool: Tool,
+        relative_path: &str,
+        original: &str,
+    ) {
         let mut fixture = Fixture::new();
         let project = fixture.register_project_with(|root| {
-            fs::create_dir_all(root.join(".cursor/rules")).unwrap();
-            fs::write(
-                root.join(".cursor/rules/easytoagents.mdc"),
-                "---\nalwaysApply: true\n---\n\n# native prompt\n",
-            )
-            .unwrap();
+            let path = root.join(relative_path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, original).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
         });
+        fs::write(
+            fixture.home.join(".codex/config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                project.root_path
+            ),
+        )
+        .unwrap();
         let native = list_project_native_resources(
             &mut fixture.database,
             &fixture.environment,
             &ProjectNativeResourceQueryInput {
                 project_id: project.id.clone(),
-                tool: Tool::Cursor,
+                tool,
                 artifact_kind: ArtifactKind::Prompt,
             },
         )
@@ -1403,7 +1422,7 @@ mod tests {
             &fixture.environment,
             &ProjectNativeResourceQueryInput {
                 project_id: project.id.clone(),
-                tool: Tool::Cursor,
+                tool,
                 artifact_kind: ArtifactKind::Prompt,
             },
         )
@@ -1419,7 +1438,7 @@ mod tests {
         let profile = crate::profiles::create_prompt_profile(
             &mut fixture.database,
             crate::profiles::PromptProfileInput {
-                name: "中央 Cursor 规则".to_owned(),
+                name: "中央追加规则".to_owned(),
                 body: "# centrally managed prompt\n".to_owned(),
             },
         )
@@ -1432,7 +1451,7 @@ mod tests {
             &fixture.environment,
             &crate::profiles::SetPromptProjectAssignmentInput {
                 project_id: project.id.clone(),
-                tool: Tool::Cursor,
+                tool,
                 prompt_profile_id: Some(profile.id),
                 project_row_version: current_project.row_version,
             },
@@ -1442,7 +1461,7 @@ mod tests {
             &mut fixture.database,
             &fixture.environment,
             &SecretRedactor::default(),
-            Tool::Cursor,
+            tool,
             Some(project.id.clone()),
         )
         .unwrap();
@@ -1453,7 +1472,7 @@ mod tests {
             &fixture.environment,
             &mut SecretRedactor::default(),
             &central_preview.preview_id,
-            Tool::Cursor,
+            tool,
             ArtifactKind::Prompt,
             Some(&project.id),
         )
@@ -1464,14 +1483,17 @@ mod tests {
             &fixture.environment,
             &ProjectNativeResourceQueryInput {
                 project_id: project.id.clone(),
-                tool: Tool::Cursor,
+                tool,
                 artifact_kind: ArtifactKind::Prompt,
             },
         )
         .unwrap();
-        assert!(native_items.is_empty());
+        assert_eq!(native_items.len(), 1);
+        assert_eq!(native_items[0].id, disabled.id);
+        assert_eq!(native_items[0].state, ProjectNativeResourceState::Conflict);
+        assert!(!native_items[0].can_restore);
         let preserved = repository::get_by_id(&fixture.database, &disabled.id).unwrap();
-        assert_eq!(preserved.state, "disabled");
+        assert_eq!(preserved.state, "conflict");
         assert_eq!(preserved.disabled_snapshot_id, disabled_snapshot_id);
 
         let summary =
@@ -1479,20 +1501,115 @@ mod tests {
                 .unwrap()
                 .native_resources;
         assert_eq!(summary.disabled, 0);
-        assert_eq!(summary.conflict, 0);
+        assert_eq!(summary.conflict, 1);
 
-        // 中央托管中的旧原生快照不应再阻塞项目登记移除。
+        // 原生恢复材料仍在使用，不能通过移除项目丢掉恢复入口。
         let current_project =
             crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
                 .unwrap();
-        crate::projects::remove_project(
+        let removal_error = crate::projects::remove_project(
             &mut fixture.database,
             &crate::projects::VersionedProjectInput {
-                id: project.id,
+                id: project.id.clone(),
                 row_version: current_project.row_version,
             },
         )
+        .unwrap_err();
+        assert_eq!(removal_error.code(), ErrorCode::Conflict);
+        let restore_error = preview_project_native_resource_action(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewProjectNativeResourceActionInput {
+                resource_id: native_items[0].id.clone(),
+                row_version: native_items[0].row_version,
+                action: ProjectNativeResourceAction::Restore,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(restore_error.code(), ErrorCode::Conflict);
+
+        let snapshot_id = disabled_snapshot_id.unwrap();
+        assert!(repository::snapshot_is_referenced(
+            fixture.database.connection(),
+            &snapshot_id,
+            &fixture.database.path().to_string_lossy(),
+        )
+        .unwrap());
+
+        let deletion = delete_snapshots(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![snapshot_id],
+            },
+        )
         .unwrap();
+        assert!(deletion.deleted_ids.is_empty());
+        assert_eq!(deletion.failures.len(), 1);
+
+        // 解除中央分配仍保留当前文件；用户移走占用文件后可恢复原始快照。
+        crate::profiles::set_prompt_project_assignment(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::profiles::SetPromptProjectAssignmentInput {
+                project_id: project.id.clone(),
+                tool,
+                prompt_profile_id: None,
+                project_row_version: current_project.row_version,
+            },
+        )
+        .unwrap();
+        let prompt_path = Path::new(&native.target_path);
+        let central_bytes = fs::read(prompt_path).unwrap();
+        fs::rename(prompt_path, prompt_path.with_extension("saved")).unwrap();
+        let restored_candidate = list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project.id.clone(),
+                tool,
+                artifact_kind: ArtifactKind::Prompt,
+            },
+        )
+        .unwrap()
+        .remove(0);
+        assert_eq!(
+            restored_candidate.state,
+            ProjectNativeResourceState::Disabled
+        );
+        assert!(restored_candidate.can_restore);
+        let restore = preview_project_native_resource_action(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewProjectNativeResourceActionInput {
+                resource_id: restored_candidate.id,
+                row_version: restored_candidate.row_version,
+                action: ProjectNativeResourceAction::Restore,
+            },
+        )
+        .unwrap();
+        apply_project_native_resource_preview(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &ApplyProjectNativeResourcePreviewInput {
+                preview_id: restore.preview_id,
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(prompt_path).unwrap(), original);
+        assert_eq!(
+            fs::read(prompt_path.with_extension("saved")).unwrap(),
+            central_bytes
+        );
+        assert_eq!(
+            fs::metadata(prompt_path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
     }
 
     #[test]
