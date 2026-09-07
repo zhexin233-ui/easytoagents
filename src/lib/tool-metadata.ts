@@ -12,7 +12,6 @@ export interface ToolMetadata {
   capabilities: {
     provider: boolean;
     promptGlobal: boolean;
-    promptProject: boolean;
     mcp: boolean;
     skills: boolean;
     hooks: boolean;
@@ -28,7 +27,6 @@ export const TOOL_METADATA = {
     capabilities: {
       provider: true,
       promptGlobal: true,
-      promptProject: true,
       mcp: true,
       skills: true,
       hooks: true,
@@ -42,7 +40,6 @@ export const TOOL_METADATA = {
     capabilities: {
       provider: true,
       promptGlobal: true,
-      promptProject: true,
       mcp: true,
       skills: true,
       hooks: true,
@@ -56,7 +53,6 @@ export const TOOL_METADATA = {
     capabilities: {
       provider: false,
       promptGlobal: true,
-      promptProject: true,
       mcp: true,
       skills: true,
       hooks: true,
@@ -70,7 +66,6 @@ export const TOOL_METADATA = {
     capabilities: {
       provider: true,
       promptGlobal: true,
-      promptProject: true,
       mcp: true,
       skills: true,
       hooks: true,

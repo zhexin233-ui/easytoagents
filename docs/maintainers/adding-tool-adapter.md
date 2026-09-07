@@ -6,13 +6,13 @@ EasyToAgents 以 capability 为先，不要求新工具复制 Claude 或 Codex �
 
 开始改代码前，为每个 `artifact × scope × operation` 记录官方来源、验证日期和结论：
 
-| Artifact       | Global  | Project | Import  | Apply   | 证据与诊断                       |
-| -------------- | ------- | ------- | ------- | ------- | -------------------------------- |
-| Provider       | Unknown | N/A     | Unknown | Unknown | 官方文件路径、schema、优先级     |
-| Prompt / Rules | Unknown | Unknown | Unknown | Unknown | 用户级与项目级分别核验           |
-| MCP            | Unknown | Unknown | Unknown | Unknown | 路径、容器、transport、敏感字段  |
-| Skills         | Unknown | Unknown | Unknown | Unknown | 发现目录、嵌套规则、链接兼容性   |
-| Hooks          | Unknown | Unknown | Unknown | Unknown | 事件集合、承载方式、matcher 语义 |
+| Artifact       | Global  | Project     | Import  | Apply   | 证据与诊断                                       |
+| -------------- | ------- | ----------- | ------- | ------- | ------------------------------------------------ |
+| Provider       | Unknown | N/A         | Unknown | Unknown | 官方文件路径、schema、优先级                     |
+| Prompt / Rules | Unknown | Unsupported | Unknown | Unknown | Prompt 仅支持全局；项目提示词/规则不纳入产品能力 |
+| MCP            | Unknown | Unknown     | Unknown | Unknown | 路径、容器、transport、敏感字段                  |
+| Skills         | Unknown | Unknown     | Unknown | Unknown | 发现目录、嵌套规则、链接兼容性                   |
+| Hooks          | Unknown | Unknown     | Unknown | Unknown | 事件集合、承载方式、matcher 语义                 |
 
 状态只允许：
 
@@ -23,17 +23,24 @@ EasyToAgents 以 capability 为先，不要求新工具复制 Claude 或 Codex �
 
 证据表至少包含官方 URL、页面标题、访问日期、稳定路径/格式、版本或渠道限制。第三方博客、论坛和逆向得到的私有存储不能单独授权写入。
 
-Cursor 的当前矩阵是一个非对称示例：全局/项目 MCP、Skills 与 Prompt/Rules 为 Supported；Provider、API Key、模型为 Unsupported（Prompt 依据 2026-09-06 官方核验开放：全局 `~/.cursor/rules` 与项目 `.cursor/rules/*.mdc`，见 cursor.com/docs/rules 与 cursor.com/help/customization/rules；应用只接管自有单文件 `rules/easytoagents.mdc`，由 `TargetFormat::CursorMdc` 包装/剥离 `alwaysApply: true` frontmatter）。不要因为 `Tool` 已存在就自动开放所有页面或数据库表。
+For Prompt/Rules, `Import` and `Apply` are evaluated only for the supported
+global scope. A project-scope result is always `Unsupported`, so a new adapter
+must not add a project Prompt descriptor, assignment, or native-resource path.
+Registered project files such as `CLAUDE.md`, `AGENTS.md`, and Cursor
+`.cursor/rules/` remain user-owned; project discovery and synchronization do not
+observe, disable, restore, or rewrite them.
+
+Cursor 的当前矩阵是一个非对称示例：全局 Prompt/Rules 与全局/项目 MCP、Skills、Hooks 为 Supported；Provider、API Key、模型和项目 Prompt/Rules 为 Unsupported（Prompt 依据 2026-09-06 官方核验开放全局 `~/.cursor/rules`，见 cursor.com/docs/rules 与 cursor.com/help/customization/rules；应用只接管自有单文件 `rules/easytoagents.mdc`，由 `TargetFormat::CursorMdc` 包装/剥离 `alwaysApply: true` frontmatter）。项目 `.cursor/rules` 文件不被 EasyToAgents 观察或写入。不要因为 `Tool` 已存在就自动开放所有页面或数据库表。
 
 Cursor Prompt/Rules 证据矩阵（2026-09-06）：
 
-| Tool   | Artifact     | Global    | Project   | Import    | Apply     | 官方证据                                                                                                      | 核验日期   |
-| ------ | ------------ | --------- | --------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------- | ---------- |
-| Cursor | Prompt/Rules | Supported | Supported | Supported | Supported | [User rule files](https://cursor.com/help/customization/rules)；[`.mdc` rules](https://cursor.com/docs/rules) | 2026-09-06 |
+| Tool   | Artifact     | Global    | Project     | Import    | Apply     | 官方证据                                                                                                      | 核验日期   |
+| ------ | ------------ | --------- | ----------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------- | ---------- |
+| Cursor | Prompt/Rules | Supported | Unsupported | Supported | Supported | [User rule files](https://cursor.com/help/customization/rules)；[`.mdc` rules](https://cursor.com/docs/rules) | 2026-09-06 |
 
-合同：全局目标为 `~/.cursor/rules/easytoagents.mdc`，项目目标为
-`<root>/.cursor/rules/easytoagents.mdc`；应用固定写入 `alwaysApply: true` frontmatter，
-导入/观测剥离该 frontmatter，只把正文纳入档案投影。规则目录中的其他文件不属于受管范围。
+合同：Prompt 仅有全局目标 `~/.cursor/rules/easytoagents.mdc`；应用固定写入
+`alwaysApply: true` frontmatter，导入/观测剥离该 frontmatter，只把正文纳入全局档案
+投影。项目 `.cursor/rules` 及规则目录中的其他文件不属于受管范围。
 
 ## 2. 领域合同与 Adapter
 
@@ -77,7 +84,7 @@ Cursor Prompt/Rules 证据矩阵（2026-09-06）：
 - Import 是只读发现 → 持久化脱敏预览 → 用户显式选择 → 中央导入，不隐式接管原生目标。全局 Skill 只有在正式目标入口与 Ready 中央副本的名称和完整树哈希精确一致时，才可另行准备 takeover-aware Preview；首次接管即使开启 direct Apply 也必须再次确认。
 - MCP renderer/parser 必须保留未知字段，只修改受管名称；`headers`、`env`、`auth` 和扩展凭据不能进入普通 DTO、日志或预览明文。
 - Skills 继续使用中央不可变副本和逐名称受管链接。普通 Apply 对普通目录、外部链接、断链和逃逸保持冲突保护；显式首次接管只能通过持久化证据生成专用 mutation。外部链接只替换入口，普通目录必须先创建可恢复目录树快照。工具是否发现符号链接必须由实机 smoke 证明。
-- Project service 只创建该工具支持的 assignment/status；不支持 Prompt 的工具不能产生项目 Prompt 行。
+- Project service 只创建该工具支持的 MCP、Skills、Hooks assignment/status；Prompt 是全局资源，项目服务不能产生 Prompt 行。
 - Overview 可以展示 Unsupported，但不能把它描述为“未接管”。
 - Restore 必须从 snapshot 的 tool/artifact/scope 重新推导同一窄 allowed root，并复用现有 journal、snapshot、写后校验与回滚。
 
@@ -111,7 +118,7 @@ pnpm bindings:check
 
 - Tool 序列化、生成 bindings 与 metadata 集合；
 - Desktop/CLI 探针的成功、缺失、错误 ID、异常版本、链接路径和超时；
-- Adapter 的 global/project descriptor、unsupported capability、ownership、敏感 selector 和 allowed root；
+- Adapter 的 global/project descriptor、unsupported capability、ownership、敏感 selector 和 allowed root；Prompt 只测试全局 descriptor，项目作用域必须保持 unsupported；
 - 数据库上一版本升级、精确锚点、旧数据、约束 canary、外键/索引与重开；
 - MCP stdio/HTTP round-trip、未知字段、敏感值、Missing/InSync/漂移/解析失败/类型冲突/stale/恢复；
 - Skills 全局/项目分配、导入来源、普通目录/外部链接/断链/逃逸、恢复和实机发现 smoke；
@@ -142,17 +149,17 @@ git diff --check
 Pi 当前只作为待调研候选，不代表已知路径；ZCode 已于 2026-09-05 依据本机核验
 与官方 zcode-configuration-guide 完成证据核验并正式接入（迁移 `0013`）：
 
-| 工具  | Provider  | Prompt/Rules | MCP       | Skills    | Hooks     | 下一步                                                                                                                                                 |
-| ----- | --------- | ------------ | --------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pi    | Unknown   | Unknown      | Unknown   | Unknown   | Unknown   | 找到官方配置与安装文档，建立版本化 fixture                                                                                                             |
-| ZCode | Supported | Supported    | Supported | Supported | Supported | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键 |
+| 工具  | Provider  | Prompt/Rules（全局） | MCP       | Skills    | Hooks     | 下一步                                                                                                                                                 |
+| ----- | --------- | -------------------- | --------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pi    | Unknown   | Unknown              | Unknown   | Unknown   | Unknown   | 找到官方配置与安装文档，建立版本化 fixture                                                                                                             |
+| ZCode | Supported | Supported（仅全局）  | Supported | Supported | Supported | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键 |
 
-Cursor 的 Prompt/Rules 已于 2026-09-06 依据官方证据接入（迁移 `0017`）：全局
+Cursor 的全局 Prompt/Rules 已于 2026-09-06 依据官方证据接入（历史迁移 `0017`
+曾扩展过项目作用域，现行 v18 已清理该历史状态）：当前只使用全局
 `~/.cursor/rules/easytoagents.mdc`（cursor.com/help/customization/rules 的
-"User rule files" 段落）与项目 `<root>/.cursor/rules/easytoagents.mdc`
-（cursor.com/docs/rules，`.mdc` 必须带 frontmatter 才会被规则系统识别）；
-`TargetFormat::CursorMdc` 在写入时包装固定 `alwaysApply: true`、观测/导入时
-剥离 frontmatter，规则目录内其余用户文件不受纳管。
+"User rule files" 段落）；`TargetFormat::CursorMdc` 在写入时包装固定
+`alwaysApply: true`、观测/导入时剥离 frontmatter。项目 `.cursor/rules` 与其中的
+其他用户文件不受 EasyToAgents 观察或写入。
 
 ## 10. Hooks 能力矩阵（2026-09-05 官方证据核验）
 

@@ -25,7 +25,6 @@ describe("tool metadata", () => {
       capabilities: {
         provider: false,
         promptGlobal: true,
-        promptProject: true,
         mcp: true,
         skills: true,
       },
@@ -37,7 +36,6 @@ describe("tool metadata", () => {
       capabilities: {
         provider: true,
         promptGlobal: true,
-        promptProject: true,
         mcp: true,
         skills: true,
       },

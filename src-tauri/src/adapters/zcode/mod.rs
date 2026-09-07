@@ -2,7 +2,7 @@
 //!
 //! 证据来源（2026-09-05 本机核验 + 官方 zcode-configuration-guide）：
 //! - Provider：`~/.zcode/v2/config.json` 顶层 `provider` 对象（JSON，含敏感 apiKey）。
-//! - Prompt：`~/.zcode/AGENTS.md` 与 `<project>/AGENTS.md`（Markdown 整文档）。
+//! - Prompt：仅全局 `~/.zcode/AGENTS.md`（Markdown 整文档）。
 //! - MCP：`~/.zcode/cli/config.json` 与 `<project>/.zcode/config.json` 的嵌套键
 //!   `mcp.servers`（JSON；同一文件还承载 hooks 等非受管内容，必须用选择器只接管 MCP 子树）。
 //! - Skills：`~/.zcode/skills` 与 `<project>/.zcode/skills`（目录 + SKILL.md）。
@@ -111,17 +111,6 @@ impl ToolAdapter for ZcodeAdapter {
         if let Some(project_root) = context.project_root {
             let root = Path::new(project_root.as_str());
             targets.extend([
-                descriptor(
-                    ArtifactKind::Prompt,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join("AGENTS.md"))?),
-                    TargetFormat::Markdown,
-                    vec!["$document"],
-                    vec![],
-                    supported_capability.clone(),
-                    SymlinkPolicy::Reject,
-                ),
                 descriptor(
                     ArtifactKind::Mcp,
                     Scope::Project,
@@ -293,16 +282,9 @@ mod tests {
             project_mcp.path.as_deref(),
             project.join(".zcode/config.json").to_str()
         );
-        let project_prompt = targets
-            .iter()
-            .find(|target| {
-                target.artifact_kind == ArtifactKind::Prompt && target.scope == Scope::Project
-            })
-            .unwrap();
-        assert_eq!(
-            project_prompt.path.as_deref(),
-            project.join("AGENTS.md").to_str()
-        );
+        assert!(!targets.iter().any(|target| {
+            target.artifact_kind == ArtifactKind::Prompt && target.scope == Scope::Project
+        }));
         let project_skill = targets
             .iter()
             .find(|target| {

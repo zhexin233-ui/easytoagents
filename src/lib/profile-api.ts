@@ -57,8 +57,6 @@ export const profileKeys = {
   providers: (tool: Tool) => [...profileKeyBase, tool, "providers"] as const,
   prompts: [...profileKeyBase, "prompts"] as const,
   status: (tool: Tool) => [...profileKeyBase, tool, "status"] as const,
-  promptProject: (projectId: string, tool: Tool) =>
-    [...profileKeyBase, "projects", projectId, tool, "prompt"] as const,
 };
 
 export function providerProfilesQueryOptions(tool: Tool) {
@@ -73,17 +71,6 @@ export function promptProfilesQueryOptions() {
   return queryOptions({
     queryKey: profileKeys.prompts,
     queryFn: async () => unwrapResult(await commands.listPromptProfiles()),
-  });
-}
-
-export function promptProjectAssignmentQueryOptions(
-  projectId: string,
-  tool: Tool,
-) {
-  return queryOptions({
-    queryKey: profileKeys.promptProject(projectId, tool),
-    queryFn: async () =>
-      unwrapResult(await commands.getPromptProjectAssignment(projectId, tool)),
   });
 }
 

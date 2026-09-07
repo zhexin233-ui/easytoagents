@@ -1,0 +1,10 @@
+{"file":".trellis/spec/backend/index.md","reason":"定位 Rust/Tauri 后端的数据库、质量、错误处理与目录规范入口。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"实施 v18 前向迁移、精确 sqlite_schema 修订、外键清理顺序和升级回归。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"区分全局 Prompt 与项目 Prompt 的现有 Preview/Apply、ownership、原生资源和文件保留合同。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"迁移、快照清理和已收窄 RPC 必须保持稳定错误边界并 fail closed。"}
+{"file":".trellis/spec/frontend/index.md","reason":"定位项目详情、生成绑定、查询状态和前端质量规范入口。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"裁剪项目 Prompt UI/direct-apply/native-resource 分支时保持 MCP、Skill、Hook 与全局 Prompt 行为。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Rust DTO/命令收窄后通过生成 bindings 同步联合类型与调用签名。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"追踪数据库、service、RPC、bindings、query、UI、测试和文档的完整删除链。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"避免误删 Prompt 与其他 artifact 共用的 Preview、Apply、snapshot 和项目资源原语。"}
+{"file":".trellis/tasks/09-07-remove-project-prompts/research/removal-impact.md","reason":"提供完整移除边界、迁移依赖、保留项和已确认的历史快照策略。"}

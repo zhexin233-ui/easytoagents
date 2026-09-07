@@ -280,25 +280,9 @@ async previewProviderSync(tool: Tool) : Promise<Result<PreviewPlan, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async previewPromptSync(tool: Tool, projectId: string | null) : Promise<Result<PreviewPlan, AppError>> {
+async previewPromptSync(tool: Tool) : Promise<Result<PreviewPlan, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("preview_prompt_sync", { tool, projectId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async setPromptProjectAssignment(input: SetPromptProjectAssignmentInput) : Promise<Result<PromptProjectAssignmentDto, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_prompt_project_assignment", { input }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getPromptProjectAssignment(projectId: string, tool: Tool) : Promise<Result<PromptProjectAssignmentDto, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_prompt_project_assignment", { projectId, tool }) };
+    return { status: "ok", data: await TAURI_INVOKE("preview_prompt_sync", { tool }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -720,7 +704,7 @@ export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: s
  * 原生配置写入方式：默认保持预览确认，`Direct` 在预览无冲突时跳过确认对话框。
  */
 export type ApplyMode = "preview_confirm" | "direct"
-export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind; projectId: string | null }
+export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ApplyProjectNativeResourcePreviewInput = { previewId: string }
 export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
 export type ApplySkillPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
@@ -822,10 +806,10 @@ export type PreviewProjectNativeResourceActionInput = { resourceId: string; rowV
 export type PreviewSkillSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; baselineMismatchedItems: string[]; readoptAvailable: boolean; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
 export type ProjectDto = { id: string; displayName: string; rootPath: string; pathStatus: ProjectPathStatus; gitStatus: GitRepositoryStatus; codexTrustStatus: TrustStatus; claudePolicyStatus: PolicyState; targets: ProjectTargetStatusDto[]; nativeResources: ProjectNativeResourceSummaryDto; lastScannedAt: string | null; rowVersion: number }
-export type ProjectNativeEntryType = "mcp_entry" | "directory" | "symlink" | "prompt_file"
+export type ProjectNativeEntryType = "mcp_entry" | "directory" | "symlink"
 export type ProjectNativeResourceAction = "disable" | "restore"
 export type ProjectNativeResourceDto = { id: string; projectId: string; tool: Tool; artifactKind: ArtifactKind; displayName: string; targetPath: string; entryType: ProjectNativeEntryType; state: ProjectNativeResourceState; rowVersion: number; canDisable: boolean; canRestore: boolean; diagnosticCodes: string[]; safeSummary: JsonValue; disabledAt: string | null }
-export type ProjectNativeResourceKind = "mcp" | "skill" | "prompt"
+export type ProjectNativeResourceKind = "mcp" | "skill"
 export type ProjectNativeResourceQueryInput = { projectId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ProjectNativeResourceState = "active" | "disabled" | "missing" | "conflict"
 export type ProjectNativeResourceSummaryDto = { active: number; disabled: number; missing: number; conflict: number }
@@ -835,7 +819,6 @@ export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
 export type PromptProfileDto = { id: string; name: string; body: string; globalTools: Tool[]; importedFromPath: string | null; rowVersion: number }
 export type PromptProfileInput = { name: string; body: string }
-export type PromptProjectAssignmentDto = { projectId: string; tool: Tool; profileId: string | null }
 export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue }
 export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null }
 export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null; zcodeKind: string | null }
@@ -875,11 +858,6 @@ export type SetGlobalSkillAssignmentInput = { tool: Tool; skillId: string; assig
 export type SetProjectHookAssignmentInput = { projectId: string; tool: Tool; hookId: string; event: HookEvent; assigned: boolean; hookRowVersion: number; projectRowVersion: number }
 export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
 export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
-export type SetPromptProjectAssignmentInput = { projectId: string; tool: Tool;
-/**
- * `None` 表示解除分配：项目文件保留，应用停止纳管。
- */
-promptProfileId: string | null; projectRowVersion: number }
 export type SkillContentPreviewDto = { id: string; name: string; skillMd: string; files: string[]; contentHash: string; rowVersion: number }
 export type SkillDto = { id: string; name: string; sourcePath: string; centralPath: string; contentHash: string; description: string; status: SkillStatus; diagnosticCode: string | null; globalTools: Tool[]; rowVersion: number }
 export type SkillImportCandidateDto = { candidateId: string; name: string; description: string; sourcePaths: string[]; status: SkillImportCandidateStatus; reason: string | null; existingSkillId: string | null; takeoverEligible: boolean; takeoverEntryType: SkillTakeoverEntryType | null }

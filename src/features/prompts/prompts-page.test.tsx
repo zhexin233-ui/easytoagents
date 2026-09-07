@@ -717,7 +717,7 @@ describe("PromptsPage", () => {
       await screen.findByRole("button", { name: "预览 Codex 全局同步" }),
     );
     await waitFor(() =>
-      expect(commands.previewPromptSync).toHaveBeenCalledWith("codex", null),
+      expect(commands.previewPromptSync).toHaveBeenCalledWith("codex"),
     );
     expect(
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
@@ -728,7 +728,6 @@ describe("PromptsPage", () => {
         previewId: promptPreview.previewId,
         tool: "codex",
         artifactKind: "prompt",
-        projectId: null,
       }),
     );
     const applyStatus =
@@ -774,14 +773,13 @@ describe("PromptsPage", () => {
     const dialog = screen.getByRole("dialog", { name: "编辑提示词" });
     fireEvent.click(within(dialog).getByRole("button", { name: "保存编辑" }));
     await waitFor(() =>
-      expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null),
+      expect(commands.previewPromptSync).toHaveBeenCalledWith("claude"),
     );
     await waitFor(() =>
       expect(commands.applyProfilePreview).toHaveBeenCalledWith({
         previewId: promptPreview.previewId,
         tool: "claude",
         artifactKind: "prompt",
-        projectId: null,
       }),
     );
     expect(
@@ -887,14 +885,13 @@ describe("PromptsPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
-      expect(commands.previewPromptSync).toHaveBeenCalledWith("claude", null),
+      expect(commands.previewPromptSync).toHaveBeenCalledWith("claude"),
     );
     await waitFor(() =>
       expect(commands.applyProfilePreview).toHaveBeenCalledWith({
         previewId: promptPreview.previewId,
         tool: "claude",
         artifactKind: "prompt",
-        projectId: null,
       }),
     );
     expect(

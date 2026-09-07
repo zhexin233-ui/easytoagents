@@ -259,7 +259,6 @@ describe("OnboardingWizard", () => {
         previewId: syncPreview.previewId,
         tool: "claude",
         artifactKind: "provider",
-        projectId: null,
       }),
     );
     expect(await screen.findByText("向导已完成")).toBeInTheDocument();
@@ -535,13 +534,11 @@ describe("OnboardingWizard", () => {
       previewId: syncPreview.previewId,
       tool: "claude",
       artifactKind: "provider",
-      projectId: null,
     });
     expect(commands.applyProfilePreview).toHaveBeenNthCalledWith(2, {
       previewId: promptSyncPreview.previewId,
       tool: "claude",
       artifactKind: "prompt",
-      projectId: null,
     });
     expect(
       screen.getByRole("button", { name: "已有应用，不能返回选择" }),
@@ -555,7 +552,6 @@ describe("OnboardingWizard", () => {
       previewId: promptSyncPreview.previewId,
       tool: "claude",
       artifactKind: "prompt",
-      projectId: null,
     });
     expect(await screen.findByText("向导已完成")).toBeInTheDocument();
   });

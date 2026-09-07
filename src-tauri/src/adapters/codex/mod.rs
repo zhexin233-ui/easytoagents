@@ -159,19 +159,6 @@ impl ToolAdapter for CodexAdapter {
                     PromptOverrideState::NotApplicable,
                     SymlinkPolicy::ManagedChildrenOnly,
                 ),
-                descriptor(
-                    ArtifactKind::Prompt,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    path_text(&root.join("AGENTS.md"))?,
-                    TargetFormat::Markdown,
-                    vec!["$document"],
-                    vec![],
-                    capability.clone(),
-                    project_trust,
-                    PromptOverrideState::NotApplicable,
-                    SymlinkPolicy::Reject,
-                ),
                 // 项目级 hooks 只在项目 `.codex/` 层受信任时加载（官方合同），
                 // 与项目 MCP 相同的 trust 语义。
                 descriptor(

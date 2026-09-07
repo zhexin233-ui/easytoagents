@@ -374,10 +374,7 @@ fn project_targets(targets: Vec<TargetDescriptor>) -> Vec<TargetDescriptor> {
             target.scope == crate::domain::Scope::Project
                 && matches!(
                     target.artifact_kind,
-                    ArtifactKind::Mcp
-                        | ArtifactKind::Skill
-                        | ArtifactKind::Prompt
-                        | ArtifactKind::Hook
+                    ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook
                 )
                 && target.path.is_some()
         })

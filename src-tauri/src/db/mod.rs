@@ -8,6 +8,7 @@ use std::{
 };
 
 use rusqlite::{params, Connection, Transaction, TransactionBehavior};
+use uuid::Uuid;
 
 use crate::{
     app::AppPaths,
@@ -110,6 +111,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "cursor_prompt_support",
         sql: include_str!("migrations/0017_cursor_prompt_support.sql"),
     },
+    Migration {
+        version: 18,
+        name: "remove_project_prompts",
+        sql: include_str!("migrations/0018_remove_project_prompts.sql"),
+    },
 ];
 
 pub(crate) struct Migration {
@@ -142,6 +148,7 @@ impl Database {
         configure_connection(&connection, paths.database())?;
         run_migrations(&mut connection, paths.database())?;
         configure_connection(&connection, paths.database())?;
+        process_retired_snapshot_cleanup(&connection, paths)?;
 
         for sensitive_file in [
             paths.database().to_owned(),
@@ -293,51 +300,176 @@ fn validate_migration_preconditions(
     migration: &Migration,
     path: &Path,
 ) -> Result<(), AppError> {
-    if migration.version != 10 {
-        return Ok(());
-    }
+    if migration.version == 10 {
+        const SHARED_TOOL_ANCHOR: &str = "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex'))";
+        const MANAGED_TARGET_ANCHOR: &str =
+            "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex')),";
+        for table in [
+            "mcp_global_assignments",
+            "skill_global_assignments",
+            "mcp_project_assignments",
+            "skill_project_assignments",
+            "mcp_import_previews",
+            "skill_import_previews",
+        ] {
+            let matched: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = ?1 AND sql IS NOT NULL
+                       AND (length(sql) - length(replace(sql, ?2, ''))) = length(?2)",
+                    params![table, SHARED_TOOL_ANCHOR],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            if matched != 1 {
+                return Err(AppError::migration(
+                    &path.to_string_lossy(),
+                    migration.version,
+                ));
+            }
+        }
 
-    const SHARED_TOOL_ANCHOR: &str = "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex'))";
-    const MANAGED_TARGET_ANCHOR: &str = "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex')),";
-    for table in [
-        "mcp_global_assignments",
-        "skill_global_assignments",
-        "mcp_project_assignments",
-        "skill_project_assignments",
-        "mcp_import_previews",
-        "skill_import_previews",
-    ] {
-        let matched: i64 = transaction
+        let managed_target_matched: i64 = transaction
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type = 'table' AND name = ?1 AND instr(sql, ?2) > 0",
-                params![table, SHARED_TOOL_ANCHOR],
+                 WHERE type = 'table' AND name = 'managed_targets' AND sql IS NOT NULL
+                   AND (length(sql) - length(replace(sql, ?1, ''))) = length(?1)",
+                [MANAGED_TARGET_ANCHOR],
                 |row| row.get(0),
             )
             .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
-        if matched != 1 {
+        if managed_target_matched != 1 {
+            return Err(AppError::migration(
+                &path.to_string_lossy(),
+                migration.version,
+            ));
+        }
+        return Ok(());
+    }
+
+    if migration.version == 18 {
+        const PROJECT_PROMPT_SCOPE_ANCHOR: &str =
+            "artifact_kind IN ('mcp', 'skill', 'prompt', 'hook'))";
+        const NATIVE_PROMPT_ENTRY_ANCHOR: &str =
+            "entry_type IN ('mcp_entry', 'directory', 'symlink', 'prompt_file')";
+
+        for (table, anchor) in [
+            ("managed_targets", PROJECT_PROMPT_SCOPE_ANCHOR),
+            ("project_native_resources", NATIVE_PROMPT_ENTRY_ANCHOR),
+        ] {
+            let matched: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = ?1 AND sql IS NOT NULL
+                       AND (length(sql) - length(replace(sql, ?2, ''))) = length(?2)",
+                    params![table, anchor],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            if matched != 1 {
+                return Err(AppError::migration(
+                    &path.to_string_lossy(),
+                    migration.version,
+                ));
+            }
+        }
+
+        let assignments_table: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'prompt_project_assignments'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+        if assignments_table != 1 {
             return Err(AppError::migration(
                 &path.to_string_lossy(),
                 migration.version,
             ));
         }
     }
+    Ok(())
+}
 
-    let managed_target_matched: i64 = transaction
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'table' AND name = 'managed_targets' AND instr(sql, ?1) > 0",
-            [MANAGED_TARGET_ANCHOR],
-            |row| row.get(0),
+/// 迁移提交后退休历史 Prompt 快照。数据库迁移只记录绝对路径和身份；
+/// 这里再次验证路径形状、父目录和文件类型，任何越界、链接或特殊文件都
+/// 保留在队列中等待人工/后续版本处理，不触碰 managed_targets.target_path。
+fn process_retired_snapshot_cleanup(
+    connection: &Connection,
+    paths: &AppPaths,
+) -> Result<(), AppError> {
+    let database_path = paths.database().to_string_lossy().into_owned();
+    let mut statement = connection
+        .prepare(
+            "SELECT snapshot_id, run_id, snapshot_path, storage_kind
+             FROM retired_snapshot_cleanup ORDER BY retired_at, snapshot_id",
         )
-        .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
-    if managed_target_matched != 1 {
-        return Err(AppError::migration(
-            &path.to_string_lossy(),
-            migration.version,
-        ));
+        .map_err(|_| AppError::database(&database_path, "read_retired_snapshot_cleanup"))?;
+    let entries = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|_| AppError::database(&database_path, "read_retired_snapshot_cleanup"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::database(&database_path, "read_retired_snapshot_cleanup"))?;
+    drop(statement);
+
+    for (snapshot_id, run_id, snapshot_path, storage_kind) in entries {
+        let Some(path) =
+            retired_snapshot_path(paths, &snapshot_id, &run_id, &snapshot_path, &storage_kind)
+        else {
+            continue;
+        };
+
+        let completed = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => false,
+            Ok(_) => fs::remove_file(&path).is_ok(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+            Err(_) => false,
+        };
+        if completed {
+            connection
+                .execute(
+                    "DELETE FROM retired_snapshot_cleanup WHERE snapshot_id = ?1",
+                    [&snapshot_id],
+                )
+                .map_err(|_| {
+                    AppError::database(&database_path, "delete_retired_snapshot_cleanup")
+                })?;
+        }
     }
     Ok(())
+}
+
+fn retired_snapshot_path(
+    paths: &AppPaths,
+    snapshot_id: &str,
+    run_id: &str,
+    snapshot_path: &str,
+    storage_kind: &str,
+) -> Option<PathBuf> {
+    if storage_kind != "payload_file"
+        || Uuid::parse_str(snapshot_id).is_err()
+        || Uuid::parse_str(run_id).is_err()
+    {
+        return None;
+    }
+    let expected = paths
+        .snapshots()
+        .join(run_id)
+        .join(format!("{snapshot_id}.snapshot"));
+    if Path::new(snapshot_path) != expected
+        || crate::security::reject_symlink_components(&expected).is_err()
+    {
+        return None;
+    }
+    Some(expected)
 }
 
 fn backup_database_before_migrations(paths: &AppPaths) -> Result<Option<DatabaseBackup>, AppError> {
@@ -499,7 +631,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 17);
+        assert_eq!(database.schema_version().unwrap(), 18);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1037,7 +1169,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1072,7 +1204,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1127,7 +1259,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 17);
+        assert_eq!(database.schema_version().unwrap(), 18);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1144,6 +1276,388 @@ mod tests {
                 (file_snapshot.to_owned(), "payload_file".to_owned()),
                 (directory_snapshot.to_owned(), "metadata_only".to_owned()),
             ]
+        );
+    }
+
+    #[test]
+    fn project_prompt_migration_removes_only_project_prompt_state_and_payloads() {
+        const PROMPT_PROFILE_ID: &str = "00000000-0000-4000-8000-000000000501";
+        const PROMPT_TARGET_ID: &str = "00000000-0000-4000-8000-000000000502";
+        const MCP_TARGET_ID: &str = "00000000-0000-4000-8000-000000000503";
+        const GLOBAL_PROMPT_TARGET_ID: &str = "00000000-0000-4000-8000-000000000504";
+        const PROMPT_RUN_ID: &str = "00000000-0000-4000-8000-000000000505";
+        const MIXED_RUN_ID: &str = "00000000-0000-4000-8000-000000000506";
+        const GLOBAL_RUN_ID: &str = "00000000-0000-4000-8000-000000000507";
+        const PROMPT_SNAPSHOT_ID: &str = "00000000-0000-4000-8000-000000000508";
+        const MIXED_PROMPT_SNAPSHOT_ID: &str = "00000000-0000-4000-8000-000000000509";
+        const MIXED_MCP_SNAPSHOT_ID: &str = "00000000-0000-4000-8000-000000000510";
+        const GLOBAL_SNAPSHOT_ID: &str = "00000000-0000-4000-8000-000000000511";
+        const PROMPT_NATIVE_ID: &str = "00000000-0000-4000-8000-000000000512";
+        const PROMPT_ITEM_ID: &str = "00000000-0000-4000-8000-000000000513";
+        const PROMPT_RUN_ITEM_ID: &str = "00000000-0000-4000-8000-000000000514";
+        const MIXED_PROMPT_ITEM_ID: &str = "00000000-0000-4000-8000-000000000515";
+        const MIXED_MCP_ITEM_ID: &str = "00000000-0000-4000-8000-000000000516";
+        const GLOBAL_ITEM_ID: &str = "00000000-0000-4000-8000-000000000517";
+
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let project_root = root.join("prompt-project");
+        fs::create_dir(&project_root).unwrap();
+        let project_prompt_path = project_root.join("CLAUDE.md");
+        let project_prompt_bytes = b"# keep this user file\nwith exact bytes\n";
+        fs::write(&project_prompt_path, project_prompt_bytes).unwrap();
+
+        let paths = AppPaths::from_data_root(root.join("v17-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+
+        let snapshot_path = |run_id: &str, snapshot_id: &str| {
+            paths
+                .snapshots()
+                .join(run_id)
+                .join(format!("{snapshot_id}.snapshot"))
+        };
+        let prompt_snapshot_path = snapshot_path(PROMPT_RUN_ID, PROMPT_SNAPSHOT_ID);
+        let mixed_prompt_snapshot_path = snapshot_path(MIXED_RUN_ID, MIXED_PROMPT_SNAPSHOT_ID);
+        let mixed_mcp_snapshot_path = snapshot_path(MIXED_RUN_ID, MIXED_MCP_SNAPSHOT_ID);
+        let global_snapshot_path = snapshot_path(GLOBAL_RUN_ID, GLOBAL_SNAPSHOT_ID);
+        for path in [
+            &prompt_snapshot_path,
+            &mixed_prompt_snapshot_path,
+            &mixed_mcp_snapshot_path,
+            &global_snapshot_path,
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"retired snapshot payload").unwrap();
+        }
+
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations(
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE,
+                        applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                    )",
+                )
+                .unwrap();
+            for migration in &super::MIGRATIONS[..17] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, project_root.to_str().unwrap());
+            connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body)
+                     VALUES (?1, 'central', 'Retired project prompt', 'body')",
+                    [PROMPT_PROFILE_ID],
+                )
+                .unwrap();
+            for (id, artifact_kind, scope, project_id, target_path) in [
+                (
+                    PROMPT_TARGET_ID,
+                    "prompt",
+                    "project",
+                    Some(PROJECT_ONE_ID),
+                    project_prompt_path.to_str().unwrap(),
+                ),
+                (
+                    MCP_TARGET_ID,
+                    "mcp",
+                    "project",
+                    Some(PROJECT_ONE_ID),
+                    "/fixture/prompt-project/.mcp.json",
+                ),
+                (
+                    GLOBAL_PROMPT_TARGET_ID,
+                    "prompt",
+                    "global",
+                    None,
+                    "/fixture/home/CLAUDE.md",
+                ),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO managed_targets(
+                            id, tool, artifact_kind, scope, project_id, target_path
+                         ) VALUES (?1, 'claude', ?2, ?3, ?4, ?5)",
+                        params![id, artifact_kind, scope, project_id, target_path],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO managed_items(
+                        id, target_id, resource_kind, resource_id, external_key,
+                        last_applied_item_hash
+                     ) VALUES (?1, ?2, 'prompt', ?3, 'prompt', ?4)",
+                    params![
+                        PROMPT_ITEM_ID,
+                        PROMPT_TARGET_ID,
+                        PROMPT_PROFILE_ID,
+                        "a".repeat(64)
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id)
+                     VALUES (?1, 'claude', ?2)",
+                    params![PROJECT_ONE_ID, PROMPT_PROFILE_ID],
+                )
+                .unwrap();
+
+            for (run_id, project_id) in [
+                (PROMPT_RUN_ID, Some(PROJECT_ONE_ID)),
+                (MIXED_RUN_ID, Some(PROJECT_ONE_ID)),
+                (GLOBAL_RUN_ID, None),
+            ] {
+                let scope = project_id.map_or("global", |_| "project");
+                connection
+                    .execute(
+                        "INSERT INTO sync_runs(id, kind, status, scope, project_id, db_version)
+                         VALUES (?1, 'apply', 'succeeded', ?2, ?3, 17)",
+                        params![run_id, scope, project_id],
+                    )
+                    .unwrap();
+            }
+            for (id, run_id, target_id) in [
+                (PROMPT_RUN_ITEM_ID, PROMPT_RUN_ID, PROMPT_TARGET_ID),
+                (MIXED_PROMPT_ITEM_ID, MIXED_RUN_ID, PROMPT_TARGET_ID),
+                (MIXED_MCP_ITEM_ID, MIXED_RUN_ID, MCP_TARGET_ID),
+                (GLOBAL_ITEM_ID, GLOBAL_RUN_ID, GLOBAL_PROMPT_TARGET_ID),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO sync_items(
+                            id, run_id, target_id, change_kind, status
+                         ) VALUES (?1, ?2, ?3, 'update', 'in_sync')",
+                        params![id, run_id, target_id],
+                    )
+                    .unwrap();
+            }
+            for (id, run_id, target_id, target_path, stored_path) in [
+                (
+                    PROMPT_SNAPSHOT_ID,
+                    PROMPT_RUN_ID,
+                    PROMPT_TARGET_ID,
+                    project_prompt_path.to_str().unwrap(),
+                    prompt_snapshot_path.to_str().unwrap(),
+                ),
+                (
+                    MIXED_PROMPT_SNAPSHOT_ID,
+                    MIXED_RUN_ID,
+                    PROMPT_TARGET_ID,
+                    project_prompt_path.to_str().unwrap(),
+                    mixed_prompt_snapshot_path.to_str().unwrap(),
+                ),
+                (
+                    MIXED_MCP_SNAPSHOT_ID,
+                    MIXED_RUN_ID,
+                    MCP_TARGET_ID,
+                    "/fixture/prompt-project/.mcp.json",
+                    mixed_mcp_snapshot_path.to_str().unwrap(),
+                ),
+                (
+                    GLOBAL_SNAPSHOT_ID,
+                    GLOBAL_RUN_ID,
+                    GLOBAL_PROMPT_TARGET_ID,
+                    "/fixture/home/CLAUDE.md",
+                    global_snapshot_path.to_str().unwrap(),
+                ),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO snapshots(
+                            id, run_id, target_id, target_path, snapshot_path,
+                            target_type, storage_kind
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, 'file', 'payload_file')",
+                        params![id, run_id, target_id, target_path, stored_path],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO project_native_resources(
+                        id, target_id, external_key, entry_type, state,
+                        observed_item_hash, disabled_snapshot_id, disabled_at
+                     ) VALUES (?1, ?2, 'prompt', 'prompt_file', 'disabled', ?3, ?4,
+                               strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                    params![
+                        PROMPT_NATIVE_ID,
+                        PROMPT_TARGET_ID,
+                        "b".repeat(64),
+                        PROMPT_SNAPSHOT_ID
+                    ],
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&paths).unwrap();
+        assert_eq!(database.schema_version().unwrap(), 18);
+        assert_eq!(
+            fs::read(&project_prompt_path).unwrap(),
+            project_prompt_bytes
+        );
+        assert!(!prompt_snapshot_path.exists());
+        assert!(!mixed_prompt_snapshot_path.exists());
+        assert!(mixed_mcp_snapshot_path.is_file());
+        assert!(global_snapshot_path.is_file());
+
+        let connection = database.connection();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'prompt_project_assignments'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_targets WHERE id = ?1",
+                    [PROMPT_TARGET_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM project_native_resources", [], |row| {
+                    row.get::<_, i64>(0)
+                },)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM snapshots WHERE target_id = ?1",
+                    [PROMPT_TARGET_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sync_items WHERE target_id = ?1",
+                    [PROMPT_TARGET_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_items WHERE target_id = ?1",
+                    [PROMPT_TARGET_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sync_runs WHERE id = ?1",
+                    [PROMPT_RUN_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sync_items WHERE run_id = ?1",
+                    [MIXED_RUN_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM snapshots WHERE run_id = ?1",
+                    [MIXED_RUN_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_targets WHERE id = ?1",
+                    [GLOBAL_PROMPT_TARGET_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM snapshots WHERE id = ?1",
+                    [GLOBAL_SNAPSHOT_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM retired_snapshot_cleanup", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        assert!(connection
+            .execute(
+                "INSERT INTO managed_targets(
+                    id, tool, artifact_kind, scope, project_id, target_path
+                 ) VALUES ('00000000-0000-4000-8000-000000000518', 'claude', 'prompt',
+                           'project', ?1, ?2)",
+                params![PROJECT_ONE_ID, project_prompt_path.to_str().unwrap()],
+            )
+            .is_err());
+
+        drop(database);
+        let reopened = Database::open(&paths).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 18);
+        assert_eq!(
+            reopened
+                .connection()
+                .query_row("SELECT COUNT(*) FROM retired_snapshot_cleanup", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
         );
     }
 
@@ -1195,7 +1709,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1209,20 +1723,14 @@ mod tests {
                 .unwrap();
             assert_eq!(preserved, 1);
             let connection = database.connection();
-            // 迁移执行所用的同一连接必须立即识别修订后的 CHECK。
+            // 迁移执行所用的同一连接必须立即识别收紧后的 CHECK。
             connection
                 .execute(
                     "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
                      VALUES (?1, 'claude', 'prompt', 'project', ?2, '/fixture/prompt-canary/CLAUDE.md')",
                     params![CANARY_TARGET_ID, CANARY_PROJECT_ID],
                 )
-                .unwrap();
-            connection
-                .execute(
-                    "DELETE FROM managed_targets WHERE id = ?1",
-                    [CANARY_TARGET_ID],
-                )
-                .unwrap();
+                .unwrap_err();
         }
     }
 
@@ -1266,7 +1774,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1354,7 +1862,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1422,9 +1930,8 @@ mod tests {
 
             assert!(connection.execute("INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000223', 'cursor', 'Cursor Provider')", []).is_err());
             assert!(connection.execute("INSERT INTO prompt_profiles(id, tool, name, body) VALUES ('00000000-0000-4000-8000-000000000224', 'cursor', 'Cursor Prompt', '')", []).is_err());
-            // 0017 放宽后：cursor 项目分配、cursor×prompt 受管目标与 cursor×prompt
-            // 导入预览被接受；cursor×provider 的导入预览仍被 tool×artifact 组合 CHECK 拒绝。
-            connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, CLAUDE_PROMPT_ID]).unwrap();
+            // 0017 放宽后的 cursor×prompt 全局受管目标与导入预览在 v18
+            // 迁移后仍保留；项目 Prompt 分配及项目受管目标已经被移除。
             connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'cursor', 'prompt', 'global', '/fixture/home/.cursor/rules/easytoagents.mdc')", ["00000000-0000-4000-8000-000000000268"]).unwrap();
             connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES (?1, 'cursor', 'prompt', '/fixture/home/.cursor/rules/easytoagents.mdc', ?2, 'Cursor', '{}')", params![CURSOR_PROMPT_IMPORT_ID, "b".repeat(64)]).unwrap();
             assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000226', 'cursor', 'provider', 'global', '/fixture/provider.json')", []).is_err());
@@ -1448,7 +1955,6 @@ mod tests {
                     ["00000000-0000-4000-8000-000000000268"],
                 )
                 .unwrap();
-            connection.execute("DELETE FROM prompt_project_assignments WHERE project_id = ?1 AND tool = 'cursor'", [PROJECT_ONE_ID]).unwrap();
             connection
                 .execute(
                     "DELETE FROM mcp_import_previews WHERE id = ?1",
@@ -1510,7 +2016,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1540,8 +2046,6 @@ mod tests {
                 .unwrap();
             connection.execute("INSERT INTO provider_profiles(id, tool, name, api_base_url, api_key, default_model, config_json, is_active) VALUES (?1, 'zcode', 'ZCode Provider', 'https://provider.example.com/v1', 'fixture-key', 'GLM-5.3', '{}', 1)", [ZCODE_PROVIDER_ID]).unwrap();
             connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES (?1, 'zcode', 'provider', '/fixture/home/.zcode/v2/config.json', ?2, 'ZCode', '{}')", params![ZCODE_PROFILE_IMPORT, "a".repeat(64)]).unwrap();
-            connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'zcode', '00000000-0000-4000-8000-000000000227')", [PROJECT_ONE_ID]).unwrap();
-
             // 每工具至多一份生效的 ZCode 提示词索引：第二份被拒绝。
             connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_zcode) VALUES (?1, 'central', 'ZCode 生效提示词', '', 1)", [ZCODE_PROMPT_PROFILE]).unwrap();
             assert!(connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_zcode) VALUES ('00000000-0000-4000-8000-000000000238', 'central', 'ZCode 第二份生效', '', 1)", []).is_err());
@@ -1555,14 +2059,6 @@ mod tests {
                 .is_err());
             assert!(connection.execute("INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000239', 'windsurf', 'Windsurf Provider')", []).is_err());
             assert!(connection.execute("INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000240', 'windsurf', 'mcp', 'global', '/fixture/windsurf.json')", []).is_err());
-            assert!(connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'windsurf', '00000000-0000-4000-8000-000000000227')", [PROJECT_ONE_ID]).is_err());
-
-            connection
-                .execute(
-                    "DELETE FROM prompt_project_assignments WHERE project_id = ?1 AND tool = 'zcode'",
-                    [PROJECT_ONE_ID],
-                )
-                .unwrap();
             connection
                 .execute(
                     "DELETE FROM profile_import_previews WHERE id = ?1",
@@ -1637,7 +2133,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1656,20 +2152,13 @@ mod tests {
             connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_cursor) VALUES (?1, 'central', 'Cursor 生效提示词', '', 1)", [PROMPT_PROFILE_ID]).unwrap();
             assert!(connection.execute("INSERT INTO prompt_profiles(id, tool, name, body, is_active_cursor) VALUES ('00000000-0000-4000-8000-000000000265', 'central', 'Cursor 第二份生效', '', 1)", []).is_err());
 
-            // 项目分配与导入预览接受 'cursor'；cursor×provider 导入预览仍被组合 CHECK 拒绝。
-            connection.execute("INSERT INTO prompt_project_assignments(project_id, tool, prompt_profile_id) VALUES (?1, 'cursor', ?2)", params![PROJECT_ONE_ID, PROMPT_PROFILE_ID]).unwrap();
+            // Cursor Prompt 全局导入预览接受；cursor×provider 导入预览仍被组合 CHECK 拒绝。
             connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES (?1, 'cursor', 'prompt', '/fixture/home/.cursor/rules/easytoagents.mdc', ?2, 'Cursor', '{}')", params![CURSOR_IMPORT_PREVIEW, "b".repeat(64)]).unwrap();
             assert!(connection.execute("INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000267', 'cursor', 'provider', '/fixture/provider.json', ?1, 'Cursor', '{}')", ["b".repeat(64)]).is_err());
 
             // Cursor Provider 仍被 provider_profiles 的 tool CHECK 拒绝（0017 刻意不放宽）。
             assert!(connection.execute("INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000266', 'cursor', 'Cursor Provider')", []).is_err());
 
-            connection
-                .execute(
-                    "DELETE FROM prompt_project_assignments WHERE project_id = ?1 AND tool = 'cursor'",
-                    [PROJECT_ONE_ID],
-                )
-                .unwrap();
             connection
                 .execute(
                     "DELETE FROM profile_import_previews WHERE id = ?1",
@@ -1720,7 +2209,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1869,7 +2358,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1981,7 +2470,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2157,7 +2646,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 17);
+            assert_eq!(database.schema_version().unwrap(), 18);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

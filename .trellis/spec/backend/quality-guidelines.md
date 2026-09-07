@@ -10,9 +10,11 @@ Backend integrations use explicit inputs and fail-closed evidence. Discovery, sc
 preview generation, and Git inspection are read-only operations; they must be safe to
 run against hostile paths and configuration contents.
 
-Project-native Skill/MCP/Prompt observation is a third identity: it is not a central
+Project-native Skill/MCP observation is a third identity: it is not a central
 assignment and not `managed_items` ownership. Empty-baseline target identity rows exist
-only to hang that observation; they must not relax ordinary Apply.
+only to hang that supported observation; they must not relax ordinary Apply. Prompt is
+global-only, so project Prompt/Rules files are outside discovery, observation,
+ownership, disable/restore, and Apply.
 
 ---
 
@@ -20,10 +22,10 @@ only to hang that observation; they must not relax ordinary Apply.
 
 - Reading `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or equivalent process state from
   adapters. Resolve every target from an explicit discovery context.
-- Treating a tool enum as capability evidence. Cursor supports global/project MCP,
-  Skills, and its single managed Prompt/Rules `.mdc` file; Provider, API Key/model,
-  and any other unverified target must return explicit unsupported descriptors and
-  must never reach native reads.
+- Treating a tool enum as capability evidence. Cursor supports global Prompt and
+  global/project MCP and Skills; Provider, API Key/model, project Prompt/Rules, and
+  any other unverified target must return explicit unsupported descriptors and must
+  never reach native reads.
 - Guessing Claude MCP targets for a non-default config root, or treating stale policy
   and trust evidence as allowed.
 - Following a symlinked target or a symlink introduced in an ancestor after discovery.
@@ -78,9 +80,9 @@ only to hang that observation; they must not relax ordinary Apply.
 
 - The Claude/Codex/Cursor × global/project × provider/prompt/MCP/skill descriptor matrix is
   complete and reports capability, policy, trust, and prompt-override state accurately.
-  Cursor Provider entries remain unsupported and pathless; its Prompt/Rules entries
-  use the explicit `~/.cursor/rules/easytoagents.mdc` and
-  `<root>/.cursor/rules/easytoagents.mdc` contracts and are assignable.
+  Cursor Provider entries remain unsupported and pathless; its Prompt descriptor is
+  global-only at the explicit `~/.cursor/rules/easytoagents.mdc` target. Project
+  Prompt/Rules entries are unsupported and cannot be assigned.
 - Sensitive selectors match the current native field names and are document-relative.
 - JSON/TOML rendering preserves unmanaged fields, tables, and comments; Markdown and
   skill-link handling do not follow unmanaged links.
@@ -110,13 +112,14 @@ only to hang that observation; they must not relax ordinary Apply.
 ### 3. Contracts
 
 - `CLAUDE_CONFIG_DIR` affects Claude settings, prompt, and skills targets;
-  `CODEX_HOME` affects Codex config, prompt, and user skills targets (Codex user
+  `CODEX_HOME` affects Codex config, global prompt, and user skills targets (Codex user
   Skills resolve from `$CODEX_HOME/skills`, following `CODEX_HOME`).
 - Cursor targets are resolved only from explicit HOME/project roots: user/project MCP
   use `.cursor/mcp.json`, user/project Skills use `.cursor/skills`, and the managed
-  global/project Prompt target is `.cursor/rules/easytoagents.mdc`. Cursor has no
-  Provider target. `TargetFormat::CursorMdc` renders fixed `alwaysApply: true`
-  frontmatter and projects the body without frontmatter on observation/import.
+  global Prompt target is `.cursor/rules/easytoagents.mdc`. Cursor has no Provider
+  target or project Prompt target. `TargetFormat::CursorMdc` renders fixed
+  `alwaysApply: true` frontmatter and projects the body without frontmatter on
+  global observation/import.
 - Non-default Claude user MCP requires version-bound capability evidence. Codex
   project MCP/skills require trusted evidence. Unknown evidence blocks.
 - A preview binds descriptor identity, full/managed hashes, managed target
@@ -147,7 +150,8 @@ only to hang that observation; they must not relax ordinary Apply.
 ### 6. Tests Required
 
 - Cover the complete Claude/Codex/Cursor × global/project × artifact descriptor matrix,
-  including fail-closed Cursor Provider cases and CursorMdc Prompt round-trips.
+  including fail-closed Cursor Provider and project Prompt cases, plus the global
+  CursorMdc Prompt round-trip.
 - Use isolated homes/config roots/projects for missing, empty, malformed,
   permission, symlink, trust, policy, override, and drift fixtures.
 - Search serialized preview rows, RPC DTOs, errors, and journals for every fixture
@@ -417,76 +421,89 @@ let preview = preview_provider_sync(database, context, tool)?;
 let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind::Provider)?;
 ```
 
-### Scenario: Project-level prompt assignment (hard copy)
+### Scenario: Global-only Prompt profiles
 
-#### 1. Scope / Trigger
+Prompt profiles, global tool assignments, native import, preview, and Apply are
+global operations. Their public command signatures carry a tool and the exact
+persisted preview identity, but no project identity. The global Prompt target is
+resolved from the tool's explicit configuration root and is written only through
+the shared persisted preview/apply pipeline.
 
-- Trigger: prompt project assignment, project-scope prompt preview/apply,
-  unassignment, or prompt profile deletion changes.
+### 1. Scope / Trigger
 
-#### 2. Signatures
+- Trigger: Prompt profile CRUD, global assignment/import/sync, or any project
+  discovery/detail/native-resource change that could accidentally reintroduce a
+  project Prompt surface.
 
-- `preview_prompt_sync(tool, projectId: Option<String>) -> PreviewPlan`；
-  `apply_profile_preview(ApplyProfilePreviewInput{previewId, tool, artifactKind,
-  projectId}) -> ApplyResult`；projectId 为 None 时保持全局语义不变。
-- `set_prompt_project_assignment(SetPromptProjectAssignmentInput{projectId,
-  tool, promptProfileId: Option, projectRowVersion}) -> PromptProjectAssignmentDto`；
-  `get_prompt_project_assignment(projectId, tool)`。
-- 目标矩阵补全：Claude 项目 `<root>/CLAUDE.md`、Codex 项目
-  `<root>/AGENTS.md`（均为 `TargetFormat::Markdown` + `$document` +
-  `WholeDocument`），以及 Cursor 项目
-  `<root>/.cursor/rules/easytoagents.mdc`（`TargetFormat::CursorMdc` +
-  `$document` + `WholeDocument`）。全局与项目分配**互不排斥**（与 mcp/skill
-  的互斥触发器有意不同）；每 (项目, 工具) 至多一份（`prompt_project_assignments` PK）。
+### 2. Signatures
 
-#### 3. Contracts
+- `preview_prompt_sync(tool) -> PreviewPlan` and
+  `apply_profile_preview({ previewId, tool, artifactKind }) -> ApplyResult` have
+  no `projectId` field.
+- Global Prompt uses `ArtifactKind::Prompt`, `WholeDocument`, and the existing
+  Markdown/CursorMdc target formats; project resource APIs use only supported
+  MCP/Skill/Hook kinds and do not expose Prompt assignment DTOs.
 
-- 项目级为**硬拷贝**语义：apply 写普通文件，此后项目文件归项目所有；
-  外部修改不构成 stale，而是把观测内容作为本次预览的确认基线（不落库），
-  apply 端指纹绑定保证预览与应用间未被再次改动。全局作用域保持外部修改
-  必须走接管导入的严格语义。
-- 解除分配 = 同事务删除分配行 + 清空基线哈希（行保留，见 database-guidelines），
-  项目文件保留、仅停止纳管；重复提交相同分配为 no-op（不 bump 项目版本）；
-  分配/解除都会 bump 项目 `row_version`。
-- 被项目分配引用的档案禁止删除（`count_prompt_project_assignments` 前置
-  校验 + FK RESTRICT 兜底）；跨工具档案分配拒绝。
-- 档案分配与同步都只改中央意图；原生写入必须经持久化预览 + 显式 Apply。
+### 3. Contracts
 
-#### 4. Validation & Error Matrix
+- Project pages and project services do not expose Prompt assignment, project
+  Prompt preview/apply, or Prompt native-resource actions.
+- Project discovery does not read `CLAUDE.md`, `AGENTS.md`, Cursor rules, or
+  equivalent project Prompt/Rules files. It does not create a project Prompt
+  target, baseline, assignment row, or `PromptFile` observation.
+- Global Prompt CRUD changes only central SQLite intent. A global Prompt sync may
+  read or write its one global target after an explicit preview and Apply; it
+  never falls back to a registered project's path.
+- Migration 0018 removes historical project Prompt database state and private
+  snapshots while leaving current project files byte-for-byte unchanged.
+
+### 4. Validation & Error Matrix
 
 | Condition | Required result |
 | --- | --- |
-| 档案与工具不匹配 | `INVALID_INPUT`；无写入 |
-| 项目分配缺失但基线哈希仍存在 | `CONFLICT`（防御分支，正常流程不可达） |
-| 解除分配时重复提交 / 相同分配重复提交 | no-op，不 bump 项目版本 |
-| 档案仍被项目引用时删除 | `CONFLICT`；档案保留 |
-| 项目外部修改 CLAUDE.md/AGENTS.md | 预览可合并（覆盖式重新应用），apply 前再校验指纹 |
-| 全局目标外部修改 | stale/conflict；走接管导入（严格语义不变） |
+| Project Prompt assignment/preview/apply payload | Type/command boundary rejects it; no native read or write |
+| `projectId` supplied to global Prompt preview/apply | `INVALID_INPUT`; central intent unchanged |
+| Global Prompt target missing or malformed | Structured preview/import error; no project fallback |
+| Project scan encounters Prompt/Rules file | Ignore it; do not create target, baseline, or native-resource row |
+| Global Prompt preview/apply with valid tool and preview ID | Use explicit global root and shared persisted pipeline |
 
-#### 5. Tests Required
+### 5. Good/Base/Bad Cases
 
-- 分配→预览→应用写出项目根文件；外部修改→覆盖；解除分配保留文件且基线
-  哈希清空；跨工具拒绝；删除阻塞；全局回归不变（`profiles/service.rs`）。
-- 迁移金丝雀：同连接识别修订后的 CHECK（`db/mod.rs`）。
+- Good: keep global Prompt CRUD/import/assignment/preview/apply working while a
+  project scan ignores all Prompt/Rules files.
+- Base: a project page renders MCP/Skill/Hook resources only and a global Prompt
+  preview carries no project identity.
+- Bad: add a project Prompt selector, read a project's `CLAUDE.md`, or make a
+  global Prompt apply fall back to a registered project's path.
 
-#### 6. Wrong vs Correct
+### 6. Tests Required
+
+- Preserve global Prompt CRUD/import/assignment/preview/apply coverage, including
+  Markdown and CursorMdc projections and redacted previews.
+- Assert generated bindings have no project Prompt assignment command/DTO or
+  `PromptFile` project entry type; project detail/discovery/native-resource tests
+  neither render nor invoke project Prompt capabilities.
+- Scan project files and serialized RPC/preview/journal carriers for fixture
+  secrets and assert project Prompt files remain byte-for-byte unchanged.
+
+### 7. Wrong vs Correct
 
 #### Wrong
 
-```rust
-// 解除分配删除基线行会破坏快照 RESTRICT 外键；也不允许在 CRUD 内写原生文件。
-repository::delete_prompt_project_baseline(database, project_id, tool)?;
-fs::remove_file(project_root.join("CLAUDE.md"))?;
+```ts
+await commands.previewPromptSync({ tool, projectId });
+await commands.applyProfilePreview({ previewId, tool, artifactKind, projectId });
 ```
 
 #### Correct
 
-```rust
-// 解除分配：同事务删分配行 + 清空基线哈希，文件保留。
-repository::set_prompt_project_assignment(database, project_id, tool, None, expected)?;
-// 写入必须经预览 + Apply。
-let plan = preview_prompt_sync(database, environment, redactor, tool, Some(project_id))?;
-apply_profile_preview(state, plan.preview_id, tool, ArtifactKind::Prompt, Some(project_id))?;
+```ts
+const plan = await commands.previewPromptSync({ tool });
+await commands.applyProfilePreview({
+  previewId: plan.previewId,
+  tool,
+  artifactKind: "prompt",
+});
 ```
 
 ## Scenario: MCP central intent and inherited project projections
@@ -776,9 +793,9 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
   persisted so the app does not loop forever while both tools remain unmanaged.
 - A global snapshot restore derives its allowed root from the exact tool/artifact
   matrix (`HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or Cursor's
-  `$HOME/.cursor`). Cursor accepts MCP/Skill/Prompt snapshots; Provider restore
-  remains rejected. A removed-project snapshot is not restorable until the project
-  identity is active again.
+  `$HOME/.cursor`). Cursor accepts MCP/Skill and global Prompt snapshots; Provider
+  restore and project Prompt snapshots are rejected. A removed-project snapshot is
+  not restorable until the project identity is active again.
 
 ### 4. Validation & Error Matrix
 
@@ -797,8 +814,8 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
 ### 5. Good/Base/Bad Cases
 
 - Good: register a canonical isolated project, scan current Git/policy/trust and native
-  targets, select only project additions, review a persisted preview, and restore a
-  snapshot through the exact tool/artifact root.
+  MCP/Skill targets, select only supported project additions, review a persisted preview,
+  and restore a snapshot through the exact tool/artifact root.
 - Base: list/rescan/dashboard/onboarding detection reads current evidence and central
   metadata only; project CRUD and import confirmation do not write native targets.
 - Bad: a case alias, stale project version, active writer, external same-name item,
@@ -811,8 +828,8 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
   application-data root. Never read process tool environment or a developer config.
 - Cover symlink aliases, `NOCASE` duplicates, soft reactivation, stale removal CAS,
   active-writer removal blocking, disabled-native-resource removal blocking, native
-  preservation, live managed drift, and external same-name conflict before the first
-  preview.
+  preservation, live managed drift, external same-name conflict, and the absence of
+  project Prompt reads before the first preview.
 - Cover the neutral `PROJECT_TARGET_INITIAL_UNMANAGED` diagnostic for an observed
   external-only project target with global inheritance and no baseline, and its muted
   frontend rendering without the raw diagnostic line.
@@ -1122,14 +1139,14 @@ remove_files(&plan)?;                              // per-item results
 delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
 ```
 
-## Scenario: Project-native resource observation, disable, and restore
+## Scenario: Project-native MCP/Skill resource observation, disable, and restore
 
 ### 1. Scope / Trigger
 
 - Trigger: project registration/rescan/get DTOs, `project_native_resources`,
-  native disable/restore preview/apply, MCP selector mutation, Skill entry
-  removal/restore without central takeover, Prompt whole-file disable, snapshot
-  reference protection, or project-detail native UI.
+  native MCP/Skill disable/restore preview/apply, MCP selector mutation, Skill
+  entry removal/restore without central takeover, snapshot reference protection,
+  or project-detail native UI. Prompt/Rules files are not part of this flow.
 
 ### 2. Signatures
 
@@ -1140,9 +1157,9 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
   `upsert_observed_active`, `snapshot_is_referenced`,
   `count_blocking_native_resources`) and `projects/native_resources.rs`.
   Commands live in `commands/projects.rs`.
-- `ProjectNativeResourceDto.safeSummary` is `{ kind: "mcp" }` for MCP,
-  `{ entryType }` for Skill, `{ kind: "prompt" }` for Prompt. It never carries
-  command, args, env, headers, URL, or raw config.
+- `ProjectNativeResourceDto.safeSummary` is `{ kind: "mcp" }` for MCP and
+  `{ entryType }` for Skill. It never carries command, args, env, headers, URL,
+  or raw config.
 - Migration `0012_project_native_resources.sql` only. Do not rewrite historical
   migrations.
 
@@ -1151,28 +1168,25 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
 - Three identities stay distinct:
   1. central resource + assignment = what the app wants to sync;
   2. `managed_items` + filled baselines = proven ownership;
-  3. `project_native_resources` = observation and recoverable disable state.
-- 项目级 Prompt 是 `WholeDocument` 目标，不产生 `managed_items`；只有对应的
-  `prompt_project_assignments` 仍存在且 `managed_targets.baseline_full_hash` 与
-  `baseline_managed_hash` 均非空时，才算中央已经接管该 Prompt 目标。仅有空基线
-  或残留基线都不能隐藏项目原生资源。
+  3. `project_native_resources` = MCP/Skill observation and recoverable disable state.
+- Prompt/Rules are global-only. They do not produce project `managed_targets`,
+  `managed_items`, `project_native_resources`, or disable/restore actions.
 - `insert_project_target_identity` may create a `managed_targets` row with empty
-  `baseline_*` and no `managed_items`. That row is not ownership. Ordinary
-  `preview_mcp_sync` / Skill / Prompt Apply with no assignment must still produce
-  zero targets and must not create an empty project file.
+  `baseline_*` and no `managed_items` for an observed MCP or Skill target. That
+  row is not ownership. Ordinary `preview_mcp_sync` / Skill Apply with no
+  assignment must still produce zero targets and must not create an empty project
+  configuration file.
 - Register/get/rescan reuse adapter `discover` + `scan_target`. Classification:
   matching managed item hash → central-owned (hidden from operable native list);
   managed key with drifted hash → central drift (not a native disable target);
-  no ownership evidence → project-native. Cursor project Prompt uses the managed
-  single-file `.cursor/rules/easytoagents.mdc` descriptor; other Cursor `.mdc` files
-  remain outside the application-owned target.
-- Reconciliation: new native keys upsert `active`; vanished `active` rows become
-  `missing` (no snapshot, unrestorable); `disabled` stays disabled while the
-  snapshot is valid and the key is absent; a disabled key that reappears becomes
-  `conflict` and keeps the snapshot until a later scan proves the occupancy is
-  gone. 项目 Prompt 中央 Apply 重新占用同一路径时也必须遵循上述规则：旧原生
-  记录转为 `conflict`，保留快照、保持列表可见并阻止移除项目；中央所有权不能
-  隐藏另一份待恢复的原生内容。解除分配并移走占用文件后，扫描回到 `disabled`。
+  no ownership evidence → project-native MCP/Skill resource. Project Prompt/Rules
+  files are not read and remain outside the application-owned target set.
+- Reconciliation: new MCP/Skill native keys upsert `active`; vanished `active`
+  rows become `missing` (no snapshot, unrestorable); `disabled` stays disabled
+  while the snapshot is valid and the key is absent; a disabled key that
+  reappears becomes `conflict` and keeps the snapshot until a later scan proves
+  the occupancy is gone. Central ownership cannot hide another pending native
+  resource recovery record.
 - Native writes reuse `sync` writer, `claim_preview`, journal, snapshot, and
   `finish_failed_apply`. Success updates native state via
   `apply_native_resource_changes` and must not fill ownership baselines or create
@@ -1187,9 +1201,6 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
   uses a same-parent temp entry and exclusive rename. Occupancy keeps the
   snapshot. Observed Skill hash is `inspect_skill_takeover_entry` content hash
   (directory) or fingerprint (symlink), not a type/link-target-only hash.
-- Prompt disable: Claude `CLAUDE.md`, Codex `AGENTS.md`, and Cursor
-  `.cursor/rules/easytoagents.mdc` exact descriptors. Snapshot as `payload_file`,
-  remove the file, restore original bytes and Unix mode onto an empty path.
 - Rollback of a native Skill mutation must restore an external symlink without
   `central_root` (`restore_external_symlink_without_central`). If restore created
   an empty parent directory, rollback may `remove_dir` that empty directory.
@@ -1204,8 +1215,7 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
 | `active` + `restore`, or `disabled` + `disable` | `INVALID_INPUT` |
 | `missing` or `conflict` + any action | `CONFLICT` |
 | Central-owned or central-drift item presented as native disable | `NOT_FOUND` / `CONFLICT`; no native write |
-| 项目 Prompt 有 assignment 且两项基线均非空，旧原生记录为 `disabled/conflict` | 占用路径时显示 `conflict`；保留快照并阻塞项目移除 |
-| 上述项目 Prompt 解除分配后文件仍在 | 重新按普通原生资源对账；旧 `disabled` 记录变为 `conflict` 并保留快照 |
+| Project Prompt/Rules path supplied to a native-resource command | `INVALID_INPUT` / `NOT_FOUND`; no native read or write |
 | Apply when `sync_runs.status != "previewed"` | `PREVIEW_ALREADY_CONSUMED` **before** the action matrix |
 | Stale resource/target `row_version` or target identity change | `STALE_PREVIEW` / `CONFLICT`; no overwrite |
 | Restore path/selector occupied | `CONFLICT`; keep private snapshot |
@@ -1215,37 +1225,34 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
 
 ### 5. Good/Base/Bad Cases
 
-- Good: register a fixture project, list native MCP/Skill/Prompt items, persist a
-  disable preview, confirm Apply, rescan still shows `disabled` with restore,
-  then restore siblings/tree/bytes without rewriting unrelated entries.
+- Good: register a fixture project, list native MCP/Skill items, persist a disable
+  preview, confirm Apply, rescan still shows `disabled` with restore, then restore
+  siblings/tree/bytes without rewriting unrelated entries.
 - Base: register/rescan never writes project files. `applyMode: "direct"` still
   only creates a persisted preview; Apply waits for explicit confirm.
 - Bad: auto-import to the central library, treat empty-baseline identity as
-  ownership, auto-Apply native actions, leak MCP secrets into `safeSummary`,
-  skip `snapshot_is_referenced` in a new cleanup path, or require `central_root`
-  to roll back a native symlink disable.
+  ownership, observe or auto-Apply a project Prompt/Rules file, leak MCP secrets
+  into `safeSummary`, skip `snapshot_is_referenced` in a new cleanup path, or
+  require `central_root` to roll back a native symlink disable.
 
 ### 6. Tests Required
 
-- Registration discovers items without rewriting bytes, trees, or symlink text.
-  Cursor project Prompt is present as the managed `.mdc` file; other Cursor rules
-  remain outside the managed target, while Claude/Codex Prompt are also present.
+- Registration discovers MCP/Skill items without rewriting bytes, trees, or
+  symlink text. Project Prompt/Rules files remain untouched and outside the
+  managed target set.
 - Empty-baseline identity: after register, `preview_mcp_sync` with no assignment
   has zero targets and does not create `.mcp.json`.
 - MCP selector-only disable/restore; unknown siblings and out-of-target TOML
   comments preserved; restore preview JSON has zero fixture-secret matches.
 - Skill Claude/Codex/Cursor directory and external-symlink disable/restore;
   occupancy keeps the snapshot; content-hash CAS sees directory edits.
-- Prompt Claude/Codex exact bytes/mode and CursorMdc frontmatter/body projection;
-  Cursor restore preserves the complete `.mdc` bytes and mode.
+- Global Prompt Markdown/CursorMdc frontmatter/body projection remains covered by
+  the profile preview/apply tests; project-native tests do not include Prompt.
 - Consumed preview, active writer, occupancy, and action-matrix rejects.
 - Native Apply fault: MCP `CrashBeforeTarget` keeps bytes and blocks the writer;
   Skill symlink/directory `FailAfterTarget` with `central_root = None` rolls back.
 - `soft_remove_project` and `delete_snapshots` refuse while a disabled native
   resource references the snapshot.
-- Claude/Codex/Cursor 原生 Prompt 先停用再由中央 Apply 写回同一路径：旧记录显示
-  `conflict`，保留快照并阻塞项目移除；解除分配并移走当前文件后可恢复原文及权限。
-  Cursor 恢复必须直接写回快照字节，预览投影通过适配器解析；不能重新渲染文件头。
 
 ### 7. Wrong vs Correct
 
@@ -1274,12 +1281,6 @@ if run_status != "previewed" {
 }
 validate_action_matrix(state, action)?;
 ```
-
-#### Central Prompt takeover
-
-中央所有权仍由 assignment + 两项已填基线判断，但它只能隐藏没有待恢复快照的
-普通原生记录。`disabled/conflict` 记录必须可见；中央 Apply 占用同一路径后按普通
-占用规则对账为 `conflict`。不能因为当前文件已由中央托管而隐藏旧快照或放行项目移除。
 
 ## Scenario: Hooks artifact (array-shaped native entries)
 

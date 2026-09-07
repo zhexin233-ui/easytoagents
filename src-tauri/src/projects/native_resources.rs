@@ -1,9 +1,8 @@
-//! 项目原生 Skill / MCP / Prompt 的只读发现、对账与禁用/恢复 Preview。
+//! 项目原生 Skill / MCP 的只读发现、对账与禁用/恢复 Preview。
 
 use std::{
     collections::BTreeMap,
     fs,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -197,8 +196,7 @@ pub(crate) fn apply_project_native_resource_preview_with_fault(
         desired_projection: desired,
         allowed_root: PathBuf::from(project_root.as_str()),
         central_skills_root: None,
-        delete_target: evidence.action == NativeResourceActionKind::Disable
-            && evidence.entry_type == NativeResourceEntryType::PromptFile,
+        delete_target: false,
         managed_items: Vec::new(),
         remove_managed_item_ids: Vec::new(),
         skill_takeover_entries: Vec::new(),
@@ -231,7 +229,7 @@ pub(super) fn supported_project_descriptors(
                 && target.path.is_some()
                 && matches!(
                     target.artifact_kind,
-                    ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Prompt
+                    ArtifactKind::Mcp | ArtifactKind::Skill
                 )
         }));
     }
@@ -303,9 +301,8 @@ fn observe_items(
     match descriptor.artifact_kind {
         ArtifactKind::Mcp => observe_mcp_items(database, adapter, descriptor, target_id),
         ArtifactKind::Skill => observe_skill_items(database, adapter, descriptor, target_id),
-        ArtifactKind::Prompt => observe_prompt_item(database, adapter, descriptor, target_id),
         // Hooks 不参与项目原生资源逐条观测（MVP 范围外）。
-        ArtifactKind::Hook | ArtifactKind::Provider => Ok(None),
+        ArtifactKind::Hook | ArtifactKind::Prompt | ArtifactKind::Provider => Ok(None),
     }
 }
 
@@ -401,60 +398,6 @@ fn observe_skill_items(
         });
     }
     Ok(Some(items))
-}
-
-fn observe_prompt_item(
-    database: &Database,
-    adapter: &dyn ToolAdapter,
-    descriptor: &TargetDescriptor,
-    target_id: &str,
-) -> Result<Option<Vec<ObservedNativeItem>>, AppError> {
-    let scan = scan_target(adapter, descriptor, &ManagedOwnership::WholeDocument);
-    let TargetScan::Observed(observed) = scan else {
-        return Ok(match scan {
-            TargetScan::Missing => Some(Vec::new()),
-            _ => None,
-        });
-    };
-    let path = Path::new(descriptor.path.as_deref().expect("Prompt 目标必须有路径"));
-    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-        return Ok(Some(Vec::new()));
-    };
-    let managed = match descriptor.artifact_kind {
-        ArtifactKind::Prompt => prompt_target_is_managed(database, target_id)?,
-        _ => false,
-    };
-    Ok(Some(vec![ObservedNativeItem {
-        external_key: file_name.to_owned(),
-        entry_type: ProjectNativeEntryType::PromptFile,
-        item_hash: observed.managed_hash.clone(),
-        centrally_owned: managed,
-    }]))
-}
-
-fn prompt_target_is_managed(database: &Database, target_id: &str) -> Result<bool, AppError> {
-    let path = database.path().to_string_lossy();
-    let count: i64 = database
-        .connection()
-        .query_row(
-            "SELECT COUNT(*)
-             FROM managed_targets AS target
-             WHERE target.id = ?1
-               AND target.scope = 'project'
-               AND target.artifact_kind = 'prompt'
-               AND target.baseline_full_hash IS NOT NULL
-               AND target.baseline_managed_hash IS NOT NULL
-               AND EXISTS (
-                   SELECT 1
-                   FROM prompt_project_assignments AS assignment
-                   WHERE assignment.project_id = target.project_id
-                     AND assignment.tool = target.tool
-               )",
-            [target_id],
-            |row| row.get(0),
-        )
-        .map_err(|_| AppError::database(&path, "check_prompt_target_managed"))?;
-    Ok(count > 0)
 }
 
 struct PreparedNativeAction {
@@ -596,10 +539,7 @@ fn build_action_projection(
             }
             let (content_hash, link_target, file_mode) =
                 disable_evidence_details(descriptor, record, entry_type)?;
-            let desired = match entry_type {
-                ProjectNativeEntryType::PromptFile => json!(""),
-                _ => json!({}),
-            };
+            let desired = json!({});
             Ok((
                 desired,
                 ProjectNativeResourceEvidence {
@@ -672,11 +612,6 @@ fn disable_evidence_details(
                 .map_err(|_| AppError::stale_preview("persisted", &record.id))?;
             Ok((None, Some(link_target.to_string_lossy().into_owned()), None))
         }
-        ProjectNativeEntryType::PromptFile => {
-            let metadata = fs::symlink_metadata(path)
-                .map_err(|_| AppError::stale_preview("persisted", &record.id))?;
-            Ok((None, None, Some(metadata.permissions().mode() & 0o7777)))
-        }
         ProjectNativeEntryType::McpEntry => {
             let _ = descriptor;
             Ok((None, None, None))
@@ -707,13 +642,6 @@ fn restore_desired_projection(
             });
             Ok(root)
         }
-        ProjectNativeEntryType::PromptFile => {
-            let bytes = fs::read(&snapshot.snapshot_path)
-                .map_err(|_| AppError::not_found("snapshot", &snapshot.snapshot_path))?;
-            let adapter = tool_adapter(descriptor.tool);
-            let document = adapter.parse(descriptor, crate::adapters::ObservedRaw::File(bytes))?;
-            adapter.project_managed(&document, &ManagedOwnership::WholeDocument)
-        }
         ProjectNativeEntryType::Directory | ProjectNativeEntryType::Symlink => {
             let entry = match entry_type {
                 ProjectNativeEntryType::Directory => DirectoryEntry {
@@ -726,7 +654,7 @@ fn restore_desired_projection(
                         AppError::conflict("snapshot", "符号链接快照缺少链接目标")
                     })?),
                 },
-                ProjectNativeEntryType::McpEntry | ProjectNativeEntryType::PromptFile => {
+                ProjectNativeEntryType::McpEntry => {
                     unreachable!()
                 }
             };
@@ -748,10 +676,7 @@ fn rebuild_desired_projection(
     evidence: &ProjectNativeResourceEvidence,
 ) -> Result<Value, AppError> {
     match evidence.action {
-        NativeResourceActionKind::Disable => Ok(match evidence.entry_type {
-            NativeResourceEntryType::PromptFile => json!(""),
-            _ => json!({}),
-        }),
+        NativeResourceActionKind::Disable => Ok(json!({})),
         NativeResourceActionKind::Restore => {
             let snapshot_id = evidence.restore_snapshot_id.as_deref().ok_or_else(|| {
                 AppError::invalid_input("projectNativeAction", "恢复缺少快照标识")
@@ -781,7 +706,6 @@ fn rebuild_desired_projection(
                     NativeResourceEntryType::McpEntry => ProjectNativeEntryType::McpEntry,
                     NativeResourceEntryType::Directory => ProjectNativeEntryType::Directory,
                     NativeResourceEntryType::Symlink => ProjectNativeEntryType::Symlink,
-                    NativeResourceEntryType::PromptFile => ProjectNativeEntryType::PromptFile,
                 },
                 &snapshot,
             )
@@ -815,7 +739,6 @@ fn item_hash_from_scan(
                 .ok_or_else(|| AppError::conflict("projectNativeResource", "Skill 入口已不存在"))?;
             Ok(skill_entry_item_hash(&child, entry_type, value))
         }
-        ProjectNativeEntryType::PromptFile => Ok(observed.managed_hash.clone()),
     }
 }
 
@@ -835,16 +758,6 @@ fn validate_live_occupancy(
             )),
         },
         ProjectNativeResourceAction::Restore => match entry_type {
-            ProjectNativeEntryType::PromptFile => {
-                if matches!(scan, TargetScan::Missing) {
-                    Ok(())
-                } else {
-                    Err(AppError::conflict(
-                        "targetPath",
-                        "恢复目标已被占用，拒绝覆盖",
-                    ))
-                }
-            }
             ProjectNativeEntryType::McpEntry => {
                 if matches!(scan, TargetScan::Missing)
                     || projection_key_absent(scan, descriptor, &record.external_key)
@@ -930,13 +843,11 @@ fn native_ownership(
         ArtifactKind::Skill => Ok(ManagedOwnership::SymlinkNames(
             vec![external_key.to_owned()],
         )),
-        ArtifactKind::Prompt => Ok(ManagedOwnership::WholeDocument),
         // Hooks 不参与项目原生资源的逐条停用/恢复（MVP 范围外），
         // 与 Provider 一样 fail closed。
-        ArtifactKind::Hook | ArtifactKind::Provider => Err(AppError::invalid_input(
-            "artifactKind",
-            "该资源类型不是项目原生资源",
-        )),
+        ArtifactKind::Hook | ArtifactKind::Prompt | ArtifactKind::Provider => Err(
+            AppError::invalid_input("artifactKind", "该资源类型不是项目原生资源"),
+        ),
     }
 }
 
@@ -971,7 +882,6 @@ fn should_hide_centralized(
         "skill" => skill_repository::list_managed_skill_items(database, &record.target_id)?
             .into_iter()
             .any(|item| item.external_key == record.external_key),
-        "prompt" => prompt_target_is_managed(database, &record.target_id)?,
         _ => false,
     };
     // 禁用快照代表另一份待恢复的原生内容，不能因中央资源占用路径而隐藏。
@@ -1044,8 +954,7 @@ fn safe_summary(artifact_kind: ArtifactKind, entry_type: ProjectNativeEntryType)
     match artifact_kind {
         ArtifactKind::Mcp => json!({ "kind": "mcp" }),
         ArtifactKind::Skill => json!({ "entryType": entry_type.as_str() }),
-        ArtifactKind::Prompt => json!({ "kind": "prompt" }),
-        ArtifactKind::Hook | ArtifactKind::Provider => json!({}),
+        ArtifactKind::Prompt | ArtifactKind::Hook | ArtifactKind::Provider => json!({}),
     }
 }
 
@@ -1086,7 +995,6 @@ fn evidence_entry_type(entry_type: ProjectNativeEntryType) -> NativeResourceEntr
         ProjectNativeEntryType::McpEntry => NativeResourceEntryType::McpEntry,
         ProjectNativeEntryType::Directory => NativeResourceEntryType::Directory,
         ProjectNativeEntryType::Symlink => NativeResourceEntryType::Symlink,
-        ProjectNativeEntryType::PromptFile => NativeResourceEntryType::PromptFile,
     }
 }
 
@@ -1095,7 +1003,6 @@ fn entry_type_record(entry_type: NativeResourceEntryType) -> &'static str {
         NativeResourceEntryType::McpEntry => "mcp_entry",
         NativeResourceEntryType::Directory => "directory",
         NativeResourceEntryType::Symlink => "symlink",
-        NativeResourceEntryType::PromptFile => "prompt_file",
     }
 }
 
@@ -1124,9 +1031,7 @@ fn skill_entry_item_hash(
         Ok(inspection) => match entry_type {
             ProjectNativeEntryType::Directory => inspection.content_hash,
             ProjectNativeEntryType::Symlink => inspection.fingerprint,
-            ProjectNativeEntryType::McpEntry | ProjectNativeEntryType::PromptFile => {
-                hash_json(fallback)
-            }
+            ProjectNativeEntryType::McpEntry => hash_json(fallback),
         },
         Err(_) => hash_json(fallback),
     }
@@ -1177,7 +1082,7 @@ mod tests {
         },
     };
     use rusqlite::params;
-    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::os::unix::fs::symlink;
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -1277,12 +1182,11 @@ mod tests {
         let before_mcp = br#"{"mcpServers":{"native-stdio":{"command":"npx","env":{"API_KEY":"sk-native-secret"}}}}"#;
         let project = fixture.register_project_with(|root| {
             fs::write(root.join(".mcp.json"), before_mcp).unwrap();
-            fs::write(root.join("CLAUDE.md"), "# native prompt\n").unwrap();
             write_skill(&root.join(".claude/skills"), "native-dir", "workflow");
             let link = root.join(".claude/skills/native-link");
             symlink(root.join(".claude/skills/native-dir"), &link).unwrap();
         });
-        assert_eq!(project.native_resources.active, 4);
+        assert_eq!(project.native_resources.active, 3);
         let after = fs::read(fixture.home.join("projects/native/.mcp.json")).unwrap();
         assert_eq!(after, before_mcp);
         let items = list_project_native_resources(
@@ -1301,315 +1205,6 @@ mod tests {
         let serialized = serde_json::to_string(&items[0]).unwrap();
         assert!(!serialized.contains("sk-native-secret"));
         assert!(!serialized.contains("npx"));
-    }
-
-    #[test]
-    fn cursor_project_prompt_uses_official_mdc_target() {
-        let mut fixture = Fixture::new();
-        let project = fixture.register_project_with(|root| {
-            fs::write(root.join("AGENTS.md"), "# codex prompt\n").unwrap();
-            fs::create_dir_all(root.join(".cursor/rules")).unwrap();
-            fs::write(
-                root.join(".cursor/rules/easytoagents.mdc"),
-                "---\nalwaysApply: true\n---\n\n# cursor prompt\n",
-            )
-            .unwrap();
-        });
-        let cursor_prompts = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Cursor,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap();
-        assert_eq!(cursor_prompts.len(), 1);
-        assert_eq!(cursor_prompts[0].display_name, "easytoagents.mdc");
-        assert_eq!(
-            cursor_prompts[0].target_path,
-            project.root_path.clone() + "/.cursor/rules/easytoagents.mdc"
-        );
-        let codex_prompts = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id,
-                tool: Tool::Codex,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap();
-        assert_eq!(codex_prompts.len(), 1);
-        assert_eq!(codex_prompts[0].display_name, "AGENTS.md");
-    }
-
-    #[test]
-    fn centrally_owned_project_prompt_preserves_native_recovery() {
-        for (tool, relative_path, original) in [
-            (
-                Tool::Claude,
-                "CLAUDE.md",
-                "# 原有 Claude 指令\n\n保留空格  \n",
-            ),
-            (Tool::Codex, "AGENTS.md", "# 原有 Codex 指令\r\n"),
-            (
-                Tool::Cursor,
-                ".cursor/rules/easytoagents.mdc",
-                "---\ndescription: 保留自定义文件头\nalwaysApply: false\n---\n\n# 原有 Cursor 指令  \n",
-            ),
-        ] {
-            assert_central_prompt_preserves_native_recovery(tool, relative_path, original);
-        }
-    }
-
-    fn assert_central_prompt_preserves_native_recovery(
-        tool: Tool,
-        relative_path: &str,
-        original: &str,
-    ) {
-        let mut fixture = Fixture::new();
-        let project = fixture.register_project_with(|root| {
-            let path = root.join(relative_path);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, original).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-        });
-        fs::write(
-            fixture.home.join(".codex/config.toml"),
-            format!(
-                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
-                project.root_path
-            ),
-        )
-        .unwrap();
-        let native = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let mut redactor = SecretRedactor::default();
-        let disable = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: native.id.clone(),
-                row_version: native.row_version,
-                action: ProjectNativeResourceAction::Disable,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: disable.preview_id,
-            },
-        )
-        .unwrap();
-        let disabled = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        assert_eq!(disabled.state, ProjectNativeResourceState::Disabled);
-        let disabled_snapshot_id = repository::get_by_id(&fixture.database, &disabled.id)
-            .unwrap()
-            .disabled_snapshot_id
-            .clone();
-        assert!(disabled_snapshot_id.is_some());
-
-        let profile = crate::profiles::create_prompt_profile(
-            &mut fixture.database,
-            crate::profiles::PromptProfileInput {
-                name: "中央追加规则".to_owned(),
-                body: "# centrally managed prompt\n".to_owned(),
-            },
-        )
-        .unwrap();
-        let current_project =
-            crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
-                .unwrap();
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool,
-                prompt_profile_id: Some(profile.id),
-                project_row_version: current_project.row_version,
-            },
-        )
-        .unwrap();
-        let central_preview = crate::profiles::preview_prompt_sync(
-            &mut fixture.database,
-            &fixture.environment,
-            &SecretRedactor::default(),
-            tool,
-            Some(project.id.clone()),
-        )
-        .unwrap();
-        crate::profiles::apply_profile_preview(
-            &Mutex::new(()),
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &mut SecretRedactor::default(),
-            &central_preview.preview_id,
-            tool,
-            ArtifactKind::Prompt,
-            Some(&project.id),
-        )
-        .unwrap();
-
-        let native_items = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap();
-        assert_eq!(native_items.len(), 1);
-        assert_eq!(native_items[0].id, disabled.id);
-        assert_eq!(native_items[0].state, ProjectNativeResourceState::Conflict);
-        assert!(!native_items[0].can_restore);
-        let preserved = repository::get_by_id(&fixture.database, &disabled.id).unwrap();
-        assert_eq!(preserved.state, "conflict");
-        assert_eq!(preserved.disabled_snapshot_id, disabled_snapshot_id);
-
-        let summary =
-            crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
-                .unwrap()
-                .native_resources;
-        assert_eq!(summary.disabled, 0);
-        assert_eq!(summary.conflict, 1);
-
-        // 原生恢复材料仍在使用，不能通过移除项目丢掉恢复入口。
-        let current_project =
-            crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
-                .unwrap();
-        let removal_error = crate::projects::remove_project(
-            &mut fixture.database,
-            &crate::projects::VersionedProjectInput {
-                id: project.id.clone(),
-                row_version: current_project.row_version,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(removal_error.code(), ErrorCode::Conflict);
-        let restore_error = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: native_items[0].id.clone(),
-                row_version: native_items[0].row_version,
-                action: ProjectNativeResourceAction::Restore,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(restore_error.code(), ErrorCode::Conflict);
-
-        let snapshot_id = disabled_snapshot_id.unwrap();
-        assert!(repository::snapshot_is_referenced(
-            fixture.database.connection(),
-            &snapshot_id,
-            &fixture.database.path().to_string_lossy(),
-        )
-        .unwrap());
-
-        let deletion = delete_snapshots(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &DeleteSnapshotsInput {
-                snapshot_ids: vec![snapshot_id],
-            },
-        )
-        .unwrap();
-        assert!(deletion.deleted_ids.is_empty());
-        assert_eq!(deletion.failures.len(), 1);
-
-        // 解除中央分配仍保留当前文件；用户移走占用文件后可恢复原始快照。
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool,
-                prompt_profile_id: None,
-                project_row_version: current_project.row_version,
-            },
-        )
-        .unwrap();
-        let prompt_path = Path::new(&native.target_path);
-        let central_bytes = fs::read(prompt_path).unwrap();
-        fs::rename(prompt_path, prompt_path.with_extension("saved")).unwrap();
-        let restored_candidate = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        assert_eq!(
-            restored_candidate.state,
-            ProjectNativeResourceState::Disabled
-        );
-        assert!(restored_candidate.can_restore);
-        let restore = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: restored_candidate.id,
-                row_version: restored_candidate.row_version,
-                action: ProjectNativeResourceAction::Restore,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: restore.preview_id,
-            },
-        )
-        .unwrap();
-        assert_eq!(fs::read_to_string(prompt_path).unwrap(), original);
-        assert_eq!(
-            fs::read(prompt_path.with_extension("saved")).unwrap(),
-            central_bytes
-        );
-        assert_eq!(
-            fs::metadata(prompt_path).unwrap().permissions().mode() & 0o777,
-            0o640
-        );
     }
 
     #[test]
@@ -1945,91 +1540,6 @@ mod tests {
     }
 
     #[test]
-    fn prompt_disable_restore_keeps_bytes_and_mode() {
-        let mut fixture = Fixture::new();
-        let project = fixture.register_project_with(|root| {
-            let path = root.join("CLAUDE.md");
-            fs::write(&path, b"# exact bytes\n").unwrap();
-            let mut permissions = fs::metadata(&path).unwrap().permissions();
-            permissions.set_mode(0o640);
-            fs::set_permissions(&path, permissions).unwrap();
-        });
-        let item = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let mut redactor = SecretRedactor::default();
-        let preview = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: item.id.clone(),
-                row_version: item.row_version,
-                action: ProjectNativeResourceAction::Disable,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: preview.preview_id,
-            },
-        )
-        .unwrap();
-        assert!(!fixture.home.join("projects/native/CLAUDE.md").exists());
-        let disabled = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let mut redactor = SecretRedactor::default();
-        let restore = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: disabled.id.clone(),
-                row_version: disabled.row_version,
-                action: ProjectNativeResourceAction::Restore,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: restore.preview_id,
-            },
-        )
-        .unwrap();
-        let path = fixture.home.join("projects/native/CLAUDE.md");
-        assert_eq!(fs::read(&path).unwrap(), b"# exact bytes\n");
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
-            0o640
-        );
-    }
-
-    #[test]
     fn skill_directory_and_symlink_disable_restore() {
         let mut fixture = Fixture::new();
         let home = fixture.home.clone();
@@ -2224,86 +1734,6 @@ mod tests {
     }
 
     #[test]
-    fn restore_occupancy_and_project_removal_are_blocked() {
-        let mut fixture = Fixture::new();
-        let project = fixture.register_project_with(|root| {
-            fs::write(root.join("CLAUDE.md"), "# native\n").unwrap();
-        });
-        let item = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let mut redactor = SecretRedactor::default();
-        let preview = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: item.id.clone(),
-                row_version: item.row_version,
-                action: ProjectNativeResourceAction::Disable,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: preview.preview_id,
-            },
-        )
-        .unwrap();
-        fs::write(
-            fixture.home.join("projects/native/CLAUDE.md"),
-            "# occupied\n",
-        )
-        .unwrap();
-        let disabled = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        assert_eq!(disabled.state, ProjectNativeResourceState::Conflict);
-        let mut redactor = SecretRedactor::default();
-        let error = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: disabled.id.clone(),
-                row_version: disabled.row_version,
-                action: ProjectNativeResourceAction::Restore,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), ErrorCode::Conflict);
-        let remove = crate::projects::remove_project(
-            &mut fixture.database,
-            &crate::projects::VersionedProjectInput {
-                id: project.id.clone(),
-                row_version: project.row_version,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(remove.code(), ErrorCode::Conflict);
-    }
-
-    #[test]
     fn empty_identity_row_does_not_open_ordinary_mcp_apply() {
         let mut fixture = Fixture::new();
         let before = br#"{"mcpServers":{"native-stdio":{"command":"npx"}}}"#;
@@ -2393,179 +1823,6 @@ mod tests {
         )
         .unwrap();
         assert!(items.is_empty());
-    }
-
-    #[test]
-    fn action_matrix_rejects_restore_on_active_and_disable_on_disabled() {
-        let mut fixture = Fixture::new();
-        let project = fixture.register_project_with(|root| {
-            fs::write(root.join("CLAUDE.md"), "# native\n").unwrap();
-        });
-        let item = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let mut redactor = SecretRedactor::default();
-        let restore_active = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: item.id.clone(),
-                row_version: item.row_version,
-                action: ProjectNativeResourceAction::Restore,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(restore_active.code(), ErrorCode::InvalidInput);
-        let preview = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: item.id.clone(),
-                row_version: item.row_version,
-                action: ProjectNativeResourceAction::Disable,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: preview.preview_id,
-            },
-        )
-        .unwrap();
-        let disabled = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id,
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let disable_again = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: disabled.id,
-                row_version: disabled.row_version,
-                action: ProjectNativeResourceAction::Disable,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(disable_again.code(), ErrorCode::InvalidInput);
-    }
-
-    #[test]
-    fn consumed_preview_and_active_writer_are_rejected() {
-        let mut fixture = Fixture::new();
-        let project = fixture.register_project_with(|root| {
-            fs::write(root.join("CLAUDE.md"), "# native\n").unwrap();
-        });
-        let item = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let mut redactor = SecretRedactor::default();
-        let preview = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: item.id.clone(),
-                row_version: item.row_version,
-                action: ProjectNativeResourceAction::Disable,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: preview.preview_id.clone(),
-            },
-        )
-        .unwrap();
-        let consumed = apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: preview.preview_id,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(consumed.code(), ErrorCode::PreviewAlreadyConsumed);
-
-        fixture
-            .database
-            .connection()
-            .execute(
-                "INSERT INTO sync_runs(id, kind, status, scope, project_id, db_version)
-                 VALUES (?1, 'apply', 'applying', 'project', ?2, 0)",
-                params![Uuid::new_v4().to_string(), project.id],
-            )
-            .unwrap();
-        let restored = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id,
-                tool: Tool::Claude,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .into_iter()
-        .find(|item| item.state == ProjectNativeResourceState::Disabled)
-        .unwrap();
-        let restore = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: restored.id,
-                row_version: restored.row_version,
-                action: ProjectNativeResourceAction::Restore,
-            },
-        )
-        .unwrap();
-        let writer = apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: restore.preview_id,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(writer.code(), ErrorCode::WriteInProgress);
     }
 
     #[test]
@@ -2842,98 +2099,5 @@ mod tests {
                 "{tool:?} Skill 恢复应还原正文"
             );
         }
-    }
-
-    #[test]
-    fn codex_prompt_disable_restore_keeps_bytes_and_mode() {
-        let mut fixture = Fixture::new();
-        let project = fixture.register_project_with(|root| {
-            let path = root.join("AGENTS.md");
-            fs::write(&path, b"# exact agents\n").unwrap();
-            let mut permissions = fs::metadata(&path).unwrap().permissions();
-            permissions.set_mode(0o640);
-            fs::set_permissions(&path, permissions).unwrap();
-        });
-        let canonical = fs::canonicalize(fixture.home.join("projects/native")).unwrap();
-        fs::write(
-            fixture.home.join(".codex/config.toml"),
-            format!(
-                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
-                canonical.display()
-            ),
-        )
-        .unwrap();
-        let item = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id.clone(),
-                tool: Tool::Codex,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let mut redactor = SecretRedactor::default();
-        let preview = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: item.id,
-                row_version: item.row_version,
-                action: ProjectNativeResourceAction::Disable,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: preview.preview_id,
-            },
-        )
-        .unwrap();
-        assert!(!canonical.join("AGENTS.md").exists());
-        let disabled = list_project_native_resources(
-            &mut fixture.database,
-            &fixture.environment,
-            &ProjectNativeResourceQueryInput {
-                project_id: project.id,
-                tool: Tool::Codex,
-                artifact_kind: ArtifactKind::Prompt,
-            },
-        )
-        .unwrap()
-        .remove(0);
-        let restore = preview_project_native_resource_action(
-            &mut fixture.database,
-            &fixture.environment,
-            &mut redactor,
-            &PreviewProjectNativeResourceActionInput {
-                resource_id: disabled.id,
-                row_version: disabled.row_version,
-                action: ProjectNativeResourceAction::Restore,
-            },
-        )
-        .unwrap();
-        apply_project_native_resource_preview(
-            &fixture.write_operations,
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &ApplyProjectNativeResourcePreviewInput {
-                preview_id: restore.preview_id,
-            },
-        )
-        .unwrap();
-        let path = canonical.join("AGENTS.md");
-        assert_eq!(fs::read(&path).unwrap(), b"# exact agents\n");
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
-            0o640
-        );
     }
 }

@@ -4,11 +4,17 @@ import type { ArtifactKind, Tool } from "@/bindings/commands";
 import { commands } from "@/bindings/commands";
 import { unwrapResult } from "@/lib/profile-api";
 
+export type ProjectResourceKind = Exclude<ArtifactKind, "provider" | "prompt">;
+
 export const projectKeys = {
   all: ["projects"] as const,
   list: () => [...projectKeys.all, "list"] as const,
   detail: (id: string) => [...projectKeys.all, "detail", id] as const,
-  nativeResources: (id: string, tool: Tool, artifactKind: ArtifactKind) =>
+  nativeResources: (
+    id: string,
+    tool: Tool,
+    artifactKind: ProjectResourceKind,
+  ) =>
     [...projectKeys.all, "native-resources", id, tool, artifactKind] as const,
 };
 
@@ -30,7 +36,7 @@ export function projectQueryOptions(id: string) {
 export function projectNativeResourcesQueryOptions(
   projectId: string,
   tool: Tool,
-  artifactKind: ArtifactKind,
+  artifactKind: ProjectResourceKind,
 ) {
   return queryOptions({
     queryKey: projectKeys.nativeResources(projectId, tool, artifactKind),

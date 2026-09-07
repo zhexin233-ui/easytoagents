@@ -186,7 +186,7 @@ export function PromptsPage() {
 
   const previewMutation = useMutation({
     mutationFn: async ({ tool }: PromptPreviewRequest) =>
-      unwrapResult(await commands.previewPromptSync(tool, null)),
+      unwrapResult(await commands.previewPromptSync(tool)),
     onSuccess: (plan, { tool, autoApply }) => {
       if (autoApply && canAutoApplyPreview(plan)) {
         applyMutation.mutate({
@@ -211,7 +211,6 @@ export function PromptsPage() {
           previewId: preview.plan.previewId,
           tool: preview.tool,
           artifactKind: "prompt",
-          projectId: null,
         }),
       ),
     onSuccess: (result) => {
@@ -327,7 +326,7 @@ export function PromptsPage() {
         <p className="text-muted-foreground text-sm">提示词</p>
         <h1 className="mt-1 text-2xl font-semibold">全局提示词档案</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          集中维护提示词指令文档，并按工具通过图标启用或停用（每个工具同时只有一份生效，启用新档案会自动替换原生效档案）。中央修改不会直接改写原生配置，同步需经持久化预览确认。项目级的提示词分配在各项目详情页中进行。
+          集中维护提示词指令文档，并按工具通过图标启用或停用（每个工具同时只有一份生效，启用新档案会自动替换原生效档案）。中央修改不会直接改写原生配置，同步需经持久化预览确认。
         </p>
       </header>
 

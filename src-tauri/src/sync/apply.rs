@@ -1426,7 +1426,7 @@ fn build_native_resource_mutations(
     use super::NativeResourceEntryType;
     validate_preview_hashes(item, input)?;
     match (evidence.entry_type, evidence.action) {
-        (NativeResourceEntryType::McpEntry, _) | (NativeResourceEntryType::PromptFile, _) => {
+        (NativeResourceEntryType::McpEntry, _) => {
             build_file_native_mutations(item, input, evidence, target_index)
         }
         (NativeResourceEntryType::Directory | NativeResourceEntryType::Symlink, _) => {
@@ -1441,12 +1441,8 @@ fn build_file_native_mutations(
     evidence: &super::ProjectNativeResourceEvidence,
     target_index: usize,
 ) -> Result<Vec<PendingMutation>, AppError> {
-    use super::NativeResourceActionKind;
     let path = PathBuf::from(&item.target_path);
-    if input.delete_target
-        || evidence.action == NativeResourceActionKind::Disable
-            && evidence.entry_type == super::NativeResourceEntryType::PromptFile
-    {
+    if input.delete_target {
         let expected_before_fingerprint = capture_path_state(&path)?.fingerprint();
         return Ok(vec![PendingMutation {
             target_id: item.target_id.clone(),
@@ -1466,37 +1462,12 @@ fn build_file_native_mutations(
         TargetScan::Missing => None,
         _ => return Err(AppError::stale_preview("persisted", &item.target_id)),
     };
-    let bytes = if evidence.entry_type == super::NativeResourceEntryType::PromptFile
-        && evidence.action == NativeResourceActionKind::Restore
-    {
-        // 原生提示词按快照原样恢复，避免 Cursor 渲染器重复生成或改写文件头。
-        let snapshot_path = evidence.restore_snapshot_path.as_deref().ok_or_else(|| {
-            AppError::invalid_input("projectNativeAction", "提示词恢复缺少快照路径")
-        })?;
-        let bytes =
-            fs::read(snapshot_path).map_err(|_| AppError::not_found("snapshot", snapshot_path))?;
-        let document = adapter.parse(
-            &input.descriptor,
-            crate::adapters::ObservedRaw::File(bytes.clone()),
-        )?;
-        if adapter.project_managed(&document, &input.ownership)? != input.desired_projection
-            || evidence
-                .content_hash
-                .as_ref()
-                .is_some_and(|hash| hash != &hash_bytes(&bytes))
-        {
-            return Err(AppError::stale_preview("persisted", &item.target_id));
-        }
-        bytes
-    } else {
-        let RenderedTarget::File(bytes) = adapter.render(
-            &input.descriptor,
-            current,
-            &input.desired_projection,
-            &input.ownership,
-        )?;
-        bytes
-    };
+    let RenderedTarget::File(bytes) = adapter.render(
+        &input.descriptor,
+        current,
+        &input.desired_projection,
+        &input.ownership,
+    )?;
     let current_state = capture_path_state(&path)?;
     let mode = evidence.restore_file_mode.unwrap_or(match &current_state {
         PathState::File { mode, .. } => *mode,
@@ -2705,7 +2676,7 @@ fn apply_remove_native_skill(
                 hash,
             )?;
         }
-        NativeResourceEntryType::McpEntry | NativeResourceEntryType::PromptFile => {
+        NativeResourceEntryType::McpEntry => {
             return Err(AppError::invalid_input(
                 "projectNativeAction",
                 "非 Skill 入口不能走目录删除",
@@ -3553,9 +3524,7 @@ fn native_disable_snapshot_path(
                 .to_string_lossy()
                 .into_owned()
         }
-        NativeResourceEntryType::McpEntry | NativeResourceEntryType::PromptFile => {
-            preview_item.target_path.clone()
-        }
+        NativeResourceEntryType::McpEntry => preview_item.target_path.clone(),
     }
 }
 
@@ -4373,6 +4342,20 @@ pub fn detect_interrupted_run(
     }
     let mut targets = Vec::new();
     for target in journal.targets {
+        // v18 会从混合历史 run 中移除项目 Prompt target，但保留同一 run
+        // 中仍有效的 MCP/Skill/Hook target。journal 是旧版本的文件快照，
+        // 不能把已从数据库退役的 target 再暴露为可恢复对象。
+        let target_exists: bool = database
+            .connection()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM managed_targets WHERE id = ?1)",
+                [&target.target_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| AppError::database(&database_path, "check_interrupted_target"))?;
+        if !target_exists {
+            continue;
+        }
         let state = capture_path_state(Path::new(&target.target_path));
         let (current_type, current_fingerprint, error_code) = match state {
             Ok(state) => (Some(state.target_type()), Some(state.fingerprint()), None),

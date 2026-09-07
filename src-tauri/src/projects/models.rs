@@ -80,7 +80,6 @@ pub struct RemoveProjectResultDto {
 pub enum ProjectNativeResourceKind {
     Mcp,
     Skill,
-    Prompt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -119,7 +118,6 @@ pub enum ProjectNativeEntryType {
     McpEntry,
     Directory,
     Symlink,
-    PromptFile,
 }
 
 impl ProjectNativeEntryType {
@@ -128,7 +126,6 @@ impl ProjectNativeEntryType {
             "mcp_entry" => Some(Self::McpEntry),
             "directory" => Some(Self::Directory),
             "symlink" => Some(Self::Symlink),
-            "prompt_file" => Some(Self::PromptFile),
             _ => None,
         }
     }
@@ -138,7 +135,6 @@ impl ProjectNativeEntryType {
             Self::McpEntry => "mcp_entry",
             Self::Directory => "directory",
             Self::Symlink => "symlink",
-            Self::PromptFile => "prompt_file",
         }
     }
 }

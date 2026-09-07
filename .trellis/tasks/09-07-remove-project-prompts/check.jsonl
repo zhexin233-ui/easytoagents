@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"核验 v18 升级/新库一致性、精确 CHECK、外键完整性、备份和迁移原子性。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核验项目 Prompt 入口与原生恢复链完整退出，同时全局 Prompt 和其他项目资源无回归。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"核验迁移与快照退休清理不会静默越界或产生不稳定错误。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验项目详情无 Prompt 查询/写入，MCP、Skill、Hook 与全局 Prompt 交互仍符合现有合同。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"核验生成 bindings、前端联合类型和调用 payload 不含悬挂的项目 Prompt 字段。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"执行跨层残留审计，覆盖 adapter、DB、RPC、bindings、queries、UI、测试和文档。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"核验共享 Preview/Apply/snapshot 原语没有因删除 PromptFile 分支而被破坏。"}
+{"file":".trellis/tasks/09-07-remove-project-prompts/research/removal-impact.md","reason":"按已确认范围检查删除项、保留项、快照策略和历史资料例外。"}

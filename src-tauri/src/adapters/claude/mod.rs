@@ -170,18 +170,6 @@ impl ToolAdapter for ClaudeAdapter {
                     SymlinkPolicy::ManagedChildrenOnly,
                 ),
                 descriptor(
-                    ArtifactKind::Prompt,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join("CLAUDE.md"))?),
-                    TargetFormat::Markdown,
-                    vec!["$document"],
-                    vec![],
-                    tool_capability.clone(),
-                    PolicyState::Allowed,
-                    SymlinkPolicy::Reject,
-                ),
-                descriptor(
                     ArtifactKind::Hook,
                     Scope::Project,
                     Some(project_root.as_str().to_owned()),

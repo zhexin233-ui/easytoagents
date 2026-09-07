@@ -84,7 +84,6 @@ pub enum NativeResourceEntryType {
     McpEntry,
     Directory,
     Symlink,
-    PromptFile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -847,9 +846,6 @@ fn native_action_allows_merge(
             !projection_is_empty(&scan_managed_projection(scan)) && projection_is_empty(desired)
         }
         NativeResourceActionKind::Restore => match evidence.entry_type {
-            NativeResourceEntryType::PromptFile => {
-                matches!(scan, TargetScan::Missing) && !projection_is_empty(desired)
-            }
             NativeResourceEntryType::McpEntry
             | NativeResourceEntryType::Directory
             | NativeResourceEntryType::Symlink => {

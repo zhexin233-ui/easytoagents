@@ -1716,7 +1716,6 @@ mod tests {
                 TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,
-                TargetTrustState::Untrusted,
             ]
         );
     }

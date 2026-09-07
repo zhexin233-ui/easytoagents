@@ -14,18 +14,17 @@ use uuid::Uuid;
 use super::models::{
     validate_prompt_fields, validate_provider_fields, validate_provider_fields_with_optional_key,
     ClaudeCredentialEnvKey, ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto,
-    PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, PromptProjectAssignmentDto,
-    ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput,
-    SecretUpdate, SetGlobalPromptAssignmentInput, SetPromptProjectAssignmentInput,
-    StoredProviderConfig, ToolProfileStatusDto, UpdatePromptProfileInput,
-    UpdateProviderProfileInput, VersionedProfileInput, CODEX_BEARER_TOKEN_WARNING,
-    NEW_SESSION_NOTICE,
+    PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, ProviderImportPreviewDto,
+    ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput, SecretUpdate,
+    SetGlobalPromptAssignmentInput, StoredProviderConfig, ToolProfileStatusDto,
+    UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
+    CODEX_BEARER_TOKEN_WARNING, NEW_SESSION_NOTICE,
 };
 use crate::{
     adapters::{
-        canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, zcode::ZcodeAdapter, DiscoveryContext, ExplicitEnvironment,
-        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
+        claude::ClaudeAdapter, codex::CodexAdapter, cursor::CursorAdapter, zcode::ZcodeAdapter,
+        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor,
+        ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -34,12 +33,10 @@ use crate::{
             NewPromptProfileRecord, NewProviderProfileRecord, PromptProfileRecord,
             ProviderProfileRecord,
         },
-        projects::get_registered_project,
         Database,
     },
-    domain::{ArtifactKind, ArtifactName, ProjectRoot, Scope, Tool},
+    domain::{ArtifactKind, ArtifactName, Scope, Tool},
     error::{AppError, ErrorCode},
-    git::inspect_path,
     git::GitPathStatus,
     security::SecretRedactor,
     sync::{
@@ -315,68 +312,11 @@ pub fn delete_prompt_profile(
     database: &mut Database,
     input: &VersionedProfileInput,
 ) -> Result<DeleteProfileResultDto, AppError> {
-    let assigned_projects = repository::count_prompt_project_assignments(database, &input.id)?;
-    if assigned_projects > 0 {
-        return Err(AppError::conflict(
-            "promptProfile",
-            "该提示词档案仍被项目分配使用，请先在项目中解除分配",
-        ));
-    }
     repository::delete_prompt_profile(database, &input.id, i64::from(input.row_version))?;
     Ok(DeleteProfileResultDto {
         id: input.id.clone(),
         deleted: true,
     })
-}
-
-pub fn set_prompt_project_assignment(
-    database: &mut Database,
-    environment: &ExplicitEnvironment,
-    input: &SetPromptProjectAssignmentInput,
-) -> Result<PromptProjectAssignmentDto, AppError> {
-    ensure_profile_capability(input.tool, ArtifactKind::Prompt)?;
-    let project = get_registered_project(database, &input.project_id)?;
-    let tool = input.tool;
-    if input.prompt_profile_id.is_some() {
-        // 分配前确认目标描述符存在（工具可用、信任/策略状态在预览阶段仍会校验）。
-        // 档案存在性、「对该工具全局生效不可分配」守卫与幂等例外
-        // 在 repository 事务内统一执行。
-        let project_root = canonical_project_root(&project.root_path)?;
-        descriptor_for_scope(environment, tool, ArtifactKind::Prompt, Some(&project_root))?;
-    }
-    repository::set_prompt_project_assignment(
-        database,
-        &project.id,
-        tool,
-        input.prompt_profile_id.as_deref(),
-        input.project_row_version,
-    )?;
-    get_prompt_project_assignment(database, &project.id, tool)
-}
-
-pub fn get_prompt_project_assignment(
-    database: &Database,
-    project_id: &str,
-    tool: Tool,
-) -> Result<PromptProjectAssignmentDto, AppError> {
-    ensure_profile_capability(tool, ArtifactKind::Prompt)?;
-    let assignment = repository::find_prompt_project_assignment(database, project_id, tool)?;
-    Ok(PromptProjectAssignmentDto {
-        project_id: project_id.to_owned(),
-        tool,
-        profile_id: assignment.map(|record| record.id),
-    })
-}
-
-fn canonical_project_root(path: &str) -> Result<ProjectRoot, AppError> {
-    let canonical = canonicalize_project_root(Path::new(path))?;
-    if canonical.as_str() != path {
-        return Err(AppError::conflict(
-            "projectRoot",
-            "登记项目根与当前 canonical 路径不一致",
-        ));
-    }
-    Ok(canonical)
 }
 
 pub fn get_tool_profile_status(
@@ -697,10 +637,9 @@ pub fn preview_prompt_sync(
     environment: &ExplicitEnvironment,
     redactor: &SecretRedactor,
     tool: Tool,
-    project_id: Option<String>,
 ) -> Result<PreviewPlan, AppError> {
     ensure_profile_capability(tool, ArtifactKind::Prompt)?;
-    let prepared = prepare_prompt_sync(database, environment, tool, project_id.as_deref())?;
+    let prepared = prepare_prompt_sync(database, environment, tool)?;
     persist_prepared_preview(database, prepared, redactor)
 }
 
@@ -714,7 +653,6 @@ pub fn apply_profile_preview(
     preview_id: &str,
     tool: Tool,
     artifact_kind: ArtifactKind,
-    project_id: Option<&str>,
 ) -> Result<ApplyResult, AppError> {
     ensure_profile_capability(tool, artifact_kind)?;
     if !matches!(artifact_kind, ArtifactKind::Provider | ArtifactKind::Prompt) {
@@ -727,18 +665,15 @@ pub fn apply_profile_preview(
     if persisted.items.len() != 1
         || persisted.items[0].envelope.descriptor.tool != tool
         || persisted.items[0].envelope.descriptor.artifact_kind != artifact_kind
-        || persisted.items[0].envelope.descriptor.scope
-            != if project_id.is_some() {
-                Scope::Project
-            } else {
-                Scope::Global
-            }
+        || persisted.scope != Scope::Global
+        || persisted.project_id.is_some()
+        || persisted.items[0].envelope.descriptor.scope != Scope::Global
     {
         return Err(AppError::stale_preview(preview_id, "profileTarget"));
     }
     let prepared = match artifact_kind {
         ArtifactKind::Provider => prepare_provider_sync(database, environment, redactor, tool)?,
-        ArtifactKind::Prompt => prepare_prompt_sync(database, environment, tool, project_id)?,
+        ArtifactKind::Prompt => prepare_prompt_sync(database, environment, tool)?,
         ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
             unreachable!("已在入口拒绝")
         }
@@ -774,7 +709,6 @@ struct PreparedProfileSync {
     row_versions: Vec<DatabaseRowVersion>,
     allowed_root: PathBuf,
     git: Option<GitPathStatus>,
-    project_id: Option<String>,
     delete_target: bool,
 }
 
@@ -787,7 +721,7 @@ fn prepare_provider_sync(
     let mut descriptor = descriptor_for(environment, tool, ArtifactKind::Provider)?;
     refine_claude_provider_policy(&mut descriptor);
     ensure_tool_is_available(&descriptor)?;
-    let target = ensure_profile_target(database, &descriptor, None)?;
+    let target = ensure_profile_target(database, &descriptor)?;
     let active = repository::find_active_provider_profile(database, tool)?;
     if active.is_none() && target.baseline.full_hash.is_none() {
         return Err(AppError::not_found("activeProviderProfile", tool.as_str()));
@@ -817,7 +751,6 @@ fn prepare_provider_sync(
         desired_projection,
         row_versions,
         git: None,
-        project_id: None,
         delete_target: false,
     })
 }
@@ -826,57 +759,18 @@ fn prepare_prompt_sync(
     database: &mut Database,
     environment: &ExplicitEnvironment,
     tool: Tool,
-    project_id: Option<&str>,
 ) -> Result<PreparedProfileSync, AppError> {
-    let project = project_id
-        .map(|id| get_registered_project(database, id))
-        .transpose()?;
-    let project_root = project
-        .as_ref()
-        .map(|project| canonical_project_root(&project.root_path))
-        .transpose()?;
-    let descriptor = descriptor_for_scope(
-        environment,
-        tool,
-        ArtifactKind::Prompt,
-        project_root.as_ref(),
-    )?;
+    let descriptor = descriptor_for(environment, tool, ArtifactKind::Prompt)?;
     ensure_tool_is_available(&descriptor)?;
-    let target = ensure_profile_target(
-        database,
-        &descriptor,
-        project.as_ref().map(|p| p.id.as_str()),
-    )?;
-    let assigned = match project.as_ref() {
-        Some(project) => repository::find_prompt_project_assignment(database, &project.id, tool)?,
-        None => repository::find_active_prompt_profile(database, tool)?,
-    };
+    let target = ensure_profile_target(database, &descriptor)?;
+    let assigned = repository::find_active_prompt_profile(database, tool)?;
     let assigned = match assigned {
         Some(record) => Some(record),
-        // 全局作用域在「无生效档案且从未建立基线」时报错，与既有合同一致；
-        // 项目作用域仅在已建立基线但分配被移除时可能出现同样形状，同样报错。
         None if target.baseline.full_hash.is_none() => {
-            return Err(AppError::not_found(
-                if project.is_some() {
-                    "promptProjectAssignment"
-                } else {
-                    "activePromptProfile"
-                },
-                project
-                    .as_ref()
-                    .map(|p| p.id.as_str())
-                    .unwrap_or(tool.as_str()),
-            ));
+            return Err(AppError::not_found("activePromptProfile", tool.as_str()));
         }
         None => None,
     };
-    if project.is_some() && assigned.is_none() {
-        // 项目分配与基线状态不一致：不允许把空文档写入项目记忆文件。
-        return Err(AppError::conflict(
-            "promptProjectAssignment",
-            "项目提示词分配缺失但目标基线仍存在",
-        ));
-    }
     let desired_projection = Value::String(
         assigned
             .as_ref()
@@ -894,51 +788,16 @@ fn prepare_prompt_sync(
         &descriptor,
         &ManagedOwnership::WholeDocument,
     );
-    // 项目作用域的产品语义允许「本地已修改后覆盖式重新应用」：外部修改不算
-    // 阻断冲突，而是把观测到的当前内容作为本次预览的确认基线（不落库）。
-    // Apply 端指纹绑定仍保证预览与应用之间目标未被再次改动；全局作用域
-    // 保持外部修改必须走接管导入的严格语义。
-    let baseline = match (&target.baseline, &scan) {
-        (
-            ManagedTargetBaseline {
-                full_hash: Some(full),
-                managed_hash: Some(managed),
-                ..
-            },
-            TargetScan::Observed(observed),
-        ) if project.is_some()
-            && (full != &observed.full_hash || managed != &observed.managed_hash) =>
-        {
-            ManagedTargetBaseline {
-                full_hash: Some(observed.full_hash.clone()),
-                managed_hash: Some(observed.managed_hash.clone()),
-                ..target.baseline.clone()
-            }
-        }
-        _ => target.baseline.clone(),
-    };
-    let allowed_root = match project_root.as_ref() {
-        Some(root) => PathBuf::from(root.as_str()),
-        None => allowed_root(environment, tool),
-    };
-    let git = project_root
-        .as_ref()
-        .zip(descriptor.path.as_deref())
-        .map(|(root, path)| inspect_path(root, Path::new(path)))
-        .transpose()?;
-    let prepared_project_id = project.as_ref().map(|project| project.id.clone());
-    let prepared_delete_target = assigned.is_none() && project.is_none();
     Ok(PreparedProfileSync {
-        allowed_root,
-        git,
+        allowed_root: allowed_root(environment, tool),
+        git: None,
         descriptor,
         ownership: ManagedOwnership::WholeDocument,
-        baseline,
+        baseline: target.baseline,
         scan,
         desired_projection,
         row_versions,
-        project_id: prepared_project_id,
-        delete_target: prepared_delete_target,
+        delete_target: assigned.is_none(),
     })
 }
 
@@ -949,7 +808,7 @@ fn persist_prepared_preview(
 ) -> Result<PreviewPlan, AppError> {
     let plan = build_preview_plan(
         prepared.descriptor.scope,
-        prepared.project_id.clone(),
+        None,
         vec![PreviewTargetRequest {
             descriptor: prepared.descriptor,
             ownership: prepared.ownership,
@@ -979,7 +838,6 @@ struct ManagedProfileTarget {
 fn ensure_profile_target(
     database: &mut Database,
     descriptor: &TargetDescriptor,
-    project_id: Option<&str>,
 ) -> Result<ManagedProfileTarget, AppError> {
     let target_path = descriptor_path(descriptor)?;
     let database_path = database.path().to_string_lossy().into_owned();
@@ -990,12 +848,11 @@ fn ensure_profile_target(
                     baseline_projection_json
              FROM managed_targets
              WHERE tool = ?1 AND artifact_kind = ?2 AND scope = ?3
-               AND ifnull(project_id, '') = ifnull(?4, '') AND target_path = ?5",
+               AND project_id IS NULL AND target_path = ?4",
             params![
                 descriptor.tool.as_str(),
                 descriptor.artifact_kind.as_str(),
                 descriptor.scope.as_str(),
-                project_id,
                 target_path,
             ],
             |row| {
@@ -1019,13 +876,12 @@ fn ensure_profile_target(
             .execute(
                 "INSERT INTO managed_targets(
                     id, tool, artifact_kind, scope, project_id, target_path
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 ) VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
                 params![
                     id,
                     descriptor.tool.as_str(),
                     descriptor.artifact_kind.as_str(),
                     descriptor.scope.as_str(),
-                    project_id,
                     target_path,
                 ],
             )
@@ -1687,35 +1543,17 @@ fn descriptor_for(
     tool: Tool,
     artifact_kind: ArtifactKind,
 ) -> Result<TargetDescriptor, AppError> {
-    descriptor_for_scope(environment, tool, artifact_kind, None)
-}
-
-fn descriptor_for_scope(
-    environment: &ExplicitEnvironment,
-    tool: Tool,
-    artifact_kind: ArtifactKind,
-    project_root: Option<&ProjectRoot>,
-) -> Result<TargetDescriptor, AppError> {
     let adapter = tool_adapter(tool);
     let context = DiscoveryContext {
         environment,
-        project_root,
+        project_root: None,
         claude_user_mcp_probe: environment.claude_user_mcp_probe(),
         claude_customization_policy_probe: environment.claude_customization_policy_probe(),
     };
     adapter
         .discover(&context)?
         .into_iter()
-        .find(|target| {
-            target.artifact_kind == artifact_kind
-                && match (target.scope, project_root) {
-                    (Scope::Global, None) => true,
-                    (Scope::Project, Some(root)) => {
-                        target.project_root.as_deref() == Some(root.as_str())
-                    }
-                    _ => false,
-                }
-        })
+        .find(|target| target.artifact_kind == artifact_kind && target.scope == Scope::Global)
         .ok_or_else(|| AppError::not_found("targetDescriptor", artifact_kind.as_str()))
 }
 
@@ -1943,13 +1781,12 @@ mod tests {
     use super::{
         apply_profile_preview, confirm_prompt_import, confirm_provider_import,
         copy_provider_profile, create_prompt_profile, create_provider_profile,
-        delete_prompt_profile, discover_prompt_import, discover_provider_import,
-        get_tool_profile_status, list_provider_profiles, preview_prompt_sync,
-        preview_provider_sync, set_active_provider_profile, set_global_prompt_assignment,
-        update_prompt_profile, update_provider_profile, CopyProviderProfileInput, PromptProfileDto,
-        PromptProfileInput, ProviderOptionsInput, ProviderProfileInput,
-        SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
-        CLAUDE_MODEL_KEY,
+        discover_prompt_import, discover_provider_import, get_tool_profile_status,
+        list_provider_profiles, preview_prompt_sync, preview_provider_sync,
+        set_active_provider_profile, set_global_prompt_assignment, update_prompt_profile,
+        update_provider_profile, CopyProviderProfileInput, PromptProfileDto, PromptProfileInput,
+        ProviderOptionsInput, ProviderProfileInput, SetGlobalPromptAssignmentInput,
+        UpdatePromptProfileInput, UpdateProviderProfileInput, CLAUDE_MODEL_KEY,
     };
     use crate::{
         adapters::{
@@ -2139,7 +1976,6 @@ mod tests {
             &sync_preview.preview_id,
             Tool::Zcode,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
 
@@ -2184,7 +2020,6 @@ mod tests {
             &second_preview.preview_id,
             Tool::Zcode,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
         let document: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
@@ -2301,7 +2136,6 @@ mod tests {
             &first_preview.preview_id,
             Tool::Claude,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
 
@@ -2336,7 +2170,6 @@ mod tests {
             &second_preview.preview_id,
             Tool::Claude,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
         let written: Value = serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
@@ -2607,7 +2440,6 @@ base_url = "https://external.example.com/v1"
             &first_preview.preview_id,
             Tool::Codex,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
         let journal = fs::read_to_string(
@@ -2662,7 +2494,6 @@ base_url = "https://external.example.com/v1"
             &second_preview.preview_id,
             Tool::Codex,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
 
@@ -2703,7 +2534,6 @@ base_url = "https://external.example.com/v1"
             &cleanup_preview.preview_id,
             Tool::Codex,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
         let cleaned: Value =
@@ -3041,7 +2871,6 @@ tenant = "fixture"
             &apply_preview.preview_id,
             Tool::Codex,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
         let written: Value =
@@ -3165,7 +2994,6 @@ tenant = "fixture"
             &sync_preview.preview_id,
             Tool::Codex,
             ArtifactKind::Provider,
-            None,
         )
         .unwrap();
         let written: Value =
@@ -3212,7 +3040,6 @@ tenant = "fixture"
             &fixture.environment,
             &redactor,
             Tool::Codex,
-            None,
         )
         .unwrap();
         apply_profile_preview(
@@ -3224,7 +3051,6 @@ tenant = "fixture"
             &first_preview.preview_id,
             Tool::Codex,
             ArtifactKind::Prompt,
-            None,
         )
         .unwrap();
         let prompt_path = fixture.home.join(".codex/AGENTS.md");
@@ -3248,7 +3074,6 @@ tenant = "fixture"
             &fixture.environment,
             &redactor,
             Tool::Codex,
-            None,
         )
         .unwrap();
         fs::write(&prompt_path, "# 外部修改\n").unwrap();
@@ -3261,7 +3086,6 @@ tenant = "fixture"
             &stale_preview.preview_id,
             Tool::Codex,
             ArtifactKind::Prompt,
-            None,
         )
         .unwrap_err();
         assert_eq!(error.code(), crate::error::ErrorCode::StalePreview);
@@ -3332,7 +3156,6 @@ tenant = "fixture"
             &fixture.environment,
             &SecretRedactor::default(),
             Tool::Cursor,
-            None,
         )
         .unwrap();
         apply_profile_preview(
@@ -3344,74 +3167,12 @@ tenant = "fixture"
             &first_preview.preview_id,
             Tool::Cursor,
             ArtifactKind::Prompt,
-            None,
         )
         .unwrap();
         let prompt_path = fixture.home.join(".cursor/rules/easytoagents.mdc");
         assert_eq!(
             fs::read_to_string(&prompt_path).unwrap(),
             "---\nalwaysApply: true\n---\n\n# 既有规则\n\n- 保持精确\n- 新增条款\n"
-        );
-
-        // 项目分配：正文写入项目规则目录；对该工具全局生效的档案不能分配到项目。
-        let project = register_demo_project(&mut fixture);
-        let other = create_prompt_profile(
-            &mut fixture.database,
-            PromptProfileInput {
-                name: "项目级 Cursor 规则".to_owned(),
-                body: "# 项目规则\n".to_owned(),
-            },
-        )
-        .unwrap();
-        let error = crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Cursor,
-                prompt_profile_id: Some(imported.id.clone()),
-                project_row_version: project.row_version,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), crate::error::ErrorCode::Conflict);
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Cursor,
-                prompt_profile_id: Some(other.id),
-                project_row_version: project.row_version,
-            },
-        )
-        .unwrap();
-        let project_preview = preview_prompt_sync(
-            &mut fixture.database,
-            &fixture.environment,
-            &SecretRedactor::default(),
-            Tool::Cursor,
-            Some(project.id.clone()),
-        )
-        .unwrap();
-        apply_profile_preview(
-            &Mutex::new(()),
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &mut SecretRedactor::default(),
-            &project_preview.preview_id,
-            Tool::Cursor,
-            ArtifactKind::Prompt,
-            Some(&project.id),
-        )
-        .unwrap();
-        let project_mdc = fixture
-            .home
-            .join("projects/demo/.cursor/rules/easytoagents.mdc");
-        assert_eq!(
-            fs::read_to_string(&project_mdc).unwrap(),
-            "---\nalwaysApply: true\n---\n\n# 项目规则\n"
         );
     }
 
@@ -3485,303 +3246,5 @@ tenant = "fixture"
                 .code(),
             crate::error::ErrorCode::InvalidInput
         );
-    }
-
-    fn register_demo_project(fixture: &mut Fixture) -> crate::projects::ProjectDto {
-        let project_root = fixture.home.join("projects/demo");
-        fs::create_dir_all(&project_root).unwrap();
-        crate::projects::register_project(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::projects::RegisterProjectInput {
-                display_name: "演示项目".to_owned(),
-                root_path: project_root.to_string_lossy().into_owned(),
-            },
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn prompt_project_assignment_apply_overwrites_drift_and_unassign_keeps_file() {
-        let mut fixture = fixture();
-        let project = register_demo_project(&mut fixture);
-        let redactor = SecretRedactor::default();
-        let profile = create_prompt_profile(
-            &mut fixture.database,
-            PromptProfileInput {
-                name: "项目提示词".to_owned(),
-                body: "# 项目指引\n".to_owned(),
-            },
-        )
-        .unwrap();
-
-        // 档案被项目分配时禁止删除。
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                prompt_profile_id: Some(profile.id.clone()),
-                project_row_version: project.row_version,
-            },
-        )
-        .unwrap();
-        let blocked = delete_prompt_profile(
-            &mut fixture.database,
-            &crate::profiles::VersionedProfileInput {
-                id: profile.id.clone(),
-                row_version: profile.row_version,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(blocked.code(), crate::error::ErrorCode::Conflict);
-
-        // 分配后预览并应用：项目根出现 CLAUDE.md 硬拷贝。
-        let preview = preview_prompt_sync(
-            &mut fixture.database,
-            &fixture.environment,
-            &redactor,
-            Tool::Claude,
-            Some(project.id.clone()),
-        )
-        .unwrap();
-        apply_profile_preview(
-            &Mutex::new(()),
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &mut SecretRedactor::default(),
-            &preview.preview_id,
-            Tool::Claude,
-            ArtifactKind::Prompt,
-            Some(&project.id),
-        )
-        .unwrap();
-        let project_prompt_path = fixture.home.join("projects/demo/CLAUDE.md");
-        assert_eq!(
-            fs::read_to_string(&project_prompt_path).unwrap(),
-            "# 项目指引\n"
-        );
-
-        // 项目文件被外部修改后，预览仍可合并（覆盖式重新应用），apply 后内容回到档案正文。
-        fs::write(&project_prompt_path, "# 项目自行修改\n").unwrap();
-        let drift_preview = preview_prompt_sync(
-            &mut fixture.database,
-            &fixture.environment,
-            &redactor,
-            Tool::Claude,
-            Some(project.id.clone()),
-        )
-        .unwrap();
-        apply_profile_preview(
-            &Mutex::new(()),
-            &mut fixture.database,
-            &fixture.paths,
-            &fixture.environment,
-            &mut SecretRedactor::default(),
-            &drift_preview.preview_id,
-            Tool::Claude,
-            ArtifactKind::Prompt,
-            Some(&project.id),
-        )
-        .unwrap();
-        assert_eq!(
-            fs::read_to_string(&project_prompt_path).unwrap(),
-            "# 项目指引\n"
-        );
-
-        // 分配期间项目提示词基线行存在。
-        let baseline_count: i64 = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT COUNT(*) FROM managed_targets
-                 WHERE tool = 'claude' AND artifact_kind = 'prompt' AND scope = 'project'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-
-        // 解除分配：项目文件保留，纳管基线清空（行保留、哈希置空）。
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                prompt_profile_id: None,
-                project_row_version: project.row_version + 1,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            fs::read_to_string(&project_prompt_path).unwrap(),
-            "# 项目指引\n"
-        );
-        let cleared_baseline_count: i64 = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT COUNT(*) FROM managed_targets
-                 WHERE tool = 'claude' AND artifact_kind = 'prompt' AND scope = 'project'
-                   AND baseline_full_hash IS NULL AND baseline_managed_hash IS NULL",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let active_baseline_count: i64 = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT COUNT(*) FROM managed_targets
-                 WHERE tool = 'claude' AND artifact_kind = 'prompt' AND scope = 'project'
-                   AND baseline_full_hash IS NOT NULL",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(baseline_count, 1);
-        assert_eq!(cleared_baseline_count, 1);
-        assert_eq!(active_baseline_count, 0);
-
-        // 解除分配后档案可以删除。
-        delete_prompt_profile(
-            &mut fixture.database,
-            &crate::profiles::VersionedProfileInput {
-                id: profile.id.clone(),
-                row_version: profile.row_version,
-            },
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn prompt_project_assignment_is_tool_agnostic_and_bumps_project_version() {
-        let mut fixture = fixture();
-        let project = register_demo_project(&mut fixture);
-        let profile = create_prompt_profile(
-            &mut fixture.database,
-            PromptProfileInput {
-                name: "共享档案".to_owned(),
-                body: "# Claude\n".to_owned(),
-            },
-        )
-        .unwrap();
-
-        // 工具无关档案可分配到任意工具的项目记忆文件。
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                prompt_profile_id: Some(profile.id.clone()),
-                project_row_version: project.row_version,
-            },
-        )
-        .unwrap();
-        let after_assign: i64 = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT row_version FROM projects WHERE id = ?1",
-                [&project.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(after_assign, i64::from(project.row_version) + 1);
-
-        // 相同分配重复提交是无操作，项目 row_version 不变。
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                prompt_profile_id: Some(profile.id.clone()),
-                project_row_version: u32::try_from(after_assign).unwrap(),
-            },
-        )
-        .unwrap();
-        let after_repeat: i64 = fixture
-            .database
-            .connection()
-            .query_row(
-                "SELECT row_version FROM projects WHERE id = ?1",
-                [&project.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(after_repeat, after_assign);
-    }
-
-    #[test]
-    fn prompt_project_assignment_rejects_globally_active_profile() {
-        let mut fixture = fixture();
-        let project = register_demo_project(&mut fixture);
-        let active = create_enabled_prompt(&mut fixture, Tool::Claude, "全局生效", "# 全局指令\n");
-
-        // 全局生效档案不允许分配到项目，项目 row_version 不变。
-        let rejected = crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                prompt_profile_id: Some(active.id.clone()),
-                project_row_version: project.row_version,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(rejected.code(), crate::error::ErrorCode::Conflict);
-        let reason = rejected
-            .details()
-            .and_then(|details| details.get("reason"))
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        assert!(reason.contains("全局生效"));
-
-        // 先分配后启用（对该工具全局生效）的历史分配：重复写入当前分配保持无操作语义。
-        let inactive = create_prompt_profile(
-            &mut fixture.database,
-            PromptProfileInput {
-                name: "先分配后启用".to_owned(),
-                body: "# 项目指引\n".to_owned(),
-            },
-        )
-        .unwrap();
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                prompt_profile_id: Some(inactive.id.clone()),
-                project_row_version: project.row_version,
-            },
-        )
-        .unwrap();
-        set_global_prompt_assignment(
-            &mut fixture.database,
-            &SetGlobalPromptAssignmentInput {
-                tool: Tool::Claude,
-                prompt_profile_id: inactive.id.clone(),
-                assigned: true,
-                row_version: inactive.row_version,
-            },
-        )
-        .unwrap();
-        crate::profiles::set_prompt_project_assignment(
-            &mut fixture.database,
-            &fixture.environment,
-            &crate::profiles::SetPromptProjectAssignmentInput {
-                project_id: project.id.clone(),
-                tool: Tool::Claude,
-                prompt_profile_id: Some(inactive.id.clone()),
-                project_row_version: project.row_version + 1,
-            },
-        )
-        .unwrap();
     }
 }

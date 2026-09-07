@@ -664,7 +664,6 @@ describe("ToolProfilesPage", () => {
         previewId: preview.previewId,
         tool: "claude",
         artifactKind: "provider",
-        projectId: null,
       }),
     );
   });
@@ -748,7 +747,6 @@ describe("ToolProfilesPage", () => {
         previewId: preview.previewId,
         tool: "claude",
         artifactKind: "provider",
-        projectId: null,
       }),
     );
     expect(
@@ -814,7 +812,6 @@ describe("ToolProfilesPage", () => {
         previewId: preview.previewId,
         tool: "claude",
         artifactKind: "provider",
-        projectId: null,
       }),
     );
     expect(

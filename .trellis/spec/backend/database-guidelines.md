@@ -10,6 +10,13 @@ The desktop backend uses bundled SQLite through `rusqlite`. The database is the
 structured source of truth; native Claude/Codex/Cursor files are synchronization
 targets and must not replace relational constraints with unvalidated JSON.
 
+Prompt is a global-only resource in the current schema. Project Prompt
+assignments, project Prompt targets, and PromptFile observations are retired;
+project-native observation now covers supported MCP and Skill resources (Hook
+project assignment/status remains separate from this observation table).
+Migration 0018 removes historical project Prompt rows and private snapshots
+without reading or deleting files under a registered project root.
+
 ## Query Patterns
 
 - Enable and verify `foreign_keys=ON` and `journal_mode=WAL` for every
@@ -31,12 +38,12 @@ targets and must not replace relational constraints with unvalidated JSON.
 - Migration tests must use `tempfile` roots and must prove reopening is
   idempotent. Never point a test at a developer database.
 
-### Scenario: In-place schema-text revision for CHECK-only changes
+### Scenario: In-place schema-text revision for CHECK-only changes (historical)
 
-背景：`managed_targets` 被三张子表外键引用（`managed_items` CASCADE、
+历史背景：`managed_targets` 被三张子表外键引用（`managed_items` CASCADE、
 `sync_targets`/`snapshots` RESTRICT），且迁移事务内 `PRAGMA foreign_keys=OFF`
-是 no-op；为放开项目作用域 `artifact_kind` CHECK 而重建表会触发隐式
-`DELETE` 的级联清空或 RESTRICT 失败。
+是 no-op；早期迁移曾为项目 Prompt 放宽 `artifact_kind` CHECK。该段只说明
+已发布迁移的历史实现，当前 v18 已收紧项目 CHECK，不能据此重新开放项目 Prompt。
 
 #### Wrong
 
@@ -61,15 +68,16 @@ SET sql = replace(sql,
 WHERE type = 'table' AND name = 'managed_targets'
   AND instr(sql, 'artifact_kind IN (''mcp'', ''skill''))') > 0;
 PRAGMA writable_schema = OFF;
-CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
+CREATE TABLE prompt_project_assignments (...); -- 0008 历史 DDL，触发重解析
 ```
 
 要点：
 
 - UPDATE 的 `WHERE` 必须锚定旧文本（`instr(...) > 0`），幂等且防止空改。
 - 迁移事务内**不能**用 INSERT 金丝雀验证新 CHECK（同连接缓存仍旧）；
-  生效性由迁移测试在 `Database::open` 后的金丝雀插入断言
+  早期生效性由迁移测试在 `Database::open` 后的金丝雀插入断言
   （`prompt_project_assignment_migration_rewrites_managed_targets_check`）。
+  该测试与 0008 仅是历史证据，不是当前 API 合同。
 - 基线行是**永久行**：解除纳管清空 `baseline_full_hash` /
   `baseline_managed_hash` / `baseline_projection_json`（两者同 NULL），
   不删除行——快照 RESTRICT 外键引用行 id，删除会失败；NULL 基线 +
@@ -93,6 +101,101 @@ CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
   首选：每工具启用位 `is_active_claude`/`is_active_codex` + 各自部分唯一
   索引接替 `uq_prompt_profiles_one_active_per_tool`；旧列清零（`UPDATE`）
   并在迁移注释里标记为遗留，代码路径不得再读。
+
+### Scenario: v18 removal of historical project Prompt state
+
+Migration `0018_remove_project_prompts.sql` is the forward-only compatibility
+boundary for databases that passed through the historical project Prompt
+feature. It must not rewrite migrations 0001–0017 or infer ownership from a
+project file.
+
+### 1. Scope / Trigger
+
+- Trigger: opening a v17 (or older supported-prefix) database after the project
+  Prompt capability has been removed, including schema checks, row cleanup, and
+  private snapshot cleanup.
+
+### 2. Signatures
+
+- `Database::open(&AppPaths) -> Result<Database, AppError>` applies migration
+  0018 in one `IMMEDIATE` transaction, then retries the cleanup queue.
+- `retired_snapshot_cleanup(snapshot_id, run_id, snapshot_path, storage_kind,
+  content_hash, queued_at)` records retired snapshot metadata before source rows
+  are deleted.
+- `process_retired_snapshot_cleanup(&Connection, &AppPaths) -> Result<_, _>`
+  accepts only queue rows whose path is derived from the private snapshots root.
+
+### 3. Contracts
+
+- Materialize project-scope Prompt target IDs before deleting any parent row.
+- Record every related snapshot's `snapshot_id`, `run_id`, `snapshot_path`,
+  `storage_kind`, and `content_hash` before deleting native-resource, snapshot,
+  or sync-item rows.
+- Remove only project Prompt native-resource rows, their snapshots and sync
+  items, empty historical runs, project Prompt targets, and the assignment
+  table. Mixed runs and records for global Prompt, MCP, Skill, or Hook targets
+  remain intact.
+- Tighten the `managed_targets` project `artifact_kind` CHECK to
+  `mcp|skill|hook`, and `project_native_resources.entry_type` to
+  `mcp_entry|directory|symlink`, using exact `sqlite_schema` anchors. Global
+  Prompt profiles, assignments, targets, imports, snapshots, and runs remain
+  valid.
+- After the transaction commits, remove only a validated regular `payload_file`
+  under `AppPaths.snapshots/<run_id>/` with UUID identity and exact
+  `<snapshot_id>.snapshot` path. Missing files count as complete; symlinks,
+  special files, invalid paths, and non-payload storage kinds stay queued.
+- Cleanup never consults `managed_targets.target_path` and never touches a
+  registered project's `CLAUDE.md`, `AGENTS.md`, Cursor rules, or any other
+  project file. Retired private snapshot deletion is not reversible by the app.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Missing or duplicate old CHECK anchor | Migration aborts with a stable migration error |
+| Project Prompt snapshot is referenced by a mixed run | Snapshot/run remain; only retired rows are removed |
+| Queue path escapes the private snapshots root | Queue row remains; no filesystem mutation |
+| Queue path is symlink/special/non-regular | Queue row remains; no filesystem mutation |
+| Queue storage kind is not `payload_file` | Queue row remains for a later retry |
+| Snapshot file is already missing | Queue row is marked complete/removed |
+| Reopen after successful v18 migration | No duplicate rows or deletes; schema remains v18 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: upgrade an isolated old database, preserve global and mixed-run rows,
+  delete only validated private retired payloads, and reopen successfully.
+- Base: a missing payload is treated as already cleaned; an unsafe or unsupported
+  queue entry remains for a future retry.
+- Bad: rebuild a referenced table, derive cleanup from a project target path,
+  delete a project file, or silently ignore a missing schema anchor.
+
+### 6. Tests Required
+
+- Seed v17 state containing project Prompt, global Prompt, MCP/Skill/Hook, mixed
+  runs, native-resource snapshots, and project files; assert exact row/file
+  preservation and removal after `Database::open`.
+- Assert the v18 CHECK canaries reject project Prompt targets and `prompt_file`
+  entries, while global Prompt inserts still succeed.
+- Exercise idempotent reopen, missing/symlink/special/outside queue paths,
+  non-payload queue kinds, FK integrity, and unchanged project-file bytes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Do not trust a historical target_path: it may point into a registered project.
+fs::remove_file(managed_target.target_path)?;
+```
+
+#### Correct
+
+```rust
+// Derive and validate the private snapshot path from queue identity only.
+let path = paths.snapshots().join(&run_id).join(format!("{snapshot_id}.snapshot"));
+validate_private_payload_path(&path, &paths.snapshots(), &snapshot_id)?;
+remove_regular_payload_if_present(&path)?;
+```
 
 ## Naming Conventions
 
@@ -136,11 +239,12 @@ CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
 
 - Private directories are `0700`; the database, WAL/SHM, backup, journal, and
   snapshot files are `0600`.
-- The schema contains provider/prompt/MCP/skill/project entities, four explicit
-  assignment tables, managed targets/items, `project_native_resources`, sync
-  runs/items, snapshots, and the `app_settings` key-value table for singleton
-  user preferences (no `row_version`; unknown stored enum values fail closed
-  with `DATABASE_ERROR`).
+- The schema contains provider/prompt/MCP/skill/project entities, global profile
+  state, MCP/Skill/Hook global and project assignments, managed targets/items,
+  `project_native_resources` for MCP/Skill observations, sync runs/items,
+  snapshots, and the `app_settings` key-value table for singleton user
+  preferences (no `row_version`; unknown stored enum values fail closed with
+  `DATABASE_ERROR`). Prompt profile state and its native targets are global-only.
 - Every stored JSON value validates its expected top-level shape. Every stored
   hash is lowercase SHA-256. Global inheritance is not represented by duplicate
   project assignments.
@@ -152,7 +256,7 @@ CREATE TABLE prompt_project_assignments (...); -- 普通 DDL 触发重解析
 | Relative, root, broad, symlinked, or special private path | `INVALID_INPUT` or `PERMISSION_DENIED`; create nothing outside the root |
 | Effective WAL/foreign-key PRAGMA differs | stable database error; startup stops |
 | Migration history is renamed, unknown, or out of order | stable migration error; no later migration runs |
-| Global/project assignment duplicates on `INSERT` or `UPDATE` | SQLite trigger conflict plus matching domain conflict |
+| Global/project MCP, Skill, or Hook assignment duplicates on `INSERT` or `UPDATE` | SQLite trigger conflict plus matching domain conflict |
 | `row_version` decreases | reject; unchanged version is atomically bumped |
 
 ### 5. Good/Base/Bad Cases
@@ -195,22 +299,26 @@ let database = Database::open(&paths)?;
 - Trigger: any change to migration `0012_project_native_resources.sql`,
   `db/native_resources.rs`, native-resource CAS, target-identity upsert, snapshot
   FK/RESTRICT, `soft_remove_project`, or `delete_snapshots` reference checks.
+- Current project-native observation covers MCP entries and Skill directories or
+  links. Prompt/Rules files are outside this model and are never observed or
+  exposed as disable/restore resources.
 
 ### 2. Signatures
 
 - Table `project_native_resources`: UUID `id`, `target_id` → `managed_targets(id)`
   `ON DELETE CASCADE`, `external_key`, `entry_type` in
-  `mcp_entry|directory|symlink|prompt_file`, `state` in
+  `mcp_entry|directory|symlink`, `state` in
   `active|disabled|missing|conflict`, optional SHA-256 `observed_item_hash`,
   `disabled_snapshot_id` → `snapshots(id)` `ON DELETE RESTRICT`, `disabled_at`,
   timestamps, `row_version`. Unique `(target_id, external_key)`.
 - `insert_project_target_identity(...)` inserts only
   `id, tool, artifact_kind, scope='project', project_id, target_path` when no
-  row exists; baselines stay NULL.
+  row exists; baselines stay NULL. Valid project artifact kinds are `mcp`,
+  `skill`, and `hook`; Prompt is not a project target.
 - `snapshot_is_referenced(connection, snapshot_id, database_path) -> bool`
 - `count_blocking_native_resources(tx, project_id, database_path) -> u32`
   counts `disabled` + `conflict` for that project.
-- Compiled schema version is `12` (`src-tauri/src/app/mod.rs` assertion).
+- Compiled schema version is `18` (`src-tauri/src/app/mod.rs` assertion).
 
 ### 3. Contracts
 
@@ -221,6 +329,9 @@ let database = Database::open(&paths)?;
   while a native row references the old id.
 - Identity upsert does not write `baseline_full_hash`, `baseline_managed_hash`,
   `baseline_projection_json`, or `managed_items`.
+- Project scans may create empty-baseline identity rows only for supported MCP,
+  Skill, or Hook targets. Such a row is observation scaffolding, not ownership;
+  it must not create an empty project file or widen ordinary Apply.
 - Product deletion of snapshots still goes through `delete_snapshots` +
   `snapshot_is_referenced`. Project removal calls
   `count_blocking_native_resources` inside the same IMMEDIATE transaction as
@@ -233,24 +344,28 @@ let database = Database::open(&paths)?;
 | `disabled` row without snapshot | SQLite CHECK abort |
 | Delete snapshot row still referenced | SQLite RESTRICT plus command-level `CONFLICT` |
 | Decrease `row_version` | `ROW_VERSION_MUST_INCREASE` |
+| Project Prompt target or PromptFile entry supplied after v18 | reject/fail closed; no native read or write |
 | Remove project while native `disabled`/`conflict` > 0 | domain `CONFLICT`; transaction rolls back |
-| Reopen after 0012 | idempotent; schema version stays 12 |
+| Reopen after 0018 | idempotent; schema version stays 18 |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: upgrade an old database, first scan lazily inserts `active` observation
-  rows, no project files are read during the migration itself.
-- Base: empty-baseline identity row exists after register; ordinary Apply still
-  has no target.
-- Bad: rebuild `managed_targets` to add the native table; delete snapshots only
-  via a new repository helper that skips `delete_snapshots`.
+- Good: register or rescan an old project, lazily insert active MCP/Skill
+  observations, and leave all project Prompt/Rules files untouched.
+- Base: an empty-baseline identity row exists after registration; ordinary Apply
+  still has no target until a supported assignment exists.
+- Bad: create a Prompt project target, infer ownership from an empty baseline,
+  rebuild `managed_targets`, or delete snapshots through a helper that skips
+  `delete_snapshots`.
 
 ### 6. Tests Required
 
-- Old-database upgrade, idempotent reopen, CHECK/unique/CAS failures.
-- Empty identity is not treated as ownership and does not create project files.
+- Old-database upgrade, idempotent reopen, CHECK/unique/CAS failures, and the
+  v18 canaries that reject project Prompt targets and `prompt_file` entries.
+- Empty identity is not treated as ownership and does not create project files;
+  project scans do not read Prompt/Rules files.
 - Referenced snapshot survives `delete_snapshots`; `soft_remove_project` refuses
-  while disabled/conflict rows exist.
+  while supported native rows are disabled or conflicted.
 
 ### 7. Wrong vs Correct
 

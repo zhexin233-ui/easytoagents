@@ -12,6 +12,10 @@ the shared change dialog, unless the user opted into the direct-apply mode below
 Skill takeover preparation and project-native disable/restore are hard exceptions:
 they always open `ChangePreviewDialog` and never auto-Apply.
 
+Prompt is global-only. The frontend must not render project Prompt assignment,
+PromptFile management, or project Prompt preview/apply controls; project
+scanning and native-resource views cover supported MCP and Skill resources only.
+
 ## Forbidden Patterns
 
 - Direct `invoke` calls in feature components, hand-built RPC payload casts, or local
@@ -88,9 +92,9 @@ they always open `ChangePreviewDialog` and never auto-Apply.
   code text.
 - Provider/Prompt surfaces are restricted to the shared `PROFILE_TOOLS` set
   (`claude`/`codex`/`cursor`/`zcode`). Cursor has a profile route, status query,
-  Prompt tab/import/assignment flow, and onboarding Prompt option, but no Provider
-  form/query/apply path; capability metadata must keep that Provider surface hidden
-  and backend rejection fail-closed.
+  global Prompt tab/import flow, and onboarding Prompt option, but no Provider
+  form/query/apply path or project Prompt assignment; capability metadata must keep
+  that Provider and project Prompt surface hidden and backend rejection fail-closed.
 
 ### 4. Validation & Error Matrix
 
@@ -393,29 +397,27 @@ const adopted = unwrapResult(
 
 - Project pages consume generated `ProjectDto` and option DTOs. Global inheritance is
   checked and read-only; there is no project-level global-disable mutation.
-- `ProjectDetailPage` is the single UI owner for project MCP/Skill assignment **and**
-  project-native resources. It uses independent local resource
-  (`"mcp" | "skill"`) and tool (`"claude" | "codex" | "cursor"`) view state, defaults
+- `ProjectDetailPage` is the single UI owner for project MCP/Skill/Hook assignment
+  **and** project-native resources. It uses independent local resource
+  (`"mcp" | "hook" | "skill"`) and tool (`"claude" | "codex" | "cursor"`) view state, defaults
   to MCP + Claude, and exposes both switches as accessible pressed-button groups.
   Claude/Codex/Cursor selection uses the bundled brand assets with an accessible button
   name, `title`, and `aria-pressed`; the decorative image stays hidden from assistive
   technology. Mount only the active tool/resource assignment view and key that subtree
   by project, tool, and resource so unsubmitted child state cannot leak across
   combinations. Inside the active combination, render a "项目原生资源" heading
-  **above** "中央追加". Cursor Prompt uses the managed single-file `.mdc` native
-  target; other Cursor rule files are not listed. Native `safeSummary` and diagnostics
-  never render MCP secrets.
+  **above** "中央追加". The project-native resource list contains supported MCP and
+  Skill observations only; Hook assignment uses its own central assignment flow.
+  Prompt/Rules files are not queried, listed, or managed. Native `safeSummary` and
+  diagnostics never render MCP secrets.
 - Native disable/restore always call `previewProjectNativeResourceAction` then open
   `ChangePreviewDialog`. `applyMode: "direct"` must not call
   `applyProjectNativeResourcePreview` until the user confirms. Success invalidates
   `projectKeys.detail`, `projectKeys.nativeResources(project, tool, artifactKind)`,
-  MCP, Skill, Prompt, and recovery query families together.
+  MCP, Skill, and recovery query families together.
 - `active` shows disable; `disabled` shows restore and `disabledAt`; `missing` is
   unrestorable; `conflict` keeps restore materials but blocks the write. An active
   writer or `rollback_failed` is a page-level block, not a per-item conflict.
-- 项目 Prompt 被中央 assignment 且已应用出基线后，中央与原生共用同一目标路径；
-  旧禁用记录必须保持可见并显示 `conflict`，保留快照且阻止移除项目。
-  解除分配保留当前文件；移走占用文件并重新扫描后才允许恢复原有提示词。
 - Project cards/register feedback render `ProjectDto.nativeResources` counts. Remove
   is disabled while `disabled + conflict > 0`.
 - Changing either project-detail view axis clears the open preview, operation message,
@@ -464,7 +466,7 @@ const adopted = unwrapResult(
 | Policy/trust/parse/permission/drift/external-name block | Distinct text/code and `BlockingState`; never imply synchronized |
 | Assignment success | Invalidate project, MCP, and Skill key families together |
 | Native disable/restore preview | Open `ChangePreviewDialog`; zero Apply calls until confirm, including `applyMode: "direct"` |
-| Native Apply success | Invalidate project, native-resources, MCP, Skill, Prompt, and recovery keys |
+| Native Apply success | Invalidate project, native-resources, MCP, Skill, and recovery keys |
 | Project has disabled/conflict native resources | Disable remove; show an actionable restore hint |
 | Active writer / `rollback_failed` on project detail | Global block; do not present native restore as writable |
 | Project resource/tool view switch | Update both groups' `aria-pressed`; show/query only the active tool/resource combination; reset transient state |
@@ -592,13 +594,8 @@ projectAssignmentMutation.mutate(input);
   previews then auto-applies. MCP save syncs the edited server's current
   `globalTools` (create has none yet), MCP delete syncs the deleted server's
   `globalTools` to clean up managed entries, MCP import success syncs the
-  imported tool, and Prompt save/delete sync the profile's `globalTools`. Project
-  Prompt assignment also triggers `previewPromptSync(tool, projectId)` after
-  the assignment invalidations; safe non-empty plans auto-apply,
-  conflicts/errors open the preview dialog, and empty plans remain no-ops.
-  项目 Prompt 解除分配只刷新查询、清除旧预览错误并提示文件保留，任何模式下都不能
-  调用 `previewPromptSync` / `applyProfilePreview`；后端已经清空分配与基线，继续同步
-  会返回 `NOT_FOUND`。
+  imported tool, and global Prompt save/delete sync the profile's global targets.
+  Prompt operations never select a project or invoke a project-scoped preview/apply.
   Skill deletion is backend-blocked while assigned and Skills directory import
   owns its own confirm flow, so neither adds auto-sync.
 - Direct mode hides the manual global-sync buttons entirely (MCP/Skills status
@@ -629,11 +626,6 @@ projectAssignmentMutation.mutate(input);
   behavior is unchanged and central toggles never trigger an implicit sync.
 - Assignment/enable toggles under direct mode assert both the preview command
   payload and the auto-applied preview ID.
-- Project Prompt assignment under direct mode asserts the exact
-  `previewPromptSync` tool/project arguments, the `applyProfilePreview` preview
-  ID/tool/artifact/project payload, and the conflict-dialog fallback.
-- Claude/Codex/Cursor 直接模式解除项目 Prompt 分配后，应显示成功且移除解除按钮；
-  断言预览与 Apply 均未调用。测试用真实的无分配 `NOT_FOUND` 响应，不能伪造删除预览。
 - Direct mode asserts the manual global-sync buttons are absent on all three
   pages, and that MCP save/delete/import plus Prompt save/delete auto-trigger
   the same preview + apply payloads; a conflicted preview from those flows

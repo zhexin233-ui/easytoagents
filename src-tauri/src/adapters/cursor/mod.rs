@@ -143,18 +143,6 @@ impl ToolAdapter for CursorAdapter {
                     supported_capability.clone(),
                     SymlinkPolicy::Reject,
                 ),
-                descriptor(
-                    // 项目规则：官方 `.cursor/rules/*.mdc`；只接管本应用文件。
-                    ArtifactKind::Prompt,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".cursor/rules/easytoagents.mdc"))?),
-                    TargetFormat::CursorMdc,
-                    vec!["$document"],
-                    vec![],
-                    supported_capability,
-                    SymlinkPolicy::Reject,
-                ),
             ]);
         }
 
@@ -277,7 +265,7 @@ mod tests {
             project_skill.path.as_deref(),
             project.join(".cursor/skills").to_str()
         );
-        // 提示词（官方规则文件合同）：全局与项目均为受管单文件 `.mdc`。
+        // 提示词（官方规则文件合同）：全局为受管单文件 `.mdc`。
         let global_prompt = targets
             .iter()
             .find(|target| {
@@ -289,16 +277,8 @@ mod tests {
             home.join(".cursor/rules/easytoagents.mdc").to_str()
         );
         assert_eq!(global_prompt.managed_selector_roots, ["$document"]);
-        let project_prompt = targets
-            .iter()
-            .find(|target| {
-                target.artifact_kind == ArtifactKind::Prompt && target.scope == Scope::Project
-            })
-            .unwrap();
-        assert_eq!(
-            project_prompt.path.as_deref(),
-            project.join(".cursor/rules/easytoagents.mdc").to_str()
-        );
-        assert_eq!(project_prompt.managed_selector_roots, ["$document"]);
+        assert!(!targets.iter().any(|target| {
+            target.artifact_kind == ArtifactKind::Prompt && target.scope == Scope::Project
+        }));
     }
 }
