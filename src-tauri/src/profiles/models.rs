@@ -41,6 +41,11 @@ pub struct ProviderOptionsInput {
     pub extra_env: BTreeMap<String, String>,
     pub wire_api: Option<String>,
     pub zcode_kind: Option<String>,
+    /// OpenCode provider SDK package (for example
+    /// `@ai-sdk/openai-compatible`). Stored as metadata; the app never
+    /// installs or executes the package.
+    pub opencode_npm: Option<String>,
+    pub opencode_api: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -113,6 +118,8 @@ pub struct ProviderOptionsDto {
     pub provider_id: Option<String>,
     pub wire_api: Option<String>,
     pub zcode_kind: Option<String>,
+    pub opencode_npm: Option<String>,
+    pub opencode_api: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -227,6 +234,10 @@ pub(crate) struct StoredProviderConfig {
     pub wire_api: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zcode_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opencode_npm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opencode_api: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra_provider_fields: BTreeMap<String, Value>,
 }
@@ -263,6 +274,8 @@ impl StoredProviderConfig {
                     provider_id: None,
                     wire_api: None,
                     zcode_kind: None,
+                    opencode_npm: None,
+                    opencode_api: None,
                     extra_provider_fields: BTreeMap::new(),
                 })
             }
@@ -287,6 +300,8 @@ impl StoredProviderConfig {
                     provider_id: Some(provider_id.to_owned()),
                     wire_api: options.wire_api,
                     zcode_kind: None,
+                    opencode_npm: None,
+                    opencode_api: None,
                     extra_provider_fields,
                 })
             }
@@ -317,6 +332,8 @@ impl StoredProviderConfig {
                     provider_id: Some(provider_id.to_owned()),
                     wire_api: None,
                     zcode_kind: Some(kind),
+                    opencode_npm: None,
+                    opencode_api: None,
                     extra_provider_fields: BTreeMap::new(),
                 })
             }
@@ -324,6 +341,34 @@ impl StoredProviderConfig {
                 "tool",
                 "CURSOR_PROVIDER_UNSUPPORTED",
             )),
+            Tool::Opencode => {
+                if options.credential_env_key.is_some()
+                    || !options.extra_env.is_empty()
+                    || options.wire_api.is_some()
+                    || options.zcode_kind.is_some()
+                {
+                    return Err(AppError::invalid_input(
+                        "providerOptions",
+                        "OpenCode Provider 不支持其他工具的专属选项",
+                    ));
+                }
+                let npm = options.opencode_npm.ok_or_else(|| {
+                    AppError::invalid_input("providerOptions", "OpenCode Provider 缺少 npm SDK")
+                })?;
+                validate_opencode_sdk(&npm)?;
+                let api = options.opencode_api.unwrap_or_else(|| "openai".to_owned());
+                validate_opencode_api(&api)?;
+                Ok(Self {
+                    credential_env_key: None,
+                    extra_env: BTreeMap::new(),
+                    provider_id: Some(provider_id.to_owned()),
+                    wire_api: None,
+                    zcode_kind: None,
+                    opencode_npm: Some(npm),
+                    opencode_api: Some(api),
+                    extra_provider_fields,
+                })
+            }
         }
     }
 
@@ -334,6 +379,8 @@ impl StoredProviderConfig {
             provider_id: self.provider_id.clone(),
             wire_api: self.wire_api.clone(),
             zcode_kind: self.zcode_kind.clone(),
+            opencode_npm: self.opencode_npm.clone(),
+            opencode_api: self.opencode_api.clone(),
         }
     }
 }
@@ -349,6 +396,32 @@ fn validate_zcode_provider_kind(kind: &str) -> Result<(), AppError> {
             "ZCode Provider API 格式只支持 anthropic、openai 或 gemini",
         ))
     }
+}
+
+fn validate_opencode_sdk(value: &str) -> Result<(), AppError> {
+    if value.is_empty()
+        || value.len() > 200
+        || value
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte == b'\0')
+    {
+        return Err(AppError::invalid_input(
+            "providerOptions",
+            "OpenCode npm SDK 标识无效",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_opencode_api(value: &str) -> Result<(), AppError> {
+    if value.is_empty() || value.len() > 64 || value.bytes().any(|byte| byte.is_ascii_whitespace())
+    {
+        return Err(AppError::invalid_input(
+            "providerOptions",
+            "OpenCode SDK 协议标识无效",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_codex_extra_provider_fields(fields: &BTreeMap<String, Value>) -> Result<(), AppError> {

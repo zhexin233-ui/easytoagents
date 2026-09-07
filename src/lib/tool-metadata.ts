@@ -3,6 +3,7 @@ import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
 import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import cursorIconUrl from "@/assets/brand/cursor-icon.svg";
 import zcodeIconUrl from "@/assets/brand/zcode-icon.svg";
+import opencodeIconUrl from "@/assets/brand/opencode-icon.svg";
 
 export interface ToolMetadata {
   id: Tool;
@@ -71,6 +72,19 @@ export const TOOL_METADATA = {
       hooks: true,
     },
   },
+  opencode: {
+    id: "opencode",
+    label: "OpenCode",
+    icon: opencodeIconUrl,
+    profileRoute: "/opencode",
+    capabilities: {
+      provider: true,
+      promptGlobal: true,
+      mcp: true,
+      skills: true,
+      hooks: false,
+    },
+  },
 } as const satisfies Record<Tool, ToolMetadata>;
 
 export const PROFILE_TOOLS = [
@@ -78,18 +92,21 @@ export const PROFILE_TOOLS = [
   "codex",
   "cursor",
   "zcode",
+  "opencode",
 ] as const satisfies readonly Tool[];
 export const MCP_TOOLS = [
   "claude",
   "codex",
   "cursor",
   "zcode",
+  "opencode",
 ] as const satisfies readonly Tool[];
 export const SKILL_TOOLS = [
   "claude",
   "codex",
   "cursor",
   "zcode",
+  "opencode",
 ] as const satisfies readonly Tool[];
 export const HOOK_TOOLS = [
   "claude",

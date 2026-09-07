@@ -121,6 +121,9 @@ export function hookEventSupportedByTool(
       "PostToolUseFailure",
       "Stop",
     ],
+    // OpenCode 的插件回调不是当前 command-only HookEvent 合同；保留工具
+    // 类型键但不暴露任何可分配事件。
+    opencode: [],
   };
   return supported[tool].includes(event);
 }

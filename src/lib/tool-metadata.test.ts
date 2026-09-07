@@ -15,10 +15,29 @@ describe("tool metadata", () => {
       "codex",
       "cursor",
       "zcode",
+      "opencode",
     ]);
-    expect(PROFILE_TOOLS).toEqual(["claude", "codex", "cursor", "zcode"]);
-    expect(MCP_TOOLS).toEqual(["claude", "codex", "cursor", "zcode"]);
-    expect(SKILL_TOOLS).toEqual(["claude", "codex", "cursor", "zcode"]);
+    expect(PROFILE_TOOLS).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+      "zcode",
+      "opencode",
+    ]);
+    expect(MCP_TOOLS).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+      "zcode",
+      "opencode",
+    ]);
+    expect(SKILL_TOOLS).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+      "zcode",
+      "opencode",
+    ]);
     expect(toolMetadata("cursor")).toMatchObject({
       label: "Cursor",
       profileRoute: "/cursor",
@@ -41,5 +60,19 @@ describe("tool metadata", () => {
       },
     });
     expect(toolMetadata("zcode").icon).toMatch(/zcode-icon\.svg|svg\+xml/);
+    expect(toolMetadata("opencode")).toMatchObject({
+      label: "OpenCode",
+      profileRoute: "/opencode",
+      capabilities: {
+        provider: true,
+        promptGlobal: true,
+        mcp: true,
+        skills: true,
+        hooks: false,
+      },
+    });
+    expect(toolMetadata("opencode").icon).toMatch(
+      /opencode-icon\.svg|svg\+xml/,
+    );
   });
 });

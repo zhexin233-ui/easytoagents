@@ -47,6 +47,7 @@ pub(crate) fn get_preview(
                         "codex" => Tool::Codex,
                         "cursor" => Tool::Cursor,
                         "zcode" => Tool::Zcode,
+                        "opencode" => Tool::Opencode,
                         _ => return Err(rusqlite::Error::InvalidQuery),
                     },
                     context_json: row.get(1)?,

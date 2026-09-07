@@ -1,0 +1,12 @@
+{
+  "command": [
+    "opencode",
+    "--pure",
+    "debug",
+    "paths"
+  ],
+  "isolated_root": "/var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk",
+  "exit_code": 0,
+  "stdout": "home       /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/home\ndata       /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/data/opencode\nbin        /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/cache/opencode/bin\nlog        /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/data/opencode/log\nrepos      /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/data/opencode/repos\ncache      /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/cache/opencode\nconfig     /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/config/opencode\nstate      /var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk/state/opencode\ntmp        /tmp/opencode\n",
+  "stderr": ""
+}

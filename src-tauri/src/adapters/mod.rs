@@ -22,15 +22,33 @@ use crate::{
 pub mod claude;
 pub mod codex;
 pub mod cursor;
+pub mod opencode;
 pub mod zcode;
 
 /// Provider/Prompt 页面与引导服务有正式文件合同的工具；Cursor Provider 仍不
 /// 支持，但 Prompt 已按官方规则文件合同接入（任务 09-06-cursor-prompt-support）。
-pub const PROFILE_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 /// MCP 与 Skills 的可分配工具集合。
-pub const ASSIGNABLE_MCP_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
-pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 4] =
-    [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
+pub const PROFILE_TOOLS: [Tool; 5] = [
+    Tool::Claude,
+    Tool::Codex,
+    Tool::Cursor,
+    Tool::Zcode,
+    Tool::Opencode,
+];
+pub const ASSIGNABLE_MCP_TOOLS: [Tool; 5] = [
+    Tool::Claude,
+    Tool::Codex,
+    Tool::Cursor,
+    Tool::Zcode,
+    Tool::Opencode,
+];
+pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 5] = [
+    Tool::Claude,
+    Tool::Codex,
+    Tool::Cursor,
+    Tool::Zcode,
+    Tool::Opencode,
+];
 /// Hooks 的可分配工具集合（四工具均有官方 hooks 合同，证据见任务 09-05-add-hooks-management）。
 pub const ASSIGNABLE_HOOK_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 
@@ -38,6 +56,10 @@ pub const ASSIGNABLE_HOOK_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::C
 #[serde(rename_all = "snake_case")]
 pub enum TargetFormat {
     Json,
+    /// OpenCode's JSON with comments/trailing commas. The parser keeps the
+    /// original source so managed top-level replacements do not discard
+    /// unrelated comments and keys.
+    Jsonc,
     Toml,
     Markdown,
     /// Cursor 规则文件（`.cursor/rules/*.mdc`）：Markdown + 固定
@@ -51,6 +73,7 @@ impl TargetFormat {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Json => "json",
+            Self::Jsonc => "jsonc",
             Self::Toml => "toml",
             Self::Markdown => "markdown",
             Self::CursorMdc => "cursor_mdc",
@@ -60,7 +83,9 @@ impl TargetFormat {
 
     pub const fn expected_type(self) -> TargetType {
         match self {
-            Self::Json | Self::Toml | Self::Markdown | Self::CursorMdc => TargetType::File,
+            Self::Json | Self::Jsonc | Self::Toml | Self::Markdown | Self::CursorMdc => {
+                TargetType::File
+            }
             Self::SymlinkDirectory => TargetType::Directory,
         }
     }
@@ -201,6 +226,7 @@ pub struct ToolAvailability {
     pub codex: ToolAvailabilityState,
     pub cursor: ToolAvailabilityState,
     pub zcode: ToolAvailabilityState,
+    pub opencode: ToolAvailabilityState,
 }
 
 impl ToolAvailability {
@@ -210,6 +236,7 @@ impl ToolAvailability {
             codex: ToolAvailabilityState::Installed,
             cursor: ToolAvailabilityState::Installed,
             zcode: ToolAvailabilityState::Installed,
+            opencode: ToolAvailabilityState::Installed,
         }
     }
 
@@ -219,6 +246,7 @@ impl ToolAvailability {
             codex: ToolAvailabilityState::Unavailable,
             cursor: ToolAvailabilityState::Unavailable,
             zcode: ToolAvailabilityState::Unavailable,
+            opencode: ToolAvailabilityState::Unavailable,
         }
     }
 }
@@ -229,11 +257,16 @@ pub struct ExplicitEnvironment {
     home: PathBuf,
     claude_config_dir: PathBuf,
     codex_home: PathBuf,
+    opencode_config_dir: PathBuf,
+    opencode_config_path: Option<PathBuf>,
+    opencode_config_content: Option<String>,
+    opencode_disabled: bool,
     uses_default_claude_config_dir: bool,
     claude_installation_version: Option<String>,
     codex_installation_version: Option<String>,
     cursor_installation_version: Option<String>,
     zcode_installation_version: Option<String>,
+    opencode_installation_version: Option<String>,
     claude_provider_policy: PolicyState,
     availability: ToolAvailability,
     claude_user_mcp_evidence: Option<VerifiedClaudeUserMcpEvidence>,
@@ -251,19 +284,27 @@ impl ExplicitEnvironment {
         let requested_claude_config_dir = claude_config_dir.unwrap_or_else(|| home.join(".claude"));
         let uses_default_claude_config_dir = requested_claude_config_dir == home.join(".claude");
         let requested_codex_home = codex_home.unwrap_or_else(|| home.join(".codex"));
+        let requested_opencode_config_dir = home.join(".config/opencode");
         let claude_config_dir =
             normalize_config_root(&requested_claude_config_dir, "claudeConfigDir")?;
         let codex_home = normalize_config_root(&requested_codex_home, "codexHome")?;
+        let opencode_config_dir =
+            normalize_config_root(&requested_opencode_config_dir, "opencodeConfigDir")?;
 
         Ok(Self {
             home,
             claude_config_dir,
             codex_home,
+            opencode_config_dir,
+            opencode_config_path: None,
+            opencode_config_content: None,
+            opencode_disabled: false,
             uses_default_claude_config_dir,
             claude_installation_version: None,
             codex_installation_version: None,
             cursor_installation_version: None,
             zcode_installation_version: None,
+            opencode_installation_version: None,
             claude_provider_policy: PolicyState::Unknown,
             availability,
             claude_user_mcp_evidence: None,
@@ -331,6 +372,45 @@ impl ExplicitEnvironment {
         Ok(self)
     }
 
+    /// Inject explicit OpenCode discovery overrides from the host boundary.
+    /// Adapters never read `XDG_CONFIG_HOME`, `OPENCODE_CONFIG`, or process
+    /// environment state themselves.
+    pub fn with_opencode_config_dir(mut self, path: impl Into<PathBuf>) -> Result<Self, AppError> {
+        self.opencode_config_dir = normalize_config_root(&path.into(), "opencodeConfigDir")?;
+        Ok(self)
+    }
+
+    pub fn with_opencode_installation_version(
+        mut self,
+        version: impl Into<String>,
+    ) -> Result<Self, AppError> {
+        let version = version.into();
+        if version.trim().is_empty() {
+            return Err(AppError::invalid_input(
+                "installationVersion",
+                "OpenCode 安装版本不能为空",
+            ));
+        }
+        self.opencode_installation_version = Some(version);
+        Ok(self)
+    }
+
+    pub fn with_opencode_config_path(mut self, path: impl Into<PathBuf>) -> Result<Self, AppError> {
+        let path = path.into();
+        self.opencode_config_path = Some(normalize_target_path(&path, "opencodeConfig")?);
+        Ok(self)
+    }
+
+    pub fn with_opencode_config_content(mut self, content: Option<String>) -> Self {
+        self.opencode_config_content = content;
+        self
+    }
+
+    pub fn with_opencode_disabled(mut self, disabled: bool) -> Self {
+        self.opencode_disabled = disabled;
+        self
+    }
+
     pub fn with_claude_user_mcp_evidence(
         mut self,
         evidence: VerifiedClaudeUserMcpEvidence,
@@ -365,6 +445,33 @@ impl ExplicitEnvironment {
         &self.codex_home
     }
 
+    pub fn opencode_config_dir(&self) -> &Path {
+        &self.opencode_config_dir
+    }
+
+    pub fn opencode_config_path(&self) -> Option<&Path> {
+        self.opencode_config_path.as_deref()
+    }
+
+    /// A custom `OPENCODE_CONFIG` file is a valid narrow write boundary for
+    /// the Provider/MCP projection. Prompts and Skills remain rooted at the
+    /// standard config directory and do not follow this single-file override.
+    pub fn opencode_config_file_root(&self) -> PathBuf {
+        self.opencode_config_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.opencode_config_dir.clone())
+    }
+
+    pub fn opencode_config_content(&self) -> Option<&str> {
+        self.opencode_config_content.as_deref()
+    }
+
+    pub fn opencode_disabled(&self) -> bool {
+        self.opencode_disabled
+    }
+
     pub fn availability(&self) -> ToolAvailability {
         self.availability
     }
@@ -375,6 +482,7 @@ impl ExplicitEnvironment {
             Tool::Codex => self.availability.codex,
             Tool::Cursor => self.availability.cursor,
             Tool::Zcode => self.availability.zcode,
+            Tool::Opencode => self.availability.opencode,
         }
     }
 
@@ -394,12 +502,17 @@ impl ExplicitEnvironment {
         self.zcode_installation_version.as_deref()
     }
 
+    pub fn opencode_installation_version(&self) -> Option<&str> {
+        self.opencode_installation_version.as_deref()
+    }
+
     pub fn installation_version(&self, tool: Tool) -> Option<&str> {
         match tool {
             Tool::Claude => self.claude_installation_version(),
             Tool::Codex => self.codex_installation_version(),
             Tool::Cursor => self.cursor_installation_version(),
             Tool::Zcode => self.zcode_installation_version(),
+            Tool::Opencode => self.opencode_installation_version(),
         }
     }
 
@@ -852,6 +965,10 @@ pub enum ObservedRaw {
 
 pub enum ObservedDocument {
     Json(Value),
+    Jsonc {
+        value: Value,
+        source: String,
+    },
     Toml {
         document: DocumentMut,
         semantic: Value,
@@ -945,6 +1062,25 @@ fn parse_document(
             }
             Ok(ObservedDocument::Json(value))
         }
+        (TargetFormat::Jsonc, ObservedRaw::File(bytes)) => {
+            if bytes.iter().all(u8::is_ascii_whitespace) {
+                return Err(AppError::parse(
+                    target.path_for_error(),
+                    target.format.as_str(),
+                ));
+            }
+            let source = String::from_utf8(bytes)
+                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let value = parse_jsonc(&source)
+                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            if !value.is_object() {
+                return Err(AppError::parse(
+                    target.path_for_error(),
+                    target.format.as_str(),
+                ));
+            }
+            Ok(ObservedDocument::Jsonc { value, source })
+        }
         (TargetFormat::Toml, ObservedRaw::File(bytes)) => {
             let text = std::str::from_utf8(&bytes)
                 .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
@@ -981,12 +1117,485 @@ fn parse_document(
     }
 }
 
+/// Parse the stable OpenCode JSONC surface without treating comments as data.
+/// This small lexer intentionally accepts only JSON plus comments/trailing
+/// commas; JSON5 extensions such as unquoted keys are rejected fail-closed.
+pub(crate) fn parse_jsonc(source: &str) -> Result<Value, serde_json::Error> {
+    let stripped = strip_jsonc_comments(source);
+    let normalized = strip_jsonc_trailing_commas(&stripped);
+    let mut deserializer = serde_json::Deserializer::from_str(&normalized);
+    let value = StrictJsonValue::deserialize(&mut deserializer)?.0;
+    deserializer.end()?;
+    Ok(value)
+}
+
+struct StrictJsonValue(Value);
+
+impl<'de> Deserialize<'de> for StrictJsonValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJsonValueVisitor)
+    }
+}
+
+struct StrictJsonValueVisitor;
+
+impl<'de> serde::de::Visitor<'de> for StrictJsonValueVisitor {
+    type Value = StrictJsonValue;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue(Value::Bool(value)))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        serde_json::Number::from_f64(value)
+            .map(|number| StrictJsonValue(Value::Number(number)))
+            .ok_or_else(|| E::custom("JSON number must be finite"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue(Value::String(value.to_owned())))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue(Value::String(value)))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue(Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue(Value::Null))
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        StrictJsonValue::deserialize(deserializer)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = sequence.next_element::<StrictJsonValue>()? {
+            values.push(value.0);
+        }
+        Ok(StrictJsonValue(Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut object = Map::new();
+        while let Some(key) = map.next_key::<String>()? {
+            let value = map.next_value::<StrictJsonValue>()?;
+            if object.insert(key, value.0).is_some() {
+                return Err(serde::de::Error::custom("duplicate JSON object key"));
+            }
+        }
+        Ok(StrictJsonValue(Value::Object(object)))
+    }
+}
+
+fn strip_jsonc_comments(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let character = source[index..]
+            .chars()
+            .next()
+            .expect("JSONC source index must be a UTF-8 boundary");
+        let width = character.len_utf8();
+        if in_string {
+            output.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            index += width;
+            continue;
+        }
+        if character == '"' {
+            in_string = true;
+            output.push(character);
+            index += width;
+            continue;
+        }
+        if character == '/' && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            output.push('\n');
+            continue;
+        }
+        if character == '/' && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                if bytes[index] == b'\n' {
+                    output.push('\n');
+                }
+                index += 1;
+            }
+            if index + 1 < bytes.len() {
+                index += 2;
+            }
+            continue;
+        }
+        output.push(character);
+        index += width;
+    }
+    output
+}
+
+fn strip_jsonc_trailing_commas(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let character = source[index..]
+            .chars()
+            .next()
+            .expect("JSONC source index must be a UTF-8 boundary");
+        let width = character.len_utf8();
+        if in_string {
+            output.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            index += width;
+            continue;
+        }
+        if character == '"' {
+            in_string = true;
+            output.push(character);
+            index += width;
+            continue;
+        }
+        if character == ',' {
+            let mut next = index + 1;
+            while next < bytes.len() && bytes[next].is_ascii_whitespace() {
+                next += 1;
+            }
+            if matches!(bytes.get(next), Some(b'}' | b']')) {
+                index += 1;
+                continue;
+            }
+        }
+        output.push(character);
+        index += width;
+    }
+    output
+}
+
+fn replace_jsonc_roots(source: &str, desired: &Value, roots: &[String]) -> String {
+    let all_roots = desired
+        .as_object()
+        .map(|object| object.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    replace_jsonc_roots_with_rendered(
+        source,
+        desired,
+        if roots.is_empty() { &all_roots } else { roots },
+    )
+}
+
+fn replace_jsonc_roots_with_rendered(source: &str, desired: &Value, roots: &[String]) -> String {
+    let mut output = source.to_owned();
+    for root in roots {
+        let Some(value) = desired.get(root) else {
+            continue;
+        };
+        let rendered = serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_owned());
+        if let Some((start, end)) = jsonc_top_level_value_span(&output, root) {
+            let rendered = preserve_jsonc_comments(&rendered, &output[start..end]);
+            output.replace_range(start..end, &rendered);
+        } else if let Some(close) = output.rfind('}') {
+            let semantic = strip_jsonc_comments(&output[..close]);
+            let needs_comma = semantic
+                .find('{')
+                .and_then(|open| semantic.get(open + 1..))
+                .is_some_and(|body| body.chars().any(|character| !character.is_whitespace()));
+            let insertion = if needs_comma {
+                format!(",\n  \"{root}\": {rendered}\n")
+            } else {
+                format!("\n  \"{root}\": {rendered}\n")
+            };
+            output.insert_str(close, &insertion);
+        } else {
+            return format!("{rendered}\n");
+        }
+    }
+    if output.trim().is_empty() {
+        return serde_json::to_string_pretty(desired)
+            .map(|value| format!("{value}\n"))
+            .unwrap_or_default();
+    }
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+/// A managed JSONC root is rendered from semantic JSON, but comments inside
+/// that root still belong to the user's file. Keep them as leading comments
+/// on the replacement value so an ownership update never silently erases
+/// comment text while preserving unmanaged semantic fields through `merged`.
+fn preserve_jsonc_comments(rendered: &str, original: &str) -> String {
+    let comments = extract_jsonc_comments(original);
+    if comments.is_empty() {
+        rendered.to_owned()
+    } else {
+        format!("{}\n{rendered}", comments.join("\n"))
+    }
+}
+
+fn extract_jsonc_comments(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut comments = Vec::new();
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            let start = index;
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            comments.push(source[start..index].trim_end().to_owned());
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            let start = index;
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            comments.push(source[start..index].to_owned());
+            continue;
+        }
+        index += 1;
+    }
+    comments
+}
+
+fn jsonc_top_level_value_span(source: &str, wanted: &str) -> Option<(usize, usize)> {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    let mut depth = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'"' {
+            let start = index;
+            index += 1;
+            let mut escaped = false;
+            while index < bytes.len() {
+                let current = bytes[index];
+                index += 1;
+                if escaped {
+                    escaped = false;
+                } else if current == b'\\' {
+                    escaped = true;
+                } else if current == b'"' {
+                    break;
+                }
+            }
+            if depth == 1 {
+                let key = serde_json::from_str::<String>(&source[start..index]).ok()?;
+                let mut cursor = skip_jsonc_space_and_comments(source.as_bytes(), index);
+                if bytes.get(cursor) != Some(&b':') {
+                    continue;
+                }
+                cursor = skip_jsonc_space_and_comments(source.as_bytes(), cursor + 1);
+                if key == wanted {
+                    let end = jsonc_value_end(source.as_bytes(), cursor)?;
+                    return Some((cursor, end));
+                }
+                index = cursor;
+                continue;
+            }
+            continue;
+        }
+        match byte {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+            }
+            b'{' | b'[' => {
+                depth += 1;
+                index += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn skip_jsonc_space_and_comments(bytes: &[u8], mut index: usize) -> usize {
+    loop {
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        if bytes.get(index) == Some(&b'/') && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes.get(index) == Some(&b'/') && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        return index;
+    }
+}
+
+fn jsonc_value_end(bytes: &[u8], mut index: usize) -> Option<usize> {
+    let start = index;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' if depth > 0 => depth -= 1,
+            b',' | b'}' if depth == 0 => return Some(index),
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                continue;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    (index > start).then_some(index)
+}
+
 fn project_document(
     document: &ObservedDocument,
     ownership: &ManagedOwnership,
 ) -> Result<Value, AppError> {
     match (document, ownership) {
         (ObservedDocument::Json(value), ManagedOwnership::WholeDocument)
+        | (ObservedDocument::Jsonc { value, .. }, ManagedOwnership::WholeDocument)
         | (
             ObservedDocument::Toml {
                 semantic: value, ..
@@ -994,6 +1603,7 @@ fn project_document(
             ManagedOwnership::WholeDocument,
         ) => Ok(value.clone()),
         (ObservedDocument::Json(value), ManagedOwnership::Selectors(selectors))
+        | (ObservedDocument::Jsonc { value, .. }, ManagedOwnership::Selectors(selectors))
         | (
             ObservedDocument::Toml {
                 semantic: value, ..
@@ -1074,6 +1684,60 @@ fn render_document(
                 .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
             bytes.push(b'\n');
             Ok(RenderedTarget::File(bytes))
+        }
+        (TargetFormat::Jsonc, current, ManagedOwnership::WholeDocument) => {
+            if !desired_projection.is_object() {
+                return Err(AppError::invalid_input(
+                    "desiredProjection",
+                    "JSONC 配置根必须是对象",
+                ));
+            }
+            match current {
+                Some(ObservedDocument::Jsonc { source, .. }) => Ok(RenderedTarget::File(
+                    replace_jsonc_roots(source, desired_projection, &[]).into_bytes(),
+                )),
+                _ => {
+                    let mut bytes =
+                        serde_json::to_vec_pretty(desired_projection).map_err(|_| {
+                            AppError::parse(target.path_for_error(), target.format.as_str())
+                        })?;
+                    bytes.push(b'\n');
+                    Ok(RenderedTarget::File(bytes))
+                }
+            }
+        }
+        (TargetFormat::Jsonc, current, ManagedOwnership::Selectors(selectors)) => {
+            let mut merged = match current {
+                Some(ObservedDocument::Jsonc { value, .. }) => value.clone(),
+                Some(ObservedDocument::Json(value)) => value.clone(),
+                None => Value::Object(Map::new()),
+                _ => {
+                    return Err(AppError::parse(
+                        target.path_for_error(),
+                        target.format.as_str(),
+                    ))
+                }
+            };
+            for selector in selectors {
+                match get_json_path(desired_projection, selector)? {
+                    Some(value) => set_json_path(&mut merged, selector, value.clone())?,
+                    None => remove_json_path(&mut merged, selector),
+                }
+            }
+            let roots = selectors
+                .iter()
+                .filter_map(|selector| selector.first().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let rendered = serde_json::to_string_pretty(&merged)
+                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            match current {
+                Some(ObservedDocument::Jsonc { source, .. }) => Ok(RenderedTarget::File(
+                    replace_jsonc_roots_with_rendered(source, &merged, &roots).into_bytes(),
+                )),
+                _ => Ok(RenderedTarget::File(format!("{rendered}\n").into_bytes())),
+            }
         }
         (TargetFormat::Toml, _, ManagedOwnership::WholeDocument) => {
             let document = toml_edit::ser::to_document(desired_projection)
@@ -1344,12 +2008,12 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        canonicalize_project_root, render_cursor_mdc, strip_mdc_frontmatter, CapabilityState,
-        ConservativeClaudeCustomizationPolicyProbe, ConservativeClaudeUserMcpProbe,
-        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, ObservedRaw, PolicyState,
-        PromptOverrideState, RenderedTarget, TargetTrustState, ToolAdapter, ToolAvailability,
-        ToolAvailabilityState, VerifiedClaudeCustomizationPolicyEvidence,
-        VerifiedClaudeUserMcpEvidence,
+        canonicalize_project_root, parse_jsonc, render_cursor_mdc, strip_mdc_frontmatter,
+        CapabilityState, ConservativeClaudeCustomizationPolicyProbe,
+        ConservativeClaudeUserMcpProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
+        ObservedRaw, PolicyState, PromptOverrideState, RenderedTarget, TargetTrustState,
+        ToolAdapter, ToolAvailability, ToolAvailabilityState,
+        VerifiedClaudeCustomizationPolicyEvidence, VerifiedClaudeUserMcpEvidence,
     };
     use crate::{
         adapters::{claude::ClaudeAdapter, codex::CodexAdapter},
@@ -1395,6 +2059,49 @@ mod tests {
 
         // 空正文渲染为仅含 frontmatter 的文件，剥离后得到空串。
         assert_eq!(strip_mdc_frontmatter(&render_cursor_mdc("")), "");
+    }
+
+    #[test]
+    fn jsonc_parser_preserves_unicode_and_comment_like_string_content() {
+        let source = r#"{
+  // 用户可读的说明
+  "description": "中文 🌏 // 不是注释",
+  "nested": {
+    "提示": "保留 /* 字符串内容 */",
+  },
+}
+"#;
+        let value = parse_jsonc(source).unwrap();
+        assert_eq!(value["description"], "中文 🌏 // 不是注释");
+        assert_eq!(value["nested"]["提示"], "保留 /* 字符串内容 */");
+    }
+
+    #[test]
+    fn jsonc_parser_rejects_duplicate_keys_at_any_depth() {
+        assert!(parse_jsonc(r#"{"provider": {}, "provider": {}}"#).is_err());
+        assert!(parse_jsonc(r#"{"provider": {"name": "a", "name": "b"}}"#).is_err());
+    }
+
+    #[test]
+    fn jsonc_root_replacement_keeps_unmanaged_unicode_and_comments() {
+        let source = r#"{
+  // provider-owned comment
+  "provider": {"fixture": {"name": "old"}},
+  "unmanaged": "未受管 / /* 保留 */",
+}
+"#;
+        let desired = json!({
+            "provider": {"fixture": {"name": "new"}},
+            "unmanaged": "未受管 / /* 保留 */",
+        });
+        let roots = vec!["provider".to_owned()];
+        let rendered = super::replace_jsonc_roots(source, &desired, &roots);
+        assert!(rendered.contains("provider-owned comment"));
+        assert!(rendered.contains("未受管 / /* 保留 */"));
+        assert_eq!(
+            parse_jsonc(&rendered).unwrap()["provider"]["fixture"]["name"],
+            "new"
+        );
     }
 
     fn environment(
@@ -1616,6 +2323,7 @@ mod tests {
                 codex: ToolAvailabilityState::Unavailable,
                 cursor: ToolAvailabilityState::Unavailable,
                 zcode: ToolAvailabilityState::Unavailable,
+                opencode: ToolAvailabilityState::Unavailable,
             },
         )
         .unwrap();

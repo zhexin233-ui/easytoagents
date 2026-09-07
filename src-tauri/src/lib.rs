@@ -296,12 +296,23 @@ pub fn run() {
             command_builder.mount_events(app);
             let paths = app::AppPaths::from_data_root(app.path().app_data_dir()?)?;
             let home = app.path().home_dir()?;
-            let probe_input = app::tool_probe::ReleaseToolProbeInput::for_macos_release(
+            let mut probe_input = app::tool_probe::ReleaseToolProbeInput::for_macos_release(
                 home,
                 environment_path("CLAUDE_CONFIG_DIR"),
                 environment_path("CODEX_HOME"),
                 std::env::var_os("PATH").unwrap_or_default(),
             );
+            let opencode_config_dir = environment_path("OPENCODE_CONFIG_DIR").or_else(|| {
+                environment_path("XDG_CONFIG_HOME")
+                    .map(|xdg_config_home| xdg_config_home.join("opencode"))
+            });
+            if let Some(opencode_config_dir) = opencode_config_dir {
+                probe_input = probe_input.with_opencode_config_dir(Some(opencode_config_dir));
+            }
+            probe_input = probe_input
+                .with_opencode_config_path(environment_path("OPENCODE_CONFIG"))
+                .with_opencode_config_content(std::env::var("OPENCODE_CONFIG_CONTENT").ok())
+                .with_opencode_disabled(std::env::var("OPENCODE_DISABLE").is_ok());
             let environment = app::tool_probe::probe_release_environment(&probe_input)?
                 .environment
                 .with_claude_provider_policy(claude_provider_policy());

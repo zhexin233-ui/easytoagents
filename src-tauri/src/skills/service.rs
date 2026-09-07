@@ -28,8 +28,9 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, zcode::ZcodeAdapter, ClaudeCustomizationPolicyProbe,
-        DiscoveryContext, ManagedOwnership, TargetDescriptor, ToolAdapter, ASSIGNABLE_SKILL_TOOLS,
+        cursor::CursorAdapter, opencode::OpencodeAdapter, zcode::ZcodeAdapter,
+        ClaudeCustomizationPolicyProbe, DiscoveryContext, ManagedOwnership, TargetDescriptor,
+        ToolAdapter, ASSIGNABLE_SKILL_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -709,6 +710,7 @@ fn prepare_skill_sync_in_connection(
             Tool::Codex => environment.codex_home().to_path_buf(),
             Tool::Cursor => environment.home().join(".cursor"),
             Tool::Zcode => environment.home().join(".zcode"),
+            Tool::Opencode => environment.opencode_config_dir().to_path_buf(),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -762,11 +764,13 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
     static ZCODE: ZcodeAdapter = ZcodeAdapter;
+    static OPENCODE: OpencodeAdapter = OpencodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
         Tool::Zcode => &ZCODE,
+        Tool::Opencode => &OPENCODE,
     }
 }
 
@@ -1261,6 +1265,8 @@ fn list_skill_managed_targets(database: &Database) -> Result<Vec<SkillManagedTar
                 "claude" => Tool::Claude,
                 "codex" => Tool::Codex,
                 "cursor" => Tool::Cursor,
+                "zcode" => Tool::Zcode,
+                "opencode" => Tool::Opencode,
                 _ => return Err(rusqlite::Error::InvalidQuery),
             };
             Ok((
@@ -1468,6 +1474,8 @@ mod tests {
             fs::create_dir(home.join(".cursor")).unwrap();
             // ZCode 同理：安装后自带 ~/.zcode 配置根。
             fs::create_dir(home.join(".zcode")).unwrap();
+            // OpenCode 全局配置根是 XDG_CONFIG_HOME/opencode（默认 ~/.config/opencode）。
+            fs::create_dir_all(home.join(".config/opencode")).unwrap();
             let home = fs::canonicalize(home).unwrap();
             let project = fs::canonicalize(project).unwrap();
             fs::write(
@@ -1832,11 +1840,22 @@ mod tests {
             },
         )
         .unwrap();
-        set_global_skill_assignment(
+        let assigned = set_global_skill_assignment(
             &mut fixture.database,
             &fixture.paths,
             &SetGlobalSkillAssignmentInput {
                 tool: Tool::Zcode,
+                skill_id: skill.id.clone(),
+                assigned: true,
+                row_version: assigned.row_version,
+            },
+        )
+        .unwrap();
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Opencode,
                 skill_id: skill.id.clone(),
                 assigned: true,
                 row_version: assigned.row_version,
@@ -1933,6 +1952,19 @@ mod tests {
             &policy,
         )
         .unwrap();
+        let opencode_preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Opencode,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
         let previewed_statuses = super::list_global_skill_target_statuses_with_policy_probe(
             &fixture.database,
             &fixture.paths,
@@ -1949,6 +1981,7 @@ mod tests {
             (Tool::Codex, codex_preview),
             (Tool::Cursor, cursor_preview),
             (Tool::Zcode, zcode_preview),
+            (Tool::Opencode, opencode_preview),
         ] {
             apply_skill_preview_with_policy_probe(
                 &Mutex::new(()),
@@ -1979,6 +2012,10 @@ mod tests {
                 .join("skills/first-sync-skill"),
             fixture.home.join(".cursor/skills/first-sync-skill"),
             fixture.home.join(".zcode/skills/first-sync-skill"),
+            fixture
+                .environment
+                .opencode_config_dir()
+                .join("skills/first-sync-skill"),
         ] {
             assert!(link.is_symlink());
             assert_eq!(

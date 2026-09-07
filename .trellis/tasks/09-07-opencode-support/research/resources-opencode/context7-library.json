@@ -1,0 +1,309 @@
+{
+  "ok": true,
+  "query": "OpenCode MCP skills hooks plugins configuration",
+  "provider": "context7",
+  "results": [
+    {
+      "id": "/websites/opencode_ai_plugins",
+      "title": "OpenCode Plugins",
+      "description": "OpenCode Plugins enable developers to extend OpenCode by hooking into events and customizing behavior through JavaScript/TypeScript modules for adding features, integrations, and custom tools.",
+      "trust_score": 8.4,
+      "benchmark_score": 71.21,
+      "total_snippets": 32,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/malhashemi/opencode-skills",
+      "title": "OpenCode Skills",
+      "description": "OpenCode Skills is a plugin that automatically discovers and registers skills as dynamic tools, enabling AI agents to leverage specialized knowledge, workflows, and bundled resources according to Anthropic's Agent Skills Specification.",
+      "trust_score": 7.6,
+      "benchmark_score": 87.64,
+      "total_snippets": 100,
+      "stars": 206,
+      "provider": "context7"
+    },
+    {
+      "id": "/ssdeanx/ai-skills",
+      "title": "OpenCode Skills",
+      "description": "OpenCode Skills is a framework for building and managing modular AI Skills that extend AI agent capabilities with specialized knowledge, workflows, and tool integrations.",
+      "trust_score": 7.9,
+      "benchmark_score": 81.5,
+      "total_snippets": 192,
+      "stars": 2,
+      "provider": "context7"
+    },
+    {
+      "id": "/joshuadavidthomas/opencode-agent-skills",
+      "title": "OpenCode Agent Skills",
+      "description": "A dynamic skills plugin for OpenCode that provides tools for loading and using reusable AI agent skills with automatic skill discovery and context injection.",
+      "trust_score": 9.6,
+      "benchmark_score": 81,
+      "total_snippets": 199,
+      "stars": 171,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/safebucket_io",
+      "title": "OpenCode Configuration and Deployment",
+      "description": "This documentation set provides comprehensive guides for configuring various aspects of the OpenCode project, including activity, cache, database, event, notification, and storage providers, as well as different deployment strategies.",
+      "trust_score": 2.5,
+      "benchmark_score": 0,
+      "total_snippets": 327,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/anomalyco/opencode",
+      "title": "OpenCode",
+      "description": "OpenCode is an open-source, provider-agnostic AI coding agent that offers LSP support, focuses on a terminal user interface (TUI), and utilizes a client/server architecture for flexible development.",
+      "trust_score": 9.6,
+      "benchmark_score": 87.31,
+      "total_snippets": 3346,
+      "stars": 45875,
+      "provider": "context7"
+    },
+    {
+      "id": "/alibaba/hooks",
+      "title": "Hooks",
+      "description": "A high-quality and reliable React Hooks library offering easy-to-use, SSR-compatible hooks with advanced features and TypeScript support.",
+      "trust_score": 9.1,
+      "benchmark_score": 77.63,
+      "total_snippets": 917,
+      "stars": 14384,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/opencode_ai",
+      "title": "Opencode",
+      "description": "Opencode is an AI coding agent designed for the terminal, assisting developers in understanding, building, and modifying codebases.",
+      "trust_score": 8.4,
+      "benchmark_score": 80.99,
+      "total_snippets": 982,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/opencode_ai_v2",
+      "title": "OpenCode",
+      "description": "OpenCode is an AI-powered interactive command-line interface (CLI) and coding agent designed to assist developers with software engineering tasks directly in their terminal.",
+      "trust_score": 8.4,
+      "benchmark_score": 71.36,
+      "total_snippets": 412,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/apotonick/hooks",
+      "title": "Hooks",
+      "description": "Hooks is a lightweight Ruby gem for declaratively defining hooks and managing callbacks in your classes with minimal complexity.",
+      "trust_score": 8.2,
+      "benchmark_score": 0,
+      "total_snippets": 61,
+      "stars": 281,
+      "provider": "context7"
+    },
+    {
+      "id": "/opencode-ai/opencode",
+      "title": "OpenCode",
+      "description": "OpenCode is a Go-based CLI application providing a powerful terminal-based AI assistant for developers, featuring a TUI for coding assistance, debugging, and tool integration with support for multiple AI providers.",
+      "trust_score": 5.9,
+      "benchmark_score": 70.29,
+      "total_snippets": 47,
+      "stars": 2378,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/opencode_ai_zh-cn",
+      "title": "OpenCode",
+      "description": "OpenCode is an open-source AI coding agent that provides terminal interface, desktop application, and IDE extensions for intelligent code assistance and project development.",
+      "trust_score": 8.4,
+      "benchmark_score": 66.54,
+      "total_snippets": 965,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/huynguyen03dev/opencode-setup",
+      "title": "OpenCode",
+      "description": "OpenCode is a terminal user interface (TUI) application that orchestrates specialized AI agents, commands, and skills to automate software engineering tasks and project management workflows.",
+      "trust_score": 6.9,
+      "benchmark_score": 59.15,
+      "total_snippets": 354,
+      "stars": 5,
+      "provider": "context7"
+    },
+    {
+      "id": "/omercnet/opencode-plugin-langfuse",
+      "title": "OpenCode Langfuse Plugin",
+      "description": "OpenCode Langfuse Plugin provides automatic LLM observability for OpenCode with zero-config tracing of sessions, messages, tool calls, costs, and performance via Langfuse and OpenTelemetry.",
+      "trust_score": 9,
+      "benchmark_score": 82.86,
+      "total_snippets": 23,
+      "stars": 48,
+      "provider": "context7"
+    },
+    {
+      "id": "/panta82/opencode-notificator",
+      "title": "OpenCode Notificator Plugin",
+      "description": "OpenCode Notificator Plugin is a plugin that integrates desktop notifications and sound alerts into OpenCode, notifying users when code generation completes or permissions are requested.",
+      "trust_score": 8.7,
+      "benchmark_score": 82.45,
+      "total_snippets": 328,
+      "stars": 58,
+      "provider": "context7"
+    },
+    {
+      "id": "/agricidaniel/claude-skills",
+      "title": "Claude Code Skills & Plugins",
+      "description": "A comprehensive open-source library of 235+ production-ready Claude Code skills, plugins, and agent skills for AI coding tools covering engineering, product, marketing, compliance, and C-level advisory domains.",
+      "trust_score": 8.1,
+      "benchmark_score": 79.67,
+      "total_snippets": 24352,
+      "stars": 3,
+      "provider": "context7"
+    },
+    {
+      "id": "/openzeppelin/uniswap-hooks",
+      "title": "Uniswap Hooks",
+      "description": "A Solidity library for secure and modular Uniswap hooks, designed for use with Uniswap v4.",
+      "trust_score": 9.7,
+      "benchmark_score": 62.94,
+      "total_snippets": 270,
+      "stars": 93,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/macroscope",
+      "title": "Opencode",
+      "description": "This documentation repository describes the features and usage of the Opencode agent, including its CLI, API, integrations, and various workflows for code analysis and fixes.",
+      "trust_score": 7.9,
+      "benchmark_score": 11.25,
+      "total_snippets": 460,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/developer_wordpress_reference_hooks",
+      "title": "WordPress Hooks",
+      "description": "WordPress Hooks is a comprehensive reference for action and filter hooks available in WordPress, detailing their purpose, usage, and source locations for developers to extend and modify core functionality.",
+      "trust_score": 10,
+      "benchmark_score": 78.69,
+      "total_snippets": 9338,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/apple/swift-configuration",
+      "title": "Swift Configuration",
+      "description": "A Swift library for reading configuration in applications and libraries, providing an abstraction layer between configuration readers and providers for consistent API access.",
+      "trust_score": 9,
+      "benchmark_score": 81.4,
+      "total_snippets": 530,
+      "stars": 673,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/nuget_packages_numericwordsconversion",
+      "title": "Opencode",
+      "description": "Opencode is a project that leverages AI models like Claude and Gemini to perform code generation, analysis, and other software engineering tasks.",
+      "trust_score": 9.5,
+      "benchmark_score": 0,
+      "total_snippets": 107,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/mark-hingston/opencode-elf",
+      "title": "OpenCode ELF Plugin",
+      "description": "The OpenCode ELF Plugin is an Emergent Learning Framework that helps an AI coding assistant continuously improve by learning from past successes and failures, leveraging local storage for rules, heuristics, and contextual memory.",
+      "trust_score": 4.7,
+      "benchmark_score": 74,
+      "total_snippets": 131,
+      "stars": 13,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/developers_whmcs_hooks",
+      "title": "WHMCS Hooks",
+      "description": "WHMCS Hooks allow developers to execute custom code when events occur inside WHMCS, enabling customization and extension of its core functionality.",
+      "trust_score": 10,
+      "benchmark_score": 66.32,
+      "total_snippets": 896,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/sema4_ai_v2_api",
+      "title": "Opencode",
+      "description": "Opencode provides comprehensive documentation for its platform, covering features such as AI agents, large language models, document intelligence, and data connections for developers and system administrators.",
+      "trust_score": 8.4,
+      "benchmark_score": 0,
+      "total_snippets": 606,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/rrousselgit/flutter_hooks",
+      "title": "Flutter Hooks",
+      "description": "A Flutter implementation of React hooks that enhances code reuse by providing a new kind of widget with improved lifecycle management.",
+      "trust_score": 9.4,
+      "benchmark_score": 85.19,
+      "total_snippets": 450,
+      "stars": 3218,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/kimchi_dev",
+      "title": "Opencode",
+      "description": "This project provides comprehensive documentation for Opencode, covering various aspects such as coding practices, model API usage, and reporting functionalities.",
+      "trust_score": 5.5,
+      "benchmark_score": 81.67,
+      "total_snippets": 449,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/learnopencode",
+      "title": "OpenCode",
+      "description": "OpenCode is a free and open-source practical course that teaches beginners how to use AI for real-world tasks, offering quick setup, multi-file context, and deep customization, with native support for Chinese AI models.",
+      "trust_score": 3.7,
+      "benchmark_score": 85.5,
+      "total_snippets": 2153,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/kioubit/flapalerted",
+      "title": "OpenCode",
+      "description": "OpenCode is an AI-powered platform for code understanding, documentation generation, and advanced code analysis, supporting various services for enterprise use cases.",
+      "trust_score": 7.9,
+      "benchmark_score": 0,
+      "total_snippets": 35,
+      "stars": 60,
+      "provider": "context7"
+    },
+    {
+      "id": "/cds-hooks/docs",
+      "title": "CDS Hooks",
+      "description": "CDS Hooks is a vendor-agnostic remote decision support standard designed to integrate clinical decision support into electronic health records and other health IT systems.",
+      "trust_score": 6.4,
+      "benchmark_score": 79,
+      "total_snippets": 458,
+      "stars": 178,
+      "provider": "context7"
+    },
+    {
+      "id": "/anomalyco/opencode-sdk-js",
+      "title": "Opencode SDK",
+      "description": "Official TypeScript library providing convenient access to the Opencode REST API with support for streaming responses, comprehensive error handling, and automatic retries.",
+      "trust_score": 9.8,
+      "benchmark_score": 72.07,
+      "total_snippets": 564,
+      "stars": 70,
+      "provider": "context7"
+    }
+  ],
+  "total": 30,
+  "elapsed_ms": 1527.61
+}

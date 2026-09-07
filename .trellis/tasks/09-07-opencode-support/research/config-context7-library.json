@@ -1,0 +1,309 @@
+{
+  "ok": true,
+  "query": "OpenCode config providers rules installation CLI desktop",
+  "provider": "context7",
+  "results": [
+    {
+      "id": "/hcompai/holo-desktop-cli",
+      "title": "Holo Desktop CLI",
+      "description": "Holo Desktop CLI is an open-source client for H Company's Holo3 vision-language model that allows users to interact with the agent via a command-line interface, MCP, ACP, and A2A surfaces.",
+      "trust_score": 7.9,
+      "benchmark_score": 0,
+      "total_snippets": 342,
+      "stars": 31,
+      "provider": "context7"
+    },
+    {
+      "id": "/gabimoncha/cursor-rules-cli",
+      "title": "Cursor Rules CLI",
+      "description": "A command-line tool for managing AI-assisted guidance in projects through Cursor IDE rules with interactive setup and security scanning.",
+      "trust_score": 8.9,
+      "benchmark_score": 62,
+      "total_snippets": 36,
+      "stars": 47,
+      "provider": "context7"
+    },
+    {
+      "id": "/anomalyco/opencode",
+      "title": "OpenCode",
+      "description": "OpenCode is an open-source, provider-agnostic AI coding agent that offers LSP support, focuses on a terminal user interface (TUI), and utilizes a client/server architecture for flexible development.",
+      "trust_score": 9.6,
+      "benchmark_score": 87.31,
+      "total_snippets": 3346,
+      "stars": 45875,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/opencode_ai",
+      "title": "Opencode",
+      "description": "Opencode is an AI coding agent designed for the terminal, assisting developers in understanding, building, and modifying codebases.",
+      "trust_score": 8.4,
+      "benchmark_score": 80.99,
+      "total_snippets": 982,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/opencode_ai_v2",
+      "title": "OpenCode",
+      "description": "OpenCode is an AI-powered interactive command-line interface (CLI) and coding agent designed to assist developers with software engineering tasks directly in their terminal.",
+      "trust_score": 8.4,
+      "benchmark_score": 71.36,
+      "total_snippets": 412,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/opencode-ai/opencode",
+      "title": "OpenCode",
+      "description": "OpenCode is a Go-based CLI application providing a powerful terminal-based AI assistant for developers, featuring a TUI for coding assistance, debugging, and tool integration with support for multiple AI providers.",
+      "trust_score": 5.9,
+      "benchmark_score": 70.29,
+      "total_snippets": 47,
+      "stars": 2378,
+      "provider": "context7"
+    },
+    {
+      "id": "/elixir-desktop/desktop",
+      "title": "Desktop",
+      "description": "Desktop is a framework for building native-like Elixir applications for Windows, macOS, Linux, iOS, and Android using Phoenix LiveView.",
+      "trust_score": 7,
+      "benchmark_score": 0,
+      "total_snippets": 522,
+      "stars": 1707,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/opencode_ai_zh-cn",
+      "title": "OpenCode",
+      "description": "OpenCode is an open-source AI coding agent that provides terminal interface, desktop application, and IDE extensions for intelligent code assistance and project development.",
+      "trust_score": 8.4,
+      "benchmark_score": 66.54,
+      "total_snippets": 965,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/rust-cli/config-rs",
+      "title": "Config",
+      "description": "⚙️ Layered configuration system for Rust applications (with strong support for 12-factor applications). ",
+      "trust_score": 7.4,
+      "benchmark_score": 89.05,
+      "total_snippets": 433,
+      "stars": 2887,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/musistudio_github_io_claude-code-router",
+      "title": "Opencode CLI and Server",
+      "description": "This project provides documentation for the Opencode CLI and Server, detailing their installation, configuration, commands, and API endpoints.",
+      "trust_score": 9.7,
+      "benchmark_score": 0,
+      "total_snippets": 441,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/huynguyen03dev/opencode-setup",
+      "title": "OpenCode",
+      "description": "OpenCode is a terminal user interface (TUI) application that orchestrates specialized AI agents, commands, and skills to automate software engineering tasks and project management workflows.",
+      "trust_score": 6.9,
+      "benchmark_score": 59.15,
+      "total_snippets": 354,
+      "stars": 5,
+      "provider": "context7"
+    },
+    {
+      "id": "/fathah/hermes-desktop",
+      "title": "Hermes Desktop",
+      "description": "Native desktop application for installing, configuring, and chatting with Hermes Agent, a self-improving AI assistant with tool use and multi-platform messaging.",
+      "trust_score": 9.7,
+      "benchmark_score": 66.11,
+      "total_snippets": 855,
+      "stars": 6129,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/macroscope",
+      "title": "Opencode",
+      "description": "This documentation repository describes the features and usage of the Opencode agent, including its CLI, API, integrations, and various workflows for code analysis and fixes.",
+      "trust_score": 7.9,
+      "benchmark_score": 11.25,
+      "total_snippets": 460,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/rubyconfig/config",
+      "title": "Config",
+      "description": "A Ruby gem for managing environment-specific settings across Rails, Sinatra, Padrino, and other Ruby frameworks using YAML files with ERB support.",
+      "trust_score": 5.9,
+      "benchmark_score": 89.75,
+      "total_snippets": 202,
+      "stars": 2167,
+      "provider": "context7"
+    },
+    {
+      "id": "/nikivdev/config",
+      "title": "Config",
+      "description": "A personal configuration repository that manages development workflows, keyboard configurations, and system settings through Flow and Karabiner.",
+      "trust_score": 8.4,
+      "benchmark_score": 0,
+      "total_snippets": 42,
+      "stars": 11,
+      "provider": "context7"
+    },
+    {
+      "id": "/podman-desktop/podman-desktop",
+      "title": "Podman Desktop",
+      "description": "Podman Desktop is a graphical interface that enables application developers to seamlessly work with containers and Kubernetes, providing dashboard functionality for managing containers, images, pods, and volumes.",
+      "trust_score": 7.2,
+      "benchmark_score": 72.21,
+      "total_snippets": 2027,
+      "stars": 5713,
+      "provider": "context7"
+    },
+    {
+      "id": "/rancher-sandbox/rancher-desktop",
+      "title": "Rancher Desktop",
+      "description": "Rancher Desktop is an open-source application that brings Kubernetes and container management to Windows, macOS, and Linux desktops.",
+      "trust_score": 9.1,
+      "benchmark_score": 57.18,
+      "total_snippets": 288,
+      "stars": 6445,
+      "provider": "context7"
+    },
+    {
+      "id": "/desktop/desktop",
+      "title": "GitHub Desktop",
+      "description": "GitHub Desktop is a simple collaboration tool that brings GitHub to your desktop with an intuitive interface for managing repositories, branches, and commits.",
+      "trust_score": 8.7,
+      "benchmark_score": 55.78,
+      "total_snippets": 716,
+      "stars": 20436,
+      "provider": "context7"
+    },
+    {
+      "id": "/gitkraken/gitkraken-desktop-docs",
+      "title": "GitKraken Desktop",
+      "description": "Official documentation for the GitKraken Desktop Git client, providing comprehensive guides and information for users.",
+      "trust_score": 9.3,
+      "benchmark_score": 0,
+      "total_snippets": 2066,
+      "stars": 3,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/nativephp_desktop_2",
+      "title": "NativePHP Desktop",
+      "description": "NativePHP is a framework for rapidly building rich, native cross-platform desktop applications using PHP, HTML, CSS, and JavaScript with built-in support for window management, menus, notifications, and databases.",
+      "trust_score": 8.5,
+      "benchmark_score": 78.44,
+      "total_snippets": 639,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/windowsnotifications/desktop-toasts",
+      "title": "Desktop Toasts",
+      "description": "Provides samples for Win32 desktop applications to display toast notifications using COM activation and respond to user interactions.",
+      "trust_score": 5.9,
+      "benchmark_score": 0,
+      "total_snippets": 9,
+      "stars": 117,
+      "provider": "context7"
+    },
+    {
+      "id": "/bradleyfalzon/ghinstallation",
+      "title": "GH Installation",
+      "description": "GH Installation is a Go library that provides HTTP transport authentication for GitHub Apps, enabling automatic JWT-based authentication with GitHub APIs.",
+      "trust_score": 7.7,
+      "benchmark_score": 93.67,
+      "total_snippets": 387,
+      "stars": 366,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/sema4_ai_v2_api",
+      "title": "Opencode",
+      "description": "Opencode provides comprehensive documentation for its platform, covering features such as AI agents, large language models, document intelligence, and data connections for developers and system administrators.",
+      "trust_score": 8.4,
+      "benchmark_score": 0,
+      "total_snippets": 606,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/noop-inc/desktop",
+      "title": "Noop Desktop",
+      "description": "Noop Desktop is a platform for running applications locally on Workshop and in Noop Cloud.",
+      "trust_score": 7.1,
+      "benchmark_score": 24.5,
+      "total_snippets": 25,
+      "stars": 0,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/kimchi_dev",
+      "title": "Opencode",
+      "description": "This project provides comprehensive documentation for Opencode, covering various aspects such as coding practices, model API usage, and reporting functionalities.",
+      "trust_score": 5.5,
+      "benchmark_score": 81.67,
+      "total_snippets": 449,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/nuget_packages_numericwordsconversion",
+      "title": "Opencode",
+      "description": "Opencode is a project that leverages AI models like Claude and Gemini to perform code generation, analysis, and other software engineering tasks.",
+      "trust_score": 9.5,
+      "benchmark_score": 0,
+      "total_snippets": 107,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/ulixee/desktop",
+      "title": "Ulixee Desktop",
+      "description": "Ulixee Desktop is an Electron-based application that provides tools for developing and testing web scraping scripts with the Hero browser engine, managing Datastores, and handling Argon payments.",
+      "trust_score": 8.1,
+      "benchmark_score": 0,
+      "total_snippets": 7,
+      "stars": 3,
+      "provider": "context7"
+    },
+    {
+      "id": "/anthonyhaussman/opencode-agy-auth",
+      "title": "OpenCode Antigravity CLI Auth Plugin",
+      "description": "OpenCode Antigravity CLI Auth Plugin is an authentication plugin for OpenCode that enables seamless OAuth integration, quota tracking, and dynamic model fetching with the Google Gemini Antigravity CLI.",
+      "trust_score": 6.8,
+      "benchmark_score": 0,
+      "total_snippets": 45,
+      "stars": 18,
+      "provider": "context7"
+    },
+    {
+      "id": "/websites/opencode_ai_plugins",
+      "title": "OpenCode Plugins",
+      "description": "OpenCode Plugins enable developers to extend OpenCode by hooking into events and customizing behavior through JavaScript/TypeScript modules for adding features, integrations, and custom tools.",
+      "trust_score": 8.4,
+      "benchmark_score": 71.21,
+      "total_snippets": 32,
+      "stars": -1,
+      "provider": "context7"
+    },
+    {
+      "id": "/anywhere-labs/deepseek-harness-desktop",
+      "title": "DSH Desktop",
+      "description": "DSH Desktop is an open-source desktop client for Windows and macOS that integrates DeepSeek Harness local Web UI, services, and plugin system into a native desktop application.",
+      "trust_score": 7.4,
+      "benchmark_score": 56.2,
+      "total_snippets": 611,
+      "stars": 17347,
+      "provider": "context7"
+    }
+  ],
+  "total": 30,
+  "elapsed_ms": 1378.59
+}

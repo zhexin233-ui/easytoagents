@@ -157,6 +157,7 @@ pub enum SkillImportSourceKind {
     CursorAgents,
     ZcodeHome,
     ZcodeAgents,
+    OpencodeGlobal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]

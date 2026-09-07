@@ -453,25 +453,108 @@ fn parse_native_item(
             "env_http_headers 环境变量引用暂不能保真导入，原配置保持不变。".to_owned(),
         ));
     }
-    let command: Option<String> = take_optional(&mut object, "command")?;
-    let url: Option<String> = take_optional(&mut object, "url")?;
-    let transport = match (
-        native_type.as_deref(),
-        command.is_some(),
-        url.is_some(),
-    ) {
-        (None | Some("stdio"), true, false) => McpTransport::Stdio,
-        (None | Some("http" | "streamable_http"), false, true) => {
-            McpTransport::StreamableHttp
-        }
-        (Some(kind), _, _) if !matches!(kind, "stdio" | "http" | "streamable_http") => {
-            return Err((
-                Status::Unsupported,
-                "type 协议暂不支持；仅支持 stdio、http 和 streamable_http。".to_owned(),
-            ))
-        }
-        _ => return Err((Status::Invalid,
-            "type 与 command/url 不匹配：stdio 仅允许 command，HTTP 仅允许 url，不能同时填写或同时缺失。".to_owned())),
+    let (command, args, url, headers, env, transport) = if tool == Tool::Opencode {
+        let command_parts: Option<Vec<String>> = take_optional(&mut object, "command")?;
+        let url: Option<String> = take_optional(&mut object, "url")?;
+        let environment: BTreeMap<String, String> =
+            take_optional(&mut object, "environment")?.unwrap_or_default();
+        let headers: BTreeMap<String, String> =
+            take_optional(&mut object, "headers")?.unwrap_or_default();
+        let parsed = match native_type.as_deref() {
+            Some("local") => {
+                let mut parts = command_parts.ok_or_else(|| {
+                    (
+                        Status::Invalid,
+                        "OpenCode local MCP 必须填写非空 command 数组。".to_owned(),
+                    )
+                })?;
+                if parts.is_empty() || parts[0].trim().is_empty() {
+                    return Err((
+                        Status::Invalid,
+                        "OpenCode local MCP 的 command 数组不能为空。".to_owned(),
+                    ));
+                }
+                if url.is_some() {
+                    return Err((
+                        Status::Invalid,
+                        "OpenCode local MCP 不能同时填写 url。".to_owned(),
+                    ));
+                }
+                let command = parts.remove(0);
+                (
+                    Some(command),
+                    parts,
+                    None,
+                    headers,
+                    environment,
+                    McpTransport::Stdio,
+                )
+            }
+            Some("remote") => {
+                if command_parts.is_some() || !environment.is_empty() || url.is_none() {
+                    return Err((
+                        Status::Invalid,
+                        "OpenCode remote MCP 必须填写 url，且不能填写 command 或 environment。"
+                            .to_owned(),
+                    ));
+                }
+                (
+                    None,
+                    Vec::new(),
+                    url,
+                    headers,
+                    environment,
+                    McpTransport::StreamableHttp,
+                )
+            }
+            Some(kind) => {
+                return Err((
+                    Status::Unsupported,
+                    format!("OpenCode MCP type={kind} 暂不支持；仅支持 local 和 remote。"),
+                ))
+            }
+            None => {
+                return Err((
+                    Status::Invalid,
+                    "OpenCode MCP 必须明确填写 type=local 或 type=remote。".to_owned(),
+                ))
+            }
+        };
+        validate_opencode_extra(&object)?;
+        parsed
+    } else {
+        let command: Option<String> = take_optional(&mut object, "command")?;
+        let url: Option<String> = take_optional(&mut object, "url")?;
+        let transport = match (
+            native_type.as_deref(),
+            command.is_some(),
+            url.is_some(),
+        ) {
+            (None | Some("stdio"), true, false) => McpTransport::Stdio,
+            (None | Some("http" | "streamable_http"), false, true) => {
+                McpTransport::StreamableHttp
+            }
+            (Some(kind), _, _) if !matches!(kind, "stdio" | "http" | "streamable_http") => {
+                return Err((
+                    Status::Unsupported,
+                    "type 协议暂不支持；仅支持 stdio、http 和 streamable_http。".to_owned(),
+                ))
+            }
+            _ => return Err((Status::Invalid,
+                "type 与 command/url 不匹配：stdio 仅允许 command，HTTP 仅允许 url，不能同时填写或同时缺失。".to_owned())),
+        };
+        let args = take_optional(&mut object, "args")?.unwrap_or_default();
+        let headers = take_optional(
+            &mut object,
+            if matches!(tool, Tool::Claude | Tool::Cursor) {
+                "headers"
+            } else {
+                "http_headers"
+            },
+        )?
+        .unwrap_or_default();
+        let env = take_optional(&mut object, "env")?.unwrap_or_default();
+        (command, args, url, headers, env, transport)
     };
     for (field, value) in
         std::iter::once(("name", name)).chain(command.as_deref().map(|value| ("command", value)))
@@ -488,17 +571,9 @@ fn parse_native_item(
         transport,
         command,
         url,
-        args: take_optional(&mut object, "args")?.unwrap_or_default(),
-        env: take_optional(&mut object, "env")?.unwrap_or_default(),
-        headers: take_optional(
-            &mut object,
-            if matches!(tool, Tool::Claude | Tool::Cursor) {
-                "headers"
-            } else {
-                "http_headers"
-            },
-        )?
-        .unwrap_or_default(),
+        args,
+        env,
+        headers,
         extra: Value::Object(object),
         enabled: true,
     };
@@ -525,6 +600,58 @@ fn parse_native_item(
     })
 }
 
+fn validate_opencode_extra(object: &Map<String, Value>) -> Result<(), CandidateError> {
+    if let Some(timeout) = object.get("timeout") {
+        if timeout.as_u64().is_none() {
+            return Err((
+                Status::Invalid,
+                "OpenCode MCP timeout 必须是非负整数毫秒。".to_owned(),
+            ));
+        }
+    }
+    if let Some(cwd) = object.get("cwd") {
+        let Some(cwd) = cwd.as_str() else {
+            return Err((
+                Status::Invalid,
+                "OpenCode MCP cwd 必须是字符串。".to_owned(),
+            ));
+        };
+        if cwd.is_empty() || cwd.chars().any(char::is_control) {
+            return Err((
+                Status::Invalid,
+                "OpenCode MCP cwd 不能为空或包含控制字符。".to_owned(),
+            ));
+        }
+    }
+    let Some(oauth) = object.get("oauth") else {
+        return Ok(());
+    };
+    match oauth {
+        Value::Bool(false) => Ok(()),
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                if !matches!(key.as_str(), "clientId" | "clientSecret" | "scope")
+                    || value.as_str().is_none()
+                    || value
+                        .as_str()
+                        .is_some_and(|value| value.chars().any(char::is_control))
+                {
+                    return Err((
+                        Status::Invalid,
+                        "OpenCode MCP oauth 只能是 false 或包含字符串 clientId/clientSecret/scope 的对象。"
+                            .to_owned(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        _ => Err((
+            Status::Invalid,
+            "OpenCode MCP oauth 只能是 false 或对象。".to_owned(),
+        )),
+    }
+}
+
 fn take_optional<T: DeserializeOwned>(
     object: &mut Map<String, Value>,
     key: &'static str,
@@ -536,7 +663,7 @@ fn take_optional<T: DeserializeOwned>(
                 let expected = match key {
                     "enabled" | "disabled" => "布尔值",
                     "args" => "字符串数组",
-                    "env" | "headers" | "http_headers" => "字符串映射",
+                    "env" | "environment" | "headers" | "http_headers" => "字符串映射",
                     _ => "字符串",
                 };
                 (
@@ -550,11 +677,18 @@ fn take_optional<T: DeserializeOwned>(
 
 fn register_native_secrets(redactor: &mut SecretRedactor, items: &Map<String, Value>) {
     for raw in items.values() {
-        for key in ["headers", "http_headers", "env_http_headers", "env", "auth"] {
+        for key in [
+            "headers",
+            "http_headers",
+            "env_http_headers",
+            "env",
+            "environment",
+            "auth",
+        ] {
             if let Some(values) = raw.get(key).and_then(Value::as_object) {
                 for (name, value) in values {
                     if let Some(value) = value.as_str() {
-                        if key == "env" {
+                        if matches!(key, "env" | "environment") {
                             service::register_environment_value(redactor, name, value);
                         } else {
                             redactor.register_secret(value);
@@ -563,6 +697,14 @@ fn register_native_secrets(redactor: &mut SecretRedactor, items: &Map<String, Va
                 }
             }
         }
+        if let Some(secret) = raw
+            .get("oauth")
+            .and_then(Value::as_object)
+            .and_then(|oauth| oauth.get("clientSecret"))
+            .and_then(Value::as_str)
+        {
+            redactor.register_secret(secret);
+        }
         service::register_detectable_extra_secrets(redactor, None, raw);
     }
 }
@@ -570,4 +712,88 @@ fn register_native_secrets(redactor: &mut SecretRedactor, items: &Map<String, Va
 fn serialize_import(value: &impl Serialize) -> Result<String, AppError> {
     serde_json::to_string(value)
         .map_err(|_| AppError::invalid_input("importPreview", "导入预览无法序列化"))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Map, Value};
+
+    use super::{parse_native_item, register_native_secrets, Status};
+    use crate::{
+        domain::{McpTransport, Tool},
+        security::SecretRedactor,
+    };
+
+    #[test]
+    fn opencode_mcp_import_validates_and_preserves_official_extra_fields() {
+        let raw = json!({
+            "type": "local",
+            "command": ["bun", "run", "server"],
+            "environment": {"FIXTURE_MODE": "1"},
+            "cwd": "./mcp",
+            "timeout": 5000,
+            "oauth": {
+                "clientId": "fixture-client",
+                "clientSecret": "fixture-secret",
+                "scope": "mcp:read"
+            },
+            "enabled": true
+        });
+        let parsed = parse_native_item(Tool::Opencode, "fixture", &raw).unwrap();
+        assert_eq!(parsed.transport, McpTransport::Stdio);
+        assert_eq!(parsed.command.as_deref(), Some("bun"));
+        assert_eq!(parsed.args, ["run", "server"]);
+        assert_eq!(parsed.env["FIXTURE_MODE"], "1");
+        assert_eq!(parsed.extra["timeout"], 5000);
+        assert_eq!(parsed.extra["oauth"]["clientSecret"], "fixture-secret");
+    }
+
+    #[test]
+    fn opencode_mcp_import_rejects_invalid_extra_types_and_mixed_transports() {
+        for (field, value) in [
+            ("timeout", json!("5000")),
+            ("cwd", json!(false)),
+            ("oauth", json!(true)),
+        ] {
+            let mut raw = json!({
+                "type": "remote",
+                "url": "https://mcp.example.test/rpc",
+                "enabled": true
+            });
+            raw.as_object_mut().unwrap().insert(field.to_owned(), value);
+            let error = parse_native_item(Tool::Opencode, "fixture", &raw).unwrap_err();
+            assert_eq!(error.0, Status::Invalid);
+        }
+
+        let mixed = json!({
+            "type": "local",
+            "command": ["bun", "run", "server"],
+            "url": "https://mcp.example.test/rpc"
+        });
+        assert_eq!(
+            parse_native_item(Tool::Opencode, "fixture", &mixed)
+                .unwrap_err()
+                .0,
+            Status::Invalid
+        );
+    }
+
+    #[test]
+    fn opencode_environment_and_oauth_secrets_are_redacted_before_preview() {
+        let raw = json!({
+            "type": "remote",
+            "url": "https://mcp.example.test/rpc",
+            "environment": {"API_KEY": "fixture-environment-secret"},
+            "oauth": {"clientSecret": "fixture-oauth-secret"}
+        });
+        let mut items = Map::new();
+        items.insert("fixture".to_owned(), raw);
+        let mut redactor = SecretRedactor::default();
+        register_native_secrets(&mut redactor, &items);
+        let redacted = redactor
+            .redact_structure(&Value::Object(items))
+            .into_value();
+        assert_eq!(redacted["fixture"]["environment"]["API_KEY"], "[REDACTED]");
+        assert_eq!(redacted["fixture"]["oauth"]["clientSecret"], "[REDACTED]");
+    }
 }

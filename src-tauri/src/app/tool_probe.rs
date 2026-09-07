@@ -1,4 +1,4 @@
-//! Release 启动边界的只读 Claude/Codex/Cursor/ZCode 安装与 Claude 策略探针。
+//! Release 启动边界的只读 Claude/Codex/Cursor/ZCode/OpenCode 安装与 Claude 策略探针。
 
 use std::{
     ffi::{CString, OsStr, OsString},
@@ -42,6 +42,10 @@ pub struct ReleaseToolProbeInput {
     home: PathBuf,
     claude_config_dir: Option<PathBuf>,
     codex_home: Option<PathBuf>,
+    opencode_config_dir: Option<PathBuf>,
+    opencode_config_path: Option<PathBuf>,
+    opencode_config_content: Option<String>,
+    opencode_disabled: bool,
     search_path: OsString,
     timeout: Duration,
     claude_managed_settings_path: PathBuf,
@@ -70,6 +74,10 @@ impl ReleaseToolProbeInput {
             home,
             claude_config_dir,
             codex_home,
+            opencode_config_dir: None,
+            opencode_config_path: None,
+            opencode_config_content: None,
+            opencode_disabled: false,
             search_path,
             timeout: DEFAULT_TOOL_PROBE_TIMEOUT,
             claude_managed_settings_path: PathBuf::from(CLAUDE_MANAGED_SETTINGS_PATH),
@@ -77,6 +85,26 @@ impl ReleaseToolProbeInput {
             cursor_app_paths,
             zcode_app_paths,
         }
+    }
+
+    pub fn with_opencode_config_dir(mut self, path: Option<PathBuf>) -> Self {
+        self.opencode_config_dir = path;
+        self
+    }
+
+    pub fn with_opencode_config_path(mut self, path: Option<PathBuf>) -> Self {
+        self.opencode_config_path = path;
+        self
+    }
+
+    pub fn with_opencode_config_content(mut self, content: Option<String>) -> Self {
+        self.opencode_config_content = content;
+        self
+    }
+
+    pub fn with_opencode_disabled(mut self, disabled: bool) -> Self {
+        self.opencode_disabled = disabled;
+        self
     }
 }
 
@@ -116,6 +144,7 @@ pub struct ReleaseToolProbeResult {
     pub codex: ToolProbeOutcome,
     pub cursor: ToolProbeOutcome,
     pub zcode: ToolProbeOutcome,
+    pub opencode: ToolProbeOutcome,
 }
 
 pub fn probe_release_environment(
@@ -131,11 +160,13 @@ pub fn probe_release_environment(
     let codex = probe_tool(ToolBinary::Codex, &path_environment, input);
     let cursor = probe_cursor(&path_environment, input);
     let zcode = probe_zcode(&path_environment, input);
+    let opencode = probe_tool(ToolBinary::Opencode, &path_environment, input);
     let availability = ToolAvailability {
         claude: claude.state,
         codex: codex.state,
         cursor: cursor.state,
         zcode: zcode.state,
+        opencode: opencode.state,
     };
     let mut environment = ExplicitEnvironment::new(
         path_environment.home(),
@@ -143,6 +174,15 @@ pub fn probe_release_environment(
         Some(path_environment.codex_home().to_path_buf()),
         availability,
     )?;
+    if let Some(path) = input.opencode_config_dir.as_ref() {
+        environment = environment.with_opencode_config_dir(path)?;
+    }
+    if let Some(path) = input.opencode_config_path.as_ref() {
+        environment = environment.with_opencode_config_path(path)?;
+    }
+    environment = environment
+        .with_opencode_config_content(input.opencode_config_content.clone())
+        .with_opencode_disabled(input.opencode_disabled);
 
     if let Some(version) = claude.version.as_deref() {
         environment = environment.with_claude_installation_version(version)?;
@@ -172,6 +212,9 @@ pub fn probe_release_environment(
     if let Some(version) = zcode.version.as_deref() {
         environment = environment.with_zcode_installation_version(version)?;
     }
+    if let Some(version) = opencode.version.as_deref() {
+        environment = environment.with_opencode_installation_version(version)?;
+    }
 
     Ok(ReleaseToolProbeResult {
         environment,
@@ -179,6 +222,7 @@ pub fn probe_release_environment(
         codex,
         cursor,
         zcode,
+        opencode,
     })
 }
 
@@ -187,6 +231,7 @@ enum ToolBinary {
     Claude,
     Codex,
     CursorAgent,
+    Opencode,
 }
 
 impl ToolBinary {
@@ -195,6 +240,7 @@ impl ToolBinary {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::CursorAgent => "agent",
+            Self::Opencode => "opencode",
         }
     }
 
@@ -218,9 +264,10 @@ impl ToolBinary {
                 .or_else(|| output.strip_prefix("cursor-agent "))
                 .or_else(|| output.strip_prefix("agent "))
                 .unwrap_or(output),
+            Self::Opencode => output.strip_prefix("opencode ").unwrap_or(output),
         };
         match self {
-            Self::Claude | Self::Codex => valid_semantic_version(version),
+            Self::Claude | Self::Codex | Self::Opencode => valid_semantic_version(version),
             Self::CursorAgent => valid_cursor_version(version),
         }
         .then(|| version.to_owned())
@@ -921,6 +968,10 @@ mod tests {
                 home: self.home.clone(),
                 claude_config_dir: Some(self.claude_root.clone()),
                 codex_home: Some(self.codex_root.clone()),
+                opencode_config_dir: None,
+                opencode_config_path: None,
+                opencode_config_content: None,
+                opencode_disabled: false,
                 search_path: self.bin.clone().into_os_string(),
                 timeout: Duration::from_secs(3),
                 claude_managed_settings_path: self.policy.clone(),

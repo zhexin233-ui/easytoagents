@@ -5,9 +5,9 @@ use rusqlite::OptionalExtension;
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, zcode::ZcodeAdapter, ClaudeCustomizationPolicyProbe,
-        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor,
-        TargetTrustState, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
+        cursor::CursorAdapter, opencode::OpencodeAdapter, zcode::ZcodeAdapter,
+        ClaudeCustomizationPolicyProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
+        PolicyState, TargetDescriptor, TargetTrustState, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
     },
     db::{
         hooks as hook_repository, mcp as mcp_repository, projects as repository,
@@ -334,10 +334,12 @@ fn observe_project(
     let codex_targets = CodexAdapter.discover(&context)?;
     let cursor_targets = CursorAdapter.discover(&context)?;
     let zcode_targets = ZcodeAdapter.discover(&context)?;
+    let opencode_targets = OpencodeAdapter.discover(&context)?;
     let claude_project_targets = project_targets(claude_targets);
     let codex_project_targets = project_targets(codex_targets);
     let cursor_project_targets = project_targets(cursor_targets);
     let zcode_project_targets = project_targets(zcode_targets);
+    let opencode_project_targets = project_targets(opencode_targets);
     let claude_policy_status = claude_project_targets
         .iter()
         .map(|target| target.policy)
@@ -357,6 +359,7 @@ fn observe_project(
         .chain(codex_project_targets)
         .chain(cursor_project_targets)
         .chain(zcode_project_targets)
+        .chain(opencode_project_targets)
         .map(|descriptor| target_status(database, project_root.as_str(), descriptor))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ProjectObservation {
@@ -704,6 +707,7 @@ fn native_mcp_container(tool: Tool) -> &'static [&'static str] {
         Tool::Codex => &["mcp_servers"],
         Tool::Cursor => &["mcpServers"],
         Tool::Zcode => &["mcp", "servers"],
+        Tool::Opencode => &["mcp"],
     }
 }
 
@@ -761,6 +765,7 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
         Tool::Codex => &CodexAdapter,
         Tool::Cursor => &CursorAdapter,
         Tool::Zcode => &ZcodeAdapter,
+        Tool::Opencode => &OpencodeAdapter,
     }
 }
 

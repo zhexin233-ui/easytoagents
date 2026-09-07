@@ -17,9 +17,9 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, zcode::ZcodeAdapter, DirectoryEntry, DiscoveryContext,
-        ExplicitEnvironment, ManagedOwnership, ObservedDocument, PolicyState, TargetDescriptor,
-        TargetFormat, TargetTrustState, ToolAdapter,
+        cursor::CursorAdapter, opencode::OpencodeAdapter, zcode::ZcodeAdapter, DirectoryEntry,
+        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, ObservedDocument, PolicyState,
+        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -969,6 +969,7 @@ fn parse_tool(value: &str) -> Result<Tool, AppError> {
         "codex" => Ok(Tool::Codex),
         "cursor" => Ok(Tool::Cursor),
         "zcode" => Ok(Tool::Zcode),
+        "opencode" => Ok(Tool::Opencode),
         _ => Err(AppError::invalid_input("tool", "工具类型无效")),
     }
 }
@@ -1011,6 +1012,12 @@ fn parse_config_value(format: TargetFormat, bytes: &[u8]) -> Result<Value, AppEr
         TargetFormat::Json => {
             serde_json::from_slice(bytes).map_err(|_| AppError::parse("snapshot", format.as_str()))
         }
+        TargetFormat::Jsonc => {
+            let text = std::str::from_utf8(bytes)
+                .map_err(|_| AppError::parse("snapshot", format.as_str()))?;
+            crate::adapters::parse_jsonc(text)
+                .map_err(|_| AppError::parse("snapshot", format.as_str()))
+        }
         TargetFormat::Toml => {
             let text = std::str::from_utf8(bytes)
                 .map_err(|_| AppError::parse("snapshot", format.as_str()))?;
@@ -1043,6 +1050,7 @@ fn native_mcp_container(tool: Tool) -> &'static [&'static str] {
         Tool::Claude | Tool::Cursor => &["mcpServers"],
         Tool::Codex => &["mcp_servers"],
         Tool::Zcode => &["mcp", "servers"],
+        Tool::Opencode => &["mcp"],
     }
 }
 
@@ -1060,11 +1068,18 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
         Tool::Codex => &CodexAdapter,
         Tool::Cursor => &CursorAdapter,
         Tool::Zcode => &ZcodeAdapter,
+        Tool::Opencode => &OpencodeAdapter,
     }
 }
 
-fn tool_adapters() -> [&'static dyn ToolAdapter; 4] {
-    [&ClaudeAdapter, &CodexAdapter, &CursorAdapter, &ZcodeAdapter]
+fn tool_adapters() -> [&'static dyn ToolAdapter; 5] {
+    [
+        &ClaudeAdapter,
+        &CodexAdapter,
+        &CursorAdapter,
+        &ZcodeAdapter,
+        &OpencodeAdapter,
+    ]
 }
 
 #[cfg(test)]
@@ -1996,6 +2011,7 @@ mod tests {
                 Tool::Cursor => ".cursor/skills",
                 Tool::Claude => unreachable!(),
                 Tool::Zcode => unreachable!(),
+                Tool::Opencode => unreachable!(),
             };
             let project = fixture.register_project_with(|root| {
                 write_skill(&root.join(relative), "native-dir", "platform-bytes");

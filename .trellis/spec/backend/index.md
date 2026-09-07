@@ -22,6 +22,7 @@ of a general-purpose logging pipeline.
 | [Quality Guidelines](./quality-guidelines.md) | Explicit discovery, preview, native-resource disable/restore, and integration safety | Current |
 | [Native MCP Import](./mcp-import-guidelines.md) | Explicit selection, format compatibility, credential classification and atomic adoption | Current |
 | [全局 Skills 导入](./skill-import-guidelines.md) | 显式来源、入口链接、内置排除、批量复制与首次状态合同 | Current |
+| [OpenCode Adapter](./opencode-adapter-guidelines.md) | Explicit JSON/JSONC boundaries, Provider/MCP/Skills contracts, and unsupported Hooks | Current |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Current |
 
 ---

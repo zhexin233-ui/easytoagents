@@ -20,9 +20,9 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, zcode::ZcodeAdapter, ClaudeCustomizationPolicyProbe,
-        ClaudeUserMcpCapabilityProbe, DiscoveryContext, ManagedOwnership, PolicyState,
-        TargetDescriptor, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
+        cursor::CursorAdapter, opencode::OpencodeAdapter, zcode::ZcodeAdapter,
+        ClaudeCustomizationPolicyProbe, ClaudeUserMcpCapabilityProbe, DiscoveryContext,
+        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -694,6 +694,7 @@ fn prepare_mcp_sync(
             Tool::Codex => environment.codex_home().to_path_buf(),
             Tool::Cursor => environment.home().join(".cursor"),
             Tool::Zcode => environment.home().join(".zcode"),
+            Tool::Opencode => environment.opencode_config_file_root(),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -770,11 +771,13 @@ pub(super) fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
     static ZCODE: ZcodeAdapter = ZcodeAdapter;
+    static OPENCODE: OpencodeAdapter = OpencodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
         Tool::Zcode => &ZCODE,
+        Tool::Opencode => &OPENCODE,
     }
 }
 
@@ -785,6 +788,7 @@ pub(super) fn native_container(tool: Tool) -> &'static [&'static str] {
         Tool::Codex => &["mcp_servers"],
         Tool::Cursor => &["mcpServers"],
         Tool::Zcode => &["mcp", "servers"],
+        Tool::Opencode => &["mcp"],
     }
 }
 
@@ -890,6 +894,35 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
                 );
             }
             object.insert("enabled".to_owned(), Value::Bool(true));
+        }
+        (Tool::Opencode, McpTransport::Stdio) => {
+            object.insert("type".to_owned(), Value::String("local".to_owned()));
+            let mut command = vec![Value::String(
+                value.command.clone().expect("stdio command 已验证"),
+            )];
+            command.extend(value.args.iter().cloned().map(Value::String));
+            object.insert("command".to_owned(), Value::Array(command));
+            if !value.env.is_empty() {
+                object.insert(
+                    "environment".to_owned(),
+                    serde_json::to_value(&value.env).unwrap(),
+                );
+            }
+            object.insert("enabled".to_owned(), Value::Bool(value.enabled));
+        }
+        (Tool::Opencode, McpTransport::StreamableHttp) => {
+            object.insert("type".to_owned(), Value::String("remote".to_owned()));
+            object.insert(
+                "url".to_owned(),
+                Value::String(value.url.clone().expect("HTTP URL 已验证")),
+            );
+            if !value.headers.is_empty() {
+                object.insert(
+                    "headers".to_owned(),
+                    serde_json::to_value(&value.headers).unwrap(),
+                );
+            }
+            object.insert("enabled".to_owned(), Value::Bool(value.enabled));
         }
     }
     Ok(Value::Object(object))
@@ -1186,7 +1219,10 @@ pub(super) fn configuration_from_record(
 pub(crate) fn register_native_projection_secrets(redactor: &mut SecretRedactor, value: &Value) {
     match value {
         Value::Object(object) => {
-            if let Some(Value::Object(env)) = object.get("env") {
+            for env_key in ["env", "environment"] {
+                let Some(Value::Object(env)) = object.get(env_key) else {
+                    continue;
+                };
                 for (key, value) in env {
                     if let Some(text) = value.as_str() {
                         register_environment_value(redactor, key, text);
@@ -2387,6 +2423,7 @@ enabled = true
             Tool::Codex => fixture.home.join(".codex/config.toml"),
             Tool::Cursor => fixture.home.join(".cursor/mcp.json"),
             Tool::Zcode => fixture.home.join(".zcode/cli/config.json"),
+            Tool::Opencode => fixture.home.join(".config/opencode/opencode.json"),
         };
         let mut document =
             super::native_container(tool)
@@ -2405,6 +2442,7 @@ enabled = true
             Tool::Codex => toml_edit::ser::to_string(&document).unwrap(),
             Tool::Cursor => serde_json::to_string_pretty(&document).unwrap(),
             Tool::Zcode => serde_json::to_string_pretty(&document).unwrap(),
+            Tool::Opencode => serde_json::to_string_pretty(&document).unwrap(),
         };
         fs::write(&path, text).unwrap();
         path
@@ -2568,6 +2606,7 @@ enabled = true
                 Tool::Codex => toml_edit::de::from_str(&contents).unwrap(),
                 Tool::Cursor => serde_json::from_str(&contents).unwrap(),
                 Tool::Zcode => serde_json::from_str(&contents).unwrap(),
+                Tool::Opencode => serde_json::from_str(&contents).unwrap(),
             };
             assert_eq!(
                 super::service_projection_get(&after, super::native_container(tool))["disabled"],

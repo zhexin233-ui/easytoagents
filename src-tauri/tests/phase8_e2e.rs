@@ -326,6 +326,7 @@ unknown = "preserve"
                 Tool::Codex => self.codex_home.clone(),
                 Tool::Cursor => self.cursor_home.clone(),
                 Tool::Zcode => self.home.join(".zcode"),
+                Tool::Opencode => self.environment.opencode_config_dir().to_path_buf(),
             }
         };
         self.restore_case(&result.run_id, &target_path, allowed_root)
@@ -384,6 +385,7 @@ unknown = "preserve"
                 Tool::Codex => self.codex_home.clone(),
                 Tool::Cursor => self.cursor_home.clone(),
                 Tool::Zcode => self.home.join(".zcode"),
+                Tool::Opencode => self.environment.opencode_config_dir().to_path_buf(),
             }
         };
         self.restore_case(

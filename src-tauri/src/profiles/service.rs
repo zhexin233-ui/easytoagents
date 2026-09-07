@@ -22,9 +22,9 @@ use super::models::{
 };
 use crate::{
     adapters::{
-        claude::ClaudeAdapter, codex::CodexAdapter, cursor::CursorAdapter, zcode::ZcodeAdapter,
-        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, PolicyState, TargetDescriptor,
-        ToolAdapter,
+        claude::ClaudeAdapter, codex::CodexAdapter, cursor::CursorAdapter,
+        opencode::OpencodeAdapter, zcode::ZcodeAdapter, DiscoveryContext, ExplicitEnvironment,
+        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter,
     },
     app::AppPaths,
     db::{
@@ -122,6 +122,9 @@ pub fn update_provider_profile(
             AppError::invalid_input("providerOptions", "ZCode Provider 缺少稳定 provider id")
         })?,
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
+        Tool::Opencode => current_config.provider_id.clone().ok_or_else(|| {
+            AppError::invalid_input("providerOptions", "OpenCode Provider 缺少稳定 provider id")
+        })?,
     };
     let allow_missing_api_key =
         codex_provider_allows_missing_api_key(current.tool, current_config.provider_id.as_deref());
@@ -192,6 +195,8 @@ pub fn copy_provider_profile(
             extra_env: BTreeMap::new(),
             wire_api: None,
             zcode_kind: None,
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Codex => ProviderOptionsInput::default(),
         Tool::Zcode => ProviderOptionsInput {
@@ -199,8 +204,15 @@ pub fn copy_provider_profile(
             extra_env: BTreeMap::new(),
             wire_api: None,
             zcode_kind: Some("anthropic".to_owned()),
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
+        Tool::Opencode => ProviderOptionsInput {
+            opencode_npm: Some("@ai-sdk/openai-compatible".to_owned()),
+            opencode_api: Some("openai".to_owned()),
+            ..ProviderOptionsInput::default()
+        },
     };
     let config = StoredProviderConfig::from_input(
         input.target_tool,
@@ -275,6 +287,7 @@ pub fn create_prompt_profile(
             is_active_codex: false,
             is_active_zcode: false,
             is_active_cursor: false,
+            is_active_opencode: false,
             imported_from_path: None,
         },
     )?)
@@ -446,12 +459,16 @@ pub fn confirm_provider_import(
             extra_env: discovered.extra_env,
             wire_api: None,
             zcode_kind: None,
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Codex => ProviderOptionsInput {
             credential_env_key: None,
             extra_env: BTreeMap::new(),
             wire_api: discovered.wire_api,
             zcode_kind: None,
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Zcode => ProviderOptionsInput {
             credential_env_key: None,
@@ -463,8 +480,15 @@ pub fn confirm_provider_import(
                     .clone()
                     .unwrap_or_else(|| "anthropic".to_owned()),
             ),
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
+        Tool::Opencode => ProviderOptionsInput {
+            opencode_npm: discovered.opencode_npm.clone(),
+            opencode_api: discovered.opencode_api.clone(),
+            ..ProviderOptionsInput::default()
+        },
     };
     let config = StoredProviderConfig::from_input(
         preview.tool,
@@ -607,6 +631,7 @@ pub fn confirm_prompt_import(
             is_active_codex: preview.tool == Tool::Codex,
             is_active_zcode: preview.tool == Tool::Zcode,
             is_active_cursor: preview.tool == Tool::Cursor,
+            is_active_opencode: preview.tool == Tool::Opencode,
             imported_from_path: Some(preview.target_path.clone()),
         },
         &ImportedBaselineRecord {
@@ -743,7 +768,7 @@ fn prepare_provider_sync(
         .into_iter()
         .collect();
     Ok(PreparedProfileSync {
-        allowed_root: allowed_root(environment, tool),
+        allowed_root: allowed_root(environment, tool, ArtifactKind::Provider),
         descriptor,
         ownership,
         baseline: target.baseline,
@@ -789,7 +814,7 @@ fn prepare_prompt_sync(
         &ManagedOwnership::WholeDocument,
     );
     Ok(PreparedProfileSync {
-        allowed_root: allowed_root(environment, tool),
+        allowed_root: allowed_root(environment, tool, ArtifactKind::Prompt),
         git: None,
         descriptor,
         ownership: ManagedOwnership::WholeDocument,
@@ -918,6 +943,8 @@ struct DiscoveredProvider {
     provider_id: Option<String>,
     wire_api: Option<String>,
     zcode_kind: Option<String>,
+    opencode_npm: Option<String>,
+    opencode_api: Option<String>,
     extra_provider_fields: BTreeMap<String, Value>,
     suggested_name: Option<String>,
 }
@@ -932,20 +959,31 @@ fn validate_discovered_provider_config(
             extra_env: discovered.extra_env.clone(),
             wire_api: None,
             zcode_kind: None,
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Codex => ProviderOptionsInput {
             credential_env_key: None,
             extra_env: BTreeMap::new(),
             wire_api: discovered.wire_api.clone(),
             zcode_kind: None,
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Zcode => ProviderOptionsInput {
             credential_env_key: None,
             extra_env: BTreeMap::new(),
             wire_api: None,
             zcode_kind: discovered.zcode_kind.clone(),
+            opencode_npm: None,
+            opencode_api: None,
         },
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
+        Tool::Opencode => ProviderOptionsInput {
+            opencode_npm: discovered.opencode_npm.clone(),
+            opencode_api: discovered.opencode_api.clone(),
+            ..ProviderOptionsInput::default()
+        },
     };
     StoredProviderConfig::from_input(
         tool,
@@ -983,6 +1021,7 @@ fn discover_native_provider(
         ]),
         Tool::Zcode => ManagedOwnership::selectors([["provider"]]),
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
+        Tool::Opencode => ManagedOwnership::selectors([["model"], ["provider"]]),
     };
     let scan = scan_target(tool_adapter(tool), &descriptor, &broad_ownership);
     let observed = match scan {
@@ -991,11 +1030,7 @@ fn discover_native_provider(
         TargetScan::ParseError => {
             return Err(AppError::parse(
                 &descriptor_path(&descriptor)?,
-                match tool {
-                    Tool::Claude | Tool::Zcode => "json",
-                    Tool::Codex => "toml",
-                    Tool::Cursor => "json",
-                },
+                descriptor.format.as_str(),
             ));
         }
         _ => return Err(scan_error(&descriptor, &scan)),
@@ -1005,6 +1040,7 @@ fn discover_native_provider(
         Tool::Codex => discover_codex_provider(&descriptor, &observed),
         Tool::Zcode => discover_zcode_provider(&descriptor, &observed),
         Tool::Cursor => Err(cursor_unsupported(ArtifactKind::Provider)),
+        Tool::Opencode => discover_opencode_provider(&descriptor, &observed),
     }
 }
 
@@ -1092,12 +1128,116 @@ fn discover_zcode_provider(
         provider_id: Some(provider_id.clone()),
         wire_api: None,
         zcode_kind: Some(kind),
+        opencode_npm: None,
+        opencode_api: None,
         extra_provider_fields: BTreeMap::new(),
         suggested_name: entry
             .get("name")
             .and_then(Value::as_str)
             .map(str::to_owned)
             .or_else(|| Some(provider_id.clone())),
+    }))
+}
+
+/// OpenCode 的 provider 选择必须由顶层 `model=providerId/modelId` 明确定位。
+/// 不在多个 provider/model 中猜第一个，并且只把可由中央档案表达的字段纳入受管投影。
+fn discover_opencode_provider(
+    descriptor: &TargetDescriptor,
+    observed: &crate::sync::ObservedTarget,
+) -> Result<Option<DiscoveredProvider>, AppError> {
+    let descriptor_path = descriptor_path(descriptor)?;
+    let root = observed
+        .managed_projection
+        .as_object()
+        .ok_or_else(|| AppError::parse(&descriptor_path, "json"))?;
+    let model_ref = root
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some((provider_id, model_id)) = model_ref.split_once('/') else {
+        return Ok(None);
+    };
+    if provider_id.trim().is_empty() || model_id.trim().is_empty() {
+        return Ok(None);
+    }
+    let Some(entry) = root
+        .get("provider")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(provider_id))
+        .and_then(Value::as_object)
+    else {
+        return Ok(None);
+    };
+    let Some(npm) = entry.get("npm").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(name) = entry.get("name").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if npm.trim().is_empty() || name.trim().is_empty() {
+        return Ok(None);
+    }
+    let Some(options) = entry.get("options").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    let Some(api_base_url) = options.get("baseURL").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if api_base_url.trim().is_empty() {
+        return Ok(None);
+    }
+    let api_key = options
+        .get("apiKey")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut managed_entry = Map::new();
+    for key in ["npm", "name"] {
+        if let Some(value) = entry.get(key) {
+            managed_entry.insert(key.to_owned(), value.clone());
+        }
+    }
+    let mut managed_options = Map::new();
+    for key in ["baseURL", "apiKey"] {
+        if let Some(value) = options.get(key) {
+            managed_options.insert(key.to_owned(), value.clone());
+        }
+    }
+    managed_entry.insert("options".to_owned(), Value::Object(managed_options));
+    if let Some(models) = entry.get("models").and_then(Value::as_object) {
+        if let Some(model) = models.get(model_id) {
+            managed_entry.insert(
+                "models".to_owned(),
+                Value::Object(Map::from_iter([(model_id.to_owned(), model.clone())])),
+            );
+        }
+    }
+    Ok(Some(DiscoveredProvider {
+        target_path: descriptor_path.clone(),
+        full_hash: observed.full_hash.clone(),
+        projection: json!({
+            "model": model_ref,
+            "provider": { provider_id: Value::Object(managed_entry) },
+        }),
+        api_base_url: api_base_url.to_owned(),
+        api_key,
+        default_model: model_id.to_owned(),
+        credential_env_key: ClaudeCredentialEnvKey::ApiKey,
+        extra_env: BTreeMap::new(),
+        provider_id: Some(provider_id.to_owned()),
+        wire_api: None,
+        zcode_kind: None,
+        opencode_npm: Some(npm.to_owned()),
+        opencode_api: Some(if npm == "@ai-sdk/openai" {
+            "openai".to_owned()
+        } else {
+            "openai-compatible".to_owned()
+        }),
+        extra_provider_fields: entry
+            .iter()
+            .filter(|(key, _)| !matches!(key.as_str(), "npm" | "name" | "options"))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        suggested_name: Some(name.to_owned()),
     }))
 }
 
@@ -1112,6 +1252,11 @@ fn ensure_tool_is_available(descriptor: &TargetDescriptor) -> Result<(), AppErro
             "capability",
             match descriptor.capability.diagnostic_code.as_deref() {
                 Some("CURSOR_PROVIDER_UNSUPPORTED") => "CURSOR_PROVIDER_UNSUPPORTED",
+                Some("OPENCODE_CONFIG_CONTENT_OVERRIDE") => "OPENCODE_CONFIG_CONTENT_OVERRIDE",
+                Some("OPENCODE_DISCOVERY_DISABLED") => "OPENCODE_DISCOVERY_DISABLED",
+                Some("OPENCODE_INSTALLATION_PROBE_UNSUPPORTED") => {
+                    "OPENCODE_INSTALLATION_PROBE_UNSUPPORTED"
+                }
                 _ => "工具安装探针未能安全确认版本",
             },
         )),
@@ -1193,6 +1338,8 @@ fn discover_claude_provider(
         provider_id: None,
         wire_api: None,
         zcode_kind: None,
+        opencode_npm: None,
+        opencode_api: None,
         extra_provider_fields: BTreeMap::new(),
         suggested_name: None,
     }))
@@ -1324,6 +1471,8 @@ fn discover_codex_provider(
         provider_id: Some(provider_id.to_owned()),
         wire_api,
         zcode_kind: None,
+        opencode_npm: None,
+        opencode_api: None,
         extra_provider_fields,
         suggested_name,
     }))
@@ -1355,6 +1504,8 @@ fn discover_codex_openai_provider(
         provider_id: Some(CODEX_OPENAI_PROVIDER_ID.to_owned()),
         wire_api: None,
         zcode_kind: None,
+        opencode_npm: None,
+        opencode_api: None,
         extra_provider_fields: BTreeMap::new(),
         suggested_name: Some("Codex OAuth 登录".to_owned()),
     }))
@@ -1474,6 +1625,50 @@ fn provider_projection(profile: &ProviderProfileRecord) -> Result<Value, AppErro
             });
             Ok(json!({ "provider": { provider_id: entry } }))
         }
+        Tool::Opencode => {
+            let provider_id = config.provider_id.ok_or_else(|| {
+                AppError::invalid_input("providerOptions", "OpenCode Provider 缺少稳定 provider id")
+            })?;
+            let npm = config.opencode_npm.ok_or_else(|| {
+                AppError::invalid_input("providerOptions", "OpenCode Provider 缺少 npm SDK")
+            })?;
+            let mut provider = config
+                .extra_provider_fields
+                .into_iter()
+                .collect::<Map<_, _>>();
+            provider.insert("npm".to_owned(), Value::String(npm));
+            provider.insert("name".to_owned(), Value::String(profile.name.clone()));
+            let mut options = provider
+                .remove("options")
+                .and_then(|value| value.as_object().cloned())
+                .unwrap_or_default();
+            if let Some(value) = &profile.api_base_url {
+                options.insert("baseURL".to_owned(), Value::String(value.clone()));
+            }
+            if let Some(value) = &profile.api_key {
+                options.insert("apiKey".to_owned(), Value::String(value.clone()));
+            } else {
+                options.remove("apiKey");
+            }
+            provider.insert("options".to_owned(), Value::Object(options));
+            let model_id = profile.default_model.as_deref().unwrap_or("default");
+            let mut models = provider
+                .remove("models")
+                .and_then(|value| value.as_object().cloned())
+                .unwrap_or_default();
+            models
+                .entry(model_id.to_owned())
+                .or_insert_with(|| json!({ "name": model_id }));
+            provider.insert("models".to_owned(), Value::Object(models));
+            let model_ref = format!("{provider_id}/{model_id}");
+            let mut root = Map::new();
+            root.insert("model".to_owned(), Value::String(model_ref));
+            root.insert(
+                "provider".to_owned(),
+                Value::Object(Map::from_iter([(provider_id, Value::Object(provider))])),
+            );
+            Ok(Value::Object(root))
+        }
         Tool::Cursor => Err(cursor_unsupported(ArtifactKind::Provider)),
     }
 }
@@ -1523,6 +1718,45 @@ fn provider_ownership(
                             provider_id.clone(),
                             leaf.to_owned(),
                         ]);
+                    }
+                }
+            }
+        }
+        Tool::Opencode => {
+            for projection in [baseline, Some(desired)].into_iter().flatten() {
+                if projection.get("model").is_some() {
+                    selectors.insert(vec!["model".to_owned()]);
+                }
+                let Some(providers) = projection.get("provider").and_then(Value::as_object) else {
+                    continue;
+                };
+                for (provider_id, provider) in providers {
+                    for leaf in ["npm", "name"] {
+                        selectors.insert(vec![
+                            "provider".to_owned(),
+                            provider_id.clone(),
+                            leaf.to_owned(),
+                        ]);
+                    }
+                    if provider.get("options").is_some() {
+                        for leaf in ["baseURL", "apiKey"] {
+                            selectors.insert(vec![
+                                "provider".to_owned(),
+                                provider_id.clone(),
+                                "options".to_owned(),
+                                leaf.to_owned(),
+                            ]);
+                        }
+                    }
+                    if let Some(models) = provider.get("models").and_then(Value::as_object) {
+                        for model_id in models.keys() {
+                            selectors.insert(vec![
+                                "provider".to_owned(),
+                                provider_id.clone(),
+                                "models".to_owned(),
+                                model_id.clone(),
+                            ]);
+                        }
                     }
                 }
             }
@@ -1597,20 +1831,30 @@ fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
     static ZCODE: ZcodeAdapter = ZcodeAdapter;
+    static OPENCODE: OpencodeAdapter = OpencodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
         Tool::Zcode => &ZCODE,
+        Tool::Opencode => &OPENCODE,
     }
 }
 
-fn allowed_root(environment: &ExplicitEnvironment, tool: Tool) -> PathBuf {
+fn allowed_root(
+    environment: &ExplicitEnvironment,
+    tool: Tool,
+    artifact_kind: ArtifactKind,
+) -> PathBuf {
     match tool {
         Tool::Claude => environment.claude_config_dir().to_owned(),
         Tool::Codex => environment.codex_home().to_owned(),
         Tool::Cursor => environment.home().join(".cursor"),
         Tool::Zcode => environment.home().join(".zcode"),
+        Tool::Opencode if matches!(artifact_kind, ArtifactKind::Provider | ArtifactKind::Mcp) => {
+            environment.opencode_config_file_root()
+        }
+        Tool::Opencode => environment.opencode_config_dir().to_owned(),
     }
 }
 
@@ -1691,6 +1935,9 @@ fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError
     }
     if record.is_active_cursor {
         global_tools.push(Tool::Cursor);
+    }
+    if record.is_active_opencode {
+        global_tools.push(Tool::Opencode);
     }
     Ok(PromptProfileDto {
         id: record.id.clone(),
@@ -2112,6 +2359,8 @@ mod tests {
                     .collect(),
                     wire_api: None,
                     zcode_kind: None,
+                    opencode_npm: None,
+                    opencode_api: None,
                 },
                 ..provider(Tool::Claude, "第一档", "fixture-first-secret", true)
             },
@@ -2658,6 +2907,7 @@ base_url = "https://external.example.com/v1"
                 codex: ToolAvailabilityState::Unsupported,
                 cursor: ToolAvailabilityState::Unavailable,
                 zcode: ToolAvailabilityState::Unavailable,
+                opencode: ToolAvailabilityState::Unavailable,
             },
         )
         .unwrap()

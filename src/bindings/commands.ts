@@ -820,8 +820,14 @@ export type PromptOverrideState = "not_applicable" | "not_present" | "present" |
 export type PromptProfileDto = { id: string; name: string; body: string; globalTools: Tool[]; importedFromPath: string | null; rowVersion: number }
 export type PromptProfileInput = { name: string; body: string }
 export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue }
-export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null }
-export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null; zcodeKind: string | null }
+export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null; opencodeNpm: string | null; opencodeApi: string | null }
+export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null; zcodeKind: string | null;
+/**
+ * OpenCode provider SDK package (for example
+ * `@ai-sdk/openai-compatible`). Stored as metadata; the app never
+ * installs or executes the package.
+ */
+opencodeNpm: string | null; opencodeApi: string | null }
 export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
 export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
 export type ReadoptHookTargetInput = { tool: Tool; projectId: string | null }
@@ -865,7 +871,7 @@ export type SkillImportCandidateStatus = "importable" | "already_imported" | "na
 export type SkillImportPreviewDto = { previewId: string | null; tool: Tool; sources: SkillImportSourceDto[]; candidates: SkillImportCandidateDto[]; message: string | null }
 export type SkillImportResultDto = { tool: Tool; createdCount: number }
 export type SkillImportSourceDto = { kind: SkillImportSourceKind; path: string; status: SkillImportSourceStatus; diagnosticCode: string | null; message: string | null }
-export type SkillImportSourceKind = "claude_global" | "codex_home" | "codex_agents" | "cursor_home" | "cursor_agents" | "zcode_home" | "zcode_agents"
+export type SkillImportSourceKind = "claude_global" | "codex_home" | "codex_agents" | "cursor_home" | "cursor_agents" | "zcode_home" | "zcode_agents" | "opencode_global"
 export type SkillImportSourceStatus = "ready" | "missing" | "empty" | "unavailable"
 export type SkillProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
 export type SkillProjectOptionDto = { skillId: string; name: string; status: SkillStatus; state: SkillProjectSelectionState; selectable: boolean; rowVersion: number }
@@ -891,7 +897,13 @@ export type TargetCapability = { state: CapabilityState; diagnosticCode: string 
  * Adapter 对一个原生目标的完整只读合同。
  */
 export type TargetDescriptor = { tool: Tool; artifactKind: ArtifactKind; scope: Scope; projectRoot: string | null; path: string | null; format: TargetFormat; managedSelectorRoots: string[]; sensitiveSelectors: string[]; capability: TargetCapability; policy: PolicyState; trust: TargetTrustState; promptOverride: PromptOverrideState; symlinkPolicy: SymlinkPolicy }
-export type TargetFormat = "json" | "toml" | "markdown" |
+export type TargetFormat = "json" |
+/**
+ * OpenCode's JSON with comments/trailing commas. The parser keeps the
+ * original source so managed top-level replacements do not discard
+ * unrelated comments and keys.
+ */
+"jsonc" | "toml" | "markdown" |
 /**
  * Cursor 规则文件（`.cursor/rules/*.mdc`）：Markdown + 固定
  * `alwaysApply: true` frontmatter。渲染时包装、观测时剥离，
@@ -903,7 +915,7 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
 /**
  * 正式支持的原生工具。
  */
-export type Tool = "claude" | "codex" | "cursor" | "zcode"
+export type Tool = "claude" | "codex" | "cursor" | "zcode" | "opencode"
 export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"

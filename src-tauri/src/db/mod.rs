@@ -116,6 +116,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "remove_project_prompts",
         sql: include_str!("migrations/0018_remove_project_prompts.sql"),
     },
+    Migration {
+        version: 19,
+        name: "opencode_tool_support",
+        sql: include_str!("migrations/0019_opencode_tool_support.sql"),
+    },
 ];
 
 pub(crate) struct Migration {
@@ -389,6 +394,117 @@ fn validate_migration_preconditions(
             ));
         }
     }
+    if migration.version == 19 {
+        let anchors = [
+            (
+                "mcp_global_assignments",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode'))",
+            ),
+            (
+                "skill_global_assignments",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode'))",
+            ),
+            (
+                "mcp_project_assignments",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode'))",
+            ),
+            (
+                "skill_project_assignments",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode'))",
+            ),
+            (
+                "mcp_import_previews",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode'))",
+            ),
+            (
+                "skill_import_previews",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode'))",
+            ),
+            (
+                "managed_targets",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode') AND (tool != 'cursor' OR artifact_kind IN ('mcp', 'skill', 'hook', 'prompt'))),",
+            ),
+            (
+                "profile_import_previews",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'zcode', 'cursor') AND (tool != 'cursor' OR artifact_kind = 'prompt')),",
+            ),
+            (
+                "provider_profiles",
+                "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'zcode'))",
+            ),
+        ];
+        for (table, anchor) in anchors {
+            let matched: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = ?1 AND sql IS NOT NULL
+                       AND instr(sql, ?2) > 0",
+                    params![table, anchor],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            if matched != 1 {
+                return Err(AppError::migration(
+                    &path.to_string_lossy(),
+                    migration.version,
+                ));
+            }
+        }
+
+        const SHARED_TOOL_ANCHOR: &str =
+            "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode'))";
+        const MANAGED_TARGET_ANCHOR: &str = "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'cursor', 'zcode') AND (tool != 'cursor' OR artifact_kind IN ('mcp', 'skill', 'hook', 'prompt'))),";
+        const PROFILE_IMPORT_ANCHOR: &str = "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'zcode', 'cursor') AND (tool != 'cursor' OR artifact_kind = 'prompt')),";
+        const PROVIDER_ANCHOR: &str =
+            "tool TEXT NOT NULL CHECK(tool IN ('claude', 'codex', 'zcode'))";
+
+        for table in [
+            "mcp_global_assignments",
+            "skill_global_assignments",
+            "mcp_project_assignments",
+            "skill_project_assignments",
+            "mcp_import_previews",
+            "skill_import_previews",
+        ] {
+            let matched: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = ?1 AND sql IS NOT NULL
+                       AND (length(sql) - length(replace(sql, ?2, ''))) = length(?2)",
+                    params![table, SHARED_TOOL_ANCHOR],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            if matched != 1 {
+                return Err(AppError::migration(
+                    &path.to_string_lossy(),
+                    migration.version,
+                ));
+            }
+        }
+
+        for (table, anchor) in [
+            ("managed_targets", MANAGED_TARGET_ANCHOR),
+            ("profile_import_previews", PROFILE_IMPORT_ANCHOR),
+            ("provider_profiles", PROVIDER_ANCHOR),
+        ] {
+            let matched: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = ?1 AND sql IS NOT NULL
+                       AND (length(sql) - length(replace(sql, ?2, ''))) = length(?2)",
+                    params![table, anchor],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            if matched != 1 {
+                return Err(AppError::migration(
+                    &path.to_string_lossy(),
+                    migration.version,
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -631,7 +747,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 18);
+        assert_eq!(database.schema_version().unwrap(), 19);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1169,7 +1285,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1204,7 +1320,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1259,7 +1375,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 18);
+        assert_eq!(database.schema_version().unwrap(), 19);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1501,7 +1617,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 18);
+        assert_eq!(database.schema_version().unwrap(), 19);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1649,7 +1765,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 18);
+        assert_eq!(reopened.schema_version().unwrap(), 19);
         assert_eq!(
             reopened
                 .connection()
@@ -1709,7 +1825,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1774,7 +1890,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1862,7 +1978,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2016,7 +2132,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2133,7 +2249,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2181,6 +2297,104 @@ mod tests {
     }
 
     #[test]
+    fn opencode_tool_support_migration_opens_only_supported_artifacts() {
+        const MCP_ID: &str = "00000000-0000-4000-8000-000000000271";
+        const SKILL_ID: &str = "00000000-0000-4000-8000-000000000272";
+        const PROMPT_ID: &str = "00000000-0000-4000-8000-000000000273";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v18-opencode-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..18] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_mcp(&connection, MCP_ID, "OpenCode MCP");
+            insert_skill(&connection, SKILL_ID, "opencode-skill");
+        }
+
+        let database = Database::open(&paths).unwrap();
+        assert_eq!(database.schema_version().unwrap(), 19);
+        let connection = database.connection();
+        connection
+            .execute(
+                "INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000274', 'opencode', 'OpenCode')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO prompt_profiles(id, tool, name, body, is_active_opencode) VALUES (?1, 'central', 'OpenCode Prompt', '', 1)",
+                [PROMPT_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO mcp_global_assignments(tool, mcp_id) VALUES ('opencode', ?1)",
+                [MCP_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO skill_global_assignments(tool, skill_id) VALUES ('opencode', ?1)",
+                [SKILL_ID],
+            )
+            .unwrap();
+        for (artifact_kind, target_id, suffix) in [
+            (
+                "provider",
+                "00000000-0000-4000-8000-000000000275",
+                "provider",
+            ),
+            ("prompt", "00000000-0000-4000-8000-000000000276", "prompt"),
+            ("mcp", "00000000-0000-4000-8000-000000000277", "mcp"),
+            ("skill", "00000000-0000-4000-8000-000000000278", "skill"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'opencode', ?2, 'global', ?3)",
+                    params![
+                        target_id,
+                        artifact_kind,
+                        format!("/fixture/opencode/{suffix}")
+                    ],
+                )
+                .unwrap();
+        }
+        assert!(connection
+            .execute(
+                "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000289', 'opencode', 'hook', 'global', '/fixture/opencode/hooks')",
+                [],
+            )
+            .is_err());
+
+        drop(database);
+        let reopened = Database::open(&paths).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 19);
+        assert_eq!(
+            reopened
+                .connection()
+                .query_row(
+                    "SELECT is_active_opencode FROM prompt_profiles WHERE id = ?1",
+                    [PROMPT_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
     fn hooks_migration_opens_hook_storage_and_widens_checks() {
         const HOOK_ONE_ID: &str = "00000000-0000-4000-8000-000000000301";
         const HOOK_TARGET_GLOBAL: &str = "00000000-0000-4000-8000-000000000302";
@@ -2209,7 +2423,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2358,7 +2572,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2470,7 +2684,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2646,7 +2860,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 18);
+            assert_eq!(database.schema_version().unwrap(), 19);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

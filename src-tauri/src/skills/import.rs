@@ -62,6 +62,7 @@ fn is_managed_source(kind: SourceKind) -> bool {
             | SourceKind::CodexHome
             | SourceKind::CursorHome
             | SourceKind::ZcodeHome
+            | SourceKind::OpencodeGlobal
     )
 }
 
@@ -105,6 +106,10 @@ fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKin
                 environment.home().join(".agents/skills"),
             ),
         ],
+        Tool::Opencode => vec![(
+            SourceKind::OpencodeGlobal,
+            environment.opencode_config_dir().join("skills"),
+        )],
     }
 }
 
@@ -1387,6 +1392,7 @@ mod tests {
                 Tool::Claude => fixture.environment.claude_config_dir().join("skills"),
                 Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
                 Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
+                Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
             };
             fixture.skill(&compat.join(".system/builtin"), "builtin");
             fs::create_dir_all(&source).unwrap();
@@ -1424,6 +1430,7 @@ mod tests {
                     Tool::Claude => fixture.environment.claude_config_dir().join("skills"),
                     Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
                     Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
+                    Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
                 };
                 let actual = fixture.root.join("external");
                 fixture.skill(&actual.join("one"), "one");

@@ -313,6 +313,7 @@ mod tests {
                 codex: ToolAvailabilityState::Installed,
                 cursor: ToolAvailabilityState::Installed,
                 zcode: ToolAvailabilityState::Unavailable,
+                opencode: ToolAvailabilityState::Installed,
             },
         )
         .unwrap();

@@ -29,8 +29,8 @@ use super::{
 use crate::{
     adapters::{
         canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, zcode::ZcodeAdapter, DiscoveryContext, ManagedOwnership,
-        PolicyState, TargetDescriptor, ToolAdapter, ASSIGNABLE_HOOK_TOOLS,
+        cursor::CursorAdapter, opencode::OpencodeAdapter, zcode::ZcodeAdapter, DiscoveryContext,
+        ManagedOwnership, PolicyState, TargetDescriptor, ToolAdapter, ASSIGNABLE_HOOK_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -152,6 +152,7 @@ pub fn delete_hook(
 
 /// 分配前校验事件在该工具的原生合同中存在；不支持的组合 fail closed。
 pub fn hook_event_supported(tool: Tool, event: HookEvent) -> Result<(), AppError> {
+    ensure_hooks_supported(tool)?;
     if event.supported_for_tool(tool) {
         Ok(())
     } else {
@@ -162,10 +163,21 @@ pub fn hook_event_supported(tool: Tool, event: HookEvent) -> Result<(), AppError
     }
 }
 
+fn ensure_hooks_supported(tool: Tool) -> Result<(), AppError> {
+    if tool == Tool::Opencode {
+        return Err(AppError::invalid_input(
+            "capability",
+            "OPENCODE_HOOKS_UNSUPPORTED",
+        ));
+    }
+    Ok(())
+}
+
 pub fn set_global_hook_assignment(
     database: &mut Database,
     input: &SetGlobalHookAssignmentInput,
 ) -> Result<HookDto, AppError> {
+    ensure_hooks_supported(input.tool)?;
     if input.assigned {
         // 生效事件随分配指定，可不同于中央建议事件；仍按工具 fail-closed。
         hook_event_supported(input.tool, input.event)?;
@@ -185,6 +197,7 @@ pub fn set_project_hook_assignment(
     database: &mut Database,
     input: &SetProjectHookAssignmentInput,
 ) -> Result<HookDto, AppError> {
+    ensure_hooks_supported(input.tool)?;
     if input.assigned {
         hook_event_supported(input.tool, input.event)?;
     }
@@ -212,6 +225,7 @@ pub fn list_hook_project_options(
     database: &Database,
     input: &HookProjectOptionsInput,
 ) -> Result<Vec<HookProjectOptionDto>, AppError> {
+    ensure_hooks_supported(input.tool)?;
     mcp_repository::get_project(database, &input.project_id)?;
     let global = repository::list_assigned_hooks(database, input.tool, None)?
         .into_iter()
@@ -839,6 +853,7 @@ fn prepare_hooks_sync(
             Tool::Codex => environment.codex_home().to_path_buf(),
             Tool::Cursor => environment.home().join(".cursor"),
             Tool::Zcode => environment.home().join(".zcode"),
+            Tool::Opencode => environment.opencode_config_dir().to_path_buf(),
         },
         |root| PathBuf::from(root.as_str()),
     );
@@ -872,6 +887,12 @@ pub(super) fn descriptor_for(
     tool: Tool,
     project_root: Option<&ProjectRoot>,
 ) -> Result<TargetDescriptor, AppError> {
+    if tool == Tool::Opencode {
+        return Err(AppError::invalid_input(
+            "capability",
+            "OPENCODE_HOOKS_UNSUPPORTED",
+        ));
+    }
     let context = DiscoveryContext {
         environment,
         project_root,
@@ -898,11 +919,13 @@ pub(super) fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
     static CODEX: CodexAdapter = CodexAdapter;
     static CURSOR: CursorAdapter = CursorAdapter;
     static ZCODE: ZcodeAdapter = ZcodeAdapter;
+    static OPENCODE: OpencodeAdapter = OpencodeAdapter;
     match tool {
         Tool::Claude => &CLAUDE,
         Tool::Codex => &CODEX,
         Tool::Cursor => &CURSOR,
         Tool::Zcode => &ZCODE,
+        Tool::Opencode => &OPENCODE,
     }
 }
 
@@ -911,6 +934,7 @@ pub(crate) fn native_selector_root(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::Claude | Tool::Codex | Tool::Zcode => &["hooks"],
         Tool::Cursor => &["version", "hooks"],
+        Tool::Opencode => &[],
     }
 }
 
@@ -919,6 +943,7 @@ pub(crate) fn events_root(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::Claude | Tool::Codex | Tool::Cursor => &["hooks"],
         Tool::Zcode => &["hooks", "events"],
+        Tool::Opencode => &[],
     }
 }
 
@@ -946,6 +971,12 @@ pub(super) fn build_desired_projection(
         Tool::Claude | Tool::Codex => json!({ "hooks": events }),
         Tool::Zcode => json!({ "hooks": { "enabled": true, "events": events } }),
         Tool::Cursor => json!({ "version": 1, "hooks": events }),
+        Tool::Opencode => {
+            return Err(AppError::invalid_input(
+                "capability",
+                "OPENCODE_HOOKS_UNSUPPORTED",
+            ))
+        }
     };
     Ok(projection)
 }
@@ -1603,6 +1634,14 @@ mod tests {
             assert!(hook_event_supported(tool, HookEvent::PreToolUse).is_ok());
         }
         assert!(hook_event_supported(Tool::Cursor, HookEvent::UserPromptSubmit).is_err());
+        assert_eq!(
+            hook_event_supported(Tool::Opencode, HookEvent::PreToolUse)
+                .unwrap_err()
+                .details()
+                .and_then(|details| details.get("reason"))
+                .and_then(serde_json::Value::as_str),
+            Some("OPENCODE_HOOKS_UNSUPPORTED")
+        );
     }
 
     #[test]

@@ -35,6 +35,8 @@ interface ProviderFormState {
   extraEnvText: string;
   wireApi: string;
   zcodeKind: string;
+  opencodeNpm: string;
+  opencodeApi: string;
 }
 
 const emptyForm: ProviderFormState = {
@@ -46,6 +48,8 @@ const emptyForm: ProviderFormState = {
   extraEnvText: "",
   wireApi: "",
   zcodeKind: "anthropic",
+  opencodeNpm: "@ai-sdk/openai-compatible",
+  opencodeApi: "openai-compatible",
 };
 
 export function ProviderPanel({
@@ -79,6 +83,8 @@ export function ProviderPanel({
         extraEnv: tool === "claude" ? extraEnv : {},
         wireApi: tool === "codex" && form.wireApi ? form.wireApi : null,
         zcodeKind: tool === "zcode" ? form.zcodeKind : null,
+        opencodeNpm: tool === "opencode" ? form.opencodeNpm : null,
+        opencodeApi: tool === "opencode" ? form.opencodeApi : null,
       };
       if (editing) {
         return unwrapResult(
@@ -491,6 +497,35 @@ export function ProviderPanel({
               />
             </Field>
           </>
+        ) : tool === "opencode" ? (
+          <>
+            <Field label="npm SDK" id={`${tool}-npm`}>
+              <input
+                id={`${tool}-npm`}
+                required
+                className="field"
+                value={form.opencodeNpm}
+                onChange={(event) =>
+                  setForm({ ...form, opencodeNpm: event.currentTarget.value })
+                }
+                placeholder="@ai-sdk/openai-compatible"
+              />
+            </Field>
+            <Field label="API 协议" id={`${tool}-api`}>
+              <select
+                id={`${tool}-api`}
+                className="field"
+                value={form.opencodeApi}
+                onChange={(event) =>
+                  setForm({ ...form, opencodeApi: event.currentTarget.value })
+                }
+              >
+                <option value="openai-compatible">openai-compatible</option>
+                <option value="openai">openai</option>
+                <option value="anthropic">anthropic</option>
+              </select>
+            </Field>
+          </>
         ) : (
           <Field label="wire_api" id={`${tool}-wire-api`}>
             <select
@@ -559,6 +594,8 @@ function editProfile(
       .join("\n"),
     wireApi: profile.options.wireApi ?? "",
     zcodeKind: profile.options.zcodeKind ?? "anthropic",
+    opencodeNpm: profile.options.opencodeNpm ?? "@ai-sdk/openai-compatible",
+    opencodeApi: profile.options.opencodeApi ?? "openai-compatible",
   });
 }
 

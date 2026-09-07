@@ -44,6 +44,7 @@ pub struct PromptProfileRecord {
     pub is_active_codex: bool,
     pub is_active_zcode: bool,
     pub is_active_cursor: bool,
+    pub is_active_opencode: bool,
     pub imported_from_path: Option<String>,
     pub row_version: i64,
 }
@@ -57,6 +58,7 @@ pub struct NewPromptProfileRecord {
     pub is_active_codex: bool,
     pub is_active_zcode: bool,
     pub is_active_cursor: bool,
+    pub is_active_opencode: bool,
     pub imported_from_path: Option<String>,
 }
 
@@ -224,8 +226,8 @@ pub fn adopt_imported_prompt(
         .execute(
             "INSERT INTO prompt_profiles(id, tool, name, body, is_active_claude,
                                         is_active_codex, is_active_zcode, is_active_cursor,
-                                        imported_from_path)
-             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                                        is_active_opencode, imported_from_path)
+             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 profile.id,
                 profile.name,
@@ -234,6 +236,7 @@ pub fn adopt_imported_prompt(
                 i64::from(profile.is_active_codex),
                 i64::from(profile.is_active_zcode),
                 i64::from(profile.is_active_cursor),
+                i64::from(profile.is_active_opencode),
                 profile.imported_from_path,
             ],
         )
@@ -458,7 +461,7 @@ pub fn list_prompt_profiles(database: &Database) -> Result<Vec<PromptProfileReco
         .connection()
         .prepare(
             "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode,
-                    is_active_cursor, imported_from_path, row_version
+                    is_active_cursor, is_active_opencode, imported_from_path, row_version
              FROM prompt_profiles
              ORDER BY name COLLATE NOCASE, id",
         )
@@ -484,11 +487,12 @@ pub fn find_active_prompt_profile(
         .connection()
         .query_row(
             "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode,
-                    is_active_cursor, imported_from_path, row_version
+                    is_active_cursor, is_active_opencode, imported_from_path, row_version
              FROM prompt_profiles
              WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
                          WHEN ?1 = 'zcode' THEN is_active_zcode
                          WHEN ?1 = 'cursor' THEN is_active_cursor
+                         WHEN ?1 = 'opencode' THEN is_active_opencode
                          ELSE is_active_codex END) = 1",
             [tool.as_str()],
             prompt_from_row,
@@ -512,8 +516,8 @@ pub fn insert_prompt_profile(
         .execute(
             "INSERT INTO prompt_profiles(id, tool, name, body, is_active_claude,
                                         is_active_codex, is_active_zcode, is_active_cursor,
-                                        imported_from_path)
-             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                                        is_active_opencode, imported_from_path)
+             VALUES (?1, 'central', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 record.id,
                 record.name,
@@ -522,6 +526,7 @@ pub fn insert_prompt_profile(
                 record.is_active_codex,
                 record.is_active_zcode,
                 record.is_active_cursor,
+                record.is_active_opencode,
                 record.imported_from_path,
             ],
         )
@@ -586,6 +591,7 @@ pub fn set_global_prompt_assignment(
         Tool::Codex => current.is_active_codex,
         Tool::Zcode => current.is_active_zcode,
         Tool::Cursor => current.is_active_cursor,
+        Tool::Opencode => current.is_active_opencode,
     };
     if already_assigned == assigned {
         return Ok(current);
@@ -660,6 +666,21 @@ pub fn set_global_prompt_assignment(
             .map_err(|error| {
                 map_profile_write_error(error, &database_path, "set_global_prompt_assignment")
             })?,
+        Tool::Opencode => transaction
+            .execute(
+                "UPDATE prompt_profiles SET is_active_opencode = ?4
+                 WHERE id = ?1 AND row_version = ?3 AND is_active_opencode = ?5",
+                params![
+                    id,
+                    tool.as_str(),
+                    expected_row_version,
+                    i64::from(assigned),
+                    i64::from(!assigned),
+                ],
+            )
+            .map_err(|error| {
+                map_profile_write_error(error, &database_path, "set_global_prompt_assignment")
+            })?,
     };
     if updated != 1 {
         return Err(AppError::conflict(
@@ -714,7 +735,7 @@ fn find_prompt_profile(
         .connection()
         .query_row(
             "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode,
-                    is_active_cursor, imported_from_path, row_version
+                    is_active_cursor, is_active_opencode, imported_from_path, row_version
              FROM prompt_profiles WHERE id = ?1",
             [id],
             prompt_from_row,
@@ -747,8 +768,9 @@ fn prompt_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromptProfileRec
         is_active_codex: row.get(4)?,
         is_active_zcode: row.get(5)?,
         is_active_cursor: row.get(6)?,
-        imported_from_path: row.get(7)?,
-        row_version: row.get(8)?,
+        is_active_opencode: row.get(7)?,
+        imported_from_path: row.get(8)?,
+        row_version: row.get(9)?,
     })
 }
 
@@ -758,6 +780,7 @@ fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
         "codex" => Ok(Tool::Codex),
         "cursor" => Ok(Tool::Cursor),
         "zcode" => Ok(Tool::Zcode),
+        "opencode" => Ok(Tool::Opencode),
         _ => Err(rusqlite::Error::InvalidQuery),
     }
 }
@@ -971,6 +994,7 @@ pub fn prompt_import_blocked(
              WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
                          WHEN ?1 = 'zcode' THEN is_active_zcode
                          WHEN ?1 = 'cursor' THEN is_active_cursor
+                         WHEN ?1 = 'opencode' THEN is_active_opencode
                          ELSE is_active_codex END) = 1
                 OR imported_from_path = ?2)",
             params![tool.as_str(), target_path],
@@ -992,6 +1016,7 @@ fn reject_prompt_import_blocked(
              WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
                          WHEN ?1 = 'zcode' THEN is_active_zcode
                          WHEN ?1 = 'cursor' THEN is_active_cursor
+                         WHEN ?1 = 'opencode' THEN is_active_opencode
                          ELSE is_active_codex END) = 1
                 OR imported_from_path = ?2)",
             params![tool.as_str(), target_path],
@@ -1035,6 +1060,7 @@ fn deactivate_prompt_profiles(
         Tool::Codex => "is_active_codex",
         Tool::Zcode => "is_active_zcode",
         Tool::Cursor => "is_active_cursor",
+        Tool::Opencode => "is_active_opencode",
     };
     let query = format!(
         "UPDATE prompt_profiles SET {column} = 0
@@ -1187,6 +1213,7 @@ mod tests {
                 is_active_codex: false,
                 is_active_zcode: false,
                 is_active_cursor: false,
+                is_active_opencode: false,
                 imported_from_path: None,
             },
         )
@@ -1201,6 +1228,7 @@ mod tests {
                 is_active_codex: false,
                 is_active_zcode: false,
                 is_active_cursor: false,
+                is_active_opencode: false,
                 imported_from_path: None,
             },
         )
@@ -1299,6 +1327,7 @@ mod tests {
                 is_active_codex: false,
                 is_active_zcode: false,
                 is_active_cursor: false,
+                is_active_opencode: false,
                 imported_from_path: None,
             },
         )

@@ -144,15 +144,16 @@ git diff --check
 
 代码回滚顺序：先从 UI 和共享集合关闭 capability，再移除 service/registry，最后移除 Adapter 分支。已应用的前向数据库迁移保留。任何原生写入失败都使用现有 snapshot/journal 恢复，不增加旁路清理脚本。
 
-## 9. Pi 与 ZCode 示例
+## 9. Pi、ZCode 与 OpenCode 示例
 
 Pi 当前只作为待调研候选，不代表已知路径；ZCode 已于 2026-09-05 依据本机核验
 与官方 zcode-configuration-guide 完成证据核验并正式接入（迁移 `0013`）：
 
-| 工具  | Provider  | Prompt/Rules（全局） | MCP       | Skills    | Hooks     | 下一步                                                                                                                                                 |
-| ----- | --------- | -------------------- | --------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pi    | Unknown   | Unknown              | Unknown   | Unknown   | Unknown   | 找到官方配置与安装文档，建立版本化 fixture                                                                                                             |
-| ZCode | Supported | Supported（仅全局）  | Supported | Supported | Supported | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键 |
+| 工具     | Provider  | Prompt/Rules（全局） | MCP                       | Skills    | Hooks       | 下一步                                                                                                                                                                    |
+| -------- | --------- | -------------------- | ------------------------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pi       | Unknown   | Unknown              | Unknown                   | Unknown   | Unknown     | 找到官方配置与安装文档，建立版本化 fixture                                                                                                                                |
+| ZCode    | Supported | Supported（仅全局）  | Supported                 | Supported | Supported   | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键                    |
+| OpenCode | Supported | Supported（仅全局）  | Supported（local/remote） | Supported | Unsupported | 已接入：PATH `opencode --version` 探针；Provider/MCP 使用官方 JSON/JSONC `provider`/`mcp` 根，Skills 使用全局 config/skills 与项目 `.opencode/skills`；不接管 `auth.json` |
 
 Cursor 的全局 Prompt/Rules 已于 2026-09-06 依据官方证据接入（历史迁移 `0017`
 曾扩展过项目作用域，现行 v18 已清理该历史状态）：当前只使用全局
@@ -161,7 +162,7 @@ Cursor 的全局 Prompt/Rules 已于 2026-09-06 依据官方证据接入（历�
 `alwaysApply: true`、观测/导入时剥离 frontmatter。项目 `.cursor/rules` 与其中的
 其他用户文件不受 EasyToAgents 观察或写入。
 
-## 10. Hooks 能力矩阵（2026-09-05 官方证据核验）
+## 10. Hooks 能力矩阵（2026-09-07 官方证据核验）
 
 Hooks 已作为第五类 artifact 接入四工具，统一事件模型见 `domain::HookEvent`
 （canonical PascalCase；Cursor 原生键为 camelCase，由
@@ -173,9 +174,10 @@ Hooks 已作为第五类 artifact 接入四工具，统一事件模型见 `domai
 | Codex       | `~/.codex/hooks.json`                    | `<root>/.codex/hooks.json`     | 11                  | 独立文件；官方要求每层只用一种表示，不管理 config.toml 内联 `[hooks]`；信任审查由 CLI `/hooks` 完成；https://developers.openai.com/codex/hooks.md |
 | Cursor      | `~/.cursor/hooks.json`                   | `<root>/.cursor/hooks.json`    | 9（camelCase 映射） | 接管 `version` + `hooks` 两个顶层键；matcher 属于条目；https://cursor.com/docs/agent/hooks                                                        |
 | ZCode       | `~/.zcode/cli/config.json` 的 `hooks` 键 | `<root>/.zcode/config.json`    | 7                   | 恒写 `hooks.enabled: true`（配置文件 hooks 必须 enabled 才运行）；事件嵌套在 `events` 键；官方 zcode-configuration-guide                          |
+| OpenCode    | 不接入（插件返回 hooks object）          | 不接入                         | —                   | 插件回调不是当前 command-only 合同；直接 RPC、分配、导入和写入均 fail closed，诊断码 `OPENCODE_HOOKS_UNSUPPORTED`                                 |
 
 不在统一事件模型内的工具特有事件（Cursor 的 `beforeShellExecution` 等、
 Claude 的 `PostToolUseFailure`、ZCode 的 `process` 型、Cursor 的 `prompt` 型）
 一律 fail closed：不能分配、不能导入，也不猜测映射。
 
-在官方证据、capability matrix 和回滚边界审核通过前，不为它们新增 Tool 值、猜测目标目录或复制 Cursor 的 Adapter。
+OpenCode 的 Plugins/hooks object 仍不映射为统一事件；在新的插件运行时合同和回滚边界审核通过前，不为它新增 Hook 事件、猜测目标目录或复制 Cursor 的 Adapter。

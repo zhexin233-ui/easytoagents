@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/assets/github-hero.png" alt="EasyToAgents — Claude、Codex、Cursor、ZCode、MCP、全局 Prompts 与 Skills 的本地配置中枢" width="100%" />
+  <img src="docs/assets/github-hero.png" alt="EasyToAgents — Claude、Codex、Cursor、ZCode、OpenCode、MCP、全局 Prompts 与 Skills 的本地配置中枢" width="100%" />
 </p>
 
 <h1 align="center">EasyToAgents</h1>
 
-<p align="center"><strong>把 Claude、Codex、Cursor、ZCode、MCP、全局提示词与 Skills 收拢到一个可预览、可同步、可恢复的本地工作台。</strong></p>
+<p align="center"><strong>把 Claude、Codex、Cursor、ZCode、OpenCode、MCP、全局提示词与 Skills 收拢到一个可预览、可同步、可恢复的本地工作台。</strong></p>
 
-<p align="center"><em>A local-first macOS app to preview, sync, and restore Claude, Codex, Cursor, ZCode, MCP, global prompts, and registered-project resources.</em></p>
+<p align="center"><em>A local-first macOS app to preview, sync, and restore Claude, Codex, Cursor, ZCode, OpenCode, MCP, global prompts, and registered-project resources.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-13%2B-000000?logo=apple&logoColor=white" alt="macOS 13+" />
@@ -24,23 +24,23 @@
   <a href="#参与贡献">参与贡献</a>
 </p>
 
-EasyToAgents 面向同时使用 Claude、Codex、Cursor 与 ZCode 的开发者。它把全局配置与已登记项目中的受支持资源整理成中央意图，同时保留对原生目标状态的检查；默认先展示变更计划，再由用户确认是否写入磁盘。
+EasyToAgents 面向同时使用 Claude、Codex、Cursor、ZCode 与 OpenCode 的开发者。它把全局配置与已登记项目中的受支持资源整理成中央意图，同时保留对原生目标状态的检查；默认先展示变更计划，再由用户确认是否写入磁盘。
 
 - **中央意图**：在一个界面维护希望启用的 Provider、全局提示词、MCP、Skills 与 Hooks。
-- **原生目标**：继续使用 Claude、Codex、Cursor、ZCode 各自公开支持的配置格式和目录，不引入专有运行时。
+- **原生目标**：继续使用 Claude、Codex、Cursor、ZCode、OpenCode 各自公开支持的配置格式和目录，不引入专有运行时。
 - **Local-first**：中央数据、同步记录与私有恢复点保留在本机，配置管理不依赖独立网站或云端控制台。
 
 ## 核心能力
 
-| 能力                   | 可以做什么                                                                                                        | 写入边界                                               |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| **Providers / 提示词** | 检测并导入 Claude、Codex、ZCode 的 Provider，以及 Claude、Codex、Cursor、ZCode 的全局提示词；提示词不提供项目分配 | 中央档案的编辑与原生配置写入分离；默认先预览再确认应用 |
-| **MCP**                | 在中央库维护 MCP Server，按 Claude、Codex、Cursor、ZCode 或具体项目分配                                           | 分配变化先更新中央意图，原生目标通过同步计划写入       |
-| **Skills**             | 将 Skill 复制到中央目录，并通过受管符号链接同步到 Claude、Codex、Cursor 与 ZCode 目标                             | 应用前展示目标计划，应用后保留恢复快照                 |
-| **Hooks**              | 在中央库维护生命周期钩子；事件随分配指定（同一 Hook 可在不同工具/项目用不同事件），页面按工具展示事件分组         | 分配变化先更新中央意图，原生目标通过同步计划写入       |
-| **Projects**           | 登记并只读扫描本地项目，在项目维度管理 MCP、Skills 与 Hooks；全局提示词不进入项目资源模型                         | 移除项目登记不会删除或改写已有原生配置                 |
+| 能力                   | 可以做什么                                                                                            | 写入边界                                               |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **Providers / 提示词** | 检测并导入 Claude、Codex、ZCode、OpenCode 的 Provider，以及五个工具的全局提示词；提示词不提供项目分配 | 中央档案的编辑与原生配置写入分离；默认先预览再确认应用 |
+| **MCP**                | 在中央库维护 MCP Server，按 Claude、Codex、Cursor、ZCode、OpenCode 或具体项目分配                     | 分配变化先更新中央意图，原生目标通过同步计划写入       |
+| **Skills**             | 将 Skill 复制到中央目录，并通过受管符号链接同步到 Claude、Codex、Cursor、ZCode 与 OpenCode 目标       | 应用前展示目标计划，应用后保留恢复快照                 |
+| **Hooks**              | 在中央库维护生命周期钩子；事件随分配指定。OpenCode 插件回调不兼容当前 command-only 合同，保持暂不支持 | 受支持工具的分配变化先更新中央意图，OpenCode 不写入    |
+| **Projects**           | 登记并只读扫描本地项目，在项目维度管理 MCP、Skills 与 Hooks；全局提示词不进入项目资源模型             | 移除项目登记不会删除或改写已有原生配置                 |
 
-Hooks 采用统一事件模型：Claude（`settings.json` 的 `hooks` 键）与 ZCode（`~/.zcode/cli/config.json`、项目 `.zcode/config.json` 的 `hooks` 键，恒写 `hooks.enabled: true`）为选择器化子树，Codex 与 Cursor 为独立 `hooks.json`（Cursor 事件键为 camelCase 并额外接管 `version`）。Cursor 当前支持全局提示词，以及全局/项目 MCP、Skills 与 Hooks；Provider、API Key、模型和项目级 Prompt/Rules 均不受支持，也不会被读取或写入。ZCode 支持 Provider、全局 Prompt、MCP、Skills 与 Hooks：Provider 写入 `~/.zcode/v2/config.json` 的 provider 条目，只接管 name/kind/options/enabled，`models` 等应用自管字段原样保留；全局 Prompt 使用用户级 `AGENTS.md`；MCP 使用 `~/.zcode/cli/config.json` 与项目 `.zcode/config.json` 的 `mcp.servers`；Skills 使用 `~/.zcode/skills`。总览页将中央意图、各工具原生目标状态、同步历史与恢复点放在同一处，便于判断“希望的配置”和“磁盘上的实际配置”是否一致。
+Hooks 采用统一事件模型：Claude（`settings.json` 的 `hooks` 键）与 ZCode（`~/.zcode/cli/config.json`、项目 `.zcode/config.json` 的 `hooks` 键，恒写 `hooks.enabled: true`）为选择器化子树，Codex 与 Cursor 为独立 `hooks.json`（Cursor 事件键为 camelCase 并额外接管 `version`）。Cursor 当前支持全局提示词，以及全局/项目 MCP、Skills 与 Hooks；Provider、API Key、模型和项目级 Prompt/Rules 均不受支持，也不会被读取或写入。ZCode 支持 Provider、全局 Prompt、MCP、Skills 与 Hooks：Provider 写入 `~/.zcode/v2/config.json` 的 provider 条目，只接管 name/kind/options/enabled，`models` 等应用自管字段原样保留；全局 Prompt 使用用户级 `AGENTS.md`；MCP 使用 `~/.zcode/cli/config.json` 与项目 `.zcode/config.json` 的 `mcp.servers`；Skills 使用 `~/.zcode/skills`。OpenCode 使用 JSON/JSONC 配置（全局 `~/.config/opencode/opencode.json(c)`、项目 `opencode.json` 或 `.opencode/` 覆盖）、全局 `AGENTS.md`、local/remote MCP 与全局/项目 Skills；Provider 不接管 `auth.json`，Hooks 插件回调保持不支持。总览页将中央意图、各工具原生目标状态、同步历史与恢复点放在同一处，便于判断“希望的配置”和“磁盘上的实际配置”是否一致。
 
 ## 产品实景
 
@@ -52,7 +52,7 @@ Hooks 采用统一事件模型：Claude（`settings.json` 的 `hooks` 键）与 
 
 ## 安全同步模型
 
-1. **只读检测**：各类配置在接管前先扫描 Claude、Codex、Cursor、ZCode 的全局目标，或已登记项目中的 MCP、Skills 与 Hooks，不立即写入。
+1. **只读检测**：各类配置在接管前先扫描 Claude、Codex、Cursor、ZCode、OpenCode 的全局目标，或已登记项目中的 MCP、Skills 与 Hooks，不立即写入。
 2. **选择性接管**：只把明确选择的 Provider、全局提示词、MCP、Skills 或 Hooks 纳入中央管理。
 3. **变更预览**：生成将要创建、更新或移除的目标计划，展示警告、冲突和脱敏差异。
 4. **确认应用**：默认仅在确认后写入原生目标，并保留不属于 EasyToAgents 管理的内容。
@@ -62,7 +62,7 @@ Hooks 采用统一事件模型：Claude（`settings.json` 的 `hooks` 键）与 
 
 首次接管全局 Skill 是直接应用模式的例外：只有名称与完整内容都和中央副本一致的入口才可选择，且仍须确认持久化预览。外部符号链接接管只替换入口，不修改其外部来源；普通目录会先复制为应用私有的目录树恢复点，并持续占用本地空间，直至你显式删除该恢复点。
 
-Prompt 仅支持全局档案、全局分配和全局同步。项目扫描与同步不观察、不创建、不禁用、不恢复或改写项目中的 `CLAUDE.md`、`AGENTS.md`、`.cursor/rules/` 等提示词/规则文件。升级到 v18 时，应用只清理数据库中已退役的项目 Prompt 分配、原生资源记录和私有历史快照；项目目录中的现有文件保持原样，迁移不会使用项目目标路径做删除。
+Prompt 仅支持全局档案、全局分配和全局同步。项目扫描与同步不观察、不创建、不禁用、不恢复或改写项目中的 `CLAUDE.md`、`AGENTS.md`、`.cursor/rules/` 等提示词/规则文件。升级到 v19 时，应用只清理数据库中已退役的项目 Prompt 分配、原生资源记录和私有历史快照；项目目录中的现有文件保持原样，迁移不会使用项目目标路径做删除。
 
 ## 快速开始
 
@@ -97,7 +97,7 @@ pnpm tauri build
 
 ## 首次使用
 
-1. 从总览点击 **开始首次检测**，只读发现本机已有的 Claude、Codex 与 ZCode 的 Provider，以及 Claude、Codex、Cursor、ZCode 的全局提示词；Cursor 的 MCP/Skills 从对应资源页导入。
+1. 从总览点击 **开始首次检测**，只读发现本机已有的 Claude、Codex、ZCode、OpenCode 的 Provider，以及五个工具的全局提示词；Cursor、OpenCode 的 MCP/Skills 也可从对应资源页导入。
 2. 按工具选择要导入的 Provider 或全局提示词；不希望接管的内容可以直接跳过。
 3. 在中央库中补充 MCP、Skills 与 Hooks，并按全局或项目范围分配；提示词始终按全局范围同步。
 4. 生成同步预览，检查目标路径、变更类型、警告、冲突和脱敏差异。

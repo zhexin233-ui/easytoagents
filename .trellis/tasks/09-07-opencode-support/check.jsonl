@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "同步与原生写入边界"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "前向迁移"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "MCP 导入及秘密合同"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "Skills 导入接管与恢复"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端交互质量"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "生成绑定及类型"}
+{"file": ".trellis/tasks/09-07-opencode-support/research/verified-contract.md", "reason": "已核验稳定版合同与实机证据"}

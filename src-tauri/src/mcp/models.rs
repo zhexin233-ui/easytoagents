@@ -26,6 +26,7 @@ const RESERVED_EXTRA_KEYS: &[&str] = &[
     "http_headers",
     "env_http_headers",
     "env",
+    "environment",
     "enabled",
     "disabled",
 ];

@@ -1,0 +1,12 @@
+{
+  "command": [
+    "opencode",
+    "--pure",
+    "debug",
+    "config"
+  ],
+  "isolated_root": "/var/folders/x5/s776s1nd1wsbcxdskf5ftb400000gn/T/eta-opencode-research-spa08wxk",
+  "exit_code": 0,
+  "stdout": "{\n  \"mcp\": {\n    \"fixture\": {\n      \"type\": \"local\",\n      \"command\": [\n        \"echo\",\n        \"fixture\"\n      ],\n      \"environment\": {\n        \"FIXTURE\": \"synthetic\"\n      },\n      \"enabled\": false\n    }\n  },\n  \"model\": \"fixture/model\",\n  \"provider\": {\n    \"fixture\": {\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"name\": \"fixture\",\n      \"options\": {\n        \"baseURL\": \"http://127.0.0.1:9/v1\",\n        \"apiKey\": \"fixture-only-not-a-real-key\"\n      },\n      \"models\": {\n        \"model\": {\n          \"name\": \"fixture\"\n        }\n      }\n    }\n  },\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"agent\": {},\n  \"mode\": {},\n  \"plugin\": [],\n  \"command\": {},\n  \"username\": \"unknown\"\n}\n",
+  "stderr": ""
+}

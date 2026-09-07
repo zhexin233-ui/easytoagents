@@ -51,6 +51,7 @@ string_enum! {
         Codex => "codex",
         Cursor => "cursor",
         Zcode => "zcode",
+        Opencode => "opencode",
     }
 }
 
@@ -182,6 +183,10 @@ impl HookEvent {
                     | Self::PreCompact
                     | Self::Stop
             ),
+            // OpenCode hooks are implemented by plugin callbacks rather than the
+            // command-only model represented by this enum. Keep the capability
+            // explicitly unsupported instead of guessing a native mapping.
+            Tool::Opencode => false,
         }
     }
 
@@ -200,6 +205,7 @@ impl HookEvent {
                 Self::Stop => "stop",
                 _ => self.as_str(),
             },
+            Tool::Opencode => self.as_str(),
             _ => self.as_str(),
         }
     }
@@ -518,6 +524,7 @@ mod tests {
             serde_json::to_value(Tool::Codex).unwrap(),
             serde_json::to_value(Tool::Cursor).unwrap(),
             serde_json::to_value(Tool::Zcode).unwrap(),
+            serde_json::to_value(Tool::Opencode).unwrap(),
             serde_json::to_value(Scope::Global).unwrap(),
             serde_json::to_value(Scope::Project).unwrap(),
             serde_json::to_value(ArtifactKind::Provider).unwrap(),
@@ -583,6 +590,7 @@ mod tests {
             "codex",
             "cursor",
             "zcode",
+            "opencode",
             "global",
             "project",
             "provider",

@@ -67,6 +67,7 @@ export function PromptsPage() {
     codex: useQuery(toolProfileStatusQueryOptions("codex")),
     cursor: useQuery(toolProfileStatusQueryOptions("cursor")),
     zcode: useQuery(toolProfileStatusQueryOptions("zcode")),
+    opencode: useQuery(toolProfileStatusQueryOptions("opencode")),
   };
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";

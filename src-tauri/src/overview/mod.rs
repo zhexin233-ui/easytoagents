@@ -170,13 +170,14 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
             .map_err(|_| AppError::database(&database_path, "read_dashboard_provider"))?
     };
     let active_prompt_name = match tool {
-        Tool::Claude | Tool::Codex | Tool::Zcode | Tool::Cursor => database
+        Tool::Claude | Tool::Codex | Tool::Zcode | Tool::Cursor | Tool::Opencode => database
             .connection()
             .query_row(
                 "SELECT name FROM prompt_profiles
                  WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
                              WHEN ?1 = 'zcode' THEN is_active_zcode
                              WHEN ?1 = 'cursor' THEN is_active_cursor
+                             WHEN ?1 = 'opencode' THEN is_active_opencode
                              ELSE is_active_codex END) = 1",
                 [tool.as_str()],
                 |row| row.get::<_, String>(0),
@@ -340,6 +341,7 @@ fn global_allowed_root(
         "codex" => Tool::Codex,
         "cursor" => Tool::Cursor,
         "zcode" => Tool::Zcode,
+        "opencode" => Tool::Opencode,
         _ => {
             return Err(AppError::conflict("snapshot", "快照包含未知工具身份"));
         }
@@ -371,6 +373,16 @@ fn global_allowed_root(
         }
         // ZCode 全局目标都位于 ~/.zcode 之下（v2、cli、AGENTS.md、skills）。
         (Tool::Zcode, _) => environment.home().join(".zcode"),
+        (Tool::Opencode, ArtifactKind::Hook) => {
+            return Err(AppError::invalid_input(
+                "capability",
+                "OPENCODE_HOOKS_UNSUPPORTED",
+            ));
+        }
+        (Tool::Opencode, ArtifactKind::Provider | ArtifactKind::Mcp) => {
+            environment.opencode_config_file_root()
+        }
+        (Tool::Opencode, _) => environment.opencode_config_dir().to_path_buf(),
     })
 }
 
