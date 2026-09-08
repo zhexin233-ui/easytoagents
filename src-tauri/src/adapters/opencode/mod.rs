@@ -61,7 +61,7 @@ impl ToolAdapter for OpencodeAdapter {
                 None,
                 config_path.clone(),
                 config_format,
-                vec!["provider"],
+                vec!["model", "provider"],
                 vec!["provider/*/options/apiKey", "provider/*/options/headers"],
                 capability.clone(),
             ),

@@ -512,9 +512,13 @@ pub fn list_global_skill_target_statuses_with_policy_probe(
             let initial_diagnostic = if baseline.full_hash.is_none()
                 && baseline.managed_hash.is_none()
                 && existing.is_empty()
-                && assessment.can_merge
             {
                 match (assessment.status, &scan, desired.is_empty()) {
+                    (
+                        crate::domain::SyncStatus::ExternalOwnedChange,
+                        TargetScan::Observed(_),
+                        false,
+                    ) => Some("SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED".to_owned()),
                     (crate::domain::SyncStatus::Missing, TargetScan::Missing, false) => {
                         Some("SKILL_TARGET_INITIAL_SYNC_PENDING".to_owned())
                     }

@@ -2116,6 +2116,34 @@ mod tests {
     }
 
     #[test]
+    fn opencode_provider_discovery_reads_model_and_provider_in_json_and_jsonc() {
+        let fixture = fixture();
+        let directory = fixture.environment.opencode_config_dir();
+        fs::create_dir_all(directory).unwrap();
+        assert!(
+            super::discover_native_provider(&fixture.environment, Tool::Opencode)
+                .unwrap()
+                .is_none()
+        );
+        for (filename, comment) in [("opencode.json", ""), ("opencode.jsonc", "// 已有配置\n")]
+        {
+            let path = directory.join(filename);
+            let content = format!(
+                "{{{comment}\"model\":\"fixture/model-a\",\"provider\":{{\"fixture\":{{\"npm\":\"@ai-sdk/openai-compatible\",\"name\":\"测试渠道\",\"options\":{{\"baseURL\":\"https://fixture.invalid/v1\",\"apiKey\":\"fixture-secret\"}}}}}},\"unrelated\":true}}"
+            );
+            fs::write(&path, &content).unwrap();
+            let discovered = super::discover_native_provider(&fixture.environment, Tool::Opencode)
+                .unwrap()
+                .unwrap();
+            assert_eq!(discovered.provider_id.as_deref(), Some("fixture"));
+            assert_eq!(discovered.default_model, "model-a");
+            assert_eq!(discovered.api_key.as_deref(), Some("fixture-secret"));
+            assert_eq!(discovered.target_path, path.to_str().unwrap());
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        }
+    }
+
+    #[test]
     fn provider_copy_is_independent_and_revalidated_for_target_tool() {
         let mut fixture = fixture();
         let mut redactor = SecretRedactor::default();

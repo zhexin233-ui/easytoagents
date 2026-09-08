@@ -615,6 +615,49 @@ describe("ToolProfilesPage", () => {
     );
   });
 
+  it("检测没有可导入渠道时显示反馈", async () => {
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "检测已有配置" }),
+    );
+    expect(
+      await within(section).findByText("未检测到可导入的已有渠道配置。"),
+    ).toBeVisible();
+  });
+
+  it("已有中央渠道时说明无法再次接管", async () => {
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [provider],
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    await within(section).findByText(provider.name);
+    fireEvent.click(
+      within(section).getByRole("button", { name: "检测已有配置" }),
+    );
+    expect(
+      await within(section).findByText(
+        "已有中央渠道档案，暂不支持再次接管原生渠道。",
+      ),
+    ).toBeVisible();
+  });
+
+  it("OpenCode 空检测结果解释默认模型与自定义渠道的关联", async () => {
+    renderPage("opencode");
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "检测已有配置" }),
+    );
+    expect(
+      await within(section).findByText(
+        /默认模型（model）引用了自定义 provider/,
+      ),
+    ).toBeVisible();
+    expect(commands.discoverProviderImport).toHaveBeenCalledWith("opencode");
+  });
+
   it("Codex OAuth 导入预览显示登录凭据来源", async () => {
     vi.mocked(commands.discoverProviderImport).mockResolvedValue({
       status: "ok",

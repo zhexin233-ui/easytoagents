@@ -529,7 +529,10 @@ export function SkillsPage() {
                         });
                       }}
                     >
-                      检测并导入已有 Skills
+                      {status.diagnosticCode ===
+                      "SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED"
+                        ? "检测并接管已有 Skills"
+                        : "检测并导入已有 Skills"}
                     </Button>
                     {!directApply ? (
                       <Button

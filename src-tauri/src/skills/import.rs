@@ -3,6 +3,7 @@
 use std::{
     cell::Cell,
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -256,26 +257,36 @@ pub fn discover_skill_import(
                 );
                 break;
             }
-            let evidence =
-                match library::resolve_skill_source_excluding(&root, &entry, &excluded_roots) {
-                    Ok(evidence) => evidence,
-                    Err(error) => {
-                        if error
-                            .details()
-                            .and_then(|details| details.get("field"))
-                            .and_then(|value| value.as_str())
-                            == Some("builtin")
-                        {
-                            excluded = true;
-                            continue;
-                        }
-                        user_entries += 1;
-                        preview
-                            .candidates
-                            .push(invalid_candidate(&entry, "来源链接、目录身份或权限无效"));
+            let evidence = match library::resolve_skill_source_excluding(
+                &root,
+                &entry,
+                &excluded_roots,
+            ) {
+                Ok(evidence) => evidence,
+                Err(error) => {
+                    if error
+                        .details()
+                        .and_then(|details| details.get("field"))
+                        .and_then(|value| value.as_str())
+                        == Some("builtin")
+                    {
+                        excluded = true;
                         continue;
                     }
-                };
+                    user_entries += 1;
+                    let reason = if fs::symlink_metadata(&entry)
+                        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                        && fs::metadata(&entry)
+                            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                    {
+                        "来源软链接的目标已不存在，无法复制或比对内容；请恢复链接目标，或备份并移走失效链接后同步中央版本"
+                    } else {
+                        "来源链接、目录身份或权限无效"
+                    };
+                    preview.candidates.push(invalid_candidate(&entry, reason));
+                    continue;
+                }
+            };
             if excluded_roots
                 .iter()
                 .any(|excluded| evidence.resolved.starts_with(excluded))
@@ -1215,23 +1226,35 @@ mod tests {
     }
 
     #[test]
-    fn exact_cursor_external_link_requires_takeover_preview_before_apply() {
+    fn exact_external_link_requires_takeover_preview_before_apply() {
+        for tool in [Tool::Cursor, Tool::Opencode] {
+            verify_external_link_takeover(tool);
+        }
+    }
+
+    fn verify_external_link_takeover(tool: Tool) {
         let mut fixture = Fixture::new();
         let external = fixture.root.join("external/one");
         fixture.skill(&external, "one");
-        let agents_root = fixture.environment.home().join(".agents/skills");
+        let agents_root = match tool {
+            Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
+            _ => fixture.environment.home().join(".agents/skills"),
+        };
         fs::create_dir_all(&agents_root).unwrap();
         symlink(&external, agents_root.join("one")).unwrap();
-        let import_preview = fixture.preview(Tool::Cursor);
+        let import_preview = fixture.preview(tool);
         let import_input = Fixture::input(&import_preview);
         assert_eq!(fixture.confirm(&import_input).unwrap().created_count, 1);
         fs::remove_file(agents_root.join("one")).unwrap();
 
-        let cursor_root = fixture.environment.home().join(".cursor/skills");
+        let cursor_root = match tool {
+            Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
+            _ => fixture.environment.home().join(".cursor/skills"),
+        };
         fs::create_dir_all(&cursor_root).unwrap();
         let cursor_entry = cursor_root.join("one");
         symlink(&external, &cursor_entry).unwrap();
-        let preview = fixture.preview(Tool::Cursor);
+        let preview = fixture.preview(tool);
         let candidate = preview
             .candidates
             .iter()
@@ -1266,6 +1289,11 @@ mod tests {
             &takeover_input,
         )
         .unwrap();
+        assert!(!takeover
+            .plan
+            .warning_codes
+            .iter()
+            .any(|code| code == crate::sync::ERROR_EXTERNAL_OWNED_CHANGE));
         assert_eq!(takeover.assigned_count, 1);
         assert_eq!(takeover.reused_count, 0);
         assert!(takeover
@@ -1275,6 +1303,22 @@ mod tests {
             .any(|code| code == crate::sync::WARNING_SKILL_TAKEOVER_CONFIRMATION));
         assert_eq!(fs::read_link(&cursor_entry).unwrap(), external);
 
+        let statuses = service::list_global_skill_target_statuses(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+        )
+        .unwrap();
+        assert_eq!(
+            statuses
+                .iter()
+                .find(|status| status.tool == tool)
+                .unwrap()
+                .diagnostic_code
+                .as_deref(),
+            Some("SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED")
+        );
+
         service::apply_skill_preview(
             &Mutex::new(()),
             &mut fixture.database,
@@ -1283,7 +1327,7 @@ mod tests {
             &SecretRedactor::default(),
             &crate::skills::ApplySkillPreviewInput {
                 preview_id: takeover.plan.preview_id,
-                tool: Tool::Cursor,
+                tool,
                 project_id: None,
             },
         )
@@ -1496,6 +1540,17 @@ mod tests {
         fixture.skill(&agents.join("escape"), "escape");
         symlink("../../outside", agents.join("escape/link")).unwrap();
         let preview = fixture.preview(Tool::Codex);
+        let broken = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "broken")
+            .unwrap();
+        assert!(broken
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("来源软链接的目标已不存在"));
+        assert!(!broken.takeover_eligible);
         assert_eq!(
             preview
                 .candidates

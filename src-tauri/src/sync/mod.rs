@@ -712,6 +712,8 @@ pub fn build_preview_plan(
 
         let mut warning_codes = assessment.diagnostic_codes;
         if takeover_allows_merge {
+            // 显式接管证据已覆盖冲突，预览只保留需要用户确认的接管提示。
+            warning_codes.retain(|code| code != ERROR_EXTERNAL_OWNED_CHANGE);
             warning_codes.push(WARNING_SKILL_TAKEOVER_CONFIRMATION.to_owned());
         }
         if native_allows_merge {

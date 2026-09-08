@@ -22,6 +22,18 @@ export function globalTargetStatusPresentation(
   const { directApply = false } = options;
   const previewBlocked = globalPreviewBlockingStatuses.has(status);
   if (
+    diagnosticCode === "SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED" &&
+    status === "external_owned_change"
+  ) {
+    return {
+      label: "○ 已有同名安装，待接管",
+      description:
+        "工具目录中已有同名技能，尚未纳入同步管理。点击“检测并接管已有 Skills”，选择与中央副本内容一致的条目，预览并确认接管；内容不同的条目需要先处理差异。",
+      tone: "warning",
+      previewBlocked,
+    };
+  }
+  if (
     diagnosticCode === "SKILL_TARGET_INITIAL_SYNC_PENDING" &&
     (status === "missing" || status === "external_non_owned_change")
   ) {

@@ -199,7 +199,22 @@ export function ProviderPanel({
   const discoverMutation = useMutation({
     mutationFn: async () =>
       unwrapResult(await commands.discoverProviderImport(tool)),
-    onSuccess: setImportPreview,
+    onMutate: () => {
+      setNotice(null);
+      setImportPreview(null);
+    },
+    onSuccess: (preview) => {
+      setImportPreview(preview);
+      if (!preview) {
+        setNotice(
+          profilesQuery.data?.length
+            ? "已有中央渠道档案，暂不支持再次接管原生渠道。"
+            : tool === "opencode"
+              ? "未检测到可导入渠道。请确认配置中的默认模型（model）引用了自定义 provider，且该渠道包含名称、npm 和 baseURL；内置渠道暂不支持导入。"
+              : "未检测到可导入的已有渠道配置。",
+        );
+      }
+    },
   });
   const confirmImportMutation = useMutation({
     mutationFn: async () => {
@@ -259,9 +274,10 @@ export function ProviderPanel({
           <Button
             variant="outline"
             size="sm"
+            disabled={discoverMutation.isPending}
             onClick={() => discoverMutation.mutate()}
           >
-            检测已有配置
+            {discoverMutation.isPending ? "正在检测…" : "检测已有配置"}
           </Button>
           <Button size="sm" onClick={() => previewMutation.mutate()}>
             {directApply ? "直接应用渠道同步" : "预览渠道同步"}
@@ -270,7 +286,10 @@ export function ProviderPanel({
       </div>
 
       {notice ? (
-        <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">
+        <p
+          role="status"
+          className="mt-4 text-sm text-emerald-700 dark:text-emerald-300"
+        >
           {notice}
         </p>
       ) : null}
