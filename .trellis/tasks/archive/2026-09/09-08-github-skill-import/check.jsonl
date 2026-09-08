@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "中央库导入合同"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "稳定错误合同"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端交互质量门"}
+{"file": ".trellis/tasks/09-08-github-skill-import/research/findings.md", "reason": "现有实现定位"}
