@@ -1205,3 +1205,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 45: 发布 macOS ARM64 0.1.0
+
+**Date**: 2026-09-08
+**Task**: 发布 macOS ARM64 0.1.0
+**Branch**: `main`
+
+### Summary
+
+新增 GitHub Actions 手动发布工作流、版本与 ARM64 DMG 校验、公开下载文档和发布规范；成功构建并公开发布 v0.1.0。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b80c835` | (see git log) |
+
+### Status
+
+[OK] **Completed**

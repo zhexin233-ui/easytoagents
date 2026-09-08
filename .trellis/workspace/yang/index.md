@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 44
-- **Last Active**: 2026-09-07
+- **Total Sessions**: 45
+- **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1207 | Active |
+| `journal-1.md` | ~1228 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 45 | 2026-09-08 | 发布 macOS ARM64 0.1.0 | `b80c835` | `main` |
 | 44 | 2026-09-07 | 完成 OpenCode 支持接入 | `bfc6a92` | `main` |
 | 43 | 2026-09-07 | 移除项目级提示词功能 | `dc76c93` | `main` |
 | 42 | 2026-09-07 | 修复项目级提示词直接应用 | `72dec60` | `main` |
