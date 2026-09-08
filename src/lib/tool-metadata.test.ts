@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import opencodeIconSource from "@/assets/brand/opencode-icon.svg?raw";
 import {
   MCP_TOOLS,
   PROFILE_TOOLS,
@@ -74,5 +75,12 @@ describe("tool metadata", () => {
     expect(toolMetadata("opencode").icon).toMatch(
       /opencode-icon\.svg|svg\+xml/,
     );
+
+    expect(opencodeIconSource).toContain(
+      '<svg width="300" height="300" viewBox="0 0 300 300"',
+    );
+    expect(opencodeIconSource).toContain('fill="#CFCECD"');
+    expect(opencodeIconSource).toContain('fill="#211E1E"');
+    expect(opencodeIconSource).not.toContain('fill="#111827"');
   });
 });
