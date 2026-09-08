@@ -1226,3 +1226,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 46: 完成 GitHub Skill 目录导入
+
+**Date**: 2026-09-08
+**Task**: 完成 GitHub Skill 目录导入
+**Branch**: `main`
+
+### Summary
+
+新增公开 GitHub 单 Skill 目录的固定提交受限下载、中央库安全导入、数据库来源兼容、Tauri RPC 与前端弹窗；补齐本地及真实链接验收、跨层规范和刷新失败防重语义。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c31eeae` | (see git log) |
+
+### Status
+
+[OK] **Completed**
