@@ -21,6 +21,7 @@
   <a href="#产品实景">产品实景</a> ·
   <a href="#安全同步模型">安全同步</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#下载安装包">下载安装包</a> ·
   <a href="#参与贡献">参与贡献</a>
 </p>
 
@@ -66,7 +67,13 @@ Prompt 仅支持全局档案、全局分配和全局同步。项目扫描与同�
 
 ## 快速开始
 
-当前支持 **macOS 13+**。仓库尚未提供公开 Release 或预编译安装包，需要从源码运行。
+当前支持 **macOS 13+**。公开安装包仅支持 Apple Silicon（M 系列）Mac；开发者也可以从源码运行。
+
+### 下载安装包
+
+前往 [GitHub Releases](https://github.com/zhexin233-ui/easytoagents/releases)，下载对应版本的 `EasyToAgents_<版本>_aarch64.dmg`。首个版本的文件名为 `EasyToAgents_0.1.0_aarch64.dmg`。
+
+打开 DMG 后，将 EasyToAgents 拖入“应用程序”目录。当前安装包未使用 Apple Developer 签名，也未经 Apple 公证，因此首次打开可能被 Gatekeeper 拦截。遇到提示时，在“应用程序”中右键 EasyToAgents 并选择“打开”，然后再次确认；也可以前往“系统设置 → 隐私与安全性”，在安全提示旁选择“仍要打开”。
 
 ### 环境要求
 
@@ -94,6 +101,17 @@ pnpm tauri build
 ```
 
 项目的 Tauri 配置会在 macOS 本地构建 `.app` 与 `.dmg`。
+
+### 维护者发布版本
+
+发布由 GitHub Actions 手动执行，普通 push 和 Pull Request 不会触发发布：
+
+1. 确认 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 与 `src-tauri/Cargo.lock` 中的应用版本一致。首版均为 `0.1.0`。
+2. 在仓库的 **Actions** 页面选择 **发布 macOS ARM64 DMG**，点击 **Run workflow**，选择要发布的提交并输入不带 `v` 前缀的版本号；首版输入 `0.1.0`。
+3. 等待构建、DMG 挂载检查、应用版本和 ARM64 架构检查全部通过。工作流随后创建 `v<版本>` 标签，上传附件，并公开 Release。
+4. 从 Release 下载 DMG，确认能正常挂载并显示 EasyToAgents 应用。
+
+同一版本的工作流会串行执行。只有标签仍指向最初发布的提交时才能重跑；重跑会替换该 Release 中同名的 ARM64 DMG，不会移动标签或修改其他版本的附件。构建失败不会创建公开 Release；上传中断可能留下标签和草稿 Release，可在同一提交上重跑恢复。
 
 ## 首次使用
 
@@ -132,8 +150,8 @@ pnpm tauri build
 
 ## 当前范围
 
-- 仅支持 macOS 13+；其他桌面平台尚未纳入当前支持范围。
-- 当前以源码运行和本地构建为主，没有公开 Release、预编译下载页或独立官网。
+- 预编译安装包仅支持 Apple Silicon（M 系列）Mac 与 macOS 13+；Intel Mac 和其他桌面平台尚未纳入当前支持范围。
+- 公开下载入口为 GitHub Releases，目前没有独立官网。
 - 仓库目前未提供 `LICENSE` 文件。
 - README 只描述仓库中已经实现且可验证的配置管理流程，不代表所有第三方工具配置都已覆盖。
 
