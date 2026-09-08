@@ -27,6 +27,12 @@ pub struct ImportSkillInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct ImportGithubSkillInput {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionedSkillInput {
     pub id: String,
     pub row_version: u32,

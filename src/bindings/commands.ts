@@ -448,6 +448,14 @@ async importSkill(input: ImportSkillInput) : Promise<Result<SkillDto, AppError>>
     else return { status: "error", error: e  as any };
 }
 },
+async importGithubSkill(input: ImportGithubSkillInput) : Promise<Result<SkillDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_github_skill", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async discoverSkillImport(tool: Tool) : Promise<Result<SkillImportPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("discover_skill_import", { tool }) };
@@ -779,6 +787,7 @@ export type HookProjectOptionDto = { hookId: string; name: string; event: HookEv
 export type HookProjectOptionsInput = { projectId: string; tool: Tool }
 export type HookProjectSelectionState = "inherited" | "selected" | "available"
 export type HookTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
+export type ImportGithubSkillInput = { url: string }
 export type ImportSkillInput = { sourcePath: string }
 export type InterruptedRunPlan = { runId: string; status: string; journalAvailable: boolean; targets: InterruptedTargetPlan[] }
 export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }

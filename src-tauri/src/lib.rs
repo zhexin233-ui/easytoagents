@@ -105,6 +105,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<skills::PrepareSkillTakeoverInput>()
         .typ::<skills::SkillTakeoverPreviewResultDto>()
         .typ::<skills::ImportSkillInput>()
+        .typ::<skills::ImportGithubSkillInput>()
         .typ::<skills::VersionedSkillInput>()
         .typ::<skills::SkillDto>()
         .typ::<skills::SkillContentPreviewDto>()
@@ -222,6 +223,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::skills::list_skills,
             commands::skills::get_skill,
             commands::skills::import_skill,
+            commands::skills::import_github_skill,
             commands::skills::discover_skill_import,
             commands::skills::confirm_skill_import,
             commands::skills::prepare_skill_takeover,

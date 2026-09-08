@@ -36,6 +36,23 @@ pub fn import_skill(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn import_github_skill(
+    state: State<'_, AppState>,
+    input: ImportGithubSkillInput,
+) -> Result<SkillDto, AppError> {
+    let paths = state.paths().clone();
+    let downloaded = skills::download_github_skill(&input.url).await?;
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    skills::import_downloaded_github_skill(
+        &mut database,
+        &paths,
+        downloaded.path(),
+        downloaded.normalized_url(),
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn preview_skill_content(
     state: State<'_, AppState>,
     id: String,

@@ -15,9 +15,9 @@ use uuid::Uuid;
 use super::{
     library::{
         cleanup_failed_import, delete_quarantined_skill, finalize_skill_import,
-        inspect_central_skill, prepare_skill_import, quarantine_central_skill,
-        read_central_skill_for_adoption, rename_import_exclusively, restore_quarantined_skill,
-        sync_directory, validate_central_skill_directory,
+        inspect_central_skill, prepare_github_skill_import, prepare_skill_import,
+        quarantine_central_skill, read_central_skill_for_adoption, rename_import_exclusively,
+        restore_quarantined_skill, sync_directory, validate_central_skill_directory,
     },
     ApplySkillPreviewInput, DeleteSkillResultDto, ImportSkillInput, PreparedSkillRecord,
     PreviewSkillSyncInput, SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput,
@@ -88,6 +88,45 @@ pub fn import_skill(
         }
     };
     skill_dto(database, paths, &record)
+}
+
+pub fn import_downloaded_github_skill(
+    database: &mut Database,
+    paths: &AppPaths,
+    source: &Path,
+    normalized_url: &str,
+) -> Result<SkillDto, AppError> {
+    let mut prepared = prepare_github_skill_import(paths, source, normalized_url)?;
+    if let Err(error) = finalize_skill_import(paths, &mut prepared) {
+        cleanup_failed_import(paths, &prepared)?;
+        return Err(error);
+    }
+    let value = PreparedSkillRecord {
+        id: prepared.id.clone(),
+        name: prepared.name.clone(),
+        source_path: prepared.source_path.clone(),
+        central_path: prepared.central_path.clone(),
+        content_hash: prepared.content_hash.clone(),
+        frontmatter: prepared.frontmatter.clone(),
+    };
+    match repository::insert_skill(database, &value) {
+        Ok(record) => skill_dto(database, paths, &record),
+        Err(error) => match repository::get_skill(database, &prepared.id) {
+            Ok(record)
+                if record.name == prepared.name
+                    && record.source_path == prepared.source_path
+                    && record.central_path == prepared.central_path
+                    && record.content_hash == prepared.content_hash =>
+            {
+                skill_dto(database, paths, &record)
+            }
+            Err(not_found) if not_found.code() == crate::error::ErrorCode::NotFound => {
+                cleanup_failed_import(paths, &prepared)?;
+                Err(error)
+            }
+            _ => Err(error),
+        },
+    }
 }
 
 pub fn adopt_skill_content(
@@ -1428,9 +1467,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        adopt_skill_content, apply_skill_preview_with_policy_probe, delete_skill, import_skill,
-        list_skill_project_options, preview_skill_content, preview_skill_sync_with_policy_probe,
-        set_global_skill_assignment, set_project_skill_assignment,
+        adopt_skill_content, apply_skill_preview_with_policy_probe, delete_skill,
+        import_downloaded_github_skill, import_skill, list_skill_project_options,
+        preview_skill_content, preview_skill_sync_with_policy_probe, set_global_skill_assignment,
+        set_project_skill_assignment,
     };
     use crate::{
         adapters::{
@@ -1592,6 +1632,42 @@ mod tests {
                 },
             )
             .unwrap()
+        }
+    }
+
+    #[test]
+    fn github_download_import_persists_url_and_only_creates_central_copy() {
+        let mut fixture = Fixture::new();
+        let source = fixture.source("github-demo");
+        let source_url = "https://github.com/acme/repo/tree/main/skills/github-demo";
+        let imported = import_downloaded_github_skill(
+            &mut fixture.database,
+            &fixture.paths,
+            &source,
+            source_url,
+        )
+        .unwrap();
+        assert_eq!(imported.source_path, source_url);
+        assert_eq!(imported.name, "github-demo");
+        assert_eq!(
+            fs::read_to_string(Path::new(&imported.central_path).join("asset.txt")).unwrap(),
+            "fixture asset"
+        );
+        for table in [
+            "skill_global_assignments",
+            "skill_project_assignments",
+            "managed_targets",
+            "managed_items",
+            "sync_runs",
+        ] {
+            let count: i64 = fixture
+                .database
+                .connection()
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "GitHub 导入不应写入 {table}");
         }
     }
 

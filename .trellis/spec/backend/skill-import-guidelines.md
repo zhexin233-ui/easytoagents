@@ -17,6 +17,8 @@ confirm_skill_import(state: State<'_, AppState>, input: ConfirmSkillImportInput)
     -> Result<SkillImportResultDto, AppError>;
 prepare_skill_takeover(state: State<'_, AppState>, input: PrepareSkillTakeoverInput)
     -> Result<SkillTakeoverPreviewResultDto, AppError>;
+import_github_skill(state: State<'_, AppState>, input: ImportGithubSkillInput)
+    -> Result<SkillDto, AppError>;
 ```
 
 领域实现位于 `src-tauri/src/skills/import.rs`；命令只取得显式环境、私有路径和数据库锁，不读取进程环境或执行技能脚本。Rust/Specta 是类型唯一来源：
@@ -25,6 +27,7 @@ prepare_skill_takeover(state: State<'_, AppState>, input: PrepareSkillTakeoverIn
 commands.discoverSkillImport(tool);
 commands.confirmSkillImport({ previewId, candidateIds });
 commands.prepareSkillTakeover({ previewId, candidateIds });
+commands.importGithubSkill({ url });
 ```
 
 迁移 `0006_skill_import_previews.sql` 新建表：
@@ -41,6 +44,36 @@ commands.prepareSkillTakeover({ previewId, candidateIds });
 保留 `(status, created_at)` 索引。表不存正文或任意 frontmatter；确认用 `WHERE status = 'previewed'` 条件消费，并与全部 Skill 插入共同提交。不得修改历史迁移、借用 MCP 接管表或自动降级真实数据库。
 
 ## 3. 跨层合同
+
+### GitHub 单目录复制导入
+
+GitHub 导入是独立于本地目录和全局发现的显式入口。RPC 只接受 `url`，仅允许
+`https://github.com/{owner}/{repo}/tree/{ref}/{path}` 形式的公开单目录链接；拒绝凭据、
+非标准端口、查询、片段、空片段、`.` / `..`、编码后的斜杠和反斜杠。ref 与目录边界
+必须按最长有效 ref 前缀解析，候选最多 16 次；解析成功后固定 commit SHA，目录树查询
+和 `raw.githubusercontent.com` 文件下载都只能使用该次解析的 SHA，不能继续读取浮动
+分支，也不能跟随重定向或接受远端返回的下载主机。
+
+下载只递归指定子树，拒绝截断树、symlink、submodule 和未知 Git 类型。与本地目录校验
+保持同一上限：4096 个文件、32 层、单文件 8 MiB、`SKILL.md` 512 KiB、正文合计
+32 MiB、相对路径 1024 字节；元数据响应、累计元数据、请求数、连接/单请求/整体时间
+另有固定上限。客户端设置固定 User-Agent，仅显式继承 `HTTP(S)_PROXY` / `ALL_PROXY`
+环境，不修改永久代理配置；错误不得返回响应正文、代理值或 URL 中的敏感内容。
+
+每次下载使用权限收窄的独立 `TempDir`，任何正常错误都由 RAII 清理。网络阶段不得持有
+数据库锁；下载完成后复用 `prepare_skill_import` 的完整树复制、frontmatter 校验、hash
+重验和排他 finalize。数据库中的 `source_path` 保存服务端重新编码的规范化 GitHub
+目录 URL（schema migration 20 放宽此前仅绝对路径的约束），不得保存临时目录路径。
+同名目录或 NOCASE 数据库名称冲突必须失败，不能覆盖或自动改名；成功只新增中央 Skill
+记录和私有副本，不写 assignment、managed target/item、sync run，也不执行下载内容。
+SQL 提交报错后必须按本次 UUID 重读记录：确认已提交则保留并返回成功，确认未提交才
+核验并清理中央副本，结果不确定时保留副本并报错，禁止盲删。
+
+`SkillGithubImportDialog` 在请求及随后列表刷新期间保持模态锁并阻止双提交。RPC 成功后
+立即进入不可重放的 committed 状态，只失效 `skillKeys.all`；刷新成功才关闭并恢复焦点。
+刷新失败必须明确说明“已复制、列表刷新失败”，保持输入和提交禁用，避免用户重复导入。
+自动化下载测试使用本地 HTTP fixture 断言完整资源和所有 raw 请求固定到同一 commit；
+真实公开链接测试保持显式 ignored，只用于发布前联网验收，不能替代稳定的本地门禁。
 
 ### 显式来源与内置排除
 
@@ -177,6 +210,11 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 | 有 desired、无 baseline/item、目标缺失或仅含不同名外部条目 | `SKILL_TARGET_INITIAL_SYNC_PENDING`，预览仍按真实 assessment 生成 |
 | 半基线、managed item 漂移、同名外部项、中央损坏或策略/权限错误 | 保留真实阻断；不能显示首次待同步                                |
 | 中央副本 hash/status 漂移 | `CENTRAL_SKILL_CONTENT_CHANGED`；未采纳前阻断预览/同步/删除；`adopt_skill_content` 只更新中央记录 |
+| GitHub URL 非 HTTPS、非 `github.com/tree`、含凭据/端口/查询/片段或不安全路径段 | `INVALID_INPUT`；不发网络请求、不创建中央副本 |
+| GitHub ref/目录不存在、API 限流、网络失败或超时 | 分别返回可理解的未找到、限流、下载失败或超时反馈；临时目录由 RAII 清理 |
+| GitHub 树截断、含链接/子模块/未知类型、缺少合法 `SKILL.md` 或超过任一预算 | 拒绝整个导入，无可见半成品 |
+| GitHub 下载成功但名称冲突 | `CONFLICT`；不覆盖、不自动改名、不分配或同步 |
+| GitHub RPC 已提交、随后前端列表刷新失败 | 明确提示已复制并锁住旧提交，禁止重复导入 |
 
 ## 5. Good / Base / Bad 示例
 
@@ -192,6 +230,9 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 - Bad：因为设置了 direct 就跳过接管预览，或把 `.agents/skills` 中的兼容别名当成可接管正式入口。
 - Good：用户改了已导入的中央 `SKILL.md` 后点「同步更改」，记录恢复 Ready，工具目录符号链接不变。
 - Bad：把「同步更改」做成从来源重拷、改写 symlink，或在 hash 漂移时通过内容预览 RPC 返回正文。
+- Good：输入公开单 Skill `tree` URL，所有资源按同一 commit SHA 下载并复制进中央库；`source_path` 保存服务端规范化 URL，assignment/managed/sync 表保持不变。
+- Base：GitHub API 临时限流或网络超时，显示稳定可重试错误，下载临时目录自动清理，用户修改 URL 后可重试。
+- Bad：跟随重定向到远端提供的主机、用浮动分支逐文件下载、覆盖同名中央目录，或在列表刷新失败后允许再次提交同一 URL。
 
 ## 6. 必需测试与断言
 
@@ -209,6 +250,8 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 - `snapshot-restore-dialog.test.tsx`：显示 `payload_file` / `metadata_only` / `directory_tree`，旧目录占位快照禁恢复但可删除，目录树恢复预览提示恢复后的中央漂移。
 - 分配 UI：断言中央列表与目标状态一起刷新，成功文案说明仍需显式同步；仅 `missing` 或 `external_non_owned_change` 与 pending 诊断组合覆盖徽标，其它组合不覆盖；分配/取消分配均不调用 Preview/Apply。
 - 浏览器 fixture 只证明实际组件的交互/布局；不能替代真实 Tauri 或真实安装验收。真实桌面未跑必须明确记载。
+- GitHub 下载器：本地 HTTP fixture 断言最长有效 ref、树完整性、嵌套资源逐字节保留、所有 raw 请求使用同一完整 commit SHA，以及截断树、链接、子模块、限额、状态码、超时与清理错误；两个公开示例保持 ignored 联网验收并使用隔离中央库。
+- GitHub UI：断言精确 trim 后 payload、pending 期间 Escape/关闭/重复 submit 锁、失败后编辑重试、成功仅刷新 `skillKeys.all`，以及刷新失败后显示“已复制”并永久禁用旧提交；断言不调用 assignment、Preview 或 Apply。
 
 ## 7. 错误与正确做法
 
@@ -232,6 +275,12 @@ let evidence = library::resolve_skill_source_excluding(root, entry, &excluded)?;
 错误：把“复制成功”当成“已同步”，给来源工具自动 assignment 或刷新受管 baseline。
 
 正确：只提交中央 Skill 记录和导入令牌；前端提示原安装未变、尚未分配或同步。
+
+错误：解析到分支后仍使用浮动 ref 逐文件下载，或直接信任远端返回的下载 URL。
+
+正确：先把 ref 解析成完整 commit SHA，再从受信任的 GitHub API 读取指定子树；所有文件 URL
+由固定 `raw.githubusercontent.com/{owner}/{repo}/{commit}/{path}` 边界自行逐段编码构造，
+禁重定向并在网络结束后才获取数据库锁。
 
 错误：把 `already_imported` 一律视为无操作，或在 direct 模式下直接替换正式目录入口。
 

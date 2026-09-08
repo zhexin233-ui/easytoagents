@@ -121,6 +121,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "opencode_tool_support",
         sql: include_str!("migrations/0019_opencode_tool_support.sql"),
     },
+    Migration {
+        version: 20,
+        name: "github_skill_sources",
+        sql: include_str!("migrations/0020_github_skill_sources.sql"),
+    },
 ];
 
 pub(crate) struct Migration {
@@ -519,6 +524,24 @@ fn validate_migration_preconditions(
             }
         }
     }
+    if migration.version == 20 {
+        const SOURCE_PATH_ANCHOR: &str = "source_path TEXT NOT NULL CHECK(\n        source_path LIKE '/%' AND source_path != '/' AND instr(source_path, '//') = 0\n        AND source_path NOT LIKE '%/../%' AND source_path NOT LIKE '%/./%'\n        AND source_path NOT LIKE '%/..' AND source_path NOT LIKE '%/.'\n        AND substr(source_path, -1) != '/'\n    )";
+        let matched: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'skills' AND sql IS NOT NULL
+                   AND (length(sql) - length(replace(sql, ?1, ''))) = length(?1)",
+                [SOURCE_PATH_ANCHOR],
+                |row| row.get(0),
+            )
+            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+        if matched != 1 {
+            return Err(AppError::migration(
+                &path.to_string_lossy(),
+                migration.version,
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -750,6 +773,36 @@ mod tests {
     }
 
     #[test]
+    fn github_skill_source_migration_accepts_only_normalized_source_shape() {
+        let (_temporary, _paths, database) = open_isolated_database();
+        assert_eq!(database.schema_version().unwrap(), 20);
+        database
+            .connection()
+            .execute(
+                "INSERT INTO skills(id, name, source_path, central_path, content_hash)
+                 VALUES (?1, 'github-demo', ?2, '/fixture/central/github-demo', ?3)",
+                params![
+                    "00000000-0000-4000-8000-000000000020",
+                    "https://github.com/acme/repo/tree/main/skills/demo",
+                    "a".repeat(64),
+                ],
+            )
+            .unwrap();
+        assert!(database
+            .connection()
+            .execute(
+                "INSERT INTO skills(id, name, source_path, central_path, content_hash)
+                 VALUES (?1, 'github-bad', ?2, '/fixture/central/github-bad', ?3)",
+                params![
+                    "00000000-0000-4000-8000-000000000021",
+                    "https://example.com/acme/repo/tree/main/skills/demo",
+                    "b".repeat(64),
+                ],
+            )
+            .is_err());
+    }
+
+    #[test]
     fn initializes_wal_foreign_keys_and_all_phase_one_tables() {
         let (_temporary, _paths, database) = open_isolated_database();
         let connection = database.connection();
@@ -761,7 +814,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 19);
+        assert_eq!(database.schema_version().unwrap(), 20);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1299,7 +1352,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             assert!(database.startup_backup().is_some());
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
@@ -1334,7 +1387,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -1389,7 +1442,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 19);
+        assert_eq!(database.schema_version().unwrap(), 20);
         let kinds = database
             .connection()
             .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1631,7 +1684,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 19);
+        assert_eq!(database.schema_version().unwrap(), 20);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1779,7 +1832,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 19);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(
             reopened
                 .connection()
@@ -1839,7 +1892,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1904,7 +1957,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1992,7 +2045,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2146,7 +2199,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2263,7 +2316,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2343,7 +2396,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            19
+            20
         );
         for (tool, artifact, accepted) in [
             ("opencode", "provider", true),
@@ -2388,7 +2441,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 19);
+        assert_eq!(database.schema_version().unwrap(), 20);
         let connection = database.connection();
         connection
             .execute(
@@ -2444,7 +2497,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 19);
+        assert_eq!(reopened.schema_version().unwrap(), 20);
         assert_eq!(
             reopened
                 .connection()
@@ -2487,7 +2540,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2636,7 +2689,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2748,7 +2801,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2924,7 +2977,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 19);
+            assert_eq!(database.schema_version().unwrap(), 20);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(

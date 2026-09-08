@@ -159,6 +159,16 @@ pub(crate) fn prepare_skill_import(
     prepare_skill_import_budgeted(paths, source, None, None)
 }
 
+pub(crate) fn prepare_github_skill_import(
+    paths: &AppPaths,
+    source: &Path,
+    normalized_url: &str,
+) -> Result<PreparedSkillImport, AppError> {
+    let mut prepared = prepare_skill_import(paths, source)?;
+    prepared.source_path = normalized_url.to_owned();
+    Ok(prepared)
+}
+
 pub(super) fn prepare_discovered_skill_import(
     paths: &AppPaths,
     evidence: &SkillSourceEvidence,

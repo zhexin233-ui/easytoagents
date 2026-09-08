@@ -27,6 +27,7 @@ import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import { SkillDirectoryImportDialog } from "@/features/skills/skill-directory-import-dialog";
+import { SkillGithubImportDialog } from "@/features/skills/skill-github-import-dialog";
 import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import {
@@ -71,6 +72,7 @@ export function SkillsPage() {
   );
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
   const [openDirectoryImport, setOpenDirectoryImport] = useState(false);
+  const [openGithubImport, setOpenGithubImport] = useState(false);
   const { notification, notify } = useNotify();
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
@@ -254,8 +256,9 @@ export function SkillsPage() {
         <p className="text-muted-foreground text-sm">应用私有中央库</p>
         <h1 className="mt-1 text-2xl font-semibold">Skills</h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          导入只复制本地目录，不移动或修改来源。各工具目标始终使用指向中央副本的符号链接，
-          并且只能通过持久化预览 Apply。
+          导入只复制本地目录或公开 GitHub
+          Skill，不移动或修改来源。各工具目标始终使用指向中央副本的符号链接，并且只能通过持久化预览
+          Apply。
         </p>
       </header>
 
@@ -276,6 +279,9 @@ export function SkillsPage() {
               <Button size="sm" onClick={() => setOpenDirectoryImport(true)}>
                 从本地目录导入
               </Button>
+              <Button size="sm" onClick={() => setOpenGithubImport(true)}>
+                从 GitHub 导入
+              </Button>
             </div>
           </div>
           {skillsQuery.isPending ? (
@@ -294,7 +300,7 @@ export function SkillsPage() {
           {skillsQuery.data?.length === 0 ? (
             <p className="text-muted-foreground mt-4 text-sm">
               尚无 Skill。可在下方全局目标卡片选择“检测并导入已有
-              Skills”，或点击“从本地目录导入”复制本地目录。
+              Skills”，或从本地目录、公开 GitHub Skill 目录导入。
             </p>
           ) : null}
           <CentralList layout={listLayout}>
@@ -684,6 +690,23 @@ export function SkillsPage() {
               kind: "success",
               message:
                 "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
+            });
+          }}
+        />
+      ) : null}
+
+      {openGithubImport ? (
+        <SkillGithubImportDialog
+          onClose={() => setOpenGithubImport(false)}
+          onImported={async () => {
+            await queryClient.invalidateQueries(
+              { queryKey: skillKeys.all },
+              { throwOnError: true },
+            );
+            notify({
+              kind: "success",
+              message:
+                "GitHub Skill 已复制到应用私有中央库；未执行脚本，也未自动分配或同步。",
             });
           }}
         />

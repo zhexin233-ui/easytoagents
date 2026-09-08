@@ -31,6 +31,7 @@ vi.mock("@/bindings/commands", () => ({
     listSkills: vi.fn(),
     getSkill: vi.fn(),
     importSkill: vi.fn(),
+    importGithubSkill: vi.fn(),
     discoverSkillImport: vi.fn(),
     confirmSkillImport: vi.fn(),
     prepareSkillTakeover: vi.fn(),
@@ -697,6 +698,125 @@ describe("SkillsPage", () => {
       within(dialog).getByRole("button", { name: "复制到中央库" }),
     ).toBeDisabled();
     expect(commands.importSkill).not.toHaveBeenCalled();
+  });
+
+  it("GitHub 导入默认收起，精确提交链接且下载期间阻止关闭和双提交", async () => {
+    const pending =
+      deferred<Awaited<ReturnType<typeof commands.importGithubSkill>>>();
+    vi.mocked(commands.importGithubSkill).mockReturnValue(pending.promise);
+    renderPage();
+    const trigger = screen.getByRole("button", { name: "从 GitHub 导入" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "从 GitHub 导入" });
+    const input = within(dialog).getByLabelText("GitHub Skill 目录链接");
+    fireEvent.change(input, {
+      target: {
+        value:
+          "  https://github.com/vercel-labs/skills/tree/main/skills/find-skills  ",
+      },
+    });
+    const submit = within(dialog).getByRole("button", {
+      name: "复制到中央库",
+    });
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(commands.importGithubSkill).toHaveBeenCalledWith({
+        url: "https://github.com/vercel-labs/skills/tree/main/skills/find-skills",
+      }),
+    );
+    expect(
+      await within(dialog).findByText("正在从 GitHub 下载并安全导入…"),
+    ).toHaveAttribute("role", "status");
+    expect(
+      within(dialog).getByRole("button", { name: "正在下载并导入…" }),
+    ).toBeDisabled();
+    fireEvent.submit(within(dialog).getByRole("form"));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(commands.importGithubSkill).toHaveBeenCalledTimes(1);
+    expect(dialog).toBeVisible();
+
+    await act(async () => {
+      pending.resolve({ status: "ok", data: skill });
+      await pending.promise;
+    });
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(
+      await screen.findByText(
+        "GitHub Skill 已复制到应用私有中央库；未执行脚本，也未自动分配或同步。",
+      ),
+    ).toHaveAttribute("role", "status");
+    expect(trigger).toHaveFocus();
+    expect(commands.setGlobalSkillAssignment).not.toHaveBeenCalled();
+    expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+  });
+
+  it("GitHub 导入失败允许修改链接重试", async () => {
+    vi.mocked(commands.importGithubSkill).mockResolvedValueOnce({
+      status: "error",
+      error: {
+        code: "NOT_FOUND",
+        message: "未找到 GitHub Skill 目录",
+        recoverable: true,
+      },
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "从 GitHub 导入" }));
+    const dialog = screen.getByRole("dialog", { name: "从 GitHub 导入" });
+    const input = within(dialog).getByLabelText("GitHub Skill 目录链接");
+    fireEvent.change(input, {
+      target: { value: "https://github.com/owner/repo/tree/main/missing" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "NOT_FOUND：未找到 GitHub Skill 目录",
+    );
+    fireEvent.change(input, {
+      target: { value: "https://github.com/owner/repo/tree/main/fixed" },
+    });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    ).toBeEnabled();
+  });
+
+  it("GitHub 复制成功但列表刷新失败时锁住旧提交并说明实际结果", async () => {
+    vi.mocked(commands.importGithubSkill).mockResolvedValue({
+      status: "ok",
+      data: skill,
+    });
+    renderPage();
+    await screen.findByText(skill.description);
+    vi.mocked(commands.listSkills).mockResolvedValueOnce({
+      status: "error",
+      error: {
+        code: "DATABASE_ERROR",
+        message: "中央列表暂不可读",
+        recoverable: true,
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "从 GitHub 导入" }));
+    const dialog = screen.getByRole("dialog", { name: "从 GitHub 导入" });
+    fireEvent.change(within(dialog).getByLabelText("GitHub Skill 目录链接"), {
+      target: { value: "https://github.com/owner/repo/tree/main/skill" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Skill 已复制到中央库，但列表刷新失败：DATABASE_ERROR：中央列表暂不可读",
+    );
+    expect(
+      within(dialog).getByLabelText("GitHub Skill 目录链接"),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "复制到中央库" }),
+    ).toBeDisabled();
+    fireEvent.submit(within(dialog).getByRole("form"));
+    expect(commands.importGithubSkill).toHaveBeenCalledTimes(1);
   });
 
   it("独立展示内容预览和删除冲突，不泄露 frontmatter 元数据", async () => {
