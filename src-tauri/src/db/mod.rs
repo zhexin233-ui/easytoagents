@@ -395,6 +395,20 @@ fn validate_migration_preconditions(
         }
     }
     if migration.version == 19 {
+        // 早期 v17 已开放 Cursor，但尚未加入 tool×artifact 组合约束。
+        // 在同一迁移事务内将这个已知旧锚点规范化，再执行下方的严格校验；
+        // 失败时连同 schema 文本一起回滚，不修改已应用的迁移历史。
+        transaction
+            .execute_batch(
+                "PRAGMA writable_schema = ON;
+                 UPDATE sqlite_master SET sql = replace(sql,
+                   'tool TEXT NOT NULL CHECK(tool IN (''claude'', ''codex'', ''zcode'', ''cursor'')),',
+                   'tool TEXT NOT NULL CHECK(tool IN (''claude'', ''codex'', ''zcode'', ''cursor'') AND (tool != ''cursor'' OR artifact_kind = ''prompt'')),')
+                 WHERE type = 'table' AND name = 'profile_import_previews'
+                   AND instr(sql, 'tool TEXT NOT NULL CHECK(tool IN (''claude'', ''codex'', ''zcode'', ''cursor'')),') > 0;
+                 PRAGMA writable_schema = OFF;",
+            )
+            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
         let anchors = [
             (
                 "mcp_global_assignments",
@@ -2293,6 +2307,56 @@ mod tests {
                     [PROMPT_PROFILE_ID],
                 )
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn opencode_migration_accepts_legacy_cursor_preview_schema() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let path = std::path::Path::new("/fixture/legacy.sqlite3");
+        connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)").unwrap();
+        for migration in &super::MIGRATIONS[..18] {
+            connection.execute_batch(migration.sql).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                    params![migration.version, migration.name],
+                )
+                .unwrap();
+        }
+        // 重现真实早期 v17/v18 的表约束，不依赖开发者数据库。
+        connection
+            .execute_batch(
+                "PRAGMA writable_schema = ON;
+            UPDATE sqlite_master SET sql = replace(sql,
+                ' AND (tool != ''cursor'' OR artifact_kind = ''prompt'')', '')
+            WHERE name = 'profile_import_previews';
+            PRAGMA writable_schema = OFF;",
+            )
+            .unwrap();
+        super::run_migrations(&mut connection, path).unwrap();
+        super::run_migrations(&mut connection, path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            19
+        );
+        for (tool, artifact, accepted) in [
+            ("opencode", "provider", true),
+            ("opencode", "prompt", true),
+            ("cursor", "prompt", true),
+            ("cursor", "provider", false),
+        ] {
+            let result = connection.execute(
+                "INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json)
+                 VALUES (?1, ?2, ?3, '/fixture/config', ?4, '预览', '{}')",
+                params![uuid::Uuid::new_v4().to_string(), tool, artifact, "a".repeat(64)],
+            );
+            assert_eq!(result.is_ok(), accepted, "{tool}/{artifact}: {result:?}");
         }
     }
 
