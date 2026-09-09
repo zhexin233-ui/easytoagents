@@ -1268,3 +1268,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 48: 修复 OpenCode 项目 Hooks 误导入口
+
+**Date**: 2026-09-09
+**Task**: 修复 OpenCode 项目 Hooks 误导入口
+**Branch**: `main`
+
+### Summary
+
+按工具能力矩阵过滤项目资源入口；OpenCode 从 Hooks 视图切换时在渲染期回落到 MCP，避免 unsupported Hook 查询；新增四工具参数化回归测试并更新前端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ce67ede` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 47
+- **Total Sessions**: 48
 - **Last Active**: 2026-09-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1270 | Active |
+| `journal-1.md` | ~1291 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 48 | 2026-09-09 | 修复 OpenCode 项目 Hooks 误导入口 | `ce67ede` | `main` |
 | 47 | 2026-09-09 | 新增侧栏项目移除入口 | `ec2239e` | `main` |
 | 46 | 2026-09-08 | 完成 GitHub Skill 目录导入 | `c31eeae` | `main` |
 | 45 | 2026-09-08 | 发布 macOS ARM64 0.1.0 | `b80c835` | `main` |
