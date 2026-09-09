@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"确认本任务适用的前端规范入口与相关约束。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"侧栏行操作需要遵循图标按钮、可访问名称、禁用解释与确认交互约束。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"移除 mutation 必须刷新项目、MCP、Skill 查询族并避免陈旧路由状态。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"必须复用生成 commands、解包结构化错误并遵循 mutation 测试约束。"}

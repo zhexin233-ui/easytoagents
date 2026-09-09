@@ -8,20 +8,40 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/app/app-shell";
-import { commands } from "@/bindings/commands";
+import { commands, type ProjectDto } from "@/bindings/commands";
 import { themeStorageKey } from "@/components/use-theme";
 
 vi.mock("@/bindings/commands", () => ({
   commands: {
     listProjects: vi.fn(),
+    removeProject: vi.fn(),
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
   },
 }));
+
+const project: ProjectDto = {
+  id: "00000000-0000-4000-8000-000000000801",
+  displayName: "侧栏项目",
+  rootPath: "/isolated/projects/sidebar",
+  pathStatus: "valid",
+  gitStatus: "repository",
+  codexTrustStatus: "trusted",
+  claudePolicyStatus: "allowed",
+  targets: [],
+  nativeResources: { active: 1, disabled: 0, missing: 0, conflict: 0 },
+  lastScannedAt: "2026-09-09T10:00:00Z",
+  rowVersion: 7,
+};
+
+function LocationProbe() {
+  const { pathname } = useLocation();
+  return <output aria-label="当前路径">{pathname}</output>;
+}
 
 function renderShell(initialEntry = "/") {
   const queryClient = new QueryClient({
@@ -31,6 +51,7 @@ function renderShell(initialEntry = "/") {
     <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={queryClient}>
         <AppShell />
+        <LocationProbe />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -42,6 +63,15 @@ describe("AppShell 侧边栏设置入口", () => {
     vi.mocked(commands.listProjects).mockResolvedValue({
       status: "ok",
       data: [],
+    });
+    vi.mocked(commands.removeProject).mockReset();
+    vi.mocked(commands.removeProject).mockResolvedValue({
+      status: "ok",
+      data: {
+        id: project.id,
+        removed: true,
+        nativeConfigurationLeftUnmanaged: true,
+      },
     });
     vi.mocked(commands.getAppSettings).mockReset();
     vi.mocked(commands.getAppSettings).mockResolvedValue({
@@ -151,5 +181,163 @@ describe("AppShell 侧边栏设置入口", () => {
     fireEvent.click(screen.getByRole("button", { name: "亮色模式" }));
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(localStorage.getItem(themeStorageKey)).toBe("light");
+  });
+
+  it("侧栏项目行提供带项目名的移除按钮，取消确认不调用命令", async () => {
+    vi.mocked(commands.listProjects).mockResolvedValue({
+      status: "ok",
+      data: [project],
+    });
+    renderShell();
+
+    const removeButton = await screen.findByRole("button", {
+      name: `移除项目 ${project.displayName}`,
+    });
+    expect(removeButton).toHaveAttribute(
+      "title",
+      `移除项目 ${project.displayName}`,
+    );
+    fireEvent.click(removeButton);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "确认移除项目",
+    });
+    expect(dialog).toHaveTextContent(
+      `项目“${project.displayName}”的登记吗？此操作只移除登记，不删除项目目录或原生配置。`,
+    );
+    expect(
+      screen
+        .getAllByRole("button", { name: /移除项目/ })
+        .every((button) => button.hasAttribute("disabled")),
+    ).toBe(true);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(commands.removeProject).not.toHaveBeenCalled();
+  });
+
+  it("确认后使用精确版本化 payload，刷新项目查询并从当前项目导航到列表", async () => {
+    vi.mocked(commands.listProjects)
+      .mockResolvedValueOnce({ status: "ok", data: [project] })
+      .mockResolvedValue({ status: "ok", data: [] });
+    renderShell(`/projects/${project.id}`);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `移除项目 ${project.displayName}`,
+      }),
+    );
+    fireEvent.click(
+      within(
+        await screen.findByRole("dialog", { name: "确认移除项目" }),
+      ).getByRole("button", { name: "确认移除" }),
+    );
+
+    await waitFor(() =>
+      expect(commands.removeProject).toHaveBeenCalledWith({
+        id: project.id,
+        rowVersion: project.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("当前路径")).toHaveTextContent("/projects"),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: `移除项目 ${project.displayName}`,
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByText(/项目“侧栏项目”已移除登记/),
+    ).toBeInTheDocument();
+  });
+
+  it("有禁用或冲突原生资源时语义化禁用移除按钮并解释原因", async () => {
+    vi.mocked(commands.listProjects).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          ...project,
+          nativeResources: {
+            ...project.nativeResources,
+            disabled: 1,
+            conflict: 1,
+          },
+        },
+      ],
+    });
+    renderShell();
+
+    const removeButton = await screen.findByRole("button", {
+      name: `移除项目 ${project.displayName}`,
+    });
+    expect(removeButton).toBeDisabled();
+    expect(
+      screen.getByText("无法移除：请先恢复已禁用或存在冲突的原生资源。"),
+    ).toBeVisible();
+    fireEvent.click(removeButton);
+    expect(commands.removeProject).not.toHaveBeenCalled();
+  });
+
+  it("移除非当前项目时保留当前路由", async () => {
+    vi.mocked(commands.listProjects)
+      .mockResolvedValueOnce({ status: "ok", data: [project] })
+      .mockResolvedValue({ status: "ok", data: [] });
+    renderShell("/mcp");
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `移除项目 ${project.displayName}`,
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "确认移除项目" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认移除" }));
+
+    await waitFor(() =>
+      expect(commands.removeProject).toHaveBeenCalledWith({
+        id: project.id,
+        rowVersion: project.rowVersion,
+      }),
+    );
+    expect(screen.getByLabelText("当前路径")).toHaveTextContent("/mcp");
+  });
+
+  it("移除失败时通过可访问通知展示结构化错误并保留操作入口", async () => {
+    vi.mocked(commands.listProjects).mockResolvedValue({
+      status: "ok",
+      data: [project],
+    });
+    vi.mocked(commands.removeProject).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "CONFLICT",
+        message: "项目版本冲突",
+        details: { reason: "项目已被其他操作更新" },
+        recoverable: true,
+      },
+    });
+    renderShell();
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `移除项目 ${project.displayName}`,
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "确认移除项目" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认移除" }));
+
+    expect(
+      await screen.findByText(
+        /移除项目“侧栏项目”失败：CONFLICT：项目已被其他操作更新/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `移除项目 ${project.displayName}` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "确认移除项目" }),
+    ).toBeInTheDocument();
   });
 });

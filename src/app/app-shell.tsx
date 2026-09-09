@@ -1,11 +1,20 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useId, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Trash2 } from "lucide-react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import { commands, type ProjectDto } from "@/bindings/commands";
+import { Notify } from "@/components/notify";
+import { useDialogFocus } from "@/components/use-dialog-focus";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useTheme } from "@/components/use-theme";
+import { useNotify } from "@/components/use-notify";
+import { Button } from "@/components/ui/button";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
-import { projectsQueryOptions } from "@/lib/projects-api";
+import { mcpKeys } from "@/lib/mcp-api";
+import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import { projectKeys, projectsQueryOptions } from "@/lib/projects-api";
+import { skillKeys } from "@/lib/skills-api";
 import {
   PROFILE_TOOLS,
   filterEnabledTools,
@@ -176,86 +185,305 @@ function ProjectNavSection({
   onToggle,
   onNavigate,
 }: ProjectNavSectionProps) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const projectsQuery = useQuery(projectsQueryOptions());
+  const [removeDialogProject, setRemoveDialogProject] =
+    useState<ProjectDto | null>(null);
+  const [removeSubmitting, setRemoveSubmitting] = useState(false);
+  const removeInFlightRef = useRef(false);
+  const { notification, notify } = useNotify();
   const projects = projectsQuery.data ?? [];
+  const removeMutation = useMutation({
+    mutationFn: async (project: ProjectDto) =>
+      unwrapResult(
+        await commands.removeProject({
+          id: project.id,
+          rowVersion: project.rowVersion,
+        }),
+      ),
+    onSuccess: async (result, project) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: mcpKeys.projects() }),
+        queryClient.invalidateQueries({ queryKey: skillKeys.projects() }),
+      ]);
+      removeInFlightRef.current = false;
+      setRemoveSubmitting(false);
+      setRemoveDialogProject(null);
+      notify({
+        kind: "success",
+        message: result.nativeConfigurationLeftUnmanaged
+          ? `项目“${project.displayName}”已移除登记；项目目录和原生配置均未删除，已有原生配置已转为非受管。`
+          : `项目“${project.displayName}”已移除登记；项目目录和原生配置均未删除。`,
+      });
+      if (isProjectRoute(pathname, project.id)) {
+        void navigate("/projects");
+      }
+    },
+    onError: (error, project) => {
+      removeInFlightRef.current = false;
+      setRemoveSubmitting(false);
+      notify({
+        kind: "error",
+        message: `移除项目“${project.displayName}”失败：${
+          profileErrorText(error) ?? "操作失败，请重新扫描后再试。"
+        }`,
+      });
+    },
+  });
+  const removeBusy =
+    removeDialogProject !== null ||
+    removeMutation.isPending ||
+    removeSubmitting;
+
+  const requestRemove = (project: ProjectDto) => {
+    if (
+      removeBusy ||
+      hasBlockedNativeResources(project.nativeResources) ||
+      removeInFlightRef.current
+    ) {
+      return;
+    }
+    removeMutation.reset();
+    setRemoveDialogProject(project);
+  };
+
+  const cancelRemove = () => {
+    if (removeBusy && removeMutation.isPending) return;
+    removeInFlightRef.current = false;
+    setRemoveSubmitting(false);
+    removeMutation.reset();
+    setRemoveDialogProject(null);
+  };
+
+  const confirmRemove = () => {
+    if (
+      !removeDialogProject ||
+      removeMutation.isPending ||
+      removeSubmitting ||
+      removeInFlightRef.current
+    ) {
+      return;
+    }
+    removeInFlightRef.current = true;
+    setRemoveSubmitting(true);
+    removeMutation.mutate(removeDialogProject);
+  };
 
   return (
-    <div>
-      <div className="flex items-center">
-        <NavLink
-          to="/projects"
-          end={false}
-          className={primaryLinkClass}
-          onClick={onNavigate}
-        >
-          项目
-        </NavLink>
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-label={open ? "收起项目列表" : "展开项目列表"}
-          title={open ? "收起项目列表" : "展开项目列表"}
-          className="text-muted-foreground hover:bg-muted hover:text-foreground mr-1 flex size-6 shrink-0 items-center justify-center rounded transition-colors"
-          onClick={onToggle}
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={cn("size-3.5 transition-transform", open && "rotate-90")}
+    <>
+      <div>
+        <div className="flex items-center">
+          <NavLink
+            to="/projects"
+            end={false}
+            className={primaryLinkClass}
+            onClick={onNavigate}
           >
-            <path d="M6 3.5 10.5 8 6 12.5" />
-          </svg>
-        </button>
-      </div>
-      {open ? (
-        <div className="mt-1 ml-3 space-y-0.5 border-l pl-3">
-          {projectsQuery.isPending ? (
-            <p
-              role="status"
-              className="text-muted-foreground px-2 py-1 text-xs"
+            项目
+          </NavLink>
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={open ? "收起项目列表" : "展开项目列表"}
+            title={open ? "收起项目列表" : "展开项目列表"}
+            className="text-muted-foreground hover:bg-muted hover:text-foreground mr-1 flex size-6 shrink-0 items-center justify-center rounded transition-colors"
+            onClick={onToggle}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={cn(
+                "size-3.5 transition-transform",
+                open && "rotate-90",
+              )}
             >
-              正在读取项目…
-            </p>
-          ) : null}
-          {projectsQuery.isError ? (
-            <p
-              role="alert"
-              className="px-2 py-1 text-xs text-red-700 dark:text-red-300"
-            >
-              项目列表加载失败
-            </p>
-          ) : null}
-          {!projectsQuery.isPending &&
-          !projectsQuery.isError &&
-          projects.length === 0 ? (
-            <p className="text-muted-foreground px-2 py-1 text-xs">
-              暂无已登记项目
-            </p>
-          ) : null}
-          {projects.map((project) => (
-            <NavLink
-              key={project.id}
-              to={`/projects/${project.id}`}
-              className={({ isActive }) =>
-                cn(
-                  "block truncate rounded-md px-2 py-1.5 text-sm transition-colors",
-                  isActive
-                    ? "bg-muted text-foreground font-medium"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )
-              }
-              title={project.displayName}
-            >
-              {project.displayName}
-            </NavLink>
-          ))}
+              <path d="M6 3.5 10.5 8 6 12.5" />
+            </svg>
+          </button>
         </div>
-      ) : null}
+        {open ? (
+          <div className="mt-1 ml-3 space-y-0.5 border-l pl-3">
+            {projectsQuery.isPending ? (
+              <p
+                role="status"
+                className="text-muted-foreground px-2 py-1 text-xs"
+              >
+                正在读取项目…
+              </p>
+            ) : null}
+            {projectsQuery.isError ? (
+              <p
+                role="alert"
+                className="px-2 py-1 text-xs text-red-700 dark:text-red-300"
+              >
+                项目列表加载失败
+              </p>
+            ) : null}
+            {!projectsQuery.isPending &&
+            !projectsQuery.isError &&
+            projects.length === 0 ? (
+              <p className="text-muted-foreground px-2 py-1 text-xs">
+                暂无已登记项目
+              </p>
+            ) : null}
+            {projects.map((project) => (
+              <div key={project.id} className="space-y-0.5">
+                <div className="flex min-w-0 items-center gap-1">
+                  <NavLink
+                    to={`/projects/${project.id}`}
+                    className={({ isActive }) =>
+                      cn(
+                        "min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm transition-colors",
+                        isActive
+                          ? "bg-muted text-foreground font-medium"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      )
+                    }
+                    title={project.displayName}
+                  >
+                    {project.displayName}
+                  </NavLink>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="size-8 shrink-0 p-0"
+                    aria-label={`移除项目 ${project.displayName}`}
+                    title={`移除项目 ${project.displayName}`}
+                    aria-describedby={
+                      hasBlockedNativeResources(project.nativeResources)
+                        ? `remove-project-blocked-${project.id}`
+                        : undefined
+                    }
+                    disabled={
+                      removeBusy ||
+                      hasBlockedNativeResources(project.nativeResources)
+                    }
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      requestRemove(project);
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" className="size-3.5" />
+                  </Button>
+                </div>
+                {hasBlockedNativeResources(project.nativeResources) ? (
+                  <p
+                    id={`remove-project-blocked-${project.id}`}
+                    className="px-2 text-[11px] leading-4 text-amber-800 dark:text-amber-300"
+                  >
+                    无法移除：请先恢复已禁用或存在冲突的原生资源。
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <ProjectRemoveDialog
+        project={removeDialogProject}
+        pending={removeMutation.isPending}
+        onClose={cancelRemove}
+        onConfirm={confirmRemove}
+      />
+      <Notify notification={notification} />
+    </>
+  );
+}
+
+function hasBlockedNativeResources(project: ProjectDto["nativeResources"]) {
+  return project.disabled + project.conflict > 0;
+}
+
+function isProjectRoute(pathname: string, projectId: string) {
+  const projectPath = `/projects/${projectId}`;
+  return pathname === projectPath || pathname.startsWith(`${projectPath}/`);
+}
+
+interface ProjectRemoveDialogProps {
+  project: ProjectDto | null;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}
+
+function ProjectRemoveDialog({
+  project,
+  pending,
+  onClose,
+  onConfirm,
+}: ProjectRemoveDialogProps) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const close = () => {
+    if (!pending) onClose();
+  };
+  const { dialogRef, onKeyDown } = useDialogFocus(project !== null, close);
+
+  if (!project) return null;
+
+  return (
+    <div
+      role="presentation"
+      className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
+    >
+      <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className="bg-card w-full max-w-md rounded-xl p-6 shadow-xl"
+      >
+        <h2 id={titleId} className="text-xl font-semibold">
+          确认移除项目
+        </h2>
+        <p
+          id={descriptionId}
+          className="text-muted-foreground mt-3 text-sm leading-6"
+        >
+          确定要移除项目“{project.displayName}
+          ”的登记吗？此操作只移除登记，不删除项目目录或原生配置。
+        </p>
+        {pending ? (
+          <p role="status" className="text-muted-foreground mt-4 text-sm">
+            正在移除，请稍候…
+          </p>
+        ) : null}
+        <div className="mt-6 flex justify-end gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={close}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (!pending) {
+                dialogRef.current?.focus();
+                onConfirm();
+              }
+            }}
+          >
+            {pending ? "正在移除…" : "确认移除"}
+          </Button>
+        </div>
+      </section>
     </div>
   );
 }

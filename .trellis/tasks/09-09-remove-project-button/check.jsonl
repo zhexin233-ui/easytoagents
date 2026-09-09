@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/index.md","reason":"核验实现覆盖当前前端规范入口列出的相关要求。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核验侧栏移除按钮的可访问语义、焦点与阻塞状态。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"核验跨域查询失效和移除当前项目后的路由一致性。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验生成命令调用、错误呈现、精确 payload 与自动化测试覆盖。"}

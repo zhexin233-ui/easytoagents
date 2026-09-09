@@ -399,13 +399,17 @@ const adopted = unwrapResult(
   checked and read-only; there is no project-level global-disable mutation.
 - `ProjectDetailPage` is the single UI owner for project MCP/Skill/Hook assignment
   **and** project-native resources. It uses independent local resource
-  (`"mcp" | "hook" | "skill"`) and tool (`"claude" | "codex" | "cursor"`) view state, defaults
-  to MCP + Claude, and exposes both switches as accessible pressed-button groups.
-  Claude/Codex/Cursor selection uses the bundled brand assets with an accessible button
-  name, `title`, and `aria-pressed`; the decorative image stays hidden from assistive
-  technology. Mount only the active tool/resource assignment view and key that subtree
-  by project, tool, and resource so unsubmitted child state cannot leak across
-  combinations. Inside the active combination, render a "项目原生资源" heading
+  (`"mcp" | "hook" | "skill"`) and tool view state, defaults to MCP + the first
+  enabled tool, and exposes both switches as accessible pressed-button groups. Tool
+  selection uses the bundled brand assets with an accessible button name, `title`, and
+  `aria-pressed`; the decorative image stays hidden from assistive technology. Filter
+  the resource switch from the active tool's shared capability metadata. Clamp the
+  effective resource view during render to the first supported resource, just like the
+  enabled-tool fallback; do not repair either state in an effect. Mount and query only
+  this effective tool/resource assignment view, and key that subtree by project, tool,
+  and effective resource so unsupported combinations (for example OpenCode + Hook)
+  never issue an RPC and unsubmitted child state cannot leak across combinations.
+  Inside the active combination, render a "项目原生资源" heading
   **above** "中央追加". The project-native resource list contains supported MCP and
   Skill observations only; Hook assignment uses its own central assignment flow.
   Prompt/Rules files are not queried, listed, or managed. Native `safeSummary` and
@@ -470,6 +474,7 @@ const adopted = unwrapResult(
 | Project has disabled/conflict native resources | Disable remove; show an actionable restore hint |
 | Active writer / `rollback_failed` on project detail | Global block; do not present native restore as writable |
 | Project resource/tool view switch | Update both groups' `aria-pressed`; show/query only the active tool/resource combination; reset transient state |
+| Selected resource unsupported by the next tool | Hide the unsupported resource button and render/query the first supported resource without an intermediate unsupported RPC |
 | Mutation completes after a project view switch | Invalidate affected server queries when required; ignore stale preview/message/dialog UI effects |
 | Tool onboarding choice omitted | Keep preview disabled until choose import/manage or explicit skip |
 | Persisted onboarding skip plus newly available import | Provider/Prompt checkbox remains enabled; selecting it clears skip |
@@ -496,9 +501,11 @@ const adopted = unwrapResult(
 - Assert inherited controls cannot mutate, assignment payloads use the displayed row
   versions, and project/MCP/Skill active queries all refetch after either assignment.
 - Assert MCP + Claude is the default project view; both directions of the MCP/Skill and
-  Claude/Codex/Cursor switches update `aria-pressed`; only the active combination query runs;
-  and remounting a combination resets unsubmitted preview-only state such as the local
-  Git-exclude checkbox.
+  tool switches update `aria-pressed`; only the active combination query runs; and
+  remounting a combination resets unsubmitted preview-only state such as the local
+  Git-exclude checkbox. Parameterize capability fallbacks: switching from Hook on each
+  Hook-capable tool to OpenCode must hide Hook, select MCP, issue no OpenCode Hook
+  options query, and render none of the Hook-only error/empty/controls UI.
 - Assert the native-resources heading appears above 中央追加; disable/restore with
   `applyMode: "direct"` opens `ChangePreviewDialog` and does not call Apply until
   confirm; MCP fixture secrets never appear in rendered native copy.
@@ -787,6 +794,80 @@ function TopBar() {
     (tool) => ({ ... }),
   );
 }
+```
+
+## Scenario: Sidebar project soft removal
+
+### 1. Scope / Trigger
+
+- Trigger: any project-list or app-shell action that removes a registered project
+  through the existing soft-removal command.
+
+### 2. Signatures
+
+- Frontend command: `commands.removeProject({ id, rowVersion })`.
+- Result: `RemoveProjectResultDto { id, removed, nativeConfigurationLeftUnmanaged }`.
+- A sidebar row must pass the displayed project's current `id` and `rowVersion`;
+  do not reconstruct or omit the version field.
+
+### 3. Contracts
+
+- Removal hides the registration and clears project assignments, but never deletes
+  the project directory or rewrites existing native configuration.
+- The UI must confirm the project name and soft-removal semantics before calling
+  the command, and must prevent navigation from the row while opening confirmation.
+- Success invalidates `projectKeys.all`, `mcpKeys.projects()`, and
+  `skillKeys.projects()`; a removed current-project route navigates to `/projects`.
+- Blocked native resources disable the action and explain the reason. Structured
+  command errors keep the project visible and render through `Notify` with
+  `role="alert"`.
+
+### 4. Validation & Error Matrix
+
+- `disabled + conflict > 0` → disabled button, visible recovery explanation,
+  zero `removeProject` calls.
+- Confirmation cancelled or escaped → dialog closes, zero command calls.
+- Command succeeds → affected query families invalidate, the row disappears,
+  and a `role="status"` notice states that files/configuration were preserved.
+- Command returns an error → dialog remains available for retry/cancel, the row
+  remains visible, and the structured reason is shown in an alert notification.
+
+### 5. Good/Base/Bad Cases
+
+- Good: capture the row DTO, confirm with the displayed name, send exact
+  `{ id, rowVersion }`, invalidate the three affected families, then route away
+  only when the removed project is currently open.
+- Base: removing a different project leaves the current route unchanged.
+- Bad: using a stale local id/version, deleting files from the project root, or
+  invalidating only the sidebar list while project MCP/Skill data remains stale.
+
+### 6. Tests Required
+
+- Assert the row button's project-specific accessible name and that clicking it
+  does not activate the `NavLink`.
+- Assert confirmation text, cancel/Escape behavior, exact command payload,
+  blocked-resource behavior, pending duplicate protection, error notification,
+  affected query invalidation, and current/non-current route outcomes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+onClick={() => commands.removeProject({ id: project.id })}
+```
+
+#### Correct
+
+```tsx
+onClick={() => {
+  event.preventDefault();
+  event.stopPropagation();
+  openRemoveConfirmation(project);
+}}
+
+commands.removeProject({ id: project.id, rowVersion: project.rowVersion });
+await invalidate(projectKeys.all, mcpKeys.projects(), skillKeys.projects());
 ```
 
 ### Gotcha: mocking Tauri IPC for browser walkthroughs
