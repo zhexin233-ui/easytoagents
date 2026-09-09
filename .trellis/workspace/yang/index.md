@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 46
-- **Last Active**: 2026-09-08
+- **Total Sessions**: 47
+- **Last Active**: 2026-09-09
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1249 | Active |
+| `journal-1.md` | ~1270 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 47 | 2026-09-09 | 新增侧栏项目移除入口 | `ec2239e` | `main` |
 | 46 | 2026-09-08 | 完成 GitHub Skill 目录导入 | `c31eeae` | `main` |
 | 45 | 2026-09-08 | 发布 macOS ARM64 0.1.0 | `b80c835` | `main` |
 | 44 | 2026-09-07 | 完成 OpenCode 支持接入 | `bfc6a92` | `main` |

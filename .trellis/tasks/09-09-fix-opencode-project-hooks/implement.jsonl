@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"确认项目页资源能力门控适用的前端规范入口。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"资源按钮与不可用状态必须符合组件和可访问性约束。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"跨工具切换时资源视图状态和查询启用条件必须保持一致。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"补充回归测试并遵循前端质量门槛。"}
+{"file":".trellis/tasks/archive/2026-09/09-07-opencode-support/research/verified-contract.md","reason":"沿用已核验的 OpenCode 插件 hooks 与 command-only 合同不兼容结论。"}

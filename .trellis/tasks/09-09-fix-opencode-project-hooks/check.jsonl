@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"核验实现符合当前前端规范入口。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核验按能力展示的资源入口及可访问行为。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"核验跨工具切换不会留下不支持的资源视图或错误查询。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验测试覆盖、类型和 lint 结果。"}
+{"file":".trellis/tasks/archive/2026-09/09-07-opencode-support/research/verified-contract.md","reason":"确认没有放宽 OpenCode Hooks fail-closed 合同。"}
