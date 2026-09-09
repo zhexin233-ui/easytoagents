@@ -18,6 +18,7 @@ import { themeStorageKey } from "@/components/use-theme";
 vi.mock("@/bindings/commands", () => ({
   commands: {
     listProjects: vi.fn(),
+    renameProject: vi.fn(),
     removeProject: vi.fn(),
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
@@ -72,6 +73,11 @@ describe("AppShell 侧边栏设置入口", () => {
         removed: true,
         nativeConfigurationLeftUnmanaged: true,
       },
+    });
+    vi.mocked(commands.renameProject).mockReset();
+    vi.mocked(commands.renameProject).mockResolvedValue({
+      status: "ok",
+      data: { ...project, displayName: "新项目名称", rowVersion: 8 },
     });
     vi.mocked(commands.getAppSettings).mockReset();
     vi.mocked(commands.getAppSettings).mockResolvedValue({
@@ -197,6 +203,13 @@ describe("AppShell 侧边栏设置入口", () => {
       "title",
       `移除项目 ${project.displayName}`,
     );
+    expect(removeButton).toHaveClass(
+      "border-0",
+      "bg-transparent",
+      "opacity-0",
+      "group-hover:opacity-100",
+      "focus-visible:opacity-100",
+    );
     fireEvent.click(removeButton);
 
     const dialog = await screen.findByRole("dialog", {
@@ -214,6 +227,94 @@ describe("AppShell 侧边栏设置入口", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(commands.removeProject).not.toHaveBeenCalled();
+  });
+
+  it("通过侧栏编辑按钮修改项目显示名称", async () => {
+    const renamedProject = {
+      ...project,
+      displayName: "新项目名称",
+      rowVersion: 8,
+    };
+    vi.mocked(commands.listProjects)
+      .mockResolvedValueOnce({ status: "ok", data: [project] })
+      .mockResolvedValue({ status: "ok", data: [renamedProject] });
+    vi.mocked(commands.renameProject).mockResolvedValue({
+      status: "ok",
+      data: renamedProject,
+    });
+    renderShell();
+
+    const editButton = await screen.findByRole("button", {
+      name: `编辑项目 ${project.displayName}`,
+    });
+    expect(editButton).toHaveClass(
+      "border-0",
+      "bg-transparent",
+      "opacity-0",
+      "group-hover:opacity-100",
+    );
+    fireEvent.click(editButton);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "修改项目显示名称",
+    });
+    const input = within(dialog).getByRole("textbox", { name: "显示名称" });
+    expect(input).toHaveValue(project.displayName);
+    expect(
+      within(dialog).getByRole("button", { name: "保存名称" }),
+    ).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: renamedProject.displayName } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存名称" }));
+
+    await waitFor(() =>
+      expect(commands.renameProject).toHaveBeenCalledWith({
+        id: project.id,
+        displayName: renamedProject.displayName,
+        rowVersion: project.rowVersion,
+      }),
+    );
+    expect(
+      await screen.findByRole("link", { name: renamedProject.displayName }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("项目显示名称已修改为“新项目名称”。"),
+    ).toBeInTheDocument();
+  });
+
+  it("修改项目显示名称失败时保留弹窗和输入", async () => {
+    vi.mocked(commands.listProjects).mockResolvedValue({
+      status: "ok",
+      data: [project],
+    });
+    vi.mocked(commands.renameProject).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "CONFLICT",
+        message: "项目版本冲突",
+        details: { reason: "项目已被其他操作更新" },
+        recoverable: true,
+      },
+    });
+    renderShell();
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `编辑项目 ${project.displayName}`,
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "修改项目显示名称",
+    });
+    const input = within(dialog).getByRole("textbox", { name: "显示名称" });
+    fireEvent.change(input, { target: { value: "冲突后的名称" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存名称" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "CONFLICT：项目已被其他操作更新",
+    );
+    expect(input).toHaveValue("冲突后的名称");
+    expect(dialog).toBeInTheDocument();
   });
 
   it("确认后使用精确版本化 payload，刷新项目查询并从当前项目导航到列表", async () => {

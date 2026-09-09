@@ -104,6 +104,14 @@ async registerProject(input: RegisterProjectInput) : Promise<Result<ProjectDto, 
     else return { status: "error", error: e  as any };
 }
 },
+async renameProject(input: RenameProjectInput) : Promise<Result<ProjectDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_project", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanProject(input: VersionedProjectInput) : Promise<Result<ProjectDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("rescan_project", { input }) };
@@ -847,6 +855,7 @@ export type RecentSyncRunDto = { id: string; kind: SyncRunKind; status: SyncRunS
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
 export type RegisterProjectInput = { displayName: string; rootPath: string }
 export type RemoveProjectResultDto = { id: string; removed: boolean; nativeConfigurationLeftUnmanaged: boolean }
+export type RenameProjectInput = { id: string; displayName: string; rowVersion: number }
 export type RestorePreview = { previewId: string; snapshotId: string; targetPath: string; currentType: TargetType; snapshotType: TargetType; storageKind: SnapshotStorageKind }
 /**
  * 资源应用范围。

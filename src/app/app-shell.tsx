@@ -1,9 +1,10 @@
 import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { commands, type ProjectDto } from "@/bindings/commands";
+import { FormDialog } from "@/components/form-dialog";
 import { Notify } from "@/components/notify";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { useEnabledTools } from "@/components/use-enabled-tools";
@@ -37,6 +38,9 @@ const primaryLinkClass = ({ isActive }: { isActive: boolean }) =>
       ? "bg-primary text-primary-foreground"
       : "text-muted-foreground hover:bg-muted hover:text-foreground",
   );
+
+const projectRowActionClass =
+  "text-muted-foreground hover:text-foreground pointer-events-none size-8 shrink-0 border-0 bg-transparent p-0 opacity-0 shadow-none transition-[color,opacity] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-transparent focus-visible:pointer-events-auto focus-visible:opacity-100";
 
 export function AppShell() {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
@@ -189,12 +193,50 @@ function ProjectNavSection({
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const projectsQuery = useQuery(projectsQueryOptions());
+  const [renameDialogProject, setRenameDialogProject] =
+    useState<ProjectDto | null>(null);
+  const [renameDisplayName, setRenameDisplayName] = useState("");
+  const [renameSubmitting, setRenameSubmitting] = useState(false);
+  const renameInFlightRef = useRef(false);
   const [removeDialogProject, setRemoveDialogProject] =
     useState<ProjectDto | null>(null);
   const [removeSubmitting, setRemoveSubmitting] = useState(false);
   const removeInFlightRef = useRef(false);
   const { notification, notify } = useNotify();
   const projects = projectsQuery.data ?? [];
+  const renameMutation = useMutation({
+    mutationFn: async () => {
+      if (!renameDialogProject) {
+        throw new Error("缺少待编辑项目");
+      }
+      return unwrapResult(
+        await commands.renameProject({
+          id: renameDialogProject.id,
+          displayName: renameDisplayName,
+          rowVersion: renameDialogProject.rowVersion,
+        }),
+      );
+    },
+    onSuccess: async (updated) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: projectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: mcpKeys.projects() }),
+        queryClient.invalidateQueries({ queryKey: skillKeys.projects() }),
+      ]);
+      renameInFlightRef.current = false;
+      setRenameSubmitting(false);
+      setRenameDialogProject(null);
+      setRenameDisplayName("");
+      notify({
+        kind: "success",
+        message: `项目显示名称已修改为“${updated.displayName}”。`,
+      });
+    },
+    onError: () => {
+      renameInFlightRef.current = false;
+      setRenameSubmitting(false);
+    },
+  });
   const removeMutation = useMutation({
     mutationFn: async (project: ProjectDto) =>
       unwrapResult(
@@ -237,10 +279,53 @@ function ProjectNavSection({
     removeDialogProject !== null ||
     removeMutation.isPending ||
     removeSubmitting;
+  const renameBusy =
+    renameDialogProject !== null ||
+    renameMutation.isPending ||
+    renameSubmitting;
+  const renameSubmitDisabled =
+    renameDisplayName.length === 0 ||
+    renameDisplayName === renameDialogProject?.displayName;
+
+  const requestRename = (project: ProjectDto) => {
+    if (renameBusy || removeBusy || renameInFlightRef.current) return;
+    renameMutation.reset();
+    setRenameDisplayName(project.displayName);
+    setRenameDialogProject(project);
+  };
+
+  const cancelRename = () => {
+    if (
+      renameMutation.isPending ||
+      renameSubmitting ||
+      renameInFlightRef.current
+    ) {
+      return;
+    }
+    renameMutation.reset();
+    setRenameDialogProject(null);
+    setRenameDisplayName("");
+  };
+
+  const submitRename = () => {
+    if (
+      !renameDialogProject ||
+      renameSubmitDisabled ||
+      renameMutation.isPending ||
+      renameSubmitting ||
+      renameInFlightRef.current
+    ) {
+      return;
+    }
+    renameInFlightRef.current = true;
+    setRenameSubmitting(true);
+    renameMutation.mutate();
+  };
 
   const requestRemove = (project: ProjectDto) => {
     if (
       removeBusy ||
+      renameBusy ||
       hasBlockedNativeResources(project.nativeResources) ||
       removeInFlightRef.current
     ) {
@@ -335,7 +420,7 @@ function ProjectNavSection({
               </p>
             ) : null}
             {projects.map((project) => (
-              <div key={project.id} className="space-y-0.5">
+              <div key={project.id} className="group space-y-0.5">
                 <div className="flex min-w-0 items-center gap-1">
                   <NavLink
                     to={`/projects/${project.id}`}
@@ -355,7 +440,24 @@ function ProjectNavSection({
                     type="button"
                     size="sm"
                     variant="outline"
-                    className="size-8 shrink-0 p-0"
+                    className={projectRowActionClass}
+                    aria-label={`编辑项目 ${project.displayName}`}
+                    title={`编辑项目 ${project.displayName}`}
+                    aria-haspopup="dialog"
+                    disabled={renameBusy || removeBusy}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      requestRename(project);
+                    }}
+                  >
+                    <Pencil aria-hidden="true" className="size-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className={projectRowActionClass}
                     aria-label={`移除项目 ${project.displayName}`}
                     title={`移除项目 ${project.displayName}`}
                     aria-describedby={
@@ -364,6 +466,7 @@ function ProjectNavSection({
                         : undefined
                     }
                     disabled={
+                      renameBusy ||
                       removeBusy ||
                       hasBlockedNativeResources(project.nativeResources)
                     }
@@ -389,6 +492,36 @@ function ProjectNavSection({
           </div>
         ) : null}
       </div>
+      <FormDialog
+        open={renameDialogProject !== null}
+        title="修改项目显示名称"
+        description="仅修改应用内显示名称，不会修改项目目录或原生配置。"
+        submitLabel="保存名称"
+        pending={renameMutation.isPending || renameSubmitting}
+        submitDisabled={renameSubmitDisabled}
+        error={profileErrorText(renameMutation.error)}
+        onClose={cancelRename}
+        onSubmit={submitRename}
+      >
+        <div>
+          <label
+            htmlFor="project-display-name"
+            className="mb-1 block text-sm font-medium"
+          >
+            显示名称
+          </label>
+          <input
+            id="project-display-name"
+            required
+            maxLength={100}
+            className="field"
+            value={renameDisplayName}
+            onChange={(event) =>
+              setRenameDisplayName(event.currentTarget.value)
+            }
+          />
+        </div>
+      </FormDialog>
       <ProjectRemoveDialog
         project={removeDialogProject}
         pending={removeMutation.isPending}

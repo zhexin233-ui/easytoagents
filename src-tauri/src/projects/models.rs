@@ -62,6 +62,14 @@ pub struct RegisterProjectInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct RenameProjectInput {
+    pub id: String,
+    pub display_name: String,
+    pub row_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionedProjectInput {
     pub id: String,
     pub row_version: u32,

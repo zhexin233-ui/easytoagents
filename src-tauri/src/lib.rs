@@ -180,6 +180,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::register_project,
+            commands::projects::rename_project,
             commands::projects::rescan_project,
             commands::projects::remove_project,
             commands::projects::list_project_native_resources,

@@ -173,6 +173,29 @@ pub fn update_project_scan(
     get_registered_project(database, id)
 }
 
+pub fn update_project_display_name(
+    database: &mut Database,
+    id: &str,
+    display_name: &str,
+    expected_row_version: u32,
+) -> Result<ProjectRecord, AppError> {
+    EntityId::parse(id)?;
+    let database_path = database.path().to_string_lossy().into_owned();
+    let updated = database
+        .connection_mut()
+        .execute(
+            "UPDATE projects
+             SET display_name = ?2
+             WHERE id = ?1 AND row_version = ?3 AND removed_at IS NULL",
+            params![id, display_name, expected_row_version],
+        )
+        .map_err(|_| AppError::database(&database_path, "rename_project"))?;
+    if updated != 1 {
+        return Err(AppError::conflict("rowVersion", "项目已被其他操作更新"));
+    }
+    get_registered_project(database, id)
+}
+
 pub fn soft_remove_project(
     database: &mut Database,
     id: &str,

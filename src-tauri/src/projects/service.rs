@@ -21,7 +21,8 @@ use crate::{
 
 use super::{
     GitRepositoryStatus, ProjectDto, ProjectNativeResourceSummaryDto, ProjectPathStatus,
-    ProjectTargetStatusDto, RegisterProjectInput, RemoveProjectResultDto, VersionedProjectInput,
+    ProjectTargetStatusDto, RegisterProjectInput, RemoveProjectResultDto, RenameProjectInput,
+    VersionedProjectInput,
 };
 
 struct ProjectObservation {
@@ -177,6 +178,34 @@ pub fn rescan_project(
         },
         input.row_version,
     )?;
+    project_dto(
+        database,
+        environment,
+        environment.claude_customization_policy_probe(),
+        updated,
+    )
+}
+
+pub fn rename_project(
+    database: &mut Database,
+    environment: &ExplicitEnvironment,
+    input: &RenameProjectInput,
+) -> Result<ProjectDto, AppError> {
+    let display_name = ArtifactName::parse(&input.display_name)?;
+    let current = repository::get_registered_project(database, &input.id)?;
+    if current.row_version != input.row_version {
+        return Err(AppError::conflict("rowVersion", "项目已被其他操作更新"));
+    }
+    let updated = if current.display_name == display_name.as_str() {
+        current
+    } else {
+        repository::update_project_display_name(
+            database,
+            &input.id,
+            display_name.as_str(),
+            input.row_version,
+        )?
+    };
     project_dto(
         database,
         environment,
@@ -796,7 +825,7 @@ mod tests {
     use rusqlite::params;
     use tempfile::tempdir;
 
-    use super::{register_project, remove_project, rescan_project};
+    use super::{register_project, remove_project, rename_project, rescan_project};
     use crate::{
         adapters::{
             codex::CodexAdapter, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
@@ -806,7 +835,9 @@ mod tests {
         db::Database,
         domain::{ArtifactKind, Scope, SyncStatus, Tool},
         error::ErrorCode,
-        projects::{ProjectPathStatus, RegisterProjectInput, VersionedProjectInput},
+        projects::{
+            ProjectPathStatus, RegisterProjectInput, RenameProjectInput, VersionedProjectInput,
+        },
         sync::{hash_json, scan_target, TargetScan},
     };
 
@@ -907,6 +938,60 @@ mod tests {
             [folded],
         );
         assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn rename_updates_only_display_name_with_cas_validation() {
+        let mut fixture = fixture();
+        let project = fixture.home.join("project");
+        fs::create_dir(&project).unwrap();
+        let registered = register_project(
+            &mut fixture.database,
+            &fixture.environment,
+            &RegisterProjectInput {
+                display_name: "Fixture".to_owned(),
+                root_path: project.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap();
+
+        let renamed = rename_project(
+            &mut fixture.database,
+            &fixture.environment,
+            &RenameProjectInput {
+                id: registered.id.clone(),
+                display_name: "Renamed Fixture".to_owned(),
+                row_version: registered.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed.display_name, "Renamed Fixture");
+        assert_eq!(renamed.root_path, registered.root_path);
+        assert_eq!(renamed.row_version, registered.row_version + 1);
+
+        let stale = rename_project(
+            &mut fixture.database,
+            &fixture.environment,
+            &RenameProjectInput {
+                id: registered.id.clone(),
+                display_name: "Stale Rename".to_owned(),
+                row_version: registered.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(stale.code(), ErrorCode::Conflict);
+
+        let invalid = rename_project(
+            &mut fixture.database,
+            &fixture.environment,
+            &RenameProjectInput {
+                id: registered.id,
+                display_name: " Invalid ".to_owned(),
+                row_version: renamed.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(invalid.code(), ErrorCode::InvalidInput);
     }
 
     #[test]

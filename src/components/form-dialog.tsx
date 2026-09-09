@@ -9,6 +9,7 @@ interface FormDialogProps {
   description: string;
   submitLabel: string;
   pending: boolean;
+  submitDisabled?: boolean;
   error: string | null;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -21,6 +22,7 @@ export function FormDialog({
   description,
   submitLabel,
   pending,
+  submitDisabled = false,
   error,
   onClose,
   onSubmit,
@@ -109,7 +111,7 @@ export function FormDialog({
             >
               取消
             </Button>
-            <Button type="submit" disabled={pending}>
+            <Button type="submit" disabled={pending || submitDisabled}>
               {pending ? "正在保存…" : submitLabel}
             </Button>
           </div>

@@ -34,6 +34,16 @@ pub fn register_project(
 
 #[tauri::command]
 #[specta::specta]
+pub fn rename_project(
+    state: State<'_, AppState>,
+    input: RenameProjectInput,
+) -> Result<ProjectDto, AppError> {
+    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+    projects::rename_project(&mut database, state.environment()?, &input)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn rescan_project(
     state: State<'_, AppState>,
     input: VersionedProjectInput,
