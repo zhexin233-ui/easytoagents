@@ -850,6 +850,114 @@ describe("ProjectDetailPage", () => {
     );
   });
 
+  it.each([
+    ["claude", "Claude"],
+    ["codex", "Codex"],
+    ["cursor", "Cursor"],
+    ["zcode", "ZCode"],
+  ] as const)(
+    "从 %s Hooks 切换到 OpenCode 时隐藏 Hooks 并回落到 MCP",
+    async (sourceTool, sourceLabel) => {
+      vi.mocked(commands.getAppSettings).mockResolvedValue({
+        status: "ok",
+        data: {
+          applyMode: "preview_confirm",
+          enabledTools: [sourceTool, "opencode"],
+        },
+      });
+      vi.mocked(commands.listMcpProjectOptions).mockResolvedValue({
+        status: "ok",
+        data: mcpOptions,
+      });
+      vi.mocked(commands.listHookProjectOptions).mockImplementation((input) =>
+        input.tool === "opencode"
+          ? Promise.resolve({
+              status: "error",
+              error: {
+                code: "INVALID_INPUT",
+                message: "OPENCODE_HOOKS_UNSUPPORTED",
+                details: { diagnosticCode: "OPENCODE_HOOKS_UNSUPPORTED" },
+                recoverable: false,
+                action: null,
+              },
+            })
+          : Promise.resolve({ status: "ok", data: hookOptions }),
+      );
+      renderPage();
+
+      await screen.findByRole("heading", {
+        name: `${sourceLabel} MCP 项目追加`,
+      });
+      fireEvent.click(screen.getByRole("button", { name: "管理项目 Hook" }));
+      expect(
+        await screen.findByRole("heading", {
+          name: `${sourceLabel} Hook 项目追加`,
+        }),
+      ).toBeVisible();
+      await waitFor(() =>
+        expect(commands.listHookProjectOptions).toHaveBeenCalledWith({
+          projectId: project.id,
+          tool: sourceTool,
+        }),
+      );
+      vi.mocked(commands.listHookProjectOptions).mockClear();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "管理 OpenCode 项目资源" }),
+      );
+
+      const resourceGroup = screen.getByRole("group", {
+        name: "项目资源管理视图",
+      });
+      await waitFor(() =>
+        expect(
+          within(resourceGroup).queryByRole("button", {
+            name: "管理项目 Hook",
+          }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(
+        within(resourceGroup).getByRole("button", {
+          name: "管理项目 MCP",
+        }),
+      ).toHaveAttribute("aria-pressed", "true");
+      expect(
+        await screen.findByRole("heading", {
+          name: "OpenCode MCP 项目追加",
+        }),
+      ).toBeVisible();
+      await waitFor(() =>
+        expect(commands.listMcpProjectOptions).toHaveBeenCalledWith({
+          projectId: project.id,
+          tool: "opencode",
+        }),
+      );
+      expect(commands.listHookProjectOptions).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText(/OPENCODE_HOOKS_UNSUPPORTED/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("中央库暂无可追加项。"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: "Hooks" }),
+      ).not.toBeInTheDocument();
+      const excludeCopy = screen.getByText(
+        "若目标是应用新建且未跟踪，在应用时写入本机 .git/info/exclude",
+      );
+      const assignmentCard = excludeCopy.closest("article");
+      expect(assignmentCard).not.toBeNull();
+      if (!assignmentCard) {
+        throw new Error(".git/info/exclude 说明不在资源追加卡片中");
+      }
+      expect(
+        within(assignmentCard).getByRole("heading", {
+          name: "MCP",
+        }),
+      ).toBeVisible();
+    },
+  );
+
   it("当前选中工具被关闭时在渲染期回落到第一个启用工具", async () => {
     const { client } = renderPage();
     await screen.findByRole("heading", { name: "Claude MCP 项目追加" });

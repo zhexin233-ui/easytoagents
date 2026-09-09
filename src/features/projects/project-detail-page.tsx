@@ -55,6 +55,32 @@ interface OpenProjectPreview {
 
 type ProjectResourceView = "mcp" | "hook" | "skill";
 
+const PROJECT_RESOURCE_VIEWS = [
+  {
+    id: "mcp",
+    label: "MCP",
+    ariaLabel: "管理项目 MCP",
+    capability: "mcp",
+  },
+  {
+    id: "hook",
+    label: "Hooks",
+    ariaLabel: "管理项目 Hook",
+    capability: "hooks",
+  },
+  {
+    id: "skill",
+    label: "Skill",
+    ariaLabel: "管理项目 Skill",
+    capability: "skills",
+  },
+] as const satisfies readonly {
+  id: ProjectResourceView;
+  label: string;
+  ariaLabel: string;
+  capability: "mcp" | "hooks" | "skills";
+}[];
+
 export function ProjectDetailPage() {
   const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
@@ -72,8 +98,18 @@ export function ProjectDetailPage() {
   const activeTool = visibleTools.includes(toolView)
     ? toolView
     : (visibleTools[0] ?? toolView);
+  const visibleResourceViews = PROJECT_RESOURCE_VIEWS.filter(
+    (view) => toolMetadata(activeTool).capabilities[view.capability],
+  );
+  // 与启用工具回落一致，资源视图也在 render 期夹逼。这样切换到不支持 Hooks
+  // 的工具时不会短暂挂载 Hook 子树并触发不受支持的查询。
+  const activeResourceView = visibleResourceViews.some(
+    (view) => view.id === resourceView,
+  )
+    ? resourceView
+    : (visibleResourceViews[0]?.id ?? resourceView);
   const [toolStatusOpen, setToolStatusOpen] = useState(false);
-  const viewKey = projectViewKey(projectId, activeTool, resourceView);
+  const viewKey = projectViewKey(projectId, activeTool, activeResourceView);
   const [openPreview, setOpenPreview] = useState<OpenProjectPreview | null>(
     null,
   );
@@ -371,36 +407,21 @@ export function ProjectDetailPage() {
               role="group"
               aria-label="项目资源管理视图"
             >
-              <Button
-                type="button"
-                size="sm"
-                variant={resourceView === "mcp" ? "default" : "outline"}
-                aria-label="管理项目 MCP"
-                aria-pressed={resourceView === "mcp"}
-                onClick={() => changeResourceView("mcp")}
-              >
-                MCP
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={resourceView === "hook" ? "default" : "outline"}
-                aria-label="管理项目 Hook"
-                aria-pressed={resourceView === "hook"}
-                onClick={() => changeResourceView("hook")}
-              >
-                Hooks
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={resourceView === "skill" ? "default" : "outline"}
-                aria-label="管理项目 Skill"
-                aria-pressed={resourceView === "skill"}
-                onClick={() => changeResourceView("skill")}
-              >
-                Skill
-              </Button>
+              {visibleResourceViews.map((view) => (
+                <Button
+                  key={view.id}
+                  type="button"
+                  size="sm"
+                  variant={
+                    activeResourceView === view.id ? "default" : "outline"
+                  }
+                  aria-label={view.ariaLabel}
+                  aria-pressed={activeResourceView === view.id}
+                  onClick={() => changeResourceView(view.id)}
+                >
+                  {view.label}
+                </Button>
+              ))}
             </div>
             <div
               className="flex items-center gap-2"
@@ -432,21 +453,21 @@ export function ProjectDetailPage() {
           <ProjectNativeResources
             project={project}
             tool={activeTool}
-            artifactKind={resourceView}
+            artifactKind={activeResourceView}
             writerBlocked={writerBlocked}
             applyPending={applyMutation.isPending}
             onPreview={handleNativePreview}
           />
           <h2 className="text-xl font-semibold">
             {toolLabel(activeTool)}{" "}
-            {resourceView === "mcp"
+            {activeResourceView === "mcp"
               ? "MCP"
-              : resourceView === "hook"
+              : activeResourceView === "hook"
                 ? "Hook"
                 : "Skill"}{" "}
             项目追加
           </h2>
-          {resourceView === "mcp" ? (
+          {activeResourceView === "mcp" ? (
             <ProjectMcpAssignments
               project={project}
               tool={activeTool}
@@ -454,7 +475,7 @@ export function ProjectDetailPage() {
               onPreview={(plan) => handlePreview(plan, activeTool, "mcp")}
               onMessage={setMessage}
             />
-          ) : resourceView === "hook" ? (
+          ) : activeResourceView === "hook" ? (
             <ProjectHookAssignments
               project={project}
               tool={activeTool}
