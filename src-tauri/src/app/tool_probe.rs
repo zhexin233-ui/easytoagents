@@ -175,11 +175,22 @@ pub fn probe_release_environment(
         input.codex_home.clone(),
         ToolAvailability::all_unavailable(),
     )?;
-    let claude = probe_tool(ToolBinary::Claude, &path_environment, input);
-    let codex = probe_tool(ToolBinary::Codex, &path_environment, input);
-    let cursor = probe_cursor(&path_environment, input);
-    let zcode = probe_zcode(&path_environment, input);
-    let opencode = probe_tool(ToolBinary::Opencode, &path_environment, input);
+    // 五个探测互不依赖，各自持有独立的进程组与超时；并行执行让总耗时
+    // 取决于最慢的一个而不是五者之和（单个工具挂住 3 秒也不再拖累其它工具）。
+    let (claude, codex, cursor, zcode, opencode) = std::thread::scope(|scope| {
+        let claude = scope.spawn(|| probe_tool(ToolBinary::Claude, &path_environment, input));
+        let codex = scope.spawn(|| probe_tool(ToolBinary::Codex, &path_environment, input));
+        let cursor = scope.spawn(|| probe_cursor(&path_environment, input));
+        let zcode = scope.spawn(|| probe_zcode(&path_environment, input));
+        let opencode = scope.spawn(|| probe_tool(ToolBinary::Opencode, &path_environment, input));
+        (
+            join_probe(claude),
+            join_probe(codex),
+            join_probe(cursor),
+            join_probe(zcode),
+            join_probe(opencode),
+        )
+    });
     let availability = ToolAvailability {
         claude: claude.state,
         codex: codex.state,
@@ -254,6 +265,13 @@ pub fn probe_release_environment(
         zcode,
         opencode,
     })
+}
+
+/// 探测线程 panic 时按"不受支持"处理，而不是让整个启动探测崩溃。
+fn join_probe(handle: std::thread::ScopedJoinHandle<'_, ToolProbeOutcome>) -> ToolProbeOutcome {
+    handle
+        .join()
+        .unwrap_or_else(|_| ToolProbeOutcome::unsupported())
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -113,14 +113,19 @@ struct GithubDownloader {
     metadata_bytes: usize,
 }
 
-pub(crate) async fn download_github_skill(input: &str) -> Result<DownloadedGithubSkill, AppError> {
+/// `proxy` 由调用方显式注入（发布进程在 setup 里从 shell 环境读一次），
+/// 下载本身不读进程环境，与适配器"显式环境注入"的原则一致。
+pub(crate) async fn download_github_skill(
+    input: &str,
+    proxy: Option<&str>,
+) -> Result<DownloadedGithubSkill, AppError> {
     let link = parse_github_tree_link(input)?;
     let mut client_builder = Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .redirect(Policy::none())
-        // 避免 macOS headless/沙箱中读取系统动态代理存储；仅显式继承 shell 环境。
+        // 避免 macOS headless/沙箱中读取系统动态代理存储；只使用显式注入的代理。
         .no_proxy();
-    if let Some(proxy) = environment_proxy()? {
+    if let Some(proxy) = proxy.map(str::trim).filter(|value| !value.is_empty()) {
         client_builder = client_builder.proxy(
             Proxy::all(proxy)
                 .map_err(|_| AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 配置无效"))?,
@@ -563,28 +568,6 @@ fn api_url(base: &Url, segments: &[&str]) -> Result<Url, AppError> {
     Ok(url)
 }
 
-fn environment_proxy() -> Result<Option<String>, AppError> {
-    for key in [
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-    ] {
-        let Some(value) = std::env::var_os(key) else {
-            continue;
-        };
-        let value = value
-            .into_string()
-            .map_err(|_| AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 必须是 UTF-8"))?;
-        if !value.trim().is_empty() {
-            return Ok(Some(value));
-        }
-    }
-    Ok(None)
-}
-
 async fn read_limited(mut response: Response, limit: usize) -> Result<Vec<u8>, AppError> {
     if response
         .content_length()
@@ -929,7 +912,7 @@ mod tests {
         let paths = AppPaths::from_data_root(root.join("private/app-data")).unwrap();
         let mut database = Database::open(&paths).unwrap();
         println!("验收公开链接：{url}");
-        let downloaded = tauri::async_runtime::block_on(download_github_skill(url)).unwrap();
+        let downloaded = tauri::async_runtime::block_on(download_github_skill(url, None)).unwrap();
         let downloaded_files = count_files(downloaded.path());
         assert!(downloaded_files >= 1, "真实示例至少必须包含 SKILL.md");
         if expects_extra_resources {

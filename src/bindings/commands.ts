@@ -8,6 +8,26 @@ export const commands = {
 async getAppInfo() : Promise<AppInfoDto> {
     return await TAURI_INVOKE("get_app_info");
 },
+async getEnvironmentState() : Promise<Result<EnvironmentStateDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_environment_state") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 重新探测五个工具并替换环境快照。探测是同步子进程调用；`command(async)`
+ * 让它在线程池执行，完成后 `AppState` 的通知回调会广播 `environment-ready`。
+ */
+async refreshEnvironment() : Promise<Result<EnvironmentStateDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("refresh_environment") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getDashboardSummary() : Promise<Result<DashboardSummaryDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_dashboard_summary") };
@@ -761,9 +781,17 @@ export type DeleteSnapshotsInput = { snapshotIds: string[] }
 export type DeleteSnapshotsResultDto = { deletedIds: string[]; failures: SnapshotDeleteFailureDto[] }
 export type DiscoverHookImportInput = { tool: Tool }
 /**
+ * 前端可读的环境探测状态：`probing == true` 时 `tools` 为空。
+ */
+export type EnvironmentStateDto = { probing: boolean; tools: ToolInstallationDto[] }
+/**
  * RPC、journal 和同步记录共用的稳定错误码。
  */
-export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED"
+export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISSION_DENIED" | "POLICY_BLOCKED" | "UNTRUSTED_PROJECT" | "CONFLICT" | "STALE_PREVIEW" | "PREVIEW_ALREADY_CONSUMED" | "WRITE_IN_PROGRESS" | "ATOMIC_WRITE_FAILED" | "ROLLBACK_FAILED" | "SECRET_REDACTED" | "DATABASE_ERROR" | "MIGRATION_FAILED" | "PERMISSION_AUDIT_FAILED" |
+/**
+ * 工具环境仍在后台探测；只出现在命令边界，永不写入 sync_runs.error_code。
+ */
+"ENVIRONMENT_PROBING"
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
 export type GitRepositoryStatus = "repository" | "not_repository" | "unavailable"
 export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptName: string | null; globalAssignments: HookGlobalAssignmentDto[]; rowVersion: number }
@@ -935,6 +963,7 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
  */
 export type Tool = "claude" | "codex" | "cursor" | "zcode" | "opencode"
 export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
+export type ToolInstallationDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; installationProbeDiagnostic: string | null }
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null;
 /**
  * 安装探针的稳定诊断码；解释探测为何是当前状态（如 PATH 条目被跳过）。

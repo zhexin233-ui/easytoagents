@@ -46,3 +46,29 @@ function errorDetailString(error: ProfileRpcError, key: string): string | null {
   const value = error.appError.details?.[key];
   return typeof value === "string" ? value : null;
 }
+
+/** 后端仍在后台探测工具环境；这不是失败，而是"稍后重试即可"的等待态。 */
+export function isEnvironmentProbingError(error: unknown): boolean {
+  return (
+    error instanceof ProfileRpcError &&
+    error.appError.code === "ENVIRONMENT_PROBING"
+  );
+}
+
+export const ENVIRONMENT_PROBING_RETRY_LIMIT = 40;
+export const ENVIRONMENT_PROBING_RETRY_DELAY_MS = 500;
+
+/**
+ * QueryClient 默认重试策略：只对探测中错误重试，让查询停留在 pending
+ * （页面据此渲染 `role="status"` 等待态），其它错误照旧立即失败。
+ * 探测完成事件会触发失效重拉，重试上限只是兜底。
+ */
+export function retryWhileEnvironmentProbing(
+  failureCount: number,
+  error: unknown,
+): boolean {
+  return (
+    isEnvironmentProbingError(error) &&
+    failureCount < ENVIRONMENT_PROBING_RETRY_LIMIT
+  );
+}

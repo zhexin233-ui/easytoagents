@@ -4,7 +4,7 @@ use std::{
 };
 
 use specta_typescript::Typescript;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_specta::{collect_commands, Builder};
 
 pub mod adapters;
@@ -168,6 +168,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<settings::UpdateAppSettingsInput>()
         .commands(collect_commands![
             commands::get_app_info,
+            commands::environment::get_environment_state,
+            commands::environment::refresh_environment,
             commands::overview::get_dashboard_summary,
             commands::overview::complete_onboarding,
             commands::overview::list_snapshots,
@@ -316,13 +318,26 @@ pub fn run() {
                 .with_opencode_config_path(environment_path("OPENCODE_CONFIG"))
                 .with_opencode_config_content(std::env::var("OPENCODE_CONFIG_CONTENT").ok())
                 .with_opencode_disabled(std::env::var("OPENCODE_DISABLE").is_ok());
-            let environment = app::tool_probe::probe_release_environment(&probe_input)?
-                .environment
-                .with_claude_provider_policy(claude_provider_policy());
-            app.manage(app::AppState::initialize_with_environment(
+            // 数据库与窗口先就绪；工具探测（最多五个 3 秒超时的子进程）放到
+            // 阻塞线程池并行执行，完成后用事件通知前端刷新依赖环境的查询。
+            let probe = app::EnvironmentProbeConfig {
+                input: probe_input,
+                claude_provider_policy: claude_provider_policy(),
+            };
+            let notifier_handle = app.handle().clone();
+            app.manage(app::AppState::initialize_probing(
                 paths,
-                environment,
+                probe,
+                environment_proxy()?,
+                Box::new(move |succeeded| {
+                    let _ = notifier_handle
+                        .emit(commands::environment::ENVIRONMENT_READY_EVENT, succeeded);
+                }),
             )?);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = handle.state::<app::AppState>().probe_environment();
+            });
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -331,6 +346,29 @@ pub fn run() {
 
 fn environment_path(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).map(PathBuf::from)
+}
+
+/// 只在 setup 里读一次 shell 代理环境，之后通过 AppState 显式注入下载器。
+fn environment_proxy() -> Result<Option<String>, error::AppError> {
+    for key in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ] {
+        let Some(value) = std::env::var_os(key) else {
+            continue;
+        };
+        let value = value.into_string().map_err(|_| {
+            error::AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 必须是 UTF-8")
+        })?;
+        if !value.trim().is_empty() {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
 }
 
 fn claude_provider_policy() -> adapters::PolicyState {

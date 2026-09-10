@@ -12,14 +12,14 @@ use crate::{
     },
 };
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_dashboard_summary(state: State<'_, AppState>) -> Result<DashboardSummaryDto, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     overview::dashboard_summary(&database, state.paths())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn complete_onboarding(
     state: State<'_, AppState>,
@@ -28,14 +28,14 @@ pub fn complete_onboarding(
     overview::complete_onboarding(&mut database)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_snapshots(state: State<'_, AppState>) -> Result<Vec<SnapshotSummary>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     sync::list_snapshots(&database)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn delete_snapshots(
     state: State<'_, AppState>,
@@ -50,7 +50,7 @@ pub fn delete_snapshots(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_interrupted_run(
     state: State<'_, AppState>,
@@ -59,7 +59,7 @@ pub fn get_interrupted_run(
     sync::detect_interrupted_run(&database, state.paths())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn preview_snapshot_restore(
     state: State<'_, AppState>,
@@ -67,7 +67,7 @@ pub fn preview_snapshot_restore(
 ) -> Result<RestorePreview, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     let context =
-        overview::snapshot_restore_context(&database, state.environment()?, &input.snapshot_id)?;
+        overview::snapshot_restore_context(&database, &*state.environment()?, &input.snapshot_id)?;
     sync::preview_restore(
         &mut database,
         state.paths(),
@@ -76,7 +76,7 @@ pub fn preview_snapshot_restore(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn restore_snapshot(
     state: State<'_, AppState>,
@@ -84,7 +84,7 @@ pub fn restore_snapshot(
 ) -> Result<ApplyResult, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     let context =
-        overview::snapshot_restore_context(&database, state.environment()?, &input.snapshot_id)?;
+        overview::snapshot_restore_context(&database, &*state.environment()?, &input.snapshot_id)?;
     sync::restore_snapshot(
         state.write_operations(),
         &mut database,

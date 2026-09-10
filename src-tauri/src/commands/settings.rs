@@ -8,14 +8,14 @@ use crate::{
     settings::{self, AppSettingsDto, UpdateAppSettingsInput},
 };
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettingsDto, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     settings::load_app_settings(&database)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn update_app_settings(
     state: State<'_, AppState>,

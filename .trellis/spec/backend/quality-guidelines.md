@@ -924,8 +924,16 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
   An explicit valid setting is accepted from the verified source path. Both forms bind
   the exact Claude version and normalized config root. Invalid, unreadable, symlinked,
   dynamic, or multi-source policy remains unknown. Provider host policy remains independent.
-- Setup probes once and stores the immutable evidence in `AppState`; commands never reread
-  process environment, rerun binaries, or substitute cached success for mismatched evidence.
+- Setup reads process environment exactly once (probe input, `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`,
+  the GitHub proxy variables) into `EnvironmentProbeConfig` / `AppState.github_proxy`, then
+  manages `AppState` **before** the probe runs so the main window appears immediately. The
+  probe itself runs on `tauri::async_runtime::spawn_blocking` and executes the five tool probes
+  in parallel (`std::thread::scope`), each with its own process group and timeout. Until it
+  finishes, `AppState::environment()` returns `ENVIRONMENT_PROBING`; on completion the
+  `environment_ready` notifier emits the `environment-ready` Tauri event. `refresh_environment`
+  re-runs the same probe input and replaces the `Arc<ExplicitEnvironment>` snapshot; commands
+  never reread process environment, rerun binaries on their own, or substitute cached success
+  for mismatched evidence.
 - Tool profile status serializes the three-state availability and exact validated version.
   UI discovery must distinguish installed, unavailable, and unsupported; unknown or unsafe
   probe results never become an installed state and never trigger native import reads.
@@ -973,6 +981,9 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
   evidence source/version/root/target mismatches without reading real host policy.
 - Prove a changed version invalidates policy evidence, and prove public MCP/Skill status,
   preview, and apply consume environment evidence rather than conservative defaults.
+- `commands::tests::every_command_runs_off_the_main_thread` scans every `commands/*.rs`
+  source: each `#[tauri::command` must be `(async)` or annotate an `async fn`. Register any
+  new command file in `COMMAND_SOURCES` or the check silently skips it.
 - Keep the dedicated-user/VM real-install discovery and UI smoke gate manual; tests must
   never inspect developer tools or configuration.
 
@@ -996,6 +1007,57 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 ```
 
 ---
+
+## Scenario: Command thread model and background environment probe
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing any Tauri command, `AppState` construction, startup
+  `setup`, the tool probe, or the GitHub download client.
+
+### 2. Signatures
+
+- Every command in `src-tauri/src/commands/*.rs` is either
+  `#[tauri::command(async)] pub fn ...(state: State<'_, AppState>, ...)` (sync body on
+  Tauri's blocking thread pool) or `pub async fn` whose blocking tail is wrapped in
+  `tauri::async_runtime::spawn_blocking` (`import_github_skill`).
+- `AppState::environment() -> Result<Arc<ExplicitEnvironment>, AppError>`; call sites pass
+  `&*state.environment()?`. `AppState::database_handle() -> Arc<Mutex<Database>>` is the
+  movable form for `spawn_blocking` closures.
+- `AppState::initialize_probing(paths, EnvironmentProbeConfig, github_proxy, notifier)`;
+  `AppState::probe_environment()`; `AppState::environment_state() -> EnvironmentStateDto`.
+- Commands `get_environment_state` / `refresh_environment`; event `environment-ready`
+  (`bool` payload = probe succeeded).
+- `download_github_skill(url, proxy: Option<&str>)` receives the proxy explicitly.
+
+### 3. Contracts
+
+- Tauri 2 runs plain sync commands on the main thread. Anything touching the database
+  mutex, the filesystem, a child process, or the network must not be a plain sync command.
+- `import_github_skill` must not run file/DB work on a tokio worker after `.await`; move
+  `database_handle()` + cloned `AppPaths` into `spawn_blocking`.
+- The environment snapshot is an `Arc`; a refresh replaces the pointer, in-flight commands
+  keep the snapshot they started with.
+- `ENVIRONMENT_PROBING` is a command-boundary error only. It is intentionally absent from
+  the `sync_runs.error_code` CHECK list and must never be persisted.
+- Do not read proxy or tool environment variables anywhere except `lib.rs` setup.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Command needs `ExplicitEnvironment` before the first probe finished | `ENVIRONMENT_PROBING` (recoverable); frontend keeps the query pending |
+| Probe fails (no safe PATH, panic in a probe thread) | environment stays `None`; event payload `false`; refresh remains available |
+| `refresh_environment` without probe config (test `AppState::initialize`) | `INVALID_INPUT`; no panic |
+| New command written as plain `#[tauri::command] pub fn` | `every_command_runs_off_the_main_thread` fails |
+
+### 5. Tests Required
+
+- The thread-model source scan above; probe-parallelism timing tests in `tool_probe`
+  (a 100 ms timeout on two tools must still finish well under the serial sum).
+- `refresh_environment` and `get_environment_state` are exercised through
+  `AppState::environment_state()` in `app::tests`; frontend covers the button, the
+  `environment-ready` invalidation, and the probing retry predicate.
 
 ## Scenario: Baseline re-adoption for externally rewritten managed targets
 

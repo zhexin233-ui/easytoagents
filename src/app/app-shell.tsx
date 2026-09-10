@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -12,10 +12,12 @@ import { useTheme } from "@/components/use-theme";
 import { useNotify } from "@/components/use-notify";
 import { Button } from "@/components/ui/button";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
+import { invalidateEnvironmentDependents } from "@/lib/environment-api";
 import { mcpKeys } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { projectKeys, projectsQueryOptions } from "@/lib/projects-api";
 import { skillKeys } from "@/lib/skills-api";
+import { subscribeEnvironmentReady } from "@/lib/tauri-events";
 import {
   PROFILE_TOOLS,
   filterEnabledTools,
@@ -43,10 +45,20 @@ const projectRowActionClass =
   "text-muted-foreground hover:text-foreground pointer-events-none size-8 shrink-0 border-0 bg-transparent p-0 opacity-0 shadow-none transition-[color,opacity] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-transparent focus-visible:pointer-events-auto focus-visible:opacity-100";
 
 export function AppShell() {
+  const queryClient = useQueryClient();
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { preference, setPreference } = useTheme();
   const { pathname } = useLocation();
+  // 后端在后台探测工具环境；探测完成后所有依赖环境的查询重新拉取，
+  // 启动期显示的"探测中"等待态随之变成真实状态。
+  useEffect(
+    () =>
+      subscribeEnvironmentReady(() => {
+        void invalidateEnvironmentDependents(queryClient);
+      }),
+    [queryClient],
+  );
   const projectSectionOpen =
     projectsExpanded || pathname.startsWith("/projects/");
 

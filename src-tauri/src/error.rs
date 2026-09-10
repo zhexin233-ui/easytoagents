@@ -43,6 +43,9 @@ pub enum ErrorCode {
     MigrationFailed,
     #[serde(rename = "PERMISSION_AUDIT_FAILED")]
     PermissionAuditFailed,
+    /// 工具环境仍在后台探测；只出现在命令边界，永不写入 sync_runs.error_code。
+    #[serde(rename = "ENVIRONMENT_PROBING")]
+    EnvironmentProbing,
 }
 
 impl ErrorCode {
@@ -64,6 +67,7 @@ impl ErrorCode {
             Self::DatabaseError => "DATABASE_ERROR",
             Self::MigrationFailed => "MIGRATION_FAILED",
             Self::PermissionAuditFailed => "PERMISSION_AUDIT_FAILED",
+            Self::EnvironmentProbing => "ENVIRONMENT_PROBING",
         }
     }
 
@@ -85,6 +89,7 @@ impl ErrorCode {
             "DATABASE_ERROR" => Some(Self::DatabaseError),
             "MIGRATION_FAILED" => Some(Self::MigrationFailed),
             "PERMISSION_AUDIT_FAILED" => Some(Self::PermissionAuditFailed),
+            "ENVIRONMENT_PROBING" => Some(Self::EnvironmentProbing),
             _ => None,
         }
     }
@@ -107,6 +112,7 @@ impl ErrorCode {
             Self::RollbackFailed => &["runId", "path", "snapshotId"],
             Self::SecretRedacted => &["field"],
             Self::DatabaseError | Self::MigrationFailed => &["path", "operation", "version"],
+            Self::EnvironmentProbing => &[],
         }
     }
 }
@@ -389,6 +395,7 @@ mod tests {
             ErrorCode::DatabaseError,
             ErrorCode::MigrationFailed,
             ErrorCode::PermissionAuditFailed,
+            ErrorCode::EnvironmentProbing,
         ];
         for code in codes {
             assert_eq!(

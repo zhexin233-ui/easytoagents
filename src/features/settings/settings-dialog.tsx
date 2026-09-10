@@ -6,6 +6,7 @@ import {
   type Tool,
   type UpdateAppSettingsInput,
 } from "@/bindings/commands";
+import { RefreshEnvironmentButton } from "@/components/refresh-environment-button";
 import { type ThemePreference } from "@/components/use-theme";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
@@ -188,6 +189,19 @@ export function SettingsDialog({
                 </span>
               </label>
             ) : null}
+          </section>
+
+          <section
+            aria-labelledby="settings-tool-probe-title"
+            className="rounded-lg border p-4"
+          >
+            <h3 id="settings-tool-probe-title" className="font-semibold">
+              工具检测
+            </h3>
+            <p className="text-muted-foreground mt-1 mb-3 text-sm">
+              安装或卸载工具后无需重启应用，重新检测即可更新各页面的安装状态与版本。
+            </p>
+            <RefreshEnvironmentButton showToolList />
           </section>
 
           <section

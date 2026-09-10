@@ -1,6 +1,13 @@
 /* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +24,8 @@ vi.mock("@/bindings/commands", () => ({
     listSnapshots: vi.fn(),
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
+    getEnvironmentState: vi.fn(),
+    refreshEnvironment: vi.fn(),
   },
 }));
 
@@ -83,6 +92,58 @@ describe("DashboardPage", () => {
     vi.mocked(commands.getDashboardSummary).mockReset();
     vi.mocked(commands.listSnapshots).mockReset();
     vi.mocked(commands.getAppSettings).mockReset();
+    vi.mocked(commands.getEnvironmentState).mockReset();
+    vi.mocked(commands.getEnvironmentState).mockResolvedValue({
+      status: "ok",
+      data: { probing: false, tools: [] },
+    });
+    vi.mocked(commands.refreshEnvironment).mockReset();
+    vi.mocked(commands.refreshEnvironment).mockResolvedValue({
+      status: "ok",
+      data: { probing: false, tools: [] },
+    });
+  });
+
+  it("探测进行中时展示等待态并禁用重新检测", async () => {
+    mockEnabledTools(["claude", "codex"]);
+    vi.mocked(commands.getDashboardSummary).mockResolvedValue({
+      status: "ok",
+      data: summary,
+    });
+    vi.mocked(commands.getEnvironmentState).mockResolvedValue({
+      status: "ok",
+      data: { probing: true, tools: [] },
+    });
+    renderDashboard();
+    const waiting = await screen.findByText(/正在检测本机工具安装状态/);
+    expect(waiting).toHaveAttribute("role", "status");
+    expect(
+      screen.getByRole("button", { name: "正在检测工具…" }),
+    ).toBeDisabled();
+    expect(commands.refreshEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("重新检测工具后刷新总览查询", async () => {
+    mockEnabledTools(["claude", "codex"]);
+    vi.mocked(commands.getDashboardSummary).mockResolvedValue({
+      status: "ok",
+      data: summary,
+    });
+    renderDashboard();
+    await screen.findByText("Claude 主渠道");
+    const summaryCalls = vi.mocked(commands.getDashboardSummary).mock.calls
+      .length;
+    fireEvent.click(
+      await screen.findByRole("button", { name: "重新检测工具" }),
+    );
+    await waitFor(() =>
+      expect(commands.refreshEnvironment).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() =>
+      expect(
+        vi.mocked(commands.getDashboardSummary).mock.calls.length,
+      ).toBeGreaterThan(summaryCalls),
+    );
   });
 
   function mockEnabledTools(enabledTools: AppSettingsDto["enabledTools"]) {

@@ -18,6 +18,8 @@ vi.mock("@/bindings/commands", () => ({
   commands: {
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
+    getEnvironmentState: vi.fn(),
+    refreshEnvironment: vi.fn(),
   },
 }));
 
@@ -74,6 +76,45 @@ afterEach(cleanup);
 describe("SettingsDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(commands.getEnvironmentState).mockResolvedValue({
+      status: "ok",
+      data: {
+        probing: false,
+        tools: [
+          {
+            tool: "claude",
+            availability: "installed",
+            installationVersion: "2.1.217",
+            installationProbeDiagnostic: null,
+          },
+          {
+            tool: "codex",
+            availability: "unavailable",
+            installationVersion: null,
+            installationProbeDiagnostic: null,
+          },
+        ],
+      },
+    });
+    vi.mocked(commands.refreshEnvironment).mockResolvedValue({
+      status: "ok",
+      data: { probing: false, tools: [] },
+    });
+  });
+
+  it("工具检测区块展示检测结果，点击重新检测调用刷新命令", async () => {
+    renderDialog();
+    const list = await screen.findByRole("list", { name: "工具检测结果" });
+    expect(list).toHaveTextContent("Claude：已检测到 2.1.217");
+    expect(list).toHaveTextContent("Codex：未检测到");
+    fireEvent.click(screen.getByRole("button", { name: "重新检测工具" }));
+    await waitFor(() =>
+      expect(commands.refreshEnvironment).toHaveBeenCalledTimes(1),
+    );
+    expect(await screen.findByText("已重新检测工具环境。")).toHaveAttribute(
+      "role",
+      "status",
+    );
   });
 
   it("open 为 false 时不渲染对话框，也不请求设置", () => {

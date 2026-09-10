@@ -53,6 +53,17 @@ is truly shared:
   the shared project row version changes.
 - Native configuration writes remain preview-driven. CRUD success updates
   central intent; it does not optimistically claim the native target was applied.
+- Startup probing: the backend answers environment-dependent commands with
+  `ENVIRONMENT_PROBING` until the background tool probe finishes. The app-level
+  `QueryClient` uses `retryWhileEnvironmentProbing` from `src/lib/rpc.ts` as its
+  default `retry`, so such queries stay `pending` (pages render their normal
+  `role="status"` loading text) instead of flashing an error. `AppShell` subscribes
+  to the `environment-ready` Tauri event through `src/lib/tauri-events.ts` and calls
+  `invalidateEnvironmentDependents` (environment, dashboard, profiles, MCP, Skills,
+  Hooks, projects). `RefreshEnvironmentButton` (dashboard header, settings dialog)
+  runs `refreshEnvironment` and performs the same invalidation. Tests that render
+  `AppShell` mock `@/lib/tauri-events`; tests that render the dashboard or settings
+  dialog mock `getEnvironmentState`.
 
 ```tsx
 export const profileKeys = {

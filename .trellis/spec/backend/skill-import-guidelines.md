@@ -59,6 +59,8 @@ GitHub 导入是独立于本地目录和全局发现的显式入口。RPC 只接
 32 MiB、相对路径 1024 字节；元数据响应、累计元数据、请求数、连接/单请求/整体时间
 另有固定上限。客户端设置固定 User-Agent，仅显式继承 `HTTP(S)_PROXY` / `ALL_PROXY`
 环境，不修改永久代理配置；错误不得返回响应正文、代理值或 URL 中的敏感内容。
+代理值只在 `lib.rs` setup 里读取一次并存入 `AppState.github_proxy`，再作为参数传给
+`download_github_skill(url, proxy)`；下载模块本身不读进程环境，测试通过参数注入代理。
 
 每次下载使用权限收窄的独立 `TempDir`，任何正常错误都由 RAII 清理。网络阶段不得持有
 数据库锁；下载完成后复用 `prepare_skill_import` 的完整树复制、frontmatter 校验、hash

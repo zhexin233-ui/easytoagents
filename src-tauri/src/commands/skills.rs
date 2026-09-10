@@ -10,21 +10,21 @@ use crate::{
     sync::{ApplyResult, PreviewPlan},
 };
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillDto>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     skills::list_skills(&database, state.paths())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_skill(state: State<'_, AppState>, id: String) -> Result<SkillDto, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     skills::get_skill(&database, state.paths(), &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn import_skill(
     state: State<'_, AppState>,
@@ -40,18 +40,26 @@ pub async fn import_github_skill(
     state: State<'_, AppState>,
     input: ImportGithubSkillInput,
 ) -> Result<SkillDto, AppError> {
+    // 代理配置在 setup 里读取一次并注入，这里不再读进程环境。
+    let downloaded = skills::download_github_skill(&input.url, state.github_proxy()).await?;
+    // 下载后的文件校验、中央库复制与数据库写入都是同步阻塞操作，
+    // 不能留在 tokio worker 上；把数据库句柄与路径移进阻塞线程池。
+    let database = state.database_handle();
     let paths = state.paths().clone();
-    let downloaded = skills::download_github_skill(&input.url).await?;
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    skills::import_downloaded_github_skill(
-        &mut database,
-        &paths,
-        downloaded.path(),
-        downloaded.normalized_url(),
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut database = database.lock().map_err(|_| state_lock_error())?;
+        skills::import_downloaded_github_skill(
+            &mut database,
+            &paths,
+            downloaded.path(),
+            downloaded.normalized_url(),
+        )
+    })
+    .await
+    .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "后台导入任务已中止", true))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn preview_skill_content(
     state: State<'_, AppState>,
@@ -61,7 +69,7 @@ pub fn preview_skill_content(
     skills::preview_skill_content(&database, state.paths(), &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn adopt_skill_content(
     state: State<'_, AppState>,
@@ -71,7 +79,7 @@ pub fn adopt_skill_content(
     skills::adopt_skill_content(&mut database, state.paths(), &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn delete_skill(
     state: State<'_, AppState>,
@@ -81,7 +89,7 @@ pub fn delete_skill(
     skills::delete_skill(&mut database, state.paths(), &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn set_global_skill_assignment(
     state: State<'_, AppState>,
@@ -91,7 +99,7 @@ pub fn set_global_skill_assignment(
     skills::set_global_skill_assignment(&mut database, state.paths(), &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn set_project_skill_assignment(
     state: State<'_, AppState>,
@@ -101,14 +109,14 @@ pub fn set_project_skill_assignment(
     skills::set_project_skill_assignment(&mut database, state.paths(), &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_skill_projects(state: State<'_, AppState>) -> Result<Vec<SkillProjectDto>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     skills::list_skill_projects(&database)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_skill_project_options(
     state: State<'_, AppState>,
@@ -118,16 +126,16 @@ pub fn list_skill_project_options(
     skills::list_skill_project_options(&database, state.paths(), &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_global_skill_target_statuses(
     state: State<'_, AppState>,
 ) -> Result<Vec<SkillTargetStatusDto>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
-    skills::list_global_skill_target_statuses(&database, state.paths(), state.environment()?)
+    skills::list_global_skill_target_statuses(&database, state.paths(), &*state.environment()?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn preview_skill_sync(
     state: State<'_, AppState>,
@@ -138,13 +146,13 @@ pub fn preview_skill_sync(
     skills::preview_skill_sync(
         &mut database,
         state.paths(),
-        state.environment()?,
+        &*state.environment()?,
         &redactor,
         &input,
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn apply_skill_preview(
     state: State<'_, AppState>,
@@ -156,7 +164,7 @@ pub fn apply_skill_preview(
         state.write_operations(),
         &mut database,
         state.paths(),
-        state.environment()?,
+        &*state.environment()?,
         &redactor,
         &input,
     )
@@ -166,27 +174,27 @@ fn state_lock_error() -> AppError {
     AppError::new(ErrorCode::WriteInProgress, "应用状态锁不可用", false)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn discover_skill_import(
     state: State<'_, AppState>,
     tool: Tool,
 ) -> Result<SkillImportPreviewDto, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
-    skills::discover_skill_import(&database, state.paths(), state.environment()?, tool)
+    skills::discover_skill_import(&database, state.paths(), &*state.environment()?, tool)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn confirm_skill_import(
     state: State<'_, AppState>,
     input: ConfirmSkillImportInput,
 ) -> Result<SkillImportResultDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    skills::confirm_skill_import(&mut database, state.paths(), state.environment()?, &input)
+    skills::confirm_skill_import(&mut database, state.paths(), &*state.environment()?, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn prepare_skill_takeover(
     state: State<'_, AppState>,
@@ -197,7 +205,7 @@ pub fn prepare_skill_takeover(
     skills::prepare_skill_takeover(
         &mut database,
         state.paths(),
-        state.environment()?,
+        &*state.environment()?,
         &redactor,
         &input,
     )

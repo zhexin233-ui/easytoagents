@@ -49,9 +49,16 @@ src-tauri/
 
 ## Module Organization
 
-- Keep `src/commands/*.rs` thin: annotate commands with `#[tauri::command]`
-  and `#[specta::specta]`, acquire the required `AppState` lock, and delegate
-  to a domain/service module.
+- Keep `src/commands/*.rs` thin: annotate commands with `#[tauri::command(async)]`
+  (or `pub async fn` + `spawn_blocking` for work after an `.await`) and
+  `#[specta::specta]`, acquire the required `AppState` lock, and delegate to a
+  domain/service module. Plain `#[tauri::command]` runs on the main thread and is
+  rejected by `commands::tests::every_command_runs_off_the_main_thread`.
+- `app/mod.rs` owns `AppState`: the database mutex (`Arc` so async commands can
+  move a handle into the blocking pool), the `RwLock<Option<Arc<ExplicitEnvironment>>>`
+  environment snapshot that starts empty and is filled by the background probe,
+  the probe config for `refresh_environment`, and the injected GitHub proxy.
+  `commands/environment.rs` exposes probe state and refresh.
 - Put SQLite statements and row decoding in `src/db/<domain>.rs`. Keep
   cross-record validation and native synchronization orchestration in the
   corresponding top-level domain module.
@@ -84,14 +91,14 @@ src-tauri/
 - `src-tauri/src/commands/projects.rs` demonstrates a thin typed command layer:
 
   ```rust
-  #[tauri::command]
+  #[tauri::command(async)]
   #[specta::specta]
   pub fn get_project(
       state: State<'_, AppState>,
       id: String,
   ) -> Result<ProjectDto, AppError> {
-      let database = state.database().lock().map_err(|_| state_lock_error())?;
-      projects::get_project(&database, state.environment()?, &id)
+      let mut database = state.database().lock().map_err(|_| state_lock_error())?;
+      projects::get_project(&mut database, &*state.environment()?, &id)
   }
   ```
 

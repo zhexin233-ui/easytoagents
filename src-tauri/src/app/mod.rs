@@ -5,13 +5,17 @@ pub mod tool_probe;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
+use serde::Serialize;
+use specta::Type;
+
 use crate::{
-    adapters::ExplicitEnvironment,
+    adapters::{ExplicitEnvironment, PolicyState, ToolAvailabilityState, PROFILE_TOOLS},
     db::Database,
-    error::AppError,
+    domain::Tool,
+    error::{AppError, ErrorCode},
     security::{
         audit_private_tree, ensure_private_directory, reject_symlink_components, SecretRedactor,
     },
@@ -132,29 +136,81 @@ impl AppPaths {
     }
 }
 
+/// 后台/刷新探测所需的全部显式输入；不读进程环境（那只在 setup 里做一次）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentProbeConfig {
+    pub input: tool_probe::ReleaseToolProbeInput,
+    pub claude_provider_policy: PolicyState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolInstallationDto {
+    pub tool: Tool,
+    pub availability: ToolAvailabilityState,
+    pub installation_version: Option<String>,
+    pub installation_probe_diagnostic: Option<String>,
+}
+
+/// 前端可读的环境探测状态：`probing == true` 时 `tools` 为空。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentStateDto {
+    pub probing: bool,
+    pub tools: Vec<ToolInstallationDto>,
+}
+
+/// 探测完成（含刷新）后的通知回调；发布进程用它向前端广播 Tauri 事件。
+pub type EnvironmentReadyNotifier = Box<dyn Fn(bool) + Send + Sync>;
+
 pub struct AppState {
-    database: Mutex<Database>,
+    /// `Arc` 让 async 命令能把数据库句柄移进阻塞线程池，而不必持有 `State` 借用。
+    database: Arc<Mutex<Database>>,
     write_operations: Mutex<()>,
     paths: AppPaths,
     redactor: RwLock<SecretRedactor>,
-    environment: Option<ExplicitEnvironment>,
+    /// `None` 表示探测仍在后台进行；命令层据此返回 `ENVIRONMENT_PROBING`。
+    /// 用 `Arc` 让命令在线程池里拿到一份不受后续刷新影响的快照。
+    environment: RwLock<Option<Arc<ExplicitEnvironment>>>,
+    probe: Option<EnvironmentProbeConfig>,
+    environment_ready: Option<EnvironmentReadyNotifier>,
+    github_proxy: Option<String>,
 }
 
 impl AppState {
     pub fn initialize(paths: AppPaths) -> Result<Self, AppError> {
-        Self::initialize_internal(paths, None)
+        Self::initialize_internal(paths, None, None, None, None)
     }
 
     pub fn initialize_with_environment(
         paths: AppPaths,
         environment: ExplicitEnvironment,
     ) -> Result<Self, AppError> {
-        Self::initialize_internal(paths, Some(environment))
+        Self::initialize_internal(paths, Some(environment), None, None, None)
+    }
+
+    /// 发布启动路径：数据库先就绪、主窗口先显示，环境由 `probe_environment` 在后台补上。
+    pub fn initialize_probing(
+        paths: AppPaths,
+        probe: EnvironmentProbeConfig,
+        github_proxy: Option<String>,
+        environment_ready: EnvironmentReadyNotifier,
+    ) -> Result<Self, AppError> {
+        Self::initialize_internal(
+            paths,
+            None,
+            Some(probe),
+            Some(environment_ready),
+            github_proxy,
+        )
     }
 
     fn initialize_internal(
         paths: AppPaths,
         environment: Option<ExplicitEnvironment>,
+        probe: Option<EnvironmentProbeConfig>,
+        environment_ready: Option<EnvironmentReadyNotifier>,
+        github_proxy: Option<String>,
     ) -> Result<Self, AppError> {
         paths.initialize()?;
         let mut database = Database::open(&paths)?;
@@ -167,16 +223,24 @@ impl AppState {
             reconcile_skill_target_baselines(&database);
         }
         Ok(Self {
-            database: Mutex::new(database),
+            database: Arc::new(Mutex::new(database)),
             write_operations: Mutex::new(()),
             paths,
             redactor: RwLock::new(SecretRedactor::default()),
-            environment,
+            environment: RwLock::new(environment.map(Arc::new)),
+            probe,
+            environment_ready,
+            github_proxy,
         })
     }
 
     pub fn database(&self) -> &Mutex<Database> {
         &self.database
+    }
+
+    /// 可移进阻塞线程池的数据库句柄；锁语义与 `database()` 完全相同。
+    pub fn database_handle(&self) -> Arc<Mutex<Database>> {
+        Arc::clone(&self.database)
     }
 
     pub fn paths(&self) -> &AppPaths {
@@ -192,11 +256,78 @@ impl AppState {
         &self.redactor
     }
 
-    pub fn environment(&self) -> Result<&ExplicitEnvironment, AppError> {
+    pub fn environment(&self) -> Result<Arc<ExplicitEnvironment>, AppError> {
         self.environment
-            .as_ref()
-            .ok_or_else(|| AppError::invalid_input("environment", "运行时工具环境尚未显式初始化"))
+            .read()
+            .map_err(|_| state_lock_error())?
+            .clone()
+            .ok_or_else(environment_probing_error)
     }
+
+    pub fn github_proxy(&self) -> Option<&str> {
+        self.github_proxy.as_deref()
+    }
+
+    /// 同步执行（或重新执行）工具探测并替换环境快照，然后通知监听方。
+    /// 探测会启动子进程并等待最多数秒，调用方必须把它放到线程池里。
+    pub fn probe_environment(&self) -> Result<Arc<ExplicitEnvironment>, AppError> {
+        let outcome = self.probe_environment_inner();
+        if let Some(notify) = self.environment_ready.as_ref() {
+            notify(outcome.is_ok());
+        }
+        outcome
+    }
+
+    fn probe_environment_inner(&self) -> Result<Arc<ExplicitEnvironment>, AppError> {
+        let probe = self.probe.as_ref().ok_or_else(|| {
+            AppError::invalid_input("environment", "当前进程没有配置工具探测输入")
+        })?;
+        let environment = Arc::new(
+            tool_probe::probe_release_environment(&probe.input)?
+                .environment
+                .with_claude_provider_policy(probe.claude_provider_policy),
+        );
+        *self.environment.write().map_err(|_| state_lock_error())? = Some(Arc::clone(&environment));
+        Ok(environment)
+    }
+
+    pub fn environment_state(&self) -> Result<EnvironmentStateDto, AppError> {
+        let environment = self.environment.read().map_err(|_| state_lock_error())?;
+        Ok(match environment.as_deref() {
+            None => EnvironmentStateDto {
+                probing: true,
+                tools: Vec::new(),
+            },
+            Some(environment) => EnvironmentStateDto {
+                probing: false,
+                tools: PROFILE_TOOLS
+                    .into_iter()
+                    .map(|tool| ToolInstallationDto {
+                        tool,
+                        availability: environment.tool_availability(tool),
+                        installation_version: environment
+                            .installation_version(tool)
+                            .map(str::to_owned),
+                        installation_probe_diagnostic: environment
+                            .installation_probe_diagnostic(tool)
+                            .map(str::to_owned),
+                    })
+                    .collect(),
+            },
+        })
+    }
+}
+
+fn state_lock_error() -> AppError {
+    AppError::new(ErrorCode::WriteInProgress, "应用状态锁不可用", false)
+}
+
+fn environment_probing_error() -> AppError {
+    AppError::new(
+        ErrorCode::EnvironmentProbing,
+        "工具环境仍在检测中，请稍后重试",
+        true,
+    )
 }
 
 fn validate_absolute_path(path: &Path) -> Result<(), AppError> {

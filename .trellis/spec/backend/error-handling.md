@@ -26,6 +26,10 @@ they may only appear in allowlisted, redacted details.
   implementation, which intentionally omits details.
 - Tauri commands return `Result<T, AppError>` and translate a poisoned shared
   state lock to the stable `WRITE_IN_PROGRESS` code before delegating.
+- `ENVIRONMENT_PROBING` is raised by `AppState::environment()` while the
+  background tool probe is still running. It is recoverable, carries no details,
+  and is deliberately **not** part of the `sync_runs.error_code` CHECK list
+  because no run can start before the environment exists; never persist it.
 
 ```rust
 #[tauri::command]

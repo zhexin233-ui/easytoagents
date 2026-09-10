@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -22,6 +23,25 @@ vi.mock("@/bindings/commands", () => ({
     removeProject: vi.fn(),
     getAppSettings: vi.fn(),
     updateAppSettings: vi.fn(),
+    getEnvironmentState: vi.fn(),
+    refreshEnvironment: vi.fn(),
+  },
+}));
+
+type EnvironmentReadyHandler = (succeeded: boolean) => void;
+
+const environmentEvents = vi.hoisted(() => {
+  const handlers: Array<(succeeded: boolean) => void> = [];
+  return { handlers };
+});
+
+vi.mock("@/lib/tauri-events", () => ({
+  subscribeEnvironmentReady: (handler: EnvironmentReadyHandler) => {
+    environmentEvents.handlers.push(handler);
+    return () => {
+      const index = environmentEvents.handlers.indexOf(handler);
+      if (index >= 0) environmentEvents.handlers.splice(index, 1);
+    };
   },
 }));
 
@@ -60,6 +80,12 @@ function renderShell(initialEntry = "/") {
 
 describe("AppShell 侧边栏设置入口", () => {
   beforeEach(() => {
+    environmentEvents.handlers.length = 0;
+    vi.mocked(commands.getEnvironmentState).mockReset();
+    vi.mocked(commands.getEnvironmentState).mockResolvedValue({
+      status: "ok",
+      data: { probing: false, tools: [] },
+    });
     vi.mocked(commands.listProjects).mockReset();
     vi.mocked(commands.listProjects).mockResolvedValue({
       status: "ok",
@@ -89,6 +115,14 @@ describe("AppShell 侧边栏设置入口", () => {
   });
 
   afterEach(cleanup);
+
+  it("收到 environment-ready 事件后重新拉取依赖环境的查询", async () => {
+    renderShell();
+    await waitFor(() => expect(commands.listProjects).toHaveBeenCalledTimes(1));
+    expect(environmentEvents.handlers).toHaveLength(1);
+    act(() => environmentEvents.handlers[0]?.(true));
+    await waitFor(() => expect(commands.listProjects).toHaveBeenCalledTimes(2));
+  });
 
   it("按总览、提示词、MCP、Hooks、Skills、项目的顺序渲染一级导航", () => {
     renderShell();

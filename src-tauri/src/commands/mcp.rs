@@ -9,7 +9,7 @@ use crate::{
     sync::{ApplyResult, PreviewPlan},
 };
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_mcp_servers(state: State<'_, AppState>) -> Result<Vec<McpServerDto>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
@@ -17,7 +17,7 @@ pub fn list_mcp_servers(state: State<'_, AppState>) -> Result<Vec<McpServerDto>,
     mcp::list_mcp_servers(&database, &redactor)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_mcp_server(state: State<'_, AppState>, id: String) -> Result<McpServerDto, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
@@ -25,7 +25,7 @@ pub fn get_mcp_server(state: State<'_, AppState>, id: String) -> Result<McpServe
     mcp::get_mcp_server(&database, &redactor, &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn create_mcp_server(
     state: State<'_, AppState>,
@@ -36,7 +36,7 @@ pub fn create_mcp_server(
     mcp::create_mcp_server(&mut database, &mut redactor, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn update_mcp_server(
     state: State<'_, AppState>,
@@ -47,7 +47,7 @@ pub fn update_mcp_server(
     mcp::update_mcp_server(&mut database, &mut redactor, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn set_mcp_enabled(
     state: State<'_, AppState>,
@@ -59,7 +59,7 @@ pub fn set_mcp_enabled(
     mcp::set_mcp_enabled(&mut database, &redactor, &input, enabled)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn delete_mcp_server(
     state: State<'_, AppState>,
@@ -69,7 +69,7 @@ pub fn delete_mcp_server(
     mcp::delete_mcp_server(&mut database, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn set_global_mcp_assignment(
     state: State<'_, AppState>,
@@ -80,7 +80,7 @@ pub fn set_global_mcp_assignment(
     mcp::set_global_mcp_assignment(&mut database, &redactor, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn set_project_mcp_assignment(
     state: State<'_, AppState>,
@@ -91,14 +91,14 @@ pub fn set_project_mcp_assignment(
     mcp::set_project_mcp_assignment(&mut database, &redactor, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_mcp_projects(state: State<'_, AppState>) -> Result<Vec<McpProjectDto>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
     mcp::list_mcp_projects(&database)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_mcp_project_options(
     state: State<'_, AppState>,
@@ -108,16 +108,16 @@ pub fn list_mcp_project_options(
     mcp::list_mcp_project_options(&database, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_global_mcp_target_statuses(
     state: State<'_, AppState>,
 ) -> Result<Vec<McpTargetStatusDto>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
-    mcp::list_global_mcp_target_statuses(&database, state.environment()?)
+    mcp::list_global_mcp_target_statuses(&database, &*state.environment()?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn preview_mcp_sync(
     state: State<'_, AppState>,
@@ -125,10 +125,10 @@ pub fn preview_mcp_sync(
 ) -> Result<PreviewPlan, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     let mut redactor = state.redactor().write().map_err(|_| state_lock_error())?;
-    mcp::preview_mcp_sync(&mut database, state.environment()?, &mut redactor, &input)
+    mcp::preview_mcp_sync(&mut database, &*state.environment()?, &mut redactor, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn apply_mcp_preview(
     state: State<'_, AppState>,
@@ -140,13 +140,13 @@ pub fn apply_mcp_preview(
         state.write_operations(),
         &mut database,
         state.paths(),
-        state.environment()?,
+        &*state.environment()?,
         &mut redactor,
         &input,
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn readopt_mcp_target(
     state: State<'_, AppState>,
@@ -158,10 +158,10 @@ pub fn readopt_mcp_target(
         .lock()
         .map_err(|_| state_lock_error())?;
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    mcp::readopt_mcp_target(&mut database, state.environment()?, &input)
+    mcp::readopt_mcp_target(&mut database, &*state.environment()?, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn discover_mcp_import(
     state: State<'_, AppState>,
@@ -169,10 +169,10 @@ pub fn discover_mcp_import(
 ) -> Result<McpImportPreviewDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     let redactor = state.redactor().read().map_err(|_| state_lock_error())?;
-    mcp::discover_mcp_import(&mut database, state.environment()?, &redactor, tool)
+    mcp::discover_mcp_import(&mut database, &*state.environment()?, &redactor, tool)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn confirm_mcp_import(
     state: State<'_, AppState>,
@@ -180,7 +180,7 @@ pub fn confirm_mcp_import(
 ) -> Result<McpImportResultDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     let mut redactor = state.redactor().write().map_err(|_| state_lock_error())?;
-    mcp::confirm_mcp_import(&mut database, state.environment()?, &mut redactor, &input)
+    mcp::confirm_mcp_import(&mut database, &*state.environment()?, &mut redactor, &input)
 }
 
 fn state_lock_error() -> AppError {

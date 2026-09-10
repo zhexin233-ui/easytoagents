@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import type { DashboardToolSummaryDto } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
+import { RefreshEnvironmentButton } from "@/components/refresh-environment-button";
 import { SnapshotRestoreDialog } from "@/components/snapshot-restore-dialog";
 import { Button } from "@/components/ui/button";
 import { useEnabledTools } from "@/components/use-enabled-tools";
@@ -29,9 +30,14 @@ export function DashboardPage() {
           </p>
         </div>
         {dashboardQuery.data && !dashboardQuery.data.needsOnboarding ? (
-          <Button variant="outline" onClick={() => setWizardOpen(true)}>
-            检测现有配置
-          </Button>
+          // 空状态刻意只保留"开始首次检测"这一个下一步；工具重新检测入口
+          // 在设置对话框里始终可用。
+          <div className="flex flex-col items-end gap-3">
+            <Button variant="outline" onClick={() => setWizardOpen(true)}>
+              检测现有配置
+            </Button>
+            <RefreshEnvironmentButton />
+          </div>
         ) : null}
       </header>
 

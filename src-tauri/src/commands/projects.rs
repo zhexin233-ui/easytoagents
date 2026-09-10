@@ -8,51 +8,51 @@ use crate::{
     projects::{self, *},
 };
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectDto>, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::list_projects(&mut database, state.environment()?)
+    projects::list_projects(&mut database, &*state.environment()?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_project(state: State<'_, AppState>, id: String) -> Result<ProjectDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::get_project(&mut database, state.environment()?, &id)
+    projects::get_project(&mut database, &*state.environment()?, &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn register_project(
     state: State<'_, AppState>,
     input: RegisterProjectInput,
 ) -> Result<ProjectDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::register_project(&mut database, state.environment()?, &input)
+    projects::register_project(&mut database, &*state.environment()?, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn rename_project(
     state: State<'_, AppState>,
     input: RenameProjectInput,
 ) -> Result<ProjectDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::rename_project(&mut database, state.environment()?, &input)
+    projects::rename_project(&mut database, &*state.environment()?, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn rescan_project(
     state: State<'_, AppState>,
     input: VersionedProjectInput,
 ) -> Result<ProjectDto, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::rescan_project(&mut database, state.environment()?, &input)
+    projects::rescan_project(&mut database, &*state.environment()?, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn remove_project(
     state: State<'_, AppState>,
@@ -62,17 +62,17 @@ pub fn remove_project(
     projects::remove_project(&mut database, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn list_project_native_resources(
     state: State<'_, AppState>,
     input: ProjectNativeResourceQueryInput,
 ) -> Result<Vec<ProjectNativeResourceDto>, AppError> {
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::list_project_native_resources(&mut database, state.environment()?, &input)
+    projects::list_project_native_resources(&mut database, &*state.environment()?, &input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn preview_project_native_resource_action(
     state: State<'_, AppState>,
@@ -82,13 +82,13 @@ pub fn preview_project_native_resource_action(
     let mut redactor = state.redactor().write().map_err(|_| state_lock_error())?;
     projects::preview_project_native_resource_action(
         &mut database,
-        state.environment()?,
+        &*state.environment()?,
         &mut redactor,
         &input,
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn apply_project_native_resource_preview(
     state: State<'_, AppState>,
@@ -99,7 +99,7 @@ pub fn apply_project_native_resource_preview(
         state.write_operations(),
         &mut database,
         state.paths(),
-        state.environment()?,
+        &*state.environment()?,
         &input,
     )
 }
