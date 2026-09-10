@@ -1352,3 +1352,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 52: Tauri 命令异步化与后台探测
+
+**Date**: 2026-09-10
+**Task**: Tauri 命令异步化与后台探测
+**Branch**: `main`
+
+### Summary
+
+全部 87 个命令脱离主线程（command(async) / spawn_blocking），启动探测改为后台线程池并行、主窗口先显示、完成后 environment-ready 事件通知前端；新增 refresh_environment 与 get_environment_state；GitHub 代理显式注入；前端探测中等待态与重新检测入口。真实 Tauri 应用的启动时序手工验证（A3）因无头环境未执行，已在任务记录��写明验证步骤。Rust 298、前端 280 用例与 bindings:check 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2ea5b71` | (see git log) |
+
+### Status
+
+[OK] **Completed**

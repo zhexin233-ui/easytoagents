@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 51
+- **Total Sessions**: 52
 - **Last Active**: 2026-09-10
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1354 | Active |
+| `journal-1.md` | ~1375 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 52 | 2026-09-10 | Tauri 命令异步化与后台探测 | `2ea5b71` | `main` |
 | 51 | 2026-09-10 | 工程配置与依赖整理 | `42d91e2` | `main` |
 | 50 | 2026-09-10 | 修复后端审阅缺陷 | `7a8c9b6` | `main` |
 | 49 | 2026-09-10 | 修复前端审阅缺陷 | `79fbdb7` | `main` |
