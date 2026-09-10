@@ -1331,3 +1331,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 51: 工程配置与依赖整理
+
+**Date**: 2026-09-10
+**Task**: 工程配置与依赖整理
+**Branch**: `main`
+
+### Summary
+
+新增 push/PR 质量门 CI；更新应用描述覆盖五工具；reqwest 0.12 与 serde_yaml_ng 替换旧依赖；hooks/import.rs 补六个夹具测试；删除 .gitkeep 与死代码，拆出 lib/rpc.ts 并迁移 hook 导入查询。pnpm check 与 bindings:check 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `42d91e2` | (see git log) |
+
+### Status
+
+[OK] **Completed**
