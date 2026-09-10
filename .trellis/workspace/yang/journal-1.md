@@ -1289,3 +1289,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 49: 修复前端审阅缺陷
+
+**Date**: 2026-09-10
+**Task**: 修复前端审阅缺陷
+**Branch**: `main`
+
+### Summary
+
+修复 A1/A2/A3/A7/A8 五处前端缺陷：artifactLabel 改为 Record 穷举并补 hook 标签，开启 noImplicitReturns；Hooks 页 activeTool 渲染期夹逼；Prompts 页应用后刷新；react-router 跳转替代 window.location 与 hash 链接；SensitiveField 使用 useId。新增回归测试，全量 271 用例通过，rust:check 通过；更新前端类型安全与质量规范。同时提交父任务与九个子任务的规划文件。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `79fbdb7` | (see git log) |
+
+### Status
+
+[OK] **Completed**
