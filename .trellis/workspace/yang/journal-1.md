@@ -1373,3 +1373,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 53: 后端性能优化
+
+**Date**: 2026-09-11
+**Task**: 后端性能优化
+**Branch**: `main`
+
+### Summary
+
+C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState lstat 签名传递把目标完整读取降到 2 次、预检一次化、启动单次全树审计与写路径作用域审计、列表聚合查询与 prepare_cached、Skill 树摘要指纹缓存、删除 canonical_json、GitHub 6 路并发下载。fsync 上限实际 16（PRD 目标 8 因保留每阶段 durability 未达成，已记录）。Rust 306、前端 280 用例全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3f2434d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
