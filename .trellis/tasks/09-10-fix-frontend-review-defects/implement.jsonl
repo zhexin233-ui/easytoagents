@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "缺陷 A1 A2 A3 A7 A8 的定位证据"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端交互质量门与测试要求"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "禁止断言与类型模式"}

@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "条目 B1 B2 B3 的定位证据与命令清单"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "显式发现与集成安全合同"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "新增稳定错误码的规则"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "GitHub 导入合同，代理注入不得破坏"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端查询失效与事件处理约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端状态语义要求"}

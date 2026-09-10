@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "条目 C1-C6 的定位证据与调用链"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "预览、快照与恢复合同不得改变"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "查询与事务约定"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "GitHub 下载限额与清理合同"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "修改常量与助手函数前先搜索"}

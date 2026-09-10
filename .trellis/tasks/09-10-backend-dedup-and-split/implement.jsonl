@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "条目 E1-E7 的重复函数清单与行号"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "模块组织约定，拆分后需更新"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQL 归属与事务约定"}
+{"file": ".trellis/spec/backend/opencode-adapter-guidelines.md", "reason": "Adapter 合同示例"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "行为不变的合同"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "去重前先搜索的规则"}
+{"file": "docs/maintainers/adding-tool-adapter.md", "reason": "新增工具流程，需随去重更新"}

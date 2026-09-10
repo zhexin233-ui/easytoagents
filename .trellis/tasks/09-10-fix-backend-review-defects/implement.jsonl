@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "缺陷 A4 A5 A6 A9 A10 A11 A12 的定位证据"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "数据库、事务与迁移约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "稳定错误合同与诊断码"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "显式发现与预览合同"}

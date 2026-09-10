@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "对照 E1-E7 是否全部完成"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "拆分后目录约定检查"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用检查"}

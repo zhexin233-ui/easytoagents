@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "条目 E14 的重复脚手架清单"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "测试要求：只 mock commands、隔离 QueryClient"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "禁止断言，mock 工厂需类型安全"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "test 目录归属"}

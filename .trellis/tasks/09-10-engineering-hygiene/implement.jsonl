@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "条目 F1-F4 与 E15 的定位证据"}
+{"file": ".trellis/spec/backend/release-workflow-guidelines.md", "reason": "GitHub 工作流的 pinned action 与权限约定"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "GitHub 导入合同，升级 reqwest 时不得破坏"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "前端目录与 lib 层归属"}

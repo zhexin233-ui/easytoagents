@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "对照 B1 B2 B3 是否全部完成"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误码稳定性检查"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "事件与状态跨层一致性"}

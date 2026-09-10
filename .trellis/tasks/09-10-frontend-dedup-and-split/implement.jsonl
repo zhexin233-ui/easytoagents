@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/09-10-codebase-optimization/research/review-findings.md", "reason": "条目 C7 D7 E8-E13 的重复清单与行号"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件模式与组合约定"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "自定义 hook 与数据获取约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "查询失效与状态归属"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "预览对话框、直接应用例外、可访问性合同"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "禁止断言"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "去重前先搜索"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "能力常量跨层单一来源"}
