@@ -1310,3 +1310,24 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: 修复后端审阅缺陷
+
+**Date**: 2026-09-10
+**Task**: 修复后端审阅缺陷
+**Branch**: `main`
+
+### Summary
+
+修复 A4/A5/A6/A9/A10/A11/A12：探测器逐条目跳过不安全 PATH 并新增诊断码透出；启动备份仅在待迁移时执行并 checkpoint、保留 3 份；项目原生资源对账单事务化并移出读路径；apply 路径键显式化；快照删除先退役行再删文件、失败入清理队列；删除死缓存与重复 PRAGMA 配置。Rust 291 用例、前端 271 用例、bindings:check 全绿；更新后端规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7a8c9b6` | (see git log) |
+
+### Status
+
+[OK] **Completed**
