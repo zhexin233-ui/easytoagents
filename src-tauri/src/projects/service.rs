@@ -115,6 +115,7 @@ fn register_project_with_policy_probe(
             &scan_update,
         )?,
     };
+    super::native_resources::reconcile_project_native_resources(database, environment, &record.id)?;
     project_dto(database, environment, policy_probe, record)
 }
 
@@ -178,6 +179,7 @@ pub fn rescan_project(
         },
         input.row_version,
     )?;
+    super::native_resources::reconcile_project_native_resources(database, environment, &input.id)?;
     project_dto(
         database,
         environment,
@@ -305,11 +307,10 @@ fn project_dto(
         }
     };
     let observation = observe_project(database, environment, policy_probe, &project_root)?;
-    let native_resources = super::native_resources::reconcile_project_native_resources(
-        database,
-        environment,
-        &record.id,
-    )?;
+    // 读路径只汇总已对账的观测记录，不写库。对账由 register/rescan 与
+    // 原生资源列表/预览入口显式触发（见 native_resources.rs）。
+    let native_resources =
+        super::native_resources::project_native_resource_summary(database, &record.id)?;
     project_dto_from_observation(
         record,
         ProjectPathStatus::Valid,

@@ -204,6 +204,8 @@ pub struct ToolProfileStatusDto {
     pub tool: Tool,
     pub availability: ToolAvailabilityState,
     pub installation_version: Option<String>,
+    /// 安装探针的稳定诊断码；解释探测为何是当前状态（如 PATH 条目被跳过）。
+    pub installation_probe_diagnostic: Option<String>,
     pub provider_target_path: Option<String>,
     pub prompt_target_path: Option<String>,
     pub provider_capability: TargetCapability,

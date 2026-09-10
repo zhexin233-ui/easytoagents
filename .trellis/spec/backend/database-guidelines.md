@@ -32,7 +32,15 @@ without reading or deleting files under a registered project root.
 
 - Migrations are embedded under `src-tauri/src/db/migrations/` and applied in an
   `IMMEDIATE` transaction together with their `schema_migrations` record.
-- Back up the existing database and any active WAL/SHM files before migration.
+- Back up the existing database only when at least one compiled migration is
+  still pending. Run `PRAGMA wal_checkpoint(TRUNCATE)` first so the copied main
+  file is self-contained, then copy the main file plus any still-present
+  WAL/SHM. Keep only the newest `STARTUP_BACKUP_RETENTION` (3) `startup-*`
+  directories; pruning is best-effort and never blocks startup. Backups carry
+  Provider credentials, so unconditional per-launch copies are a leak surface,
+  not a safety net.
+- `configure_connection` runs once per open. PRAGMAs are connection state and
+  survive migration commits; do not re-run it after `run_migrations`.
 - Treat migration history as an ordered prefix of the compiled migration list;
   reject unknown, renamed, or out-of-order records.
 - Migration tests must use `tempfile` roots and must prove reopening is
@@ -230,7 +238,8 @@ remove_regular_payload_if_present(&path)?;
 - `AppPaths::from_data_root(impl Into<PathBuf>) -> Result<AppPaths, AppError>` accepts an
   explicit private root; it never reads process `HOME` or tool configuration.
 - `Database::open(&AppPaths) -> Result<Database, AppError>` tightens private
-  permissions, backs up an existing SQLite/WAL/SHM set, verifies PRAGMAs, and
+  permissions, verifies PRAGMAs, backs up an existing SQLite/WAL/SHM set only
+  when migrations are pending (after a WAL checkpoint, pruned to 3 copies), and
   applies the ordered migration prefix.
 - Main records use UUID text IDs and optimistic `row_version`; previews reference
   exact entity versions rather than an untyped database timestamp.
@@ -263,14 +272,16 @@ remove_regular_payload_if_present(&path)?;
 
 - Good: open a canonical `tempfile` root, create the schema, reopen it, and
   observe identical migration history with stricter permissions.
-- Base: a new root has no startup backup and starts at the compiled schema version.
+- Base: a new root has no startup backup and starts at the compiled schema version;
+  reopening an up-to-date database also produces no backup.
 - Bad: an ancestor symlink, broken SQLite sidecar link, forged migration row, or
   assignment-key update must fail closed.
 
 ### 6. Tests Required
 
-- Assert WAL and foreign keys after open, idempotent reopen, and recoverable
-  backup of an active WAL database.
+- Assert WAL and foreign keys after open, idempotent reopen, no backup when no
+  migration is pending, and a recoverable (checkpointed) backup of an
+  active-WAL database that still has pending migrations, pruned to 3 copies.
 - Exercise every cross-table assignment trigger through both `INSERT` and `UPDATE`.
 - Assert `0700`/`0600`, ancestor-symlink rejection, broken-sidecar rejection,
   row-version monotonicity, UUID/JSON/hash/path checks, and parent-kind checks.

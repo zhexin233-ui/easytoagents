@@ -269,6 +269,8 @@ pub struct ExplicitEnvironment {
     opencode_installation_version: Option<String>,
     claude_provider_policy: PolicyState,
     availability: ToolAvailability,
+    /// 安装探针给出的稳定诊断码（例如 PATH 中有被跳过的不安全条目），供状态 DTO 透出。
+    installation_probe_diagnostics: Vec<(Tool, &'static str)>,
     claude_user_mcp_evidence: Option<VerifiedClaudeUserMcpEvidence>,
     claude_customization_policy_evidence: Option<VerifiedClaudeCustomizationPolicyEvidence>,
 }
@@ -307,9 +309,28 @@ impl ExplicitEnvironment {
             opencode_installation_version: None,
             claude_provider_policy: PolicyState::Unknown,
             availability,
+            installation_probe_diagnostics: Vec::new(),
             claude_user_mcp_evidence: None,
             claude_customization_policy_evidence: None,
         })
+    }
+
+    pub fn with_installation_probe_diagnostic(
+        mut self,
+        tool: Tool,
+        diagnostic: &'static str,
+    ) -> Self {
+        self.installation_probe_diagnostics
+            .retain(|(existing, _)| *existing != tool);
+        self.installation_probe_diagnostics.push((tool, diagnostic));
+        self
+    }
+
+    pub fn installation_probe_diagnostic(&self, tool: Tool) -> Option<&'static str> {
+        self.installation_probe_diagnostics
+            .iter()
+            .find(|(existing, _)| *existing == tool)
+            .map(|(_, diagnostic)| *diagnostic)
     }
 
     pub fn with_claude_installation_version(

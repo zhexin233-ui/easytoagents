@@ -16,7 +16,7 @@ use crate::{
         audit_private_tree, ensure_private_directory, reject_symlink_components, SecretRedactor,
     },
     skills::{migrate_legacy_central_skill_directories, reconcile_skill_target_baselines},
-    sync::{detect_interrupted_run, InterruptedRunPlan},
+    sync::detect_interrupted_run,
 };
 
 const APPLICATION_SUPPORT_DIRECTORY: &str = "EasyToAgents";
@@ -137,7 +137,6 @@ pub struct AppState {
     write_operations: Mutex<()>,
     paths: AppPaths,
     redactor: RwLock<SecretRedactor>,
-    interrupted_run: RwLock<Option<InterruptedRunPlan>>,
     environment: Option<ExplicitEnvironment>,
 }
 
@@ -161,9 +160,10 @@ impl AppState {
         let mut database = Database::open(&paths)?;
         migrate_legacy_central_skill_directories(&mut database, &paths)?;
         paths.audit_permissions()?;
-        let interrupted_run = detect_interrupted_run(&database, &paths)?;
         // 中断的同步等待用户显式回滚；对账只处理无活动写入者的记账漂移。
-        if interrupted_run.is_none() {
+        // 中断状态不缓存在 AppState 里：`get_interrupted_run` 与 `restore_snapshot`
+        // 每次都从 sync_runs 重新检测，缓存副本从未被读取，只会随时间陈旧。
+        if detect_interrupted_run(&database, &paths)?.is_none() {
             reconcile_skill_target_baselines(&database);
         }
         Ok(Self {
@@ -171,7 +171,6 @@ impl AppState {
             write_operations: Mutex::new(()),
             paths,
             redactor: RwLock::new(SecretRedactor::default()),
-            interrupted_run: RwLock::new(interrupted_run),
             environment,
         })
     }
@@ -191,10 +190,6 @@ impl AppState {
 
     pub fn redactor(&self) -> &RwLock<SecretRedactor> {
         &self.redactor
-    }
-
-    pub fn interrupted_run(&self) -> &RwLock<Option<InterruptedRunPlan>> {
-        &self.interrupted_run
     }
 
     pub fn environment(&self) -> Result<&ExplicitEnvironment, AppError> {

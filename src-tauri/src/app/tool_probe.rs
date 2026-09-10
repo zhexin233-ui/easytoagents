@@ -21,6 +21,7 @@ use crate::{
         ExplicitEnvironment, ToolAvailability, ToolAvailabilityState,
         VerifiedClaudeCustomizationPolicyEvidence, VerifiedClaudeUserMcpEvidence,
     },
+    domain::Tool,
     error::AppError,
 };
 
@@ -108,10 +109,20 @@ impl ReleaseToolProbeInput {
     }
 }
 
+/// PATH 中存在被跳过的不安全条目（相对路径、`.`、不可读目录或同名非文件）；
+/// 探测仍在其余安全条目中完成，但用户应知道这些位置没有被搜索。
+pub const PROBE_DIAGNOSTIC_SKIPPED_PATH_ENTRIES: &str = "INSTALLATION_PROBE_SKIPPED_PATH_ENTRIES";
+/// PATH 为空或没有任何安全的绝对条目，探测无处可搜。
+pub const PROBE_DIAGNOSTIC_NO_SAFE_PATH_ENTRIES: &str = "INSTALLATION_PROBE_NO_SAFE_PATH_ENTRIES";
+/// 首个命中的候选文件自身不安全（无法解析、非普通文件或不可执行）。
+pub const PROBE_DIAGNOSTIC_UNSAFE_CANDIDATE: &str = "INSTALLATION_PROBE_UNSAFE_CANDIDATE";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolProbeOutcome {
     pub state: ToolAvailabilityState,
     pub version: Option<String>,
+    /// 稳定诊断码，解释为什么是这个状态；`None` 表示没有额外可说明的原因。
+    pub diagnostic: Option<&'static str>,
 }
 
 impl ToolProbeOutcome {
@@ -119,6 +130,7 @@ impl ToolProbeOutcome {
         Self {
             state: ToolAvailabilityState::Installed,
             version: Some(version),
+            diagnostic: None,
         }
     }
 
@@ -126,6 +138,7 @@ impl ToolProbeOutcome {
         Self {
             state: ToolAvailabilityState::Unavailable,
             version: None,
+            diagnostic: None,
         }
     }
 
@@ -133,7 +146,13 @@ impl ToolProbeOutcome {
         Self {
             state: ToolAvailabilityState::Unsupported,
             version: None,
+            diagnostic: None,
         }
+    }
+
+    fn with_diagnostic(mut self, diagnostic: Option<&'static str>) -> Self {
+        self.diagnostic = diagnostic;
+        self
     }
 }
 
@@ -214,6 +233,17 @@ pub fn probe_release_environment(
     }
     if let Some(version) = opencode.version.as_deref() {
         environment = environment.with_opencode_installation_version(version)?;
+    }
+    for (tool, outcome) in [
+        (Tool::Claude, &claude),
+        (Tool::Codex, &codex),
+        (Tool::Cursor, &cursor),
+        (Tool::Zcode, &zcode),
+        (Tool::Opencode, &opencode),
+    ] {
+        if let Some(diagnostic) = outcome.diagnostic {
+            environment = environment.with_installation_probe_diagnostic(tool, diagnostic);
+        }
     }
 
     Ok(ReleaseToolProbeResult {
@@ -364,54 +394,115 @@ fn probe_tool(
     environment: &ExplicitEnvironment,
     input: &ReleaseToolProbeInput,
 ) -> ToolProbeOutcome {
-    let executable = match resolve_executable(&input.search_path, tool.executable_name()) {
-        ExecutableResolution::Found(path) => path,
-        ExecutableResolution::Unavailable => return ToolProbeOutcome::unavailable(),
-        ExecutableResolution::Unsupported => return ToolProbeOutcome::unsupported(),
-    };
-    match run_version_command(&executable, environment, input) {
+    let (executable, skipped_entries) =
+        match resolve_executable(&input.search_path, tool.executable_name()) {
+            ExecutableResolution::Found {
+                path,
+                skipped_entries,
+            } => (path, skipped_entries),
+            ExecutableResolution::Unavailable { skipped_entries } => {
+                return ToolProbeOutcome::unavailable()
+                    .with_diagnostic(skipped_entries_diagnostic(skipped_entries));
+            }
+            ExecutableResolution::Unsupported { reason } => {
+                return ToolProbeOutcome::unsupported().with_diagnostic(Some(reason));
+            }
+        };
+    let outcome = match run_version_command(&executable, environment, input) {
         Ok(output) if output.status.success() => tool
             .parse_version(&output.stdout, &output.stderr)
             .map_or_else(ToolProbeOutcome::unsupported, ToolProbeOutcome::installed),
         Ok(_) | Err(_) => ToolProbeOutcome::unsupported(),
+    };
+    outcome.with_diagnostic(skipped_entries_diagnostic(skipped_entries))
+}
+
+const fn skipped_entries_diagnostic(skipped_entries: usize) -> Option<&'static str> {
+    if skipped_entries > 0 {
+        Some(PROBE_DIAGNOSTIC_SKIPPED_PATH_ENTRIES)
+    } else {
+        None
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum ExecutableResolution {
-    Found(PathBuf),
-    Unavailable,
-    Unsupported,
+    Found {
+        path: PathBuf,
+        skipped_entries: usize,
+    },
+    Unavailable {
+        skipped_entries: usize,
+    },
+    Unsupported {
+        reason: &'static str,
+    },
 }
 
+/// 逐条目搜索 PATH。不安全的条目（相对路径、`.`/`..` 分量、不可读目录）和同名
+/// 非文件条目只是被跳过并计数，不会让整体探测失败：桌面应用继承的 PATH 里
+/// 出现 `.` 或 `./node_modules/.bin` 很常见，不应因此把所有工具判成
+/// `Unsupported`。只有首个命中的候选文件自身不安全，或者根本没有任何安全条目
+/// 可搜时，才返回 `Unsupported`。
 fn resolve_executable(search_path: &OsStr, name: &str) -> ExecutableResolution {
-    let entries = std::env::split_paths(search_path).collect::<Vec<_>>();
-    if entries.is_empty() || entries.iter().any(|entry| !is_safe_absolute_path(entry)) {
-        return ExecutableResolution::Unsupported;
-    }
-    for entry in entries {
+    let mut skipped_entries = 0_usize;
+    let mut searched_entries = 0_usize;
+    for entry in std::env::split_paths(search_path) {
+        if !is_safe_absolute_path(&entry) {
+            skipped_entries += 1;
+            continue;
+        }
         let candidate = entry.join(name);
         let metadata = match fs::symlink_metadata(&candidate) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => return ExecutableResolution::Unsupported,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                searched_entries += 1;
+                continue;
+            }
+            Err(_) => {
+                skipped_entries += 1;
+                continue;
+            }
         };
         if !(metadata.file_type().is_file() || metadata.file_type().is_symlink()) {
-            return ExecutableResolution::Unsupported;
+            // 同名目录或特殊文件不是可执行候选；继续搜索后面的条目。
+            skipped_entries += 1;
+            continue;
         }
+        // 首个命中的候选必须自身安全，否则视为不受支持而不是继续找下一个：
+        // 用户明确把它放在 PATH 前面，静默越过它会执行意料之外的二进制。
         let canonical = match fs::canonicalize(&candidate) {
             Ok(path) => path,
-            Err(_) => return ExecutableResolution::Unsupported,
+            Err(_) => {
+                return ExecutableResolution::Unsupported {
+                    reason: PROBE_DIAGNOSTIC_UNSAFE_CANDIDATE,
+                }
+            }
         };
         let metadata = match fs::metadata(&canonical) {
             Ok(metadata) => metadata,
-            Err(_) => return ExecutableResolution::Unsupported,
+            Err(_) => {
+                return ExecutableResolution::Unsupported {
+                    reason: PROBE_DIAGNOSTIC_UNSAFE_CANDIDATE,
+                }
+            }
         };
         if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
-            return ExecutableResolution::Unsupported;
+            return ExecutableResolution::Unsupported {
+                reason: PROBE_DIAGNOSTIC_UNSAFE_CANDIDATE,
+            };
         }
-        return ExecutableResolution::Found(candidate);
+        return ExecutableResolution::Found {
+            path: candidate,
+            skipped_entries,
+        };
     }
-    ExecutableResolution::Unavailable
+    if searched_entries == 0 {
+        return ExecutableResolution::Unsupported {
+            reason: PROBE_DIAGNOSTIC_NO_SAFE_PATH_ENTRIES,
+        };
+    }
+    ExecutableResolution::Unavailable { skipped_entries }
 }
 
 fn macos_release_search_path(home: &Path, search_path: OsString) -> OsString {
@@ -849,7 +940,7 @@ mod tests {
             ClaudeCustomizationPolicyProbeInput, DiscoveryContext, PolicyState, ToolAdapter,
             ToolAvailabilityState,
         },
-        domain::{ArtifactKind, Scope},
+        domain::{ArtifactKind, Scope, Tool},
     };
 
     use super::{probe_release_environment, ReleaseToolProbeInput, ReleaseToolProbeResult};
@@ -1036,7 +1127,7 @@ mod tests {
         )
         .unwrap();
         let executable = match super::resolve_executable(&input.search_path, "claude") {
-            super::ExecutableResolution::Found(path) => path,
+            super::ExecutableResolution::Found { path, .. } => path,
             _ => panic!("fake Claude 可执行文件未被安全解析"),
         };
         let output = super::run_version_command(&executable, &environment, &input).unwrap();
@@ -1488,6 +1579,121 @@ esac"#,
         let result = probe_release_environment(&fixture.input()).unwrap();
         assert_eq!(result.claude.state, ToolAvailabilityState::Unsupported);
         assert_eq!(result.codex.state, ToolAvailabilityState::Unsupported);
+    }
+
+    #[test]
+    fn unsafe_path_entries_are_skipped_instead_of_failing_the_whole_probe() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        fixture.write_tool("claude", "printf '2.1.217 (Claude Code)'");
+        fixture.write_tool("codex", "printf 'codex-cli 0.114.0'");
+
+        // 常见的桌面 PATH：`.`、`./node_modules/.bin` 与相对条目混在安全条目前面。
+        let mut input = fixture.input();
+        input.search_path = std::env::join_paths([
+            PathBuf::from("."),
+            PathBuf::from("./node_modules/.bin"),
+            PathBuf::from("relative-bin"),
+            fixture.bin.clone(),
+        ])
+        .unwrap();
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.claude.version.as_deref(), Some("2.1.217"));
+        assert_eq!(result.codex.state, ToolAvailabilityState::Installed);
+        assert_eq!(
+            result.claude.diagnostic,
+            Some(super::PROBE_DIAGNOSTIC_SKIPPED_PATH_ENTRIES)
+        );
+        assert_eq!(
+            result
+                .environment
+                .installation_probe_diagnostic(Tool::Claude),
+            Some(super::PROBE_DIAGNOSTIC_SKIPPED_PATH_ENTRIES)
+        );
+        assert_eq!(
+            result
+                .environment
+                .installation_probe_diagnostic(Tool::Cursor),
+            None
+        );
+
+        // 前置条目下同名的是目录，应跳过它继续在后面的安全条目里找到真实二进制。
+        let shadow = fixture.home.join("shadow-bin");
+        fs::create_dir_all(shadow.join("claude")).unwrap();
+        let mut input = fixture.input();
+        input.search_path = std::env::join_paths([shadow.clone(), fixture.bin.clone()]).unwrap();
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Installed);
+        assert_eq!(
+            result.claude.diagnostic,
+            Some(super::PROBE_DIAGNOSTIC_SKIPPED_PATH_ENTRIES)
+        );
+
+        // 完全干净的 PATH 不带诊断。
+        let result = probe_release_environment(&fixture.input()).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.claude.diagnostic, None);
+    }
+
+    #[test]
+    fn unsafe_first_candidate_and_empty_safe_path_still_fail_closed() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        fixture.write_tool("claude", "printf '2.1.217 (Claude Code)'");
+
+        // 首个命中的候选是不可执行文件：不能越过它去执行后面的二进制。
+        let first = fixture.home.join("first-bin");
+        fs::create_dir_all(&first).unwrap();
+        fs::write(first.join("claude"), "not executable").unwrap();
+        fs::set_permissions(first.join("claude"), fs::Permissions::from_mode(0o600)).unwrap();
+        let mut input = fixture.input();
+        input.search_path = std::env::join_paths([first.clone(), fixture.bin.clone()]).unwrap();
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Unsupported);
+        assert_eq!(
+            result.claude.diagnostic,
+            Some(super::PROBE_DIAGNOSTIC_UNSAFE_CANDIDATE)
+        );
+
+        // 首个候选是悬空链接同样不受支持。
+        let dangling = fixture.home.join("dangling-bin");
+        fs::create_dir_all(&dangling).unwrap();
+        symlink(fixture.home.join("missing-target"), dangling.join("claude")).unwrap();
+        let mut input = fixture.input();
+        input.search_path = std::env::join_paths([dangling.clone(), fixture.bin.clone()]).unwrap();
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Unsupported);
+        assert_eq!(
+            result.claude.diagnostic,
+            Some(super::PROBE_DIAGNOSTIC_UNSAFE_CANDIDATE)
+        );
+
+        // 没有任何安全条目：无处可搜，保持不受支持并说明原因。
+        let mut input = fixture.input();
+        input.search_path = OsString::from("relative-bin");
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Unsupported);
+        assert_eq!(
+            result.claude.diagnostic,
+            Some(super::PROBE_DIAGNOSTIC_NO_SAFE_PATH_ENTRIES)
+        );
+        let mut input = fixture.input();
+        input.search_path = OsString::new();
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.codex.state, ToolAvailabilityState::Unsupported);
+
+        // 安全条目里根本没有这个工具：不可用而不是不受支持。
+        let empty = fixture.home.join("empty-bin");
+        fs::create_dir_all(&empty).unwrap();
+        let mut input = fixture.input();
+        input.search_path = std::env::join_paths([PathBuf::from("."), empty]).unwrap();
+        let result = probe_release_environment(&input).unwrap();
+        assert_eq!(result.claude.state, ToolAvailabilityState::Unavailable);
+        assert_eq!(
+            result.claude.diagnostic,
+            Some(super::PROBE_DIAGNOSTIC_SKIPPED_PATH_ENTRIES)
+        );
     }
 
     #[test]

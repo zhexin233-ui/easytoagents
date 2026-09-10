@@ -56,13 +56,7 @@ pub fn get_interrupted_run(
     state: State<'_, AppState>,
 ) -> Result<Option<InterruptedRunPlan>, AppError> {
     let database = state.database().lock().map_err(|_| state_lock_error())?;
-    let interrupted = sync::detect_interrupted_run(&database, state.paths())?;
-    let mut cached = state
-        .interrupted_run()
-        .write()
-        .map_err(|_| state_lock_error())?;
-    *cached = interrupted.clone();
-    Ok(interrupted)
+    sync::detect_interrupted_run(&database, state.paths())
 }
 
 #[tauri::command]
@@ -91,20 +85,14 @@ pub fn restore_snapshot(
     let mut database = state.database().lock().map_err(|_| state_lock_error())?;
     let context =
         overview::snapshot_restore_context(&database, state.environment()?, &input.snapshot_id)?;
-    let result = sync::restore_snapshot(
+    sync::restore_snapshot(
         state.write_operations(),
         &mut database,
         state.paths(),
         &input.preview_id,
         &context.allowed_root,
         Some(state.paths().central_skills()),
-    )?;
-    let interrupted = sync::detect_interrupted_run(&database, state.paths())?;
-    *state
-        .interrupted_run()
-        .write()
-        .map_err(|_| state_lock_error())? = interrupted;
-    Ok(result)
+    )
 }
 
 fn state_lock_error() -> AppError {

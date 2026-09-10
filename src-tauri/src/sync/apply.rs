@@ -832,14 +832,13 @@ fn native_or_takeover_directory_hash(mutation: &Mutation) -> Option<&str> {
     }
 }
 
-fn validate_preview_inputs(
-    database: &Database,
+/// 以精确目标路径索引 Apply 输入。没有路径的描述符不能参与 Apply，重复路径也
+/// 不能静默互相覆盖；两者都必须显式失败，而不是折叠成同一个空字符串键
+/// （那会让后续按 `target_path` 查找时拿到错误的输入）。
+fn inputs_by_target_path<'a>(
     preview: &PersistedPreview,
-    inputs: &[ApplyTargetInput],
-) -> Result<(), AppError> {
-    if preview.items.len() != inputs.len() {
-        return Err(AppError::stale_preview(&preview.preview_id, "targetSet"));
-    }
+    inputs: &'a [ApplyTargetInput],
+) -> Result<BTreeMap<&'a str, &'a ApplyTargetInput>, AppError> {
     let mut by_path = BTreeMap::new();
     for input in inputs {
         let path = input
@@ -854,6 +853,18 @@ fn validate_preview_inputs(
             ));
         }
     }
+    Ok(by_path)
+}
+
+fn validate_preview_inputs(
+    database: &Database,
+    preview: &PersistedPreview,
+    inputs: &[ApplyTargetInput],
+) -> Result<(), AppError> {
+    if preview.items.len() != inputs.len() {
+        return Err(AppError::stale_preview(&preview.preview_id, "targetSet"));
+    }
+    let by_path = inputs_by_target_path(preview, inputs)?;
     let database_path = database.path().to_string_lossy().into_owned();
     let mut expected_versions = BTreeMap::new();
     for item in &preview.items {
@@ -1326,10 +1337,7 @@ fn build_target_work<'a>(
     preview: &'a PersistedPreview,
     inputs: &'a [ApplyTargetInput],
 ) -> Result<Vec<TargetWork<'a>>, AppError> {
-    let inputs = inputs
-        .iter()
-        .map(|input| (input.descriptor.path.as_deref().unwrap_or_default(), input))
-        .collect::<BTreeMap<_, _>>();
+    let inputs = inputs_by_target_path(preview, inputs)?;
     let mut work = Vec::with_capacity(preview.items.len());
     let mut exclude_patterns = BTreeMap::<PathBuf, (String, PathBuf, BTreeSet<String>)>::new();
     for (target_index, item) in preview.items.iter().enumerate() {
@@ -3384,10 +3392,7 @@ fn finish_successful_apply(
         record_expected_versions(item, &mut versions)?;
     }
     verify_database_versions(&transaction, &versions, &preview.preview_id, &database_path)?;
-    let inputs_by_path = inputs
-        .iter()
-        .map(|input| (input.descriptor.path.as_deref().unwrap_or_default(), input))
-        .collect::<BTreeMap<_, _>>();
+    let inputs_by_path = inputs_by_target_path(preview, inputs)?;
     for verification in verifications {
         let preview_item = preview
             .items
@@ -4126,7 +4131,8 @@ pub fn delete_snapshots(
     }
 
     let mut failures: Vec<SnapshotDeleteFailureDto> = Vec::new();
-    let mut removable: Vec<(String, PathBuf, SnapshotStorageKind, Option<String>)> = Vec::new();
+    let mut removable: Vec<(String, String, PathBuf, SnapshotStorageKind, Option<String>)> =
+        Vec::new();
     for snapshot_id in &ordered_ids {
         let row = database
             .connection()
@@ -4209,6 +4215,7 @@ pub fn delete_snapshots(
         }
         removable.push((
             snapshot_id.clone(),
+            run_id,
             snapshot_path,
             storage_kind,
             content_hash,
@@ -4216,45 +4223,30 @@ pub fn delete_snapshots(
     }
 
     let mut deleted_ids: Vec<String> = Vec::with_capacity(removable.len());
-    for (snapshot_id, snapshot_path, storage_kind, content_hash) in &removable {
-        if fs::symlink_metadata(snapshot_path)
-            .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
-        {
-            deleted_ids.push(snapshot_id.clone());
-            continue;
-        }
-        let removal = match storage_kind {
-            SnapshotStorageKind::DirectoryTree => content_hash
-                .as_deref()
-                .ok_or_else(|| AppError::conflict("snapshot", "目录树快照缺少 hash"))
-                .and_then(|hash| {
-                    skill_library::remove_skill_tree(
-                        snapshot_path,
-                        snapshot_path.parent().expect("快照必须有父目录"),
-                        hash,
-                    )
-                }),
-            SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
-                fs::remove_file(snapshot_path).map_err(|_| {
-                    AppError::atomic_write(&snapshot_path.to_string_lossy(), "remove_snapshot")
-                })
-            }
-        };
-        match removal {
-            Ok(()) => deleted_ids.push(snapshot_id.clone()),
-            Err(error) if error.code() == ErrorCode::NotFound => {
-                deleted_ids.push(snapshot_id.clone())
-            }
-            Err(error) => failures.push(snapshot_delete_failure(snapshot_id, &error)),
-        }
-    }
-
-    if !deleted_ids.is_empty() {
+    if !removable.is_empty() {
+        // 先在一个事务里退役数据库行：把身份登记进 retired_snapshot_cleanup 再删
+        // snapshots 行并提交。之后逐个删文件；删成功就清掉队列项，删失败的留在
+        // 队列由 Database::open 重试。这样提交失败时行与文件都还在（可重试），
+        // 文件删除失败也不会留下指向缺失文件的活行或无人认领的孤儿文件。
         let transaction = database
             .connection_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| AppError::database(&database_path, "begin_delete_snapshots"))?;
-        for snapshot_id in &deleted_ids {
+        for (snapshot_id, run_id, snapshot_path, storage_kind, content_hash) in &removable {
+            transaction
+                .execute(
+                    "INSERT OR REPLACE INTO retired_snapshot_cleanup(
+                        snapshot_id, run_id, snapshot_path, storage_kind, content_hash
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        snapshot_id,
+                        run_id,
+                        snapshot_path.to_string_lossy(),
+                        storage_kind.as_str(),
+                        content_hash,
+                    ],
+                )
+                .map_err(|_| AppError::database(&database_path, "queue_snapshot_cleanup"))?;
             transaction
                 .execute("DELETE FROM snapshots WHERE id = ?1", [snapshot_id])
                 .map_err(|_| AppError::database(&database_path, "delete_snapshot_row"))?;
@@ -4262,6 +4254,45 @@ pub fn delete_snapshots(
         transaction
             .commit()
             .map_err(|_| AppError::database(&database_path, "commit_delete_snapshots"))?;
+    }
+
+    for (snapshot_id, _run_id, snapshot_path, storage_kind, content_hash) in &removable {
+        deleted_ids.push(snapshot_id.clone());
+        let removal = if fs::symlink_metadata(snapshot_path)
+            .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+        {
+            Ok(())
+        } else {
+            match storage_kind {
+                SnapshotStorageKind::DirectoryTree => content_hash
+                    .as_deref()
+                    .ok_or_else(|| AppError::conflict("snapshot", "目录树快照缺少 hash"))
+                    .and_then(|hash| {
+                        let owner = snapshot_path.parent().ok_or_else(|| {
+                            AppError::invalid_input("snapshotPath", "快照缺少父目录")
+                        })?;
+                        skill_library::remove_skill_tree(snapshot_path, owner, hash)
+                    }),
+                SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
+                    fs::remove_file(snapshot_path).map_err(|_| {
+                        AppError::atomic_write(&snapshot_path.to_string_lossy(), "remove_snapshot")
+                    })
+                }
+            }
+        };
+        match removal {
+            Ok(()) => {}
+            Err(error) if error.code() == ErrorCode::NotFound => {}
+            // 行已退役；文件留给启动清理队列重试，不再回报为条目失败。
+            Err(_) => continue,
+        }
+        database
+            .connection()
+            .execute(
+                "DELETE FROM retired_snapshot_cleanup WHERE snapshot_id = ?1",
+                [snapshot_id],
+            )
+            .map_err(|_| AppError::database(&database_path, "dequeue_snapshot_cleanup"))?;
     }
 
     Ok(DeleteSnapshotsResultDto {
@@ -6940,6 +6971,151 @@ mod tests {
         assert!(result.failures.is_empty());
         assert!(list_snapshots(&fixture.database).unwrap().is_empty());
         assert!(!file.exists());
+    }
+
+    #[test]
+    fn delete_snapshots_retires_rows_first_and_queues_undeletable_files() {
+        let mut fixture = Fixture::new();
+        // 目标事先存在，快照才是 payload_file（启动清理队列只处理这一类）。
+        fs::write(fixture.targets.join("queued.md"), "before").unwrap();
+        let (_target, snapshot_id, run_id) = apply_snapshot_for_delete(&mut fixture, "queued.md");
+        let file = snapshot_file(&fixture, &run_id, &snapshot_id);
+        assert!(file.is_file());
+        // 让文件删除失败：把同名路径换成目录，`remove_file` 必然出错。
+        // （权限审计会在删除前把目录权限统一回 0700，所以不能用只读父目录来注入。）
+        fs::remove_file(&file).unwrap();
+        fs::create_dir(&file).unwrap();
+
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![snapshot_id.clone()],
+            },
+        )
+        .unwrap();
+        // 行已退役：列表中不再出现，不留下指向文件的活行。
+        assert_eq!(result.deleted_ids, vec![snapshot_id.clone()]);
+        assert!(result.failures.is_empty());
+        assert!(list_snapshots(&fixture.database).unwrap().is_empty());
+        // 磁盘条目仍在，并登记到可重试的清理队列。
+        assert!(file.exists());
+        let queued: (String, String, String) = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT run_id, snapshot_path, storage_kind FROM retired_snapshot_cleanup
+                 WHERE snapshot_id = ?1",
+                [&snapshot_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(queued.0, run_id);
+        assert_eq!(queued.1, file.to_string_lossy());
+        assert_eq!(queued.2, "payload_file");
+
+        // 队列只清理普通文件：目录留在队列里等待，恢复成普通文件后下次打开即被清理。
+        fs::remove_dir(&file).unwrap();
+        fs::write(&file, "stale payload").unwrap();
+        drop(fixture.database);
+        let reopened = Database::open(&fixture.paths).unwrap();
+        assert!(!file.exists());
+        let remaining: i64 = reopened
+            .connection()
+            .query_row("SELECT COUNT(*) FROM retired_snapshot_cleanup", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(remaining, 0);
+        fixture.database = reopened;
+    }
+
+    #[test]
+    fn delete_snapshots_leaves_no_cleanup_queue_entry_after_a_successful_removal() {
+        let mut fixture = Fixture::new();
+        let (_target, snapshot_id, run_id) = apply_snapshot_for_delete(&mut fixture, "clean.md");
+        let file = snapshot_file(&fixture, &run_id, &snapshot_id);
+        let result = delete_snapshots(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &DeleteSnapshotsInput {
+                snapshot_ids: vec![snapshot_id.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.deleted_ids, vec![snapshot_id.clone()]);
+        assert!(!file.exists());
+        let queued: i64 = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM retired_snapshot_cleanup WHERE snapshot_id = ?1",
+                [&snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(queued, 0);
+    }
+
+    #[test]
+    fn apply_rejects_inputs_without_a_target_path_instead_of_collapsing_them() {
+        let mut fixture = Fixture::new();
+        let first = fixture.targets.join("keyed-a.md");
+        let second = fixture.targets.join("keyed-b.md");
+        let first_descriptor = file_descriptor(&first, Scope::Global, None);
+        let second_descriptor = file_descriptor(&second, Scope::Global, None);
+        let requests = vec![
+            insert_target_and_request(
+                &fixture.database,
+                &Uuid::new_v4().to_string(),
+                first_descriptor.clone(),
+                json!("a"),
+                None,
+                false,
+                None,
+            ),
+            insert_target_and_request(
+                &fixture.database,
+                &Uuid::new_v4().to_string(),
+                second_descriptor.clone(),
+                json!("b"),
+                None,
+                false,
+                None,
+            ),
+        ];
+        let preview_id = persist_requests(&mut fixture.database, Scope::Global, None, requests);
+
+        // 两个没有路径的输入以前会折叠成同一个空字符串键、互相覆盖，然后以
+        // 误导性的 stale_preview 失败；现在必须以明确的 unsupportedTarget 拒绝。
+        let mut pathless_first = first_descriptor.clone();
+        pathless_first.path = None;
+        let mut pathless_second = second_descriptor.clone();
+        pathless_second.path = None;
+        let error = apply_persisted_preview(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &preview_id,
+            &[
+                input(pathless_first, json!("a"), &fixture.targets),
+                input(pathless_second, json!("b"), &fixture.targets),
+            ],
+            &NoApplyFault,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::StalePreview);
+        assert_eq!(
+            error
+                .details()
+                .and_then(|details| details.get("target"))
+                .and_then(Value::as_str),
+            Some("unsupportedTarget")
+        );
+        assert!(!first.exists());
+        assert!(!second.exists());
     }
 
     #[test]

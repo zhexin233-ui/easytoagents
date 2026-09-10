@@ -935,7 +935,11 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
  */
 export type Tool = "claude" | "codex" | "cursor" | "zcode" | "opencode"
 export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
-export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
+export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null;
+/**
+ * 安装探针的稳定诊断码；解释探测为何是当前状态（如 PATH 条目被跳过）。
+ */
+installationProbeDiagnostic: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
 export type UpdateAppSettingsInput = { applyMode: ApplyMode; enabledTools: Tool[] }
 export type UpdateHookInput = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; rowVersion: number }

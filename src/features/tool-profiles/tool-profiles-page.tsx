@@ -28,6 +28,20 @@ interface OpenPreview {
   artifactKind: ArtifactKind;
 }
 
+// 安装探针诊断码 → 用户可读原因。未知码只展示原始码，不猜测语义。
+const INSTALLATION_PROBE_DIAGNOSTIC_TEXT: Record<string, string> = {
+  INSTALLATION_PROBE_SKIPPED_PATH_ENTRIES:
+    "PATH 中存在被跳过的不安全条目（相对路径、`.` 或同名目录），这些位置没有被搜索；如工具安装在那里，请改用绝对路径。",
+  INSTALLATION_PROBE_NO_SAFE_PATH_ENTRIES:
+    "PATH 为空或没有任何安全的绝对路径条目，探针无处可搜。",
+  INSTALLATION_PROBE_UNSAFE_CANDIDATE:
+    "PATH 中首个同名文件无法安全解析、不是普通文件或不可执行。",
+};
+
+function installationProbeDiagnosticText(code: string): string {
+  return INSTALLATION_PROBE_DIAGNOSTIC_TEXT[code] ?? "安装探针报告了额外诊断。";
+}
+
 export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   const statusQuery = useQuery(toolProfileStatusQueryOptions(tool));
   const settingsQuery = useQuery(appSettingsQueryOptions());
@@ -111,6 +125,15 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               <p className="font-medium text-amber-800 dark:text-amber-300">
                 {title}
                 安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
+              </p>
+            ) : null}
+            {statusQuery.data.installationProbeDiagnostic ? (
+              <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                {installationProbeDiagnosticText(
+                  statusQuery.data.installationProbeDiagnostic,
+                )}
+                （诊断码：
+                <code>{statusQuery.data.installationProbeDiagnostic}</code>）
               </p>
             ) : null}
             <p>{statusQuery.data.newSessionNotice}</p>

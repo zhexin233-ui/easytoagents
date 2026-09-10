@@ -147,17 +147,27 @@ pub struct Database {
 }
 
 impl Database {
-    /// 每次打开已有数据库时先备份主文件及存在的 WAL/SHM，再运行前向迁移。
+    /// 打开数据库；只有存在待执行迁移时才在迁移前备份主文件及 WAL/SHM。
+    /// 备份前先做 WAL checkpoint，让备份出的单个主文件自洽可恢复；最多保留
+    /// 最近 `STARTUP_BACKUP_RETENTION` 份，旧备份自动裁剪（裁剪失败不阻断启动）。
     pub fn open(paths: &AppPaths) -> Result<Self, AppError> {
         paths.initialize()?;
-        let startup_backup = backup_database_before_migrations(paths)?;
         prepare_database_file(paths.database())?;
 
         let mut connection = Connection::open(paths.database())
             .map_err(|_| AppError::database(&paths.database().to_string_lossy(), "open"))?;
+        // PRAGMA 是连接级状态，迁移事务提交不会重置它们；只需在打开时配置一次。
         configure_connection(&connection, paths.database())?;
+        let applied_migrations = count_applied_migrations(&connection, paths.database())?;
+        let startup_backup = if applied_migrations > 0 && applied_migrations < MIGRATIONS.len() {
+            checkpoint_wal(&connection, paths.database())?;
+            let backup = backup_database_before_migrations(paths)?;
+            prune_startup_backups(paths.database_backups(), backup.as_ref());
+            backup
+        } else {
+            None
+        };
         run_migrations(&mut connection, paths.database())?;
-        configure_connection(&connection, paths.database())?;
         process_retired_snapshot_cleanup(&connection, paths)?;
 
         for sensitive_file in [
@@ -238,6 +248,65 @@ fn configure_connection(connection: &Connection, path: &Path) -> Result<(), AppE
         ));
     }
     Ok(())
+}
+
+/// 已应用的迁移条数；`schema_migrations` 尚不存在（全新库）时为 0。
+fn count_applied_migrations(connection: &Connection, path: &Path) -> Result<usize, AppError> {
+    let table_exists = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| AppError::database(&path.to_string_lossy(), "read_schema_migrations"))?;
+    if table_exists == 0 {
+        return Ok(0);
+    }
+    connection
+        .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map(|count| usize::try_from(count).unwrap_or_default())
+        .map_err(|_| AppError::database(&path.to_string_lossy(), "read_schema_migrations"))
+}
+
+/// 把 WAL 中的页写回主文件并截断 WAL，使随后复制出的主文件不依赖 WAL 即可打开。
+fn checkpoint_wal(connection: &Connection, path: &Path) -> Result<(), AppError> {
+    connection
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map(drop)
+        .map_err(|_| AppError::database(&path.to_string_lossy(), "checkpoint_wal"))
+}
+
+const STARTUP_BACKUP_RETENTION: usize = 3;
+
+/// 只保留最新的 `STARTUP_BACKUP_RETENTION` 个 `startup-*` 备份目录（含本次）。
+/// 备份含 Provider 凭据副本，无限累积既占空间也扩大泄露面。裁剪是尽力而为：
+/// 任何失败都不影响启动，下次打开会再次尝试。
+fn prune_startup_backups(root: &Path, current: Option<&DatabaseBackup>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    let mut directories = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
+                && entry.file_name().to_string_lossy().starts_with("startup-")
+        })
+        .map(|entry| entry.path())
+        .filter(|path| current.map_or(true, |backup| backup.directory != *path))
+        .collect::<Vec<_>>();
+    // 目录名以毫秒时间戳命名，字典序即时间序。
+    directories.sort();
+    let keep = STARTUP_BACKUP_RETENTION.saturating_sub(usize::from(current.is_some()));
+    let excess = directories.len().saturating_sub(keep);
+    for stale in directories.into_iter().take(excess) {
+        let _ = fs::remove_dir_all(stale);
+    }
 }
 
 fn run_migrations(connection: &mut Connection, path: &Path) -> Result<(), AppError> {
@@ -1225,10 +1294,23 @@ mod tests {
         let temporary = tempdir().unwrap();
         let isolated_root = fs::canonicalize(temporary.path()).unwrap();
         let paths = AppPaths::from_data_root(isolated_root.join("app-data")).unwrap();
+        // 备份只在有待执行迁移时发生：用只应用前 4 个迁移的旧库来模拟升级。
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
         {
-            let database = Database::open(&paths).unwrap();
-            database
-                .connection()
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..4] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            connection
                 .execute(
                     "INSERT INTO projects(id, display_name, root_path) VALUES (?1, 'Kept', '/fixture/kept')",
                     [PROJECT_TWO_ID],
@@ -1238,7 +1320,9 @@ mod tests {
 
         fs::set_permissions(paths.database(), fs::Permissions::from_mode(0o644)).unwrap();
         let reopened = Database::open(&paths).unwrap();
-        let backup = reopened.startup_backup().expect("已有数据库必须先备份");
+        let backup = reopened
+            .startup_backup()
+            .expect("有待执行迁移的数据库必须先备份");
         assert_eq!(mode(paths.database()).unwrap(), PRIVATE_FILE_MODE);
         for companion in [paths.database_wal(), paths.database_shm()] {
             if companion.exists() {
@@ -1268,42 +1352,102 @@ mod tests {
     }
 
     #[test]
-    fn startup_backup_preserves_rows_that_are_still_in_an_active_wal() {
+    fn startup_backup_only_runs_when_migrations_are_pending() {
         let temporary = tempdir().unwrap();
         let isolated_root = fs::canonicalize(temporary.path()).unwrap();
-        let paths = AppPaths::from_data_root(isolated_root.join("active-wal-data")).unwrap();
-        let first = Database::open(&paths).unwrap();
-        first
-            .connection()
-            .execute_batch("PRAGMA wal_autocheckpoint = 0;")
-            .unwrap();
-        first
-            .connection()
-            .execute(
-                "INSERT INTO projects(id, display_name, root_path) VALUES (?1, 'In WAL', '/fixture/in-wal')",
-                [PROJECT_TWO_ID],
-            )
-            .unwrap();
-        assert!(paths.database_wal().is_file());
+        let paths = AppPaths::from_data_root(isolated_root.join("no-pending-data")).unwrap();
+        {
+            let database = Database::open(&paths).unwrap();
+            assert!(
+                database.startup_backup().is_none(),
+                "全新库没有可备份的旧状态"
+            );
+        }
+        // 已是最新 schema：再次打开不产生任何备份目录。
+        let reopened = Database::open(&paths).unwrap();
+        assert!(reopened.startup_backup().is_none());
+        assert_eq!(fs::read_dir(paths.database_backups()).unwrap().count(), 0);
+    }
 
-        let second = Database::open(&paths).unwrap();
-        let backup = second
-            .startup_backup()
-            .expect("活动 WAL 必须随主数据库备份");
+    #[test]
+    fn startup_backup_checkpoints_active_wal_and_prunes_to_three_directories() {
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("prune-data")).unwrap();
+        paths.initialize().unwrap();
+        // 预先放四个历史备份目录；只有最新两个 + 本次应被保留。
+        for name in ["startup-100", "startup-200", "startup-300", "startup-400"] {
+            fs::create_dir_all(paths.database_backups().join(name)).unwrap();
+        }
+        fs::write(paths.database_backups().join("unrelated.txt"), "keep").unwrap();
+
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..4] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            // 关闭自动 checkpoint，让行留在 WAL 里，验证备份前会先 checkpoint。
+            connection
+                .execute_batch("PRAGMA wal_autocheckpoint = 0;")
+                .unwrap();
+            insert_mcp(&connection, MCP_ID, "In WAL");
+            assert!(paths.database_wal().is_file());
+            assert!(fs::metadata(paths.database_wal()).unwrap().len() > 0);
+        }
+
+        let database = Database::open(&paths).unwrap();
+        let backup = database.startup_backup().expect("有待执行迁移时必须备份");
         let backup_database_path = backup
             .files
             .iter()
             .find(|path| path.file_name() == paths.database().file_name())
             .unwrap();
-        let backup_connection = Connection::open(backup_database_path).unwrap();
-        let count: i64 = backup_connection
+        // 备份出的单个主文件自洽：不依赖 WAL 即可读到 checkpoint 之前的行。
+        let backup_connection = Connection::open_with_flags(
+            backup_database_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let name: String = backup_connection
             .query_row(
-                "SELECT COUNT(*) FROM projects WHERE id = ?1",
-                [PROJECT_TWO_ID],
+                "SELECT name FROM mcp_servers WHERE id = ?1",
+                [MCP_ID],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(name, "In WAL");
+
+        let mut directories = fs::read_dir(paths.database_backups())
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| entry.file_type().unwrap().is_dir())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        directories.sort();
+        assert_eq!(directories.len(), 3, "最多保留 3 份启动备份");
+        assert!(!directories.iter().any(|name| name == "startup-100"));
+        assert!(!directories.iter().any(|name| name == "startup-200"));
+        assert!(directories.iter().any(|name| name == "startup-300"));
+        assert!(directories.iter().any(|name| name == "startup-400"));
+        assert!(directories.contains(
+            &backup
+                .directory
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        ));
+        assert!(paths.database_backups().join("unrelated.txt").is_file());
+        assert_eq!(mode(&backup.directory).unwrap(), PRIVATE_DIRECTORY_MODE);
     }
 
     #[test]
@@ -1350,10 +1494,11 @@ mod tests {
             }
             insert_mcp(&connection, MCP_ID, "Existing MCP");
         }
-        for _ in 0..2 {
+        for (iteration, _) in (0..2).enumerate() {
             let database = Database::open(&paths).unwrap();
             assert_eq!(database.schema_version().unwrap(), 20);
-            assert!(database.startup_backup().is_some());
+            // 只有第一次打开有待执行迁移，才产生启动备份。
+            assert_eq!(database.startup_backup().is_some(), iteration == 0);
             let (name, previews): (String, i64) = database.connection().query_row(
                 "SELECT name, (SELECT COUNT(*) FROM mcp_import_previews) FROM mcp_servers WHERE id = ?1",
                 [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?)),

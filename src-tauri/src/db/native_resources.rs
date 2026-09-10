@@ -1,6 +1,6 @@
 //! 项目原生资源观察记录、CAS 与快照引用保护。
 
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::{
     db::Database,
@@ -206,14 +206,13 @@ pub fn get_snapshot(database: &Database, id: &str) -> Result<NativeSnapshotRecor
         .ok_or_else(|| AppError::not_found("snapshot", id))
 }
 
-pub fn find_by_target_key(
-    database: &Database,
+pub(crate) fn find_by_target_key_in(
+    connection: &Connection,
+    database_path: &str,
     target_id: &str,
     external_key: &str,
 ) -> Result<Option<NativeResourceRecord>, AppError> {
-    let path = database.path().to_string_lossy();
-    database
-        .connection()
+    connection
         .query_row(
             "SELECT resource.id, resource.target_id, target.project_id, target.tool,
                     target.artifact_kind, target.target_path, target.row_version,
@@ -227,7 +226,7 @@ pub fn find_by_target_key(
             native_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "find_native_resource"))
+        .map_err(|_| AppError::database(database_path, "find_native_resource"))
 }
 
 #[allow(dead_code)]
@@ -265,9 +264,25 @@ pub fn find_project_target_identity(
     artifact_kind: ArtifactKind,
     target_path: &str,
 ) -> Result<Option<TargetIdentityRecord>, AppError> {
-    let path = database.path().to_string_lossy();
-    database
-        .connection()
+    find_project_target_identity_in(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        project_id,
+        tool,
+        artifact_kind,
+        target_path,
+    )
+}
+
+pub(crate) fn find_project_target_identity_in(
+    connection: &Connection,
+    database_path: &str,
+    project_id: &str,
+    tool: Tool,
+    artifact_kind: ArtifactKind,
+    target_path: &str,
+) -> Result<Option<TargetIdentityRecord>, AppError> {
+    connection
         .query_row(
             "SELECT id, row_version, baseline_full_hash, baseline_managed_hash
              FROM managed_targets
@@ -289,25 +304,30 @@ pub fn find_project_target_identity(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "find_project_target_identity"))
+        .map_err(|_| AppError::database(database_path, "find_project_target_identity"))
 }
 
-pub fn insert_project_target_identity(
-    database: &mut Database,
+/// 观测脚手架：只登记项目目标身份，不写基线也不建 managed_items。调用方负责事务边界。
+pub(crate) fn insert_project_target_identity_in(
+    connection: &Connection,
+    database_path: &str,
     project_id: &str,
     tool: Tool,
     artifact_kind: ArtifactKind,
     target_path: &str,
 ) -> Result<TargetIdentityRecord, AppError> {
-    if let Some(existing) =
-        find_project_target_identity(database, project_id, tool, artifact_kind, target_path)?
-    {
+    if let Some(existing) = find_project_target_identity_in(
+        connection,
+        database_path,
+        project_id,
+        tool,
+        artifact_kind,
+        target_path,
+    )? {
         return Ok(existing);
     }
-    let database_path = database.path().to_string_lossy().into_owned();
     let id = EntityId::new().to_string();
-    database
-        .connection_mut()
+    connection
         .execute(
             "INSERT INTO managed_targets(
                 id, tool, artifact_kind, scope, project_id, target_path
@@ -320,24 +340,29 @@ pub fn insert_project_target_identity(
                 target_path,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "insert_project_target_identity"))?;
-    find_project_target_identity(database, project_id, tool, artifact_kind, target_path)?
-        .ok_or_else(|| AppError::database(&database_path, "reload_project_target_identity"))
+        .map_err(|_| AppError::database(database_path, "insert_project_target_identity"))?;
+    find_project_target_identity_in(
+        connection,
+        database_path,
+        project_id,
+        tool,
+        artifact_kind,
+        target_path,
+    )?
+    .ok_or_else(|| AppError::database(database_path, "reload_project_target_identity"))
 }
 
-pub fn upsert_observed_active(
-    database: &mut Database,
+/// 在调用方的事务内登记一次观测。同一条 `(target, key)` 的状态迁移：
+/// disabled → conflict、conflict 保持、active/missing → active、缺失 → 新建 active。
+pub(crate) fn upsert_observed_active_in(
+    connection: &Connection,
+    database_path: &str,
     target_id: &str,
     external_key: &str,
     entry_type: &str,
     observed_item_hash: &str,
-) -> Result<NativeResourceRecord, AppError> {
-    let database_path = database.path().to_string_lossy().into_owned();
-    let transaction = database
-        .connection_mut()
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_upsert_native_resource"))?;
-    let existing = transaction
+) -> Result<(), AppError> {
+    let existing = connection
         .query_row(
             "SELECT id, state FROM project_native_resources
              WHERE target_id = ?1 AND external_key = ?2",
@@ -345,34 +370,30 @@ pub fn upsert_observed_active(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "read_native_resource_for_upsert"))?;
-    let id = match existing {
+        .map_err(|_| AppError::database(database_path, "read_native_resource_for_upsert"))?;
+    match existing {
         Some((id, state)) if state == "disabled" => {
-            transaction
+            connection
                 .execute(
                     "UPDATE project_native_resources
                      SET state = 'conflict', entry_type = ?2, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                      WHERE id = ?1 AND state = 'disabled'",
                     params![id, entry_type],
                 )
-                .map_err(|_| AppError::database(&database_path, "mark_native_resource_conflict"))?;
-            id
+                .map_err(|_| AppError::database(database_path, "mark_native_resource_conflict"))?;
         }
         Some((id, state)) if state == "conflict" => {
-            transaction
+            connection
                 .execute(
                     "UPDATE project_native_resources
                      SET entry_type = ?2, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                      WHERE id = ?1 AND state = 'conflict'",
                     params![id, entry_type],
                 )
-                .map_err(|_| {
-                    AppError::database(&database_path, "touch_native_resource_conflict")
-                })?;
-            id
+                .map_err(|_| AppError::database(database_path, "touch_native_resource_conflict"))?;
         }
         Some((id, _)) => {
-            transaction
+            connection
                 .execute(
                     "UPDATE project_native_resources
                      SET state = 'active', entry_type = ?2, observed_item_hash = ?3,
@@ -381,12 +402,11 @@ pub fn upsert_observed_active(
                      WHERE id = ?1 AND state IN ('active', 'missing')",
                     params![id, entry_type, observed_item_hash],
                 )
-                .map_err(|_| AppError::database(&database_path, "update_native_resource_active"))?;
-            id
+                .map_err(|_| AppError::database(database_path, "update_native_resource_active"))?;
         }
         None => {
             let id = EntityId::new().to_string();
-            transaction
+            connection
                 .execute(
                     "INSERT INTO project_native_resources(
                         id, target_id, external_key, entry_type, state, observed_item_hash,
@@ -394,22 +414,18 @@ pub fn upsert_observed_active(
                      ) VALUES (?1, ?2, ?3, ?4, 'active', ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
                     params![id, target_id, external_key, entry_type, observed_item_hash],
                 )
-                .map_err(|_| AppError::database(&database_path, "insert_native_resource"))?;
-            id
+                .map_err(|_| AppError::database(database_path, "insert_native_resource"))?;
         }
-    };
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_upsert_native_resource"))?;
-    get_by_id(database, &id)
+    }
+    Ok(())
 }
 
-pub fn mark_active_missing(
-    database: &mut Database,
+pub(crate) fn mark_active_missing_in(
+    connection: &Connection,
+    database_path: &str,
     target_id: &str,
     remaining_keys: &[String],
 ) -> Result<(), AppError> {
-    let database_path = database.path().to_string_lossy().into_owned();
     let placeholders = remaining_keys
         .iter()
         .map(|_| "?")
@@ -430,26 +446,25 @@ pub fn mark_active_missing(
                AND external_key NOT IN ({placeholders})"
         )
     };
-    let mut statement = database
-        .connection_mut()
+    let mut statement = connection
         .prepare(&sql)
-        .map_err(|_| AppError::database(&database_path, "prepare_mark_native_missing"))?;
+        .map_err(|_| AppError::database(database_path, "prepare_mark_native_missing"))?;
     let mut params: Vec<&dyn rusqlite::ToSql> = vec![&target_id];
     for key in remaining_keys {
         params.push(key);
     }
     statement
         .execute(params.as_slice())
-        .map_err(|_| AppError::database(&database_path, "mark_native_missing"))?;
+        .map_err(|_| AppError::database(database_path, "mark_native_missing"))?;
     Ok(())
 }
 
-pub fn restore_conflict_when_vacant(
-    database: &mut Database,
+pub(crate) fn restore_conflict_when_vacant_in(
+    connection: &Connection,
+    database_path: &str,
     target_id: &str,
     occupied_keys: &[String],
 ) -> Result<(), AppError> {
-    let database_path = database.path().to_string_lossy().into_owned();
     let placeholders = occupied_keys
         .iter()
         .map(|_| "?")
@@ -468,17 +483,16 @@ pub fn restore_conflict_when_vacant(
                AND external_key NOT IN ({placeholders})"
         )
     };
-    let mut statement = database
-        .connection_mut()
+    let mut statement = connection
         .prepare(&sql)
-        .map_err(|_| AppError::database(&database_path, "prepare_restore_native_conflict"))?;
+        .map_err(|_| AppError::database(database_path, "prepare_restore_native_conflict"))?;
     let mut params: Vec<&dyn rusqlite::ToSql> = vec![&target_id];
     for key in occupied_keys {
         params.push(key);
     }
     statement
         .execute(params.as_slice())
-        .map_err(|_| AppError::database(&database_path, "restore_native_conflict"))?;
+        .map_err(|_| AppError::database(database_path, "restore_native_conflict"))?;
     Ok(())
 }
 

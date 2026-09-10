@@ -343,6 +343,9 @@ pub fn get_tool_profile_status(
         tool,
         availability: environment.tool_availability(tool),
         installation_version: environment.installation_version(tool).map(str::to_owned),
+        installation_probe_diagnostic: environment
+            .installation_probe_diagnostic(tool)
+            .map(str::to_owned),
         provider_target_path: provider.path.clone(),
         prompt_target_path: prompt.path.clone(),
         provider_capability: provider.capability,

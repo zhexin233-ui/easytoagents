@@ -883,7 +883,19 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 
 ### 3. Contracts
 
-- Resolve `claude` and `codex` only from an explicit absolute PATH. Probe Cursor Desktop
+- Resolve `claude` and `codex` only from an explicit PATH, entry by entry. An
+  entry that is not a safe absolute path (relative, `.`/`..` components, unreadable)
+  or whose same-named child is not a file/symlink is skipped and counted, never
+  fatal for the whole probe: GUI-inherited PATHs routinely contain `.` or
+  `./node_modules/.bin`. The first same-named file/symlink hit is authoritative: if
+  it cannot be canonicalized, is not a regular file, or is not executable, the tool
+  is `unsupported` (`INSTALLATION_PROBE_UNSAFE_CANDIDATE`) rather than skipped, so
+  a deliberately front-loaded shim is never silently bypassed. A PATH with no safe
+  entry at all is `unsupported` (`INSTALLATION_PROBE_NO_SAFE_PATH_ENTRIES`); a safe
+  search that finds nothing is `unavailable`. Skipped entries are reported through
+  `ExplicitEnvironment::installation_probe_diagnostic(tool)` =
+  `INSTALLATION_PROBE_SKIPPED_PATH_ENTRIES` and surface as
+  `ToolProfileStatusDto.installationProbeDiagnostic`. Probe Cursor Desktop
   first from the explicit application candidate list: use no-follow opens and bounded
   `Contents/Info.plist` parsing, require a strict semantic version, and accept only a
   regular non-symlink bundle. Only when Desktop is absent may the probe fall back to
@@ -1059,9 +1071,11 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
   delete, and delete-all share this one command.
 - Per-item flow: pre-check (existence, active-run blocker, native-resource
   snapshot reference, storage-path validation) for the WHOLE batch BEFORE any
-  file removal, then `fs::remove_file` (a missing file counts as already deleted
-  and succeeds), then ONE `IMMEDIATE` transaction deleting the rows whose files
-  were removed.
+  mutation, then ONE `IMMEDIATE` transaction that records every removable
+  snapshot in `retired_snapshot_cleanup` and deletes its `snapshots` row, then
+  per-item file removal (a missing file counts as already deleted). A file that
+  was removed drops its queue row; a file that could not be removed stays queued
+  and `Database::open` retries it on the next start.
 - Active-run blocker: a snapshot whose `run_id` has status
   `applying` / `restoring` / `rollback_failed` must be refused; those journals
   reference the snapshot for crash recovery.
@@ -1070,10 +1084,12 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
   entry). A `disabled_snapshot_id` reference is `CONFLICT`; do not add a second
   deletion API that skips the guard. SQLite `ON DELETE RESTRICT` is backup, not
   the product error.
-- Deletion order is file-first, DB-second. A DB commit failure after file
-  removal leaves rows pointing at missing files, which fail closed on restore
-  (mirrored risk of create's file-first/insert-second); never invert the order
-  so a live row never keeps a removed file.
+- Deletion order is DB-first (retire + delete row in one commit), file-second.
+  A commit failure leaves both the row and the file intact, so the batch is
+  simply retryable. A file-removal failure leaves no live row pointing at a file
+  that may later vanish, and no orphan file that nothing owns: the queue row is
+  the owner until cleanup succeeds. Never invert the order (file-first) again:
+  a commit failure after removal would leave rows whose payload is gone.
 - Infrastructure failures (lock unavailable, permission audit, DB commit) fail
   the whole command with `Err(AppError)`; per-item problems never do.
 - Pending restore previews (kind='restore', status='previewed') are NOT
@@ -1090,8 +1106,8 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 - `snapshot_path` mismatching `<snapshots_root>/<run_id>/<snapshot_id>.snapshot`
   or parent canonicalizing outside the snapshots root -> per-item `CONFLICT`;
   the file must NOT be removed (anti-impersonation guard).
-- `fs::remove_file` failure -> per-item `ATOMIC_WRITE_FAILED`
-  (`AppError::atomic_write(path, "remove_snapshot")`).
+- `fs::remove_file` failure -> the row is already retired; the item is reported
+  as deleted and its `retired_snapshot_cleanup` row remains for startup retry.
 - Lock/audit/DB commit failure -> command-level `WRITE_IN_PROGRESS` /
   `PERMISSION_DENIED` / `DATABASE_ERROR`.
 
@@ -1100,13 +1116,16 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 - Good: mixed batch where blocked and free snapshots coexist; free ones are
   deleted, blocked ones reported with their codes.
 - Base: single-id batch (single delete is just batch of one); empty batch.
-- Bad: any branch that deletes a DB row whose file removal failed, or that
+- Bad: any branch that removes a file before its row is retired, or that
   removes a file whose path failed validation.
 
 ### 6. Tests Required
 
-- Batch success removes rows and files; missing-file self-heal counts as
-  deleted.
+- Batch success removes rows and files and leaves no `retired_snapshot_cleanup`
+  entry; missing-file self-heal counts as deleted.
+- A file that cannot be removed (for example replaced by a directory) still
+  retires its row, stays queued with its run/path/storage kind, and is cleaned
+  by the next `Database::open` once it is a regular file again.
 - All three active statuses reject (file + row preserved) while an unaffected
   item in the same batch still deletes.
 - A snapshot still referenced by a disabled native resource is refused; after
@@ -1133,10 +1152,10 @@ for id in ids {
 #### Correct
 
 ```rust
-// Pre-check the whole batch, then remove files, then one transaction.
-let plan = plan_deletions(database, paths, &ids)?; // per-item pre-checks
-remove_files(&plan)?;                              // per-item results
-delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
+// Pre-check the whole batch, retire rows in one transaction, then remove files.
+let plan = plan_deletions(database, paths, &ids)?;  // per-item pre-checks
+retire_rows(database, &plan)?;                      // queue + DELETE, single IMMEDIATE tx
+remove_files_and_dequeue(database, &plan)?;         // failures stay queued for startup
 ```
 
 ## Scenario: Project-native MCP/Skill resource observation, disable, and restore
@@ -1176,6 +1195,18 @@ delete_rows(database, &plan.removable_ids)?;       // single IMMEDIATE tx
   row is not ownership. Ordinary `preview_mcp_sync` / Skill Apply with no
   assignment must still produce zero targets and must not create an empty project
   configuration file.
+- Read commands never write. `list_projects` / `get_project` only observe
+  targets and summarize the already reconciled `project_native_resources`
+  rows; they must not call `reconcile_project_native_resources`. Reconciliation
+  runs explicitly after `register_project` and `rescan_project`, and at the top
+  of `list_project_native_resources`. It scans every descriptor first (read
+  only) and then writes the whole project's observations inside ONE
+  `IMMEDIATE` transaction, so a mid-project SQL failure rolls back completely
+  instead of leaving one tool updated and the rest stale.
+  `preview_project_native_resource_action` intentionally does not reconcile:
+  reconciling bumps `row_version` of every observed row and would turn the
+  caller's displayed version into a `CONFLICT`; the preview re-scans the
+  native target itself and Apply revalidates hashes.
 - Register/get/rescan reuse adapter `discover` + `scan_target`. Classification:
   matching managed item hash → central-owned (hidden from operable native list);
   managed key with drifted hash → central drift (not a native disable target);

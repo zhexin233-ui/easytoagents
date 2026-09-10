@@ -151,6 +151,7 @@ describe("OnboardingWizard", () => {
           tool,
           availability: "installed",
           installationVersion: tool === "claude" ? "2.1.217" : "0.114.0",
+          installationProbeDiagnostic: null,
           providerCapability: {
             state: "supported" as const,
             diagnosticCode: null,
@@ -342,6 +343,7 @@ describe("OnboardingWizard", () => {
           tool,
           availability: tool === "claude" ? "unavailable" : "installed",
           installationVersion: tool === "claude" ? null : "0.114.0",
+          installationProbeDiagnostic: null,
           providerCapability: {
             state: "supported" as const,
             diagnosticCode: null,

@@ -7,6 +7,7 @@ use std::{
     sync::Mutex,
 };
 
+use rusqlite::TransactionBehavior;
 use serde_json::{json, Map, Value};
 
 use super::{
@@ -50,6 +51,9 @@ struct ObservedNativeItem {
     centrally_owned: bool,
 }
 
+/// 对账项目原生资源观测：整个项目的全部描述符在一个 IMMEDIATE 事务内写入，
+/// 中途任一 SQL 失败即整体回滚，不会留下"部分工具已更新、其余仍旧"的半更新表。
+/// 原生文件与目录的扫描在事务开始前完成（只读），事务内只做数据库写入。
 pub fn reconcile_project_native_resources(
     database: &mut Database,
     environment: &ExplicitEnvironment,
@@ -60,10 +64,32 @@ pub fn reconcile_project_native_resources(
         Ok(root) if root.as_str() == record.root_path => root,
         _ => return Ok(ProjectNativeResourceSummaryDto::empty()),
     };
+    let mut observations = Vec::new();
     for descriptor in supported_project_descriptors(environment, &project_root)? {
-        reconcile_descriptor(database, &record.id, &descriptor)?;
+        if let Some(observation) = observe_descriptor(database, &record.id, &descriptor)? {
+            observations.push(observation);
+        }
     }
+    let database_path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| AppError::database(&database_path, "begin_reconcile_native_resources"))?;
+    for observation in &observations {
+        reconcile_observation(&transaction, &database_path, &record.id, observation)?;
+    }
+    transaction
+        .commit()
+        .map_err(|_| AppError::database(&database_path, "commit_reconcile_native_resources"))?;
     summarize_project(database, &record.id)
+}
+
+/// 当前对账后的项目原生资源汇总，不触碰原生文件也不写库。
+pub(super) fn project_native_resource_summary(
+    database: &Database,
+    project_id: &str,
+) -> Result<ProjectNativeResourceSummaryDto, AppError> {
+    summarize_project(database, project_id)
 }
 
 pub fn list_project_native_resources(
@@ -236,59 +262,100 @@ pub(super) fn supported_project_descriptors(
     Ok(descriptors)
 }
 
-fn reconcile_descriptor(
-    database: &mut Database,
+struct DescriptorObservation {
+    tool: Tool,
+    artifact_kind: ArtifactKind,
+    target_path: String,
+    items: Vec<ObservedNativeItem>,
+}
+
+/// 只读观测一个描述符；返回 `None` 表示该目标不参与对账（无路径、能力未证明或扫描不可用）。
+fn observe_descriptor(
+    database: &Database,
     project_id: &str,
     descriptor: &TargetDescriptor,
-) -> Result<(), AppError> {
+) -> Result<Option<DescriptorObservation>, AppError> {
     let Some(target_path) = descriptor.path.as_deref() else {
-        return Ok(());
+        return Ok(None);
     };
     if descriptor.capability.state != crate::adapters::CapabilityState::Supported {
-        return Ok(());
+        return Ok(None);
     }
-    let identity = repository::insert_project_target_identity(
+    // 观测需要已有身份行来读取 managed_items；尚无身份行时按"无中央所有权"观测。
+    let target_id = repository::find_project_target_identity(
         database,
         project_id,
         descriptor.tool,
         descriptor.artifact_kind,
         target_path,
-    )?;
-    let observed = match observe_items(database, descriptor, &identity.target_id)? {
-        Some(items) => items,
-        None => return Ok(()),
+    )?
+    .map(|identity| identity.target_id)
+    .unwrap_or_default();
+    let Some(items) = observe_items(database, descriptor, &target_id)? else {
+        return Ok(None);
     };
-    let occupied_keys = observed
+    Ok(Some(DescriptorObservation {
+        tool: descriptor.tool,
+        artifact_kind: descriptor.artifact_kind,
+        target_path: target_path.to_owned(),
+        items,
+    }))
+}
+
+fn reconcile_observation(
+    transaction: &rusqlite::Transaction<'_>,
+    database_path: &str,
+    project_id: &str,
+    observation: &DescriptorObservation,
+) -> Result<(), AppError> {
+    let identity = repository::insert_project_target_identity_in(
+        transaction,
+        database_path,
+        project_id,
+        observation.tool,
+        observation.artifact_kind,
+        &observation.target_path,
+    )?;
+    let occupied_keys = observation
+        .items
         .iter()
         .map(|item| item.external_key.clone())
         .collect::<Vec<_>>();
-    for item in &observed {
-        let existing =
-            repository::find_by_target_key(database, &identity.target_id, &item.external_key)?;
+    for item in &observation.items {
         if item.centrally_owned {
             // 中央资源占用同一路径时，旧禁用记录仍需对账为冲突并保留快照。
             // 没有原生记录的中央资源不应被登记为新的原生资源。
-            if existing.is_some() {
-                repository::upsert_observed_active(
-                    database,
-                    &identity.target_id,
-                    &item.external_key,
-                    item.entry_type.as_str(),
-                    &item.item_hash,
-                )?;
+            let existing = repository::find_by_target_key_in(
+                transaction,
+                database_path,
+                &identity.target_id,
+                &item.external_key,
+            )?;
+            if existing.is_none() {
+                continue;
             }
-            continue;
         }
-        repository::upsert_observed_active(
-            database,
+        repository::upsert_observed_active_in(
+            transaction,
+            database_path,
             &identity.target_id,
             &item.external_key,
             item.entry_type.as_str(),
             &item.item_hash,
         )?;
     }
-    repository::restore_conflict_when_vacant(database, &identity.target_id, &occupied_keys)?;
-    repository::mark_active_missing(database, &identity.target_id, &occupied_keys)?;
+    repository::restore_conflict_when_vacant_in(
+        transaction,
+        database_path,
+        &identity.target_id,
+        &occupied_keys,
+    )?;
+    repository::mark_active_missing_in(
+        transaction,
+        database_path,
+        &identity.target_id,
+        &occupied_keys,
+    )?;
     Ok(())
 }
 
@@ -1189,6 +1256,119 @@ mod tests {
             format!("---\nname: {name}\ndescription: Fixture skill\n---\n\n{body}\n"),
         )
         .unwrap();
+    }
+
+    fn native_resource_rows(database: &Database) -> Vec<(String, String, i64)> {
+        let mut statement = database
+            .connection()
+            .prepare(
+                "SELECT external_key, state, row_version FROM project_native_resources
+                 ORDER BY external_key",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn project_reads_do_not_write_native_resource_rows() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::write(
+                root.join(".mcp.json"),
+                br#"{"mcpServers":{"native-stdio":{"command":"npx"}}}"#,
+            )
+            .unwrap();
+            write_skill(&root.join(".claude/skills"), "native-dir", "workflow");
+        });
+        let before = native_resource_rows(&fixture.database);
+        assert_eq!(before.len(), 2);
+
+        // 外部改动原生文件后，读路径必须原样返回旧观测，不触发对账写库。
+        fs::write(
+            fixture.home.join("projects/native/.mcp.json"),
+            br#"{"mcpServers":{"native-stdio":{"command":"npx"},"added-later":{"command":"uvx"}}}"#,
+        )
+        .unwrap();
+        let listed =
+            crate::projects::list_projects(&mut fixture.database, &fixture.environment).unwrap();
+        assert_eq!(listed.len(), 1);
+        let fetched =
+            crate::projects::get_project(&mut fixture.database, &fixture.environment, &project.id)
+                .unwrap();
+        assert_eq!(fetched.native_resources.active, 2);
+        assert_eq!(native_resource_rows(&fixture.database), before);
+
+        // 显式重扫才对账，新增条目此时出现。
+        let rescanned = crate::projects::rescan_project(
+            &mut fixture.database,
+            &fixture.environment,
+            &crate::projects::VersionedProjectInput {
+                id: project.id.clone(),
+                row_version: fetched.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(rescanned.native_resources.active, 3);
+        assert_eq!(native_resource_rows(&fixture.database).len(), 3);
+    }
+
+    #[test]
+    fn reconcile_is_atomic_when_a_write_fails_mid_project() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::write(
+                root.join(".mcp.json"),
+                br#"{"mcpServers":{"native-stdio":{"command":"npx"}}}"#,
+            )
+            .unwrap();
+            write_skill(&root.join(".claude/skills"), "native-dir", "workflow");
+        });
+        let before = native_resource_rows(&fixture.database);
+        assert_eq!(before.len(), 2);
+
+        // 让 Skill 目标（对账顺序靠后）的写入在数据库层失败：外部改动 MCP 文件
+        // 使第一个描述符产生真实更新，同时用触发器让 Skill 的观测写入中止。
+        fs::write(
+            fixture.home.join("projects/native/.mcp.json"),
+            br#"{"mcpServers":{"native-stdio":{"command":"npx"},"added-later":{"command":"uvx"}}}"#,
+        )
+        .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute_batch(
+                "CREATE TEMP TRIGGER fail_skill_reconcile
+                 BEFORE UPDATE ON project_native_resources
+                 WHEN NEW.entry_type = 'directory'
+                 BEGIN SELECT RAISE(ABORT, 'FIXTURE_FAILURE'); END;",
+            )
+            .unwrap();
+        let error = reconcile_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &project.id,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::DatabaseError);
+        // 第一个描述符的新增条目必须随事务回滚，表内无半更新。
+        assert_eq!(native_resource_rows(&fixture.database), before);
+
+        fixture
+            .database
+            .connection()
+            .execute_batch("DROP TRIGGER fail_skill_reconcile;")
+            .unwrap();
+        let summary = reconcile_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &project.id,
+        )
+        .unwrap();
+        assert_eq!(summary.active, 3);
     }
 
     #[test]
