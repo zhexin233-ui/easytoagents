@@ -89,7 +89,7 @@ pub(crate) fn state_fingerprint(
     let read_error = |_| AppError::database(target_path, "read_mcp_import_state");
     let mut state = Vec::new();
     let mut servers = connection
-        .prepare("SELECT id, row_version FROM mcp_servers ORDER BY id")
+        .prepare_cached("SELECT id, row_version FROM mcp_servers ORDER BY id")
         .map_err(read_error)?;
     let rows = servers
         .query_map([], |row| {
@@ -103,7 +103,7 @@ pub(crate) fn state_fingerprint(
         "SELECT mcp_id, '' FROM mcp_global_assignments WHERE tool = ?1 ORDER BY mcp_id",
         "SELECT mcp_id, project_id FROM mcp_project_assignments WHERE tool = ?1 ORDER BY mcp_id, project_id",
     ] {
-        let mut statement = connection.prepare(sql).map_err(read_error)?;
+        let mut statement = connection.prepare_cached(sql).map_err(read_error)?;
         let rows = statement.query_map([tool.as_str()], |row| Ok(json!([
             row.get::<_, String>(0)?, row.get::<_, String>(1)?
         ]))).map_err(read_error)?.collect::<Result<Vec<_>, _>>().map_err(read_error)?;
@@ -116,7 +116,7 @@ pub(crate) fn state_fingerprint(
          ON target.id = item.target_id WHERE target.tool = ?1 AND target.artifact_kind = 'mcp'
          AND target.scope = 'global' AND target.project_id IS NULL AND target.target_path = ?2 ORDER BY item.id",
     ] {
-        let mut statement = connection.prepare(sql).map_err(read_error)?;
+        let mut statement = connection.prepare_cached(sql).map_err(read_error)?;
         let rows = statement.query_map(params![tool.as_str(), target_path], |row| Ok(json!([
             row.get::<_, String>(0)?, row.get::<_, i64>(1)?
         ]))).map_err(read_error)?.collect::<Result<Vec<_>, _>>().map_err(read_error)?;

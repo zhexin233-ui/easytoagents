@@ -118,7 +118,7 @@ pub fn list_for_project(
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT resource.id, resource.target_id, target.project_id, target.tool,
                     target.artifact_kind, target.target_path, target.row_version,
                     resource.external_key, resource.entry_type, resource.state,
@@ -237,7 +237,7 @@ pub fn list_for_target(
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT resource.id, resource.target_id, target.project_id, target.tool,
                     target.artifact_kind, target.target_path, target.row_version,
                     resource.external_key, resource.entry_type, resource.state,
@@ -447,7 +447,7 @@ pub(crate) fn mark_active_missing_in(
         )
     };
     let mut statement = connection
-        .prepare(&sql)
+        .prepare_cached(&sql)
         .map_err(|_| AppError::database(database_path, "prepare_mark_native_missing"))?;
     let mut params: Vec<&dyn rusqlite::ToSql> = vec![&target_id];
     for key in remaining_keys {
@@ -484,7 +484,7 @@ pub(crate) fn restore_conflict_when_vacant_in(
         )
     };
     let mut statement = connection
-        .prepare(&sql)
+        .prepare_cached(&sql)
         .map_err(|_| AppError::database(database_path, "prepare_restore_native_conflict"))?;
     let mut params: Vec<&dyn rusqlite::ToSql> = vec![&target_id];
     for key in occupied_keys {

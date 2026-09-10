@@ -209,6 +209,25 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
   before rename/remove, and recheck database row versions before each target write. If an
   external writer changes the entry after the application rename, preserve that external
   state instead of treating it as the application's rollback fingerprint.
+- The recovery journal is append-only JSONL: every phase appends the complete
+  `RunJournal` as one compact line and fsyncs once (`persist_journal`); readers take
+  the last complete line and fall back to whole-file parsing for legacy pretty-printed
+  journals (`read_journal` / `parse_journal`). Never rewrite a journal in place, never
+  read it with a bare `serde_json::from_slice`, and keep every phase durable: the
+  single-target apply budget is ≤ 2 full reads of the target (planning + post-write
+  verify) and ≤ 16 fsyncs; `sync::apply::tests::single_write_file_apply_stays_within_io_budget`
+  enforces it.
+- Re-verification before snapshot/rename/remove uses the lstat signature
+  (`StatSignature`: device, inode, size, mtime, mode) of the state captured during
+  planning (`PendingMutation.before_state`); a signature mismatch falls back to a full
+  read compare. The post-write check is always a full read.
+- Database preflight (`revalidate_database_preflight`) runs once before the mutation
+  loop; inside the loop `PRAGMA data_version` is compared and the full preflight repeats
+  only when another connection committed.
+- Permission auditing: `AppPaths::initialize` (full tree) runs exactly once at
+  `AppState` construction; `Database::open` only `ensure_directories`; apply/restore/
+  delete audit `journals/` plus the involved `snapshots/<run_id>/` via
+  `AppPaths::audit_run_scope`.
 - A file/link replacement uses an unpredictable, application-owned temporary sibling:
   write, flush, `fsync` the temporary entry, rename, durably record `renamed`, then
   `fsync` the parent. Persist the temporary fingerprint before rename and remove it
@@ -643,6 +662,11 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
   executable bit. Executability participates in the deterministic tree hash. Rename is
   atomic and directory metadata is synced. Copy/hash/rename/DB failures remove only the
   proven per-operation staging or central child.
+- List reads (`list_skills`) may serve the central tree hash from the lstat-fingerprint
+  cache in `skills::library` (keyed by canonical path; invalidated by any size/mtime/
+  mode/link change). Content preview, adoption, takeover and Apply always recompute the
+  full digest, so the cache can only ever delay a drift diagnostic in the list, never
+  let a stale tree be applied.
 - Skill name uniqueness is `NOCASE`; central path, content hash, frontmatter, status,
   and row versions remain database-bound. Deletion uses CAS and is blocked by global or
   project assignments and any Skill managed item. Before recursive deletion, path/id,

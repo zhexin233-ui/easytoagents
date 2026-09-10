@@ -46,7 +46,7 @@ pub fn list_skills(database: &Database) -> Result<Vec<SkillRecord>, AppError> {
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, name, source_path, central_path, content_hash,
                     frontmatter_json, status, row_version
              FROM skills ORDER BY name COLLATE NOCASE, id",
@@ -292,11 +292,79 @@ pub(crate) fn delete_skill_record(
     Ok(())
 }
 
+/// 一条语句取回全部 Skill 的全局分配，供列表接口一次组装，避免逐条 N+1 查询。
+pub fn global_tools_for_all_skills(
+    database: &Database,
+) -> Result<std::collections::BTreeMap<String, Vec<Tool>>, AppError> {
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached(
+            "SELECT skill_id, tool FROM skill_global_assignments ORDER BY skill_id, tool",
+        )
+        .map_err(|_| AppError::database(&path, "prepare_all_skill_global_tools"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, tool_from_database(row.get(1)?)?))
+        })
+        .map_err(|_| AppError::database(&path, "query_all_skill_global_tools"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::database(&path, "decode_all_skill_global_tools"))?;
+    let mut grouped = std::collections::BTreeMap::<String, Vec<Tool>>::new();
+    for (skill_id, tool) in rows {
+        grouped.entry(skill_id).or_default().push(tool);
+    }
+    Ok(grouped)
+}
+
+/// 批量读取一组 Skill 的当前 row_version（`WHERE id IN`），缺失的 id 不出现在结果里。
+pub(crate) fn skill_row_versions(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    ids: &[&str],
+) -> Result<std::collections::BTreeMap<String, i64>, AppError> {
+    row_versions_by_id(
+        connection,
+        database_path,
+        "skills",
+        ids,
+        "skill_row_versions",
+    )
+}
+
+/// 通用的 `SELECT id, row_version FROM <table> WHERE id IN (...)`。
+pub(crate) fn row_versions_by_id(
+    connection: &rusqlite::Connection,
+    database_path: &str,
+    table: &'static str,
+    ids: &[&str],
+    operation: &'static str,
+) -> Result<std::collections::BTreeMap<String, i64>, AppError> {
+    if ids.is_empty() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!("SELECT id, row_version FROM {table} WHERE id IN ({placeholders})");
+    let mut statement = connection
+        .prepare_cached(&sql)
+        .map_err(|_| AppError::database(database_path, operation))?;
+    let params: Vec<&dyn rusqlite::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let rows = statement
+        .query_map(params.as_slice(), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|_| AppError::database(database_path, operation))?
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+        .map_err(|_| AppError::database(database_path, operation))?;
+    Ok(rows)
+}
+
 pub fn global_tools_for_skill(database: &Database, skill_id: &str) -> Result<Vec<Tool>, AppError> {
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT tool FROM skill_global_assignments
              WHERE skill_id = ?1 ORDER BY tool",
         )
@@ -516,7 +584,7 @@ pub(crate) fn list_assigned_skills_from_connection(
         ),
     };
     let mut statement = connection
-        .prepare(sql)
+        .prepare_cached(sql)
         .map_err(|_| AppError::database(database_path, "prepare_list_assigned_skills"))?;
     let records = statement
         .query_map(params![project_parameter, tool.as_str()], skill_from_row)
@@ -530,7 +598,7 @@ pub fn list_projects(database: &Database) -> Result<Vec<SkillProjectRecord>, App
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, display_name, root_path, codex_trust_status, row_version
              FROM projects
              WHERE removed_at IS NULL
@@ -588,7 +656,7 @@ pub(crate) fn list_managed_skill_items_from_connection(
     target_id: &str,
 ) -> Result<Vec<ManagedSkillItemRecord>, AppError> {
     let mut statement = connection
-        .prepare(
+        .prepare_cached(
             "SELECT id, resource_id, external_key, last_applied_item_hash, row_version
              FROM managed_items
              WHERE target_id = ?1 AND resource_kind = 'skill'

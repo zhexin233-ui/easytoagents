@@ -253,6 +253,7 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 - 分配 UI：断言中央列表与目标状态一起刷新，成功文案说明仍需显式同步；仅 `missing` 或 `external_non_owned_change` 与 pending 诊断组合覆盖徽标，其它组合不覆盖；分配/取消分配均不调用 Preview/Apply。
 - 浏览器 fixture 只证明实际组件的交互/布局；不能替代真实 Tauri 或真实安装验收。真实桌面未跑必须明确记载。
 - GitHub 下载器：本地 HTTP fixture 断言最长有效 ref、树完整性、嵌套资源逐字节保留、所有 raw 请求使用同一完整 commit SHA，以及截断树、链接、子模块、限额、状态码、超时与清理错误；两个公开示例保持 ignored 联网验收并使用隔离中央库。
+- 下载并发：文件通过 `FuturesUnordered` 以 6 路并发窗口下载到内存（总量仍受 `MAX_TOTAL_BYTES` 约束），任一文件失败整体失败且此时尚未创建任何目录；全部成功后在 `spawn_blocking` 中一次性写入私有临时目录。`reqwest::Client` 按代理键在 `OnceLock` 中复用。测试用慢速多线程 fixture 断言峰值并发 ≥ 2 与耗时明显低于串行，以及部分失败时返回 `NOT_FOUND`。
 - GitHub UI：断言精确 trim 后 payload、pending 期间 Escape/关闭/重复 submit 锁、失败后编辑重试、成功仅刷新 `skillKeys.all`，以及刷新失败后显示“已复制”并永久禁用旧提交；断言不调用 assignment、Preview 或 Apply。
 
 ## 7. 错误与正确做法

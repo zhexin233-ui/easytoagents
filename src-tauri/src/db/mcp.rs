@@ -49,7 +49,7 @@ pub fn list_mcp_servers(database: &Database) -> Result<Vec<McpServerRecord>, App
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, name, transport, command, args_json, url, headers_json,
                     env_json, extra_json, enabled, row_version
              FROM mcp_servers ORDER BY name COLLATE NOCASE, id",
@@ -198,11 +198,47 @@ pub fn delete_mcp_server(
     Ok(())
 }
 
+/// 一条语句取回全部 MCP 的全局分配，供列表接口一次组装。
+pub fn global_tools_for_all_mcp(
+    database: &Database,
+) -> Result<std::collections::BTreeMap<String, Vec<Tool>>, AppError> {
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached("SELECT mcp_id, tool FROM mcp_global_assignments ORDER BY mcp_id, tool")
+        .map_err(|_| AppError::database(&path, "prepare_all_mcp_global_tools"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, tool_from_database(row.get(1)?)?))
+        })
+        .map_err(|_| AppError::database(&path, "query_all_mcp_global_tools"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::database(&path, "decode_all_mcp_global_tools"))?;
+    let mut grouped = std::collections::BTreeMap::<String, Vec<Tool>>::new();
+    for (mcp_id, tool) in rows {
+        grouped.entry(mcp_id).or_default().push(tool);
+    }
+    Ok(grouped)
+}
+
+pub(crate) fn mcp_row_versions(
+    database: &Database,
+    ids: &[&str],
+) -> Result<std::collections::BTreeMap<String, i64>, AppError> {
+    super::skills::row_versions_by_id(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        "mcp_servers",
+        ids,
+        "mcp_row_versions",
+    )
+}
+
 pub fn global_tools_for_mcp(database: &Database, mcp_id: &str) -> Result<Vec<Tool>, AppError> {
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT tool FROM mcp_global_assignments
              WHERE mcp_id = ?1 ORDER BY tool",
         )
@@ -390,7 +426,7 @@ pub fn list_assigned_mcp_servers(
     };
     let mut statement = database
         .connection()
-        .prepare(sql)
+        .prepare_cached(sql)
         .map_err(|_| AppError::database(&path, "prepare_list_assigned_mcp"))?;
     let records = statement
         .query_map(params![project_parameter, tool.as_str()], mcp_from_row)
@@ -404,7 +440,7 @@ pub fn list_projects(database: &Database) -> Result<Vec<McpProjectRecord>, AppEr
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, display_name, root_path, codex_trust_status, row_version
              FROM projects
              WHERE removed_at IS NULL
@@ -462,7 +498,7 @@ pub fn list_managed_mcp_items(
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, resource_id, external_key, last_applied_item_hash, row_version
              FROM managed_items
              WHERE target_id = ?1 AND resource_kind = 'mcp'

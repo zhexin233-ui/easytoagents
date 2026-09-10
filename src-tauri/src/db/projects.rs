@@ -29,7 +29,7 @@ pub fn list_registered_projects(database: &Database) -> Result<Vec<ProjectRecord
     let database_path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, display_name, root_path, is_git_repo, codex_trust_status,
                     last_scanned_at, row_version, removed_at IS NOT NULL
              FROM projects

@@ -41,7 +41,9 @@ pub async fn import_github_skill(
     input: ImportGithubSkillInput,
 ) -> Result<SkillDto, AppError> {
     // 代理配置在 setup 里读取一次并注入，这里不再读进程环境。
-    let downloaded = skills::download_github_skill(&input.url, state.github_proxy()).await?;
+    // 先拷贝成 owned 值，避免 async 命令的 future 跨 await 借用 `State`。
+    let proxy = state.github_proxy().map(str::to_owned);
+    let downloaded = skills::download_github_skill(&input.url, proxy.as_deref()).await?;
     // 下载后的文件校验、中央库复制与数据库写入都是同步阻塞操作，
     // 不能留在 tokio worker 上；把数据库句柄与路径移进阻塞线程池。
     let database = state.database_handle();

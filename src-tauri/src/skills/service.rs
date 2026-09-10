@@ -42,7 +42,7 @@ use crate::{
     git::inspect_path,
     security::SecretRedactor,
     sync::{
-        apply_persisted_preview, assess_drift, build_preview_plan, canonical_json, hash_json,
+        apply_persisted_preview, assess_drift, build_preview_plan, hash_json,
         load_persisted_preview, persist_preview, read_directory_target, scan_target, ApplyResult,
         ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion, ManagedItemApply,
         ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest, SkillTakeoverEntry,
@@ -51,9 +51,17 @@ use crate::{
 };
 
 pub fn list_skills(database: &Database, paths: &AppPaths) -> Result<Vec<SkillDto>, AppError> {
+    // 列表只发两条 SQL（记�� + 全部全局分配），逐条组装不再回库。
+    let mut global_tools = repository::global_tools_for_all_skills(database)?;
     repository::list_skills(database)?
         .iter()
-        .map(|record| skill_dto(database, paths, record))
+        .map(|record| {
+            skill_dto_with_tools(
+                paths,
+                record,
+                global_tools.remove(&record.id).unwrap_or_default(),
+            )
+        })
         .collect()
 }
 
@@ -973,14 +981,21 @@ fn collect_row_versions<'a>(
             (DatabaseEntityType::ManagedItem, item.id.clone()),
             safe_row_version(item.row_version)?,
         );
-        if let Ok(record) =
-            repository::get_skill_from_connection(connection, database_path, &item.resource_id)
-        {
-            versions.insert(
-                (DatabaseEntityType::Skill, record.id),
-                safe_row_version(record.row_version)?,
-            );
-        }
+    }
+    // 受管条目引用的资源可能不在本次记录集合里（已解除分配但仍受管）；
+    // 一次 `WHERE id IN` 取回它们的版本，而不是逐条回库。
+    let missing = items
+        .iter()
+        .map(|item| item.resource_id.as_str())
+        .filter(|id| !versions.contains_key(&(DatabaseEntityType::Skill, (*id).to_owned())))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    for (id, row_version) in repository::skill_row_versions(connection, database_path, &missing)? {
+        versions.insert(
+            (DatabaseEntityType::Skill, id),
+            safe_row_version(row_version)?,
+        );
     }
     Ok(versions
         .into_iter()
@@ -1371,7 +1386,7 @@ fn reconcile_skill_target_baseline(
             return Ok(());
         }
     }
-    let desired = canonical_json(&build_desired_projection(&desired_records));
+    let desired = build_desired_projection(&desired_records);
     if hash_json(&desired) != observed_hash {
         return Ok(());
     }
@@ -1403,6 +1418,18 @@ fn skill_dto(
     paths: &AppPaths,
     record: &SkillRecord,
 ) -> Result<SkillDto, AppError> {
+    skill_dto_with_tools(
+        paths,
+        record,
+        repository::global_tools_for_skill(database, &record.id)?,
+    )
+}
+
+fn skill_dto_with_tools(
+    paths: &AppPaths,
+    record: &SkillRecord,
+    global_tools: Vec<Tool>,
+) -> Result<SkillDto, AppError> {
     let inspection = inspect_record(paths, record, false)?;
     let frontmatter: Value = serde_json::from_str(&record.frontmatter_json)
         .map_err(|_| AppError::invalid_input("frontmatter", "数据库中的 Skill frontmatter 无效"))?;
@@ -1422,7 +1449,7 @@ fn skill_dto(
         description: description.to_owned(),
         status: inspection.status,
         diagnostic_code: inspection.diagnostic_code.map(str::to_owned),
-        global_tools: repository::global_tools_for_skill(database, &record.id)?,
+        global_tools,
         row_version: safe_row_version(record.row_version)?,
     })
 }
@@ -1633,6 +1660,85 @@ mod tests {
             )
             .unwrap()
         }
+    }
+
+    thread_local! {
+        static SQL_STATEMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn count_sql(_statement: &str) {
+        SQL_STATEMENTS.with(|count| count.set(count.get() + 1));
+    }
+
+    /// 列表接口的 SQL 语句数不随记录数增长（记录 + 一次聚合的全局分配）。
+    #[test]
+    fn list_skills_issues_a_constant_number_of_sql_statements() {
+        let mut fixture = Fixture::new();
+        let first = fixture.import("alpha-skill");
+        set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: first.id.clone(),
+                assigned: true,
+                row_version: first.row_version,
+            },
+        )
+        .unwrap();
+        fixture.database.connection_mut().trace(Some(count_sql));
+        SQL_STATEMENTS.with(|count| count.set(0));
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].global_tools, vec![Tool::Claude]);
+        let with_one = SQL_STATEMENTS.with(std::cell::Cell::get);
+        fixture.database.connection_mut().trace(None);
+
+        for name in ["beta-skill", "gamma-skill", "delta-skill"] {
+            fixture.import(name);
+        }
+        fixture.database.connection_mut().trace(Some(count_sql));
+        SQL_STATEMENTS.with(|count| count.set(0));
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert_eq!(listed.len(), 4);
+        let with_four = SQL_STATEMENTS.with(std::cell::Cell::get);
+        fixture.database.connection_mut().trace(None);
+        assert_eq!(with_four, with_one, "列表 SQL 数量不应随记录数增长");
+        assert!(with_one <= 3, "列表 SQL 数量：{with_one}");
+    }
+
+    /// 列表场景复用 stat 指纹缓存：目录没变时不再全树读哈希；文件变化后重新摘要并识别漂移。
+    #[test]
+    fn list_skills_reuses_tree_digest_until_the_central_tree_changes() {
+        let mut fixture = Fixture::new();
+        let skill = fixture.import("cached-skill");
+        // 导入过程已把摘要放进缓存；清掉它，让首次列表必须完整读一次树。
+        crate::skills::library::clear_tree_digest_cache();
+        crate::skills::library::FULL_DIGEST_CALLS.with(|count| count.set(0));
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert_eq!(listed[0].status, SkillStatus::Ready);
+        let after_first = crate::skills::library::FULL_DIGEST_CALLS.with(std::cell::Cell::get);
+        assert!(after_first >= 1);
+        super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert_eq!(
+            crate::skills::library::FULL_DIGEST_CALLS.with(std::cell::Cell::get),
+            after_first,
+            "目录未变化时第二次列表不应重新读全树"
+        );
+
+        // 改动中央文件：mtime/size 变化 → 缓存失效 → 重新摘要并报告漂移。
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(
+            std::path::Path::new(&skill.central_path).join("SKILL.md"),
+            "---\nname: cached-skill\ndescription: 已改动\n---\n\n# 改动后的正文\n",
+        )
+        .unwrap();
+        let listed = super::list_skills(&fixture.database, &fixture.paths).unwrap();
+        assert!(crate::skills::library::FULL_DIGEST_CALLS.with(std::cell::Cell::get) > after_first);
+        assert_eq!(
+            listed[0].diagnostic_code.as_deref(),
+            Some("CENTRAL_SKILL_CONTENT_CHANGED")
+        );
     }
 
     #[test]

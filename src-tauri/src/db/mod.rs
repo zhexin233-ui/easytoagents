@@ -151,7 +151,7 @@ impl Database {
     /// 备份前先做 WAL checkpoint，让备份出的单个主文件自洽可恢复；最多保留
     /// 最近 `STARTUP_BACKUP_RETENTION` 份，旧备份自动裁剪（裁剪失败不阻断启动）。
     pub fn open(paths: &AppPaths) -> Result<Self, AppError> {
-        paths.initialize()?;
+        paths.ensure_directories()?;
         prepare_database_file(paths.database())?;
 
         let mut connection = Connection::open(paths.database())
@@ -322,7 +322,7 @@ fn run_migrations(connection: &mut Connection, path: &Path) -> Result<(), AppErr
 
     let applied_migrations = {
         let mut statement = connection
-            .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+            .prepare_cached("SELECT version, name FROM schema_migrations ORDER BY version")
             .map_err(|_| AppError::migration(&path.to_string_lossy(), 0))?;
         let applied = statement
             .query_map([], |row| {
@@ -623,7 +623,7 @@ fn process_retired_snapshot_cleanup(
 ) -> Result<(), AppError> {
     let database_path = paths.database().to_string_lossy().into_owned();
     let mut statement = connection
-        .prepare(
+        .prepare_cached(
             "SELECT snapshot_id, run_id, snapshot_path, storage_kind
              FROM retired_snapshot_cleanup ORDER BY retired_at, snapshot_id",
         )
@@ -892,7 +892,7 @@ mod tests {
         assert_eq!(foreign_key_violations, 0);
 
         let tables = connection
-            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .prepare_cached("SELECT name FROM sqlite_master WHERE type = 'table'")
             .unwrap()
             .query_map([], |row| row.get::<_, String>(0))
             .unwrap()
@@ -1590,7 +1590,7 @@ mod tests {
         assert_eq!(database.schema_version().unwrap(), 20);
         let kinds = database
             .connection()
-            .prepare("SELECT id, storage_kind FROM snapshots ORDER BY id")
+            .prepare_cached("SELECT id, storage_kind FROM snapshots ORDER BY id")
             .unwrap()
             .query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

@@ -45,9 +45,17 @@ pub fn list_mcp_servers(
     database: &Database,
     redactor: &SecretRedactor,
 ) -> Result<Vec<McpServerDto>, AppError> {
+    // 列表只发两条 SQL（记录 + 全部全局分配），逐条组装不再回库。
+    let mut global_tools = repository::global_tools_for_all_mcp(database)?;
     repository::list_mcp_servers(database)?
         .iter()
-        .map(|record| mcp_dto(database, record, redactor))
+        .map(|record| {
+            mcp_dto_with_tools(
+                record,
+                redactor,
+                global_tools.remove(&record.id).unwrap_or_default(),
+            )
+        })
         .collect()
 }
 
@@ -1075,12 +1083,19 @@ fn collect_row_versions<'a>(
             (DatabaseEntityType::ManagedItem, item.id.clone()),
             safe_row_version(item.row_version)?,
         );
-        if let Ok(record) = repository::get_mcp_server(database, &item.resource_id) {
-            versions.insert(
-                (DatabaseEntityType::McpServer, record.id),
-                safe_row_version(record.row_version)?,
-            );
-        }
+    }
+    let missing = items
+        .iter()
+        .map(|item| item.resource_id.as_str())
+        .filter(|id| !versions.contains_key(&(DatabaseEntityType::McpServer, (*id).to_owned())))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    for (id, row_version) in repository::mcp_row_versions(database, &missing)? {
+        versions.insert(
+            (DatabaseEntityType::McpServer, id),
+            safe_row_version(row_version)?,
+        );
     }
     Ok(versions
         .into_iter()
@@ -1168,6 +1183,18 @@ fn mcp_dto(
     record: &McpServerRecord,
     redactor: &SecretRedactor,
 ) -> Result<McpServerDto, AppError> {
+    mcp_dto_with_tools(
+        record,
+        redactor,
+        repository::global_tools_for_mcp(database, &record.id)?,
+    )
+}
+
+fn mcp_dto_with_tools(
+    record: &McpServerRecord,
+    redactor: &SecretRedactor,
+    global_tools: Vec<Tool>,
+) -> Result<McpServerDto, AppError> {
     let value = configuration_from_record(record)?;
     Ok(McpServerDto {
         id: record.id.clone(),
@@ -1180,7 +1207,7 @@ fn mcp_dto(
         env_names: value.env.keys().cloned().collect(),
         redacted_extra: redactor.redact_structure(&value.extra).into_value(),
         enabled: record.enabled,
-        global_tools: repository::global_tools_for_mcp(database, &record.id)?,
+        global_tools,
         row_version: safe_row_version(record.row_version)?,
     })
 }

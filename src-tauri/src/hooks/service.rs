@@ -57,9 +57,13 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 pub fn list_hooks(database: &Database) -> Result<Vec<HookDto>, AppError> {
+    // 列表只发两条 SQL（记录 + 全部全局分配），逐条组装不再回库。
+    let mut assignments = repository::global_assignments_for_all_hooks(database)?;
     repository::list_hooks(database)?
         .iter()
-        .map(|record| hook_dto(database, record))
+        .map(|record| {
+            hook_dto_with_assignments(record, assignments.remove(&record.id).unwrap_or_default())
+        })
         .collect()
 }
 
@@ -1182,12 +1186,19 @@ fn collect_row_versions<'a>(
             (DatabaseEntityType::ManagedItem, item.id.clone()),
             safe_row_version(item.row_version)?,
         );
-        if let Ok(record) = repository::get_hook(database, &item.resource_id) {
-            versions.insert(
-                (DatabaseEntityType::Hook, record.id),
-                safe_row_version(record.row_version)?,
-            );
-        }
+    }
+    let missing = items
+        .iter()
+        .map(|item| item.resource_id.as_str())
+        .filter(|id| !versions.contains_key(&(DatabaseEntityType::Hook, (*id).to_owned())))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    for (id, row_version) in repository::hook_row_versions(database, &missing)? {
+        versions.insert(
+            (DatabaseEntityType::Hook, id),
+            safe_row_version(row_version)?,
+        );
     }
     Ok(versions
         .into_iter()
@@ -1275,7 +1286,17 @@ pub(super) fn find_hook_target_baseline(
 // ---------------------------------------------------------------------------
 
 fn hook_dto(database: &Database, record: &HookRecord) -> Result<HookDto, AppError> {
-    let global_assignments = repository::global_assignments_for_hook(database, &record.id)?
+    hook_dto_with_assignments(
+        record,
+        repository::global_assignments_for_hook(database, &record.id)?,
+    )
+}
+
+fn hook_dto_with_assignments(
+    record: &HookRecord,
+    assignments: Vec<(Tool, HookEvent)>,
+) -> Result<HookDto, AppError> {
+    let global_assignments = assignments
         .into_iter()
         .map(|(tool, event)| super::HookGlobalAssignmentDto { tool, event })
         .collect();

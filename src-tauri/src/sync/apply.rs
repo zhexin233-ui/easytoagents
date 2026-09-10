@@ -23,7 +23,7 @@ use specta::Type;
 use uuid::Uuid;
 
 use super::{
-    canonical_json, hash_bytes, hash_json, load_persisted_preview, scan_target, DatabaseEntityType,
+    hash_bytes, hash_json, load_persisted_preview, scan_target, DatabaseEntityType,
     DatabaseRowVersion, PersistedPreview, PersistedPreviewEnvelope, PersistedPreviewItem,
     SkillTakeoverEntryType, TargetScan,
 };
@@ -255,6 +255,77 @@ struct SnapshotRequest<'a> {
     central_root: Option<&'a Path>,
     expected_before_fingerprint: &'a str,
     directory_tree_hash: Option<&'a str>,
+    /// 规划阶段已读取的状态；lstat 签名一致时直接复用，否则重新读取。
+    known_state: Option<&'a PathState>,
+}
+
+/// 只用 lstat 得到的文件签名：用于"内容是否可能变化"的廉价复核。
+/// 任一字段变化即回退到完整读取比对；签名相同则复用已读取的内容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct StatSignature {
+    device: u64,
+    inode: u64,
+    size: u64,
+    mtime: i64,
+    mtime_nanos: i64,
+    mode: u32,
+}
+
+impl StatSignature {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            size: metadata.len(),
+            mtime: metadata.mtime(),
+            mtime_nanos: metadata.mtime_nsec(),
+            mode: metadata.mode() & 0o7777,
+        }
+    }
+}
+
+/// 目标当前的 lstat 结果是否与已知状态一致（不读内容）。`false` 只表示需要完整复核。
+fn cheap_state_matches(state: &PathState, path: &Path) -> bool {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return error.kind() == io::ErrorKind::NotFound && matches!(state, PathState::Missing);
+        }
+    };
+    let file_type = metadata.file_type();
+    match state {
+        PathState::Missing => false,
+        PathState::File { stat, .. } => {
+            file_type.is_file() && *stat == StatSignature::from_metadata(&metadata)
+        }
+        PathState::Symlink { link_target } => {
+            file_type.is_symlink() && fs::read_link(path).is_ok_and(|target| &target == link_target)
+        }
+        PathState::Directory { device, inode } => {
+            file_type.is_dir() && metadata.dev() == *device && metadata.ino() == *inode
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// 测试用：统计 apply 内核对目标文件的完整读取次数（按线程，测试并行互不干扰）。
+    pub(crate) static TARGET_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// 测试用：统计 apply 内核发起的 fsync（文件与目录）次数。
+    pub(crate) static FSYNC_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn read_target_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    #[cfg(test)]
+    TARGET_READS.with(|count| count.set(count.get() + 1));
+    fs::read(path)
+}
+
+fn fsync_file(file: &File, path: &Path, operation: &'static str) -> Result<(), AppError> {
+    #[cfg(test)]
+    FSYNC_CALLS.with(|count| count.set(count.get() + 1));
+    file.sync_all()
+        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), operation))
 }
 
 #[derive(Debug, Clone)]
@@ -264,6 +335,8 @@ enum PathState {
         bytes: Vec<u8>,
         hash: String,
         mode: u32,
+        /// 读取内容时的 lstat 签名；仅用于廉价复核，不参与 fingerprint。
+        stat: StatSignature,
     },
     Symlink {
         link_target: PathBuf,
@@ -365,6 +438,8 @@ struct PendingMutation {
     central_root: Option<PathBuf>,
     expected_before_fingerprint: String,
     expected_after_fingerprint: String,
+    /// 规划阶段已读取的目标状态；快照阶段经廉价复核后直接复用，省一次全量读取。
+    before_state: Option<PathState>,
     mutation: Mutation,
 }
 
@@ -404,7 +479,7 @@ pub fn apply_persisted_preview(
     let _write_guard = write_operations
         .lock()
         .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "写入互斥锁不可用", false))?;
-    paths.audit_permissions()?;
+    paths.audit_run_scope([preview_id])?;
     let journal_path = paths.journals().join(format!("{preview_id}.json"));
     claim_preview(database, preview_id, &journal_path)?;
 
@@ -437,7 +512,7 @@ fn journal_reports_crash(paths: &AppPaths, run_id: &str) -> bool {
     let path = paths.journals().join(format!("{run_id}.json"));
     fs::read(path)
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<RunJournal>(&bytes).ok())
+        .and_then(|bytes| parse_journal(&bytes))
         .is_some_and(|journal| {
             journal.phase.starts_with("crashed")
                 || journal
@@ -501,6 +576,7 @@ fn apply_claimed_preview(
                 central_root: mutation.central_root.as_deref(),
                 expected_before_fingerprint: &mutation.expected_before_fingerprint,
                 directory_tree_hash: native_or_takeover_directory_hash(&mutation.mutation),
+                known_state: mutation.before_state.as_ref(),
             },
         ) {
             Ok(snapshot) => snapshot,
@@ -553,6 +629,20 @@ fn apply_claimed_preview(
 
     journal.phase = "applying".to_owned();
     persist_journal(paths, &journal)?;
+    // 数据库预检整轮只做一次；循环内用 `PRAGMA data_version` 侦测是否有其它连接
+    // 提交过写入，只有版本变化时才重做完整预检。
+    if let Err(error) = revalidate_database_preflight(database, &preview) {
+        return finish_failed_apply(
+            database,
+            paths,
+            preview_id,
+            &mut journal,
+            &snapshots,
+            &[],
+            error,
+        );
+    }
+    let mut data_version = read_data_version(database)?;
     let mut applied = Vec::new();
     for (mutation_index, mutation) in mutations.iter().enumerate() {
         let event = ApplyFaultEvent::BeforeTarget {
@@ -583,19 +673,24 @@ fn apply_claimed_preview(
                 ));
             }
         }
-        if let Err(error) = revalidate_database_preflight(database, &preview) {
-            return finish_failed_apply(
-                database,
-                paths,
-                preview_id,
-                &mut journal,
-                &snapshots,
-                &applied,
-                error,
-            );
+        let current_data_version = read_data_version(database)?;
+        if current_data_version != data_version {
+            if let Err(error) = revalidate_database_preflight(database, &preview) {
+                return finish_failed_apply(
+                    database,
+                    paths,
+                    preview_id,
+                    &mut journal,
+                    &snapshots,
+                    &applied,
+                    error,
+                );
+            }
+            data_version = current_data_version;
         }
-        if capture_path_state(&mutation.path)?.fingerprint()
-            != snapshots[mutation_index].state.fingerprint()
+        let before_state = &snapshots[mutation_index].state;
+        if !cheap_state_matches(before_state, &mutation.path)
+            && capture_path_state(&mutation.path)?.fingerprint() != before_state.fingerprint()
         {
             return finish_failed_apply(
                 database,
@@ -613,7 +708,7 @@ fn apply_claimed_preview(
             &mut journal,
             mutation_index,
             mutation,
-            &snapshots[mutation_index].state.fingerprint(),
+            before_state,
             fault,
         ) {
             Ok(()) => applied.push(mutation_index),
@@ -884,9 +979,7 @@ fn validate_preview_inputs(
                 &item.target_id,
             ));
         }
-        if hash_json(&canonical_json(&input.desired_projection))
-            != item.envelope.desired_managed_hash
-        {
+        if hash_json(&input.desired_projection) != item.envelope.desired_managed_hash {
             return Err(AppError::stale_preview(
                 &preview.preview_id,
                 &item.target_id,
@@ -1244,6 +1337,14 @@ fn verify_database_versions(
     Ok(())
 }
 
+/// SQLite 的 `data_version`：其它连接提交写入后递增；本连接自己的写入不改变它。
+fn read_data_version(database: &Database) -> Result<i64, AppError> {
+    database
+        .connection()
+        .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+        .map_err(|_| AppError::database(&database.path().to_string_lossy(), "read_data_version"))
+}
+
 fn revalidate_database_preflight(
     database: &Database,
     preview: &PersistedPreview,
@@ -1416,8 +1517,10 @@ fn build_target_work<'a>(
                     hash: hash_bytes(&rendered),
                     bytes: rendered.clone(),
                     mode,
+                    stat: StatSignature::default(),
                 }
                 .fingerprint(),
+                before_state: None,
                 mutation: Mutation::WriteFile {
                     bytes: rendered,
                     mode,
@@ -1463,6 +1566,7 @@ fn build_file_native_mutations(
             central_root: None,
             expected_before_fingerprint,
             expected_after_fingerprint: PathState::Missing.fingerprint(),
+            before_state: None,
             mutation: Mutation::Remove,
         }]);
     }
@@ -1501,8 +1605,10 @@ fn build_file_native_mutations(
             hash: hash_bytes(&bytes),
             bytes: bytes.clone(),
             mode,
+            stat: StatSignature::default(),
         }
         .fingerprint(),
+        before_state: Some(current_state),
         mutation: Mutation::WriteFile { bytes, mode },
     }])
 }
@@ -1546,6 +1652,7 @@ fn build_skill_native_mutations(
                         central_root: None,
                         expected_before_fingerprint: current.fingerprint(),
                         expected_after_fingerprint: PathState::Missing.fingerprint(),
+                        before_state: None,
                         mutation: Mutation::RemoveNativeSkill {
                             entry_type: NativeResourceEntryType::Directory,
                             content_hash: Some(content_hash),
@@ -1564,6 +1671,7 @@ fn build_skill_native_mutations(
                         central_root: None,
                         expected_before_fingerprint: current.fingerprint(),
                         expected_after_fingerprint: PathState::Missing.fingerprint(),
+                        before_state: None,
                         mutation: Mutation::RemoveNativeSkill {
                             entry_type: NativeResourceEntryType::Symlink,
                             content_hash: None,
@@ -1603,6 +1711,7 @@ fn build_skill_native_mutations(
                         central_root: None,
                         expected_before_fingerprint: current.fingerprint(),
                         expected_after_fingerprint: String::new(),
+                        before_state: None,
                         mutation: Mutation::RestoreDirectoryTree {
                             snapshot_path: PathBuf::from(snapshot_path),
                             content_hash,
@@ -1624,6 +1733,7 @@ fn build_skill_native_mutations(
                             link_target: PathBuf::from(link_target),
                         }
                         .fingerprint(),
+                        before_state: None,
                         mutation: Mutation::RestoreNativeSymlink {
                             link_target: PathBuf::from(link_target),
                         },
@@ -1683,6 +1793,7 @@ fn build_target_mutations(
             central_root: input.central_skills_root.clone(),
             expected_before_fingerprint,
             expected_after_fingerprint: PathState::Missing.fingerprint(),
+            before_state: None,
             mutation: Mutation::Remove,
         }]);
     }
@@ -1728,8 +1839,10 @@ fn build_target_mutations(
             hash: hash_bytes(&bytes),
             bytes: bytes.clone(),
             mode,
+            stat: StatSignature::default(),
         }
         .fingerprint(),
+        before_state: Some(current_state),
         mutation: Mutation::WriteFile { bytes, mode },
     }])
 }
@@ -1830,6 +1943,7 @@ fn build_symlink_mutations(
                             link_target: canonical_link_target.clone(),
                         }
                         .fingerprint(),
+                        before_state: None,
                         mutation: Mutation::TakeoverSymlink {
                             link_target: canonical_link_target,
                             central_root: central_root.clone(),
@@ -1852,6 +1966,7 @@ fn build_symlink_mutations(
                         link_target: canonical_link_target.clone(),
                     }
                     .fingerprint(),
+                    before_state: None,
                     mutation: Mutation::ReplaceSymlink {
                         link_target: canonical_link_target,
                         central_root: central_root.clone(),
@@ -1871,6 +1986,7 @@ fn build_symlink_mutations(
                         central_root: Some(central_root.clone()),
                         expected_before_fingerprint: current.fingerprint(),
                         expected_after_fingerprint: PathState::Missing.fingerprint(),
+                        before_state: None,
                         mutation: Mutation::Remove,
                     });
                 }
@@ -1915,6 +2031,7 @@ fn build_missing_skill_directories(
                 // 新目录的设备/inode 只有 mkdir 后才能确定；apply_mutation 会
                 // 把实际身份写入 durable journal，并以该身份约束回滚。
                 expected_after_fingerprint: String::new(),
+                before_state: None,
                 mutation: Mutation::CreateDirectory,
             }),
             PathState::File { .. } | PathState::Symlink { .. } => {
@@ -2255,7 +2372,7 @@ fn capture_path_state(path: &Path) -> Result<PathState, AppError> {
         return Ok(PathState::Symlink { link_target });
     }
     if metadata.is_file() {
-        let bytes = fs::read(path).map_err(|error| match error.kind() {
+        let bytes = read_target_bytes(path).map_err(|error| match error.kind() {
             io::ErrorKind::PermissionDenied => {
                 AppError::permission(&path.to_string_lossy(), "read_target")
             }
@@ -2265,6 +2382,7 @@ fn capture_path_state(path: &Path) -> Result<PathState, AppError> {
             hash: hash_bytes(&bytes),
             bytes,
             mode: metadata.permissions().mode() & 0o7777,
+            stat: StatSignature::from_metadata(&metadata),
         });
     }
     if metadata.is_dir() {
@@ -2287,6 +2405,23 @@ fn verify_expected_path_state(
     Ok(current)
 }
 
+/// 先用 lstat 签名与已知状态比对；一致则复用已读内容，否则回退到完整读取比对。
+/// 语义与 `verify_expected_path_state` 完全相同，只是省掉一次全量读取。
+fn verify_known_path_state(
+    path: &Path,
+    known: Option<&PathState>,
+    expected: ExpectedPathFingerprint<'_>,
+) -> Result<PathState, AppError> {
+    match known {
+        Some(state)
+            if cheap_state_matches(state, path) && state.fingerprint() == expected.fingerprint =>
+        {
+            Ok(state.clone())
+        }
+        _ => verify_expected_path_state(path, expected),
+    }
+}
+
 fn create_snapshot(
     database: &mut Database,
     paths: &AppPaths,
@@ -2300,9 +2435,13 @@ fn create_snapshot(
         central_root,
         expected_before_fingerprint,
         directory_tree_hash,
+        known_state,
     } = request;
     validate_allowed_path(target_path, allowed_root, false)?;
-    let state = capture_path_state(target_path)?;
+    let state = match known_state {
+        Some(known) if cheap_state_matches(known, target_path) => known.clone(),
+        _ => capture_path_state(target_path)?,
+    };
     if state.fingerprint() != expected_before_fingerprint {
         let target = target_id
             .map(str::to_owned)
@@ -2311,9 +2450,13 @@ fn create_snapshot(
     }
     let snapshot_id = Uuid::new_v4().to_string();
     let run_directory = paths.snapshots().join(run_id);
+    let run_directory_created = fs::symlink_metadata(&run_directory).is_err();
     ensure_private_directory(&run_directory)?;
-    // run 目录本身也必须在快照根中 durable，不能只 fsync 其内部文件。
-    sync_directory(paths.snapshots())?;
+    if run_directory_created {
+        // run 目录本身也必须在快照根中 durable，不能只 fsync 其内部文件；
+        // 同一 run 的后续快照复用已 durable 的目录，不再重复 fsync 快照根。
+        sync_directory(paths.snapshots())?;
+    }
     let storage_kind = match (&state, directory_tree_hash) {
         (PathState::File { .. }, _) => SnapshotStorageKind::PayloadFile,
         (PathState::Directory { .. }, Some(_)) => SnapshotStorageKind::DirectoryTree,
@@ -2340,9 +2483,7 @@ fn create_snapshot(
             snapshot_file.flush().map_err(|_| {
                 AppError::atomic_write(&snapshot_path.to_string_lossy(), "flush_snapshot")
             })?;
-            snapshot_file.sync_all().map_err(|_| {
-                AppError::atomic_write(&snapshot_path.to_string_lossy(), "sync_snapshot")
-            })?;
+            fsync_file(&snapshot_file, &snapshot_path, "sync_snapshot")?;
             ensure_private_file(&snapshot_path)?;
         }
     }
@@ -2395,23 +2536,103 @@ fn create_snapshot(
     })
 }
 
+/// journal 采用追加写：每个阶段把完整 `RunJournal` 压成一行 JSON 追加到
+/// `<run_id>.json` 末尾并 fsync 一次；读取方取最后一条完整行。以前每个阶段都
+/// 走临时文件 + rename + 目录 fsync（3 次 fsync），单目标一次 apply 要写十几次。
+/// 崩溃截断只会损坏最后一行，前一条完整状态仍可恢复；历史的单对象 pretty JSON
+/// 由 `read_journal` 兼容解析。
 fn persist_journal(paths: &AppPaths, journal: &RunJournal) -> Result<(), AppError> {
     let journal_path = paths.journals().join(format!("{}.json", journal.run_id));
     validate_allowed_path(&journal_path, paths.journals(), false)?;
-    let bytes = serde_json::to_vec_pretty(journal).map_err(|_| {
+    let mut line = serde_json::to_vec(journal).map_err(|_| {
         AppError::atomic_write(&journal_path.to_string_lossy(), "serialize_journal")
     })?;
-    atomic_replace_file(
-        &journal_path,
-        &bytes,
-        PRIVATE_FILE_MODE,
-        paths.journals(),
-        None,
-        None,
-    )
-    .map_err(|failure| match failure {
-        MutationFailure::Error(error) | MutationFailure::Crash(error) => error,
-    })
+    line.push(b'\n');
+    let created = match fs::symlink_metadata(&journal_path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => false,
+        Ok(_) => {
+            return Err(AppError::conflict(
+                "journal",
+                "journal 路径被非普通文件占用",
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+        Err(_) => {
+            return Err(AppError::atomic_write(
+                &journal_path.to_string_lossy(),
+                "lstat_journal",
+            ));
+        }
+    };
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .mode(PRIVATE_FILE_MODE)
+        .open(&journal_path)
+        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "open_journal"))?;
+    // 旧格式（整文件单对象、无尾换行）上追加时先补一个换行，避免新行粘在 `}` 后面。
+    if !created && !journal_ends_with_newline(&journal_path)? {
+        line.insert(0, b'\n');
+    }
+    file.write_all(&line)
+        .and_then(|_| file.flush())
+        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "append_journal"))?;
+    fsync_file(&file, &journal_path, "sync_journal")?;
+    if created {
+        ensure_private_file(&journal_path)?;
+        sync_directory(paths.journals())?;
+    }
+    Ok(())
+}
+
+fn journal_ends_with_newline(journal_path: &Path) -> Result<bool, AppError> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = File::open(journal_path)
+        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "open_journal"))?;
+    let length = file
+        .metadata()
+        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "stat_journal"))?
+        .len();
+    if length == 0 {
+        return Ok(true);
+    }
+    file.seek(SeekFrom::End(-1))
+        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "seek_journal"))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)
+        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "read_journal"))?;
+    Ok(last[0] == b'\n')
+}
+
+/// 解析 journal：优先取最后一条完整的单行 JSON（追加格式），否则按整文件单对象
+/// （旧格式）解析。两种格式的字段完全相同。
+fn parse_journal(bytes: &[u8]) -> Option<RunJournal> {
+    for line in bytes.rsplit(|byte| *byte == b'\n') {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if let Ok(journal) = serde_json::from_slice::<RunJournal>(line) {
+            return Some(journal);
+        }
+        break;
+    }
+    serde_json::from_slice::<RunJournal>(bytes).ok()
+}
+
+fn read_journal(journal_path: &Path) -> Result<Option<RunJournal>, AppError> {
+    let bytes = match fs::read(journal_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => {
+            return Err(AppError::permission(
+                &journal_path.to_string_lossy(),
+                "read_journal",
+            ));
+        }
+    };
+    parse_journal(&bytes)
+        .map(Some)
+        .ok_or_else(|| AppError::parse(&journal_path.to_string_lossy(), "journal"))
 }
 
 fn apply_mutation(
@@ -2419,18 +2640,19 @@ fn apply_mutation(
     journal: &mut RunJournal,
     journal_index: usize,
     mutation: &PendingMutation,
-    expected_before_fingerprint: &str,
+    before_state: &PathState,
     fault: &dyn ApplyFaultInjector,
 ) -> Result<(), MutationFailure> {
     validate_allowed_path(&mutation.path, &mutation.allowed_root, false)?;
     let expected_run_id = journal.run_id.clone();
     let expected_target_id = mutation.target_id.clone();
+    let expected_before_fingerprint = before_state.fingerprint();
     let expected = ExpectedPathFingerprint {
         run_id: &expected_run_id,
         target_id: &expected_target_id,
-        fingerprint: expected_before_fingerprint,
+        fingerprint: &expected_before_fingerprint,
     };
-    verify_expected_path_state(&mutation.path, expected)?;
+    verify_known_path_state(&mutation.path, Some(before_state), expected)?;
     journal.targets[journal_index].phase = "writing".to_owned();
     persist_journal(paths, journal)?;
     match &mutation.mutation {
@@ -2462,6 +2684,7 @@ fn apply_mutation(
             *mode,
             &mutation.allowed_root,
             Some(expected),
+            Some(before_state),
             Some((mutation.target_index, fault, paths, journal, journal_index)),
         )?,
         Mutation::Remove => {
@@ -2774,11 +2997,12 @@ fn atomic_replace_file(
     mode: u32,
     allowed_root: &Path,
     expected_current: Option<ExpectedPathFingerprint<'_>>,
+    known_state: Option<&PathState>,
     fault_context: Option<RenameFaultContext<'_>>,
 ) -> Result<(), MutationFailure> {
     validate_allowed_path(path, allowed_root, false)?;
     let current = match expected_current {
-        Some(expected) => verify_expected_path_state(path, expected)?,
+        Some(expected) => verify_known_path_state(path, known_state, expected)?,
         None => capture_path_state(path)?,
     };
     match current {
@@ -2801,24 +3025,37 @@ fn atomic_replace_file(
         .mode(PRIVATE_FILE_MODE)
         .open(&temporary)
         .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_temporary"))?;
+    // 先落数据再改权限，最后一次 fsync 同时覆盖内容与元数据；
+    // 以前是两次 sync_all（写后一次、chmod 后一次），多出的那次纯属浪费。
     if let Err(error) = file
         .write_all(bytes)
         .and_then(|_| file.flush())
-        .and_then(|_| file.sync_all())
         .and_then(|_| fs::set_permissions(&temporary, fs::Permissions::from_mode(mode & 0o7777)))
-        .and_then(|_| file.sync_all())
     {
         let _ = fs::remove_file(&temporary);
         let _ = error;
         return Err(AppError::atomic_write(&path.to_string_lossy(), "flush_temporary").into());
+    }
+    if let Err(error) = fsync_file(&file, path, "flush_temporary") {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
     }
     drop(file);
     if let Some((index, fault, paths, journal, journal_index)) = fault_context {
         journal.targets[journal_index].phase = "rename_pending".to_owned();
         journal.targets[journal_index].temporary_path =
             Some(temporary.to_string_lossy().into_owned());
-        journal.targets[journal_index].temporary_fingerprint =
-            Some(capture_path_state(&temporary)?.fingerprint());
+        // 临时文件的内容与权限就是刚写入并 fsync 的 bytes/mode，直接由内存计算指纹，
+        // 不再把刚写的文件整个读回来。
+        journal.targets[journal_index].temporary_fingerprint = Some(
+            PathState::File {
+                hash: hash_bytes(bytes),
+                bytes: Vec::new(),
+                mode: mode & 0o7777,
+                stat: StatSignature::default(),
+            }
+            .fingerprint(),
+        );
         if let Err(error) = persist_journal(paths, journal) {
             let _ = fs::remove_file(&temporary);
             let _ = sync_directory(parent);
@@ -2853,7 +3090,7 @@ fn atomic_replace_file(
         }
         validate_allowed_path(path, allowed_root, false)?;
         if let Some(expected) = expected_current {
-            if let Err(error) = verify_expected_path_state(path, expected) {
+            if let Err(error) = verify_known_path_state(path, known_state, expected) {
                 let _ = fs::remove_file(&temporary);
                 let _ = sync_directory(parent);
                 journal.targets[journal_index].phase = "rename_failed".to_owned();
@@ -3315,6 +3552,8 @@ fn validate_central_link_target(
 }
 
 fn sync_directory(path: &Path) -> Result<(), AppError> {
+    #[cfg(test)]
+    FSYNC_CALLS.with(|count| count.set(count.get() + 1));
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "sync_directory"))
@@ -3370,7 +3609,7 @@ fn verify_all_targets(work: &[TargetWork<'_>]) -> Result<Vec<TargetVerification>
             target_id: target.item.target_id.clone(),
             full_hash: Some(observed.full_hash.clone()),
             managed_hash: Some(observed.managed_hash.clone()),
-            projection: canonical_json(&target.input.desired_projection),
+            projection: target.input.desired_projection.clone(),
         });
     }
     Ok(verifications)
@@ -3883,6 +4122,7 @@ fn restore_snapshot_record(
                 allowed_root,
                 Some(expected),
                 None,
+                None,
             )
             .map_err(|failure| match failure {
                 MutationFailure::Error(error) | MutationFailure::Crash(error) => error,
@@ -4119,7 +4359,7 @@ pub fn delete_snapshots(
     let _write_guard = write_operations
         .lock()
         .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "写入互斥锁不可用", false))?;
-    paths.audit_permissions()?;
+    paths.audit_run_scope([])?;
     let database_path = database.path().to_string_lossy().into_owned();
 
     let mut ordered_ids: Vec<String> = Vec::new();
@@ -4222,6 +4462,7 @@ pub fn delete_snapshots(
         ));
     }
 
+    paths.audit_run_scope(removable.iter().map(|(_, run_id, ..)| run_id.as_str()))?;
     let mut deleted_ids: Vec<String> = Vec::with_capacity(removable.len());
     if !removable.is_empty() {
         // 先在一个事务里退役数据库行：把身份登记进 retired_snapshot_cleanup 再删
@@ -4364,10 +4605,8 @@ pub fn detect_interrupted_run(
     if metadata.permissions().mode() & 0o777 != PRIVATE_FILE_MODE {
         ensure_private_file(&journal_path)?;
     }
-    let bytes = fs::read(&journal_path)
-        .map_err(|_| AppError::permission(&journal_path.to_string_lossy(), "read_journal"))?;
-    let journal: RunJournal = serde_json::from_slice(&bytes)
-        .map_err(|_| AppError::parse(&journal_path.to_string_lossy(), "journal"))?;
+    let journal = read_journal(&journal_path)?
+        .ok_or_else(|| AppError::parse(&journal_path.to_string_lossy(), "journal"))?;
     if journal.run_id != run_id {
         return Err(AppError::conflict(
             "journal",
@@ -4419,8 +4658,8 @@ pub fn preview_restore(
     snapshot_id: &str,
     allowed_root: &Path,
 ) -> Result<RestorePreview, AppError> {
-    paths.audit_permissions()?;
     let snapshot = load_snapshot_record(database, paths, snapshot_id, allowed_root, None)?;
+    paths.audit_run_scope([snapshot.run_id.as_str()])?;
     if matches!(&snapshot.state, PathState::Directory { .. })
         && snapshot.storage_kind != SnapshotStorageKind::DirectoryTree
     {
@@ -4605,7 +4844,7 @@ pub fn restore_snapshot(
     let _write_guard = write_operations
         .lock()
         .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "写入互斥锁不可用", false))?;
-    paths.audit_permissions()?;
+    paths.audit_run_scope([restore_preview_id])?;
     let preview = load_persisted_preview(database, restore_preview_id)?;
     if preview.items.len() != 1 {
         return Err(AppError::invalid_input(
@@ -4623,6 +4862,8 @@ pub fn restore_snapshot(
         return Err(AppError::stale_preview(restore_preview_id, "allowedRoot"));
     }
     let snapshot = load_snapshot_record(database, paths, snapshot_id, allowed_root, central_root)?;
+    // 被恢复快照所属的原 run 目录也在写作用域内（恢复会读它并可能清理临时项）。
+    paths.audit_run_scope([snapshot.run_id.as_str()])?;
     let database_path = database.path().to_string_lossy().into_owned();
     validate_restore_identity(
         database.connection(),
@@ -4731,6 +4972,7 @@ fn restore_claimed_snapshot(
             central_root,
             expected_before_fingerprint: &current_fingerprint,
             directory_tree_hash: None,
+            known_state: None,
         },
     )?;
     journal.targets.push(JournalTarget {
@@ -4819,7 +5061,7 @@ fn restore_claimed_snapshot(
         &mut journal,
         0,
         &mutation,
-        &second_snapshot.state.fingerprint(),
+        &second_snapshot.state,
         &NoApplyFault,
     ) {
         Ok(()) => vec![0],
@@ -4934,11 +5176,9 @@ fn cleanup_interrupted_temporaries(
     allowed_root: &Path,
 ) -> Result<(), AppError> {
     let journal_path = paths.journals().join(format!("{source_run_id}.json"));
-    let Ok(bytes) = fs::read(&journal_path) else {
+    let Some(mut journal) = read_journal(&journal_path).ok().flatten() else {
         return Ok(());
     };
-    let mut journal: RunJournal = serde_json::from_slice(&bytes)
-        .map_err(|_| AppError::parse(&journal_path.to_string_lossy(), "journal"))?;
     let mut changed = false;
     for target in &mut journal.targets {
         if Path::new(&target.target_path) != restored_target_path {
@@ -5089,18 +5329,9 @@ fn claim_restore(
 fn interrupted_run_matches_before_state(paths: &AppPaths, run_id: &str) -> Result<bool, AppError> {
     let journal_path = paths.journals().join(format!("{run_id}.json"));
     validate_allowed_path(&journal_path, paths.journals(), false)?;
-    let bytes = match fs::read(&journal_path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(_) => {
-            return Err(AppError::permission(
-                &journal_path.to_string_lossy(),
-                "read_source_journal",
-            ));
-        }
+    let Some(journal) = read_journal(&journal_path)? else {
+        return Ok(false);
     };
-    let journal: RunJournal = serde_json::from_slice(&bytes)
-        .map_err(|_| AppError::parse(&journal_path.to_string_lossy(), "journal"))?;
     if journal.run_id != run_id || journal.targets.is_empty() {
         return Ok(false);
     }
@@ -5223,6 +5454,7 @@ fn mutation_from_snapshot(
         } else {
             snapshot.state.fingerprint()
         },
+        before_state: None,
         mutation,
     })
 }
@@ -5393,6 +5625,7 @@ fn load_snapshot_record(
                         .5
                         .and_then(|mode| u32::try_from(mode).ok())
                         .ok_or_else(|| AppError::invalid_input("snapshot", "文件快照缺少 mode"))?,
+                    stat: StatSignature::default(),
                 }
             }
             "symlink" => {
@@ -5734,6 +5967,118 @@ mod tests {
             }
             ApplyFaultDecision::Continue
         }
+    }
+
+    /// 单个 WriteFile 目标一次 apply 的 IO 预算：目标文件完整读取 ≤ 2 次
+    /// （规划阶段 1 次 + 写后校验 1 次；快照与 rename 前后的复核走 lstat 签名），
+    /// 树审计只做 journals 作用域 1 次。fsync 统计见断言注释。
+    #[test]
+    fn single_write_file_apply_stays_within_io_budget() {
+        let mut fixture = Fixture::new();
+        let target = fixture.targets.join("budget.md");
+        fs::write(&target, "old").unwrap();
+        let descriptor = file_descriptor(&target, Scope::Global, None);
+        let request = insert_target_and_request(
+            &fixture.database,
+            &Uuid::new_v4().to_string(),
+            descriptor.clone(),
+            json!("new"),
+            None,
+            false,
+            None,
+        );
+        let preview_id =
+            persist_requests(&mut fixture.database, Scope::Global, None, vec![request]);
+        super::TARGET_READS.with(|count| count.set(0));
+        super::FSYNC_CALLS.with(|count| count.set(0));
+        crate::security::AUDIT_TREE_CALLS.with(|count| count.set(0));
+        apply_persisted_preview(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &preview_id,
+            &[input(descriptor, json!("new"), &fixture.targets)],
+            &NoApplyFault,
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        assert!(
+            super::TARGET_READS.with(std::cell::Cell::get) <= 2,
+            "目标文件完整读取次数：{}",
+            super::TARGET_READS.with(std::cell::Cell::get)
+        );
+        assert_eq!(
+            crate::security::AUDIT_TREE_CALLS.with(std::cell::Cell::get),
+            1
+        );
+        // journal 10 个阶段（claimed/snapshotted/applying/writing/rename_pending/renamed/
+        // written/verified/ready_to_finalize_database/succeeded）各 1 次 + journal 文件首次
+        // 创建的目录 fsync 1 + 快照根 1 + 快照文件 1 + run 目录 1 + 临时文件 1 + 目标父目录 1
+        // = 16。改动前 journal 每阶段走临时文件 + rename（3 次），合计约 36 次。
+        // 每个 journal 阶段都保持各自的 durability——它们是崩溃恢复证据，不能为了
+        // 数字再省。
+        assert!(
+            super::FSYNC_CALLS.with(std::cell::Cell::get) <= 16,
+            "fsync 次数：{}",
+            super::FSYNC_CALLS.with(std::cell::Cell::get)
+        );
+    }
+
+    /// 旧版本写的是整文件单个 pretty JSON 对象；升级后必须仍能识别中断 run，
+    /// 而恢复阶段追加的新行会成为最新状态。
+    #[test]
+    fn legacy_whole_object_journal_is_still_recognized_and_appended_to() {
+        let mut fixture = Fixture::new();
+        let target = fixture.targets.join("legacy.md");
+        fs::write(&target, "old").unwrap();
+        let descriptor = file_descriptor(&target, Scope::Global, None);
+        let request = insert_target_and_request(
+            &fixture.database,
+            &Uuid::new_v4().to_string(),
+            descriptor.clone(),
+            json!("new"),
+            None,
+            false,
+            None,
+        );
+        let preview_id =
+            persist_requests(&mut fixture.database, Scope::Global, None, vec![request]);
+        apply_persisted_preview(
+            &fixture.write_lock,
+            &mut fixture.database,
+            &fixture.paths,
+            &preview_id,
+            &[input(descriptor.clone(), json!("new"), &fixture.targets)],
+            &InjectFault {
+                target_index: 0,
+                phase: InjectPhase::AfterRename,
+                decision: ApplyFaultDecision::Crash,
+                sabotage: None,
+            },
+        )
+        .unwrap_err();
+        let journal_path = fixture.paths.journals().join(format!("{preview_id}.json"));
+        let appended = fs::read_to_string(&journal_path).unwrap();
+        assert!(appended.lines().count() > 1, "新格式应是多行追加记录");
+        let latest = super::read_journal(&journal_path).unwrap().unwrap();
+        assert_eq!(latest.targets[0].phase, "crashed_after_rename");
+
+        // 改写成旧格式：整文件一个 pretty-printed 对象。
+        fs::write(&journal_path, serde_json::to_vec_pretty(&latest).unwrap()).unwrap();
+        assert!(super::journal_reports_crash(&fixture.paths, &preview_id));
+        let recovery = detect_interrupted_run(&fixture.database, &fixture.paths)
+            .unwrap()
+            .expect("旧格式 journal 仍必须识别出中断 run");
+        assert_eq!(recovery.run_id, preview_id);
+        assert!(recovery.journal_available);
+        assert_eq!(recovery.targets.len(), 1);
+
+        // 在旧格式文件上追加新阶段：读取方取最新一行而不是旧对象。
+        let mut updated = latest.clone();
+        updated.phase = "rolled_back".to_owned();
+        super::persist_journal(&fixture.paths, &updated).unwrap();
+        let reread = super::read_journal(&journal_path).unwrap().unwrap();
+        assert_eq!(reread.phase, "rolled_back");
     }
 
     #[test]
@@ -6168,6 +6513,7 @@ mod tests {
                 central_root: None,
                 expected_before_fingerprint: &expected,
                 directory_tree_hash: None,
+                known_state: None,
             },
         )
         .unwrap_err();
@@ -7320,10 +7666,10 @@ mod tests {
             },
         )
         .unwrap_err();
-        let journal: super::RunJournal = serde_json::from_slice(
-            &fs::read(fixture.paths.journals().join(format!("{preview_id}.json"))).unwrap(),
-        )
-        .unwrap();
+        let journal =
+            super::read_journal(&fixture.paths.journals().join(format!("{preview_id}.json")))
+                .unwrap()
+                .expect("崩溃后必须留下 journal");
         let temporary = PathBuf::from(
             journal.targets[0]
                 .temporary_path

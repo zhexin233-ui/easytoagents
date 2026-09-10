@@ -27,6 +27,18 @@ without reading or deleting files under a registered project root.
   twice: once in domain validation and once with SQLite constraints/triggers.
 - Cross-table triggers must protect both `INSERT` and `UPDATE`; insert-only
   protection can be bypassed by changing a key after creation.
+- Use `prepare_cached` for every statement in `src/db/`; SQLite's statement cache
+  makes repeated list/lookup calls skip re-parsing.
+- List endpoints issue a constant number of statements: fetch the records, then one
+  aggregated query for the per-record relation (`global_tools_for_all_skills`,
+  `global_tools_for_all_mcp`, `global_assignments_for_all_hooks`) and assemble in
+  memory. Never call a per-id lookup inside a `map` over records. Row versions for a
+  set of ids come from one `WHERE id IN (...)` (`row_versions_by_id`).
+  `skills::service::tests::list_skills_issues_a_constant_number_of_sql_statements`
+  guards this with the rusqlite trace hook.
+- `hash_json` serializes the `serde_json::Value` directly; the crate must keep
+  `preserve_order` off so `Map` stays a `BTreeMap` with sorted keys
+  (`sync::tests::serde_json_serializes_object_keys_in_sorted_order`).
 
 ## Migrations
 

@@ -430,7 +430,10 @@ pub(crate) fn inspect_central_skill(
     stored_status: SkillStatus,
     include_content: bool,
 ) -> Result<CentralSkillInspection, AppError> {
-    let digest = match inspect_central_skill_tree(paths, id, name, central_path)? {
+    // 列表场景（不取正文）允许命中 stat 指纹缓存，避免每次列表都全树读哈希；
+    // 需要正文时总是完整读取并刷新缓存。
+    let digest = match inspect_central_skill_tree(paths, id, name, central_path, !include_content)?
+    {
         Ok(digest) => digest,
         Err(inspection) => return Ok(inspection),
     };
@@ -469,7 +472,7 @@ pub(crate) fn read_central_skill_for_adoption(
     name: &str,
     central_path: &str,
 ) -> Result<AdoptedCentralSkill, AppError> {
-    let digest = match inspect_central_skill_tree(paths, id, name, central_path)? {
+    let digest = match inspect_central_skill_tree(paths, id, name, central_path, false)? {
         Ok(digest) => digest,
         Err(inspection) => {
             return Err(conflict_from_central_inspection(inspection.diagnostic_code))
@@ -491,6 +494,7 @@ fn inspect_central_skill_tree(
     id: &str,
     name: &str,
     central_path: &str,
+    allow_cached_digest: bool,
 ) -> Result<Result<TreeDigest, CentralSkillInspection>, AppError> {
     let path = Path::new(central_path);
     validate_central_skill_directory(path, paths.central_skills(), id, name)?;
@@ -532,7 +536,7 @@ fn inspect_central_skill_tree(
             skill_md: None,
         }));
     }
-    match digest_tree(path, None) {
+    match digest_tree_cached(path, allow_cached_digest) {
         Ok(digest) => Ok(Ok(digest)),
         Err(error) if error.code() == crate::error::ErrorCode::PermissionDenied => Err(error),
         Err(_) => Ok(Err(CentralSkillInspection {
@@ -542,6 +546,133 @@ fn inspect_central_skill_tree(
             skill_md: None,
         })),
     }
+}
+
+#[derive(Clone)]
+struct CachedTreeDigest {
+    stat_fingerprint: String,
+    hash: String,
+    files: Vec<String>,
+}
+
+/// 中央 Skill 目录树摘要缓存：键为 canonical 路径，值绑定整棵树的 stat 指纹
+/// （每个条目的相对路径、类型、大小、mtime 纳秒、权限位、链接目标）。任何文件
+/// 变动都会改变 mtime/size，从而自然失效；只有"同一纳秒内等长改写"才可能命中
+/// 陈旧项，而 Apply/接管路径总是重新完整校验树哈希，不依赖这里的结果。
+static TREE_DIGEST_CACHE: std::sync::Mutex<
+    std::collections::BTreeMap<std::path::PathBuf, CachedTreeDigest>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+#[cfg(test)]
+thread_local! {
+    /// 测试用：统计完整树摘要（读全部文件内容）的次数。
+    pub(crate) static FULL_DIGEST_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn clear_tree_digest_cache() {
+    TREE_DIGEST_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+}
+
+fn digest_tree_cached(path: &Path, allow_cached: bool) -> Result<TreeDigest, AppError> {
+    let stat_fingerprint = tree_stat_fingerprint(path)?;
+    if allow_cached {
+        let cache = TREE_DIGEST_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cached) = cache.get(path) {
+            if cached.stat_fingerprint == stat_fingerprint {
+                return Ok(TreeDigest {
+                    hash: cached.hash.clone(),
+                    files: cached.files.clone(),
+                    skill_md: None,
+                });
+            }
+        }
+    }
+    #[cfg(test)]
+    FULL_DIGEST_CALLS.with(|count| count.set(count.get() + 1));
+    let digest = digest_tree(path, None)?;
+    TREE_DIGEST_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(
+            path.to_path_buf(),
+            CachedTreeDigest {
+                stat_fingerprint,
+                hash: digest.hash.clone(),
+                files: digest.files.clone(),
+            },
+        );
+    Ok(digest)
+}
+
+/// 只读 lstat 的树指纹：不打开任何文件内容。遍历上限与完整摘要一致。
+fn tree_stat_fingerprint(root: &Path) -> Result<String, AppError> {
+    let mut hasher = Sha256::new();
+    let mut entries = 0_usize;
+    stat_walk(root, Path::new(""), 0, &mut hasher, &mut entries)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn stat_walk(
+    root: &Path,
+    relative: &Path,
+    depth: usize,
+    hasher: &mut Sha256,
+    entries: &mut usize,
+) -> Result<(), AppError> {
+    if depth > MAX_DEPTH {
+        return Err(AppError::invalid_input("sourcePath", "Skill 目录层级过深"));
+    }
+    let directory = root.join(relative);
+    let mut names = fs::read_dir(&directory)
+        .map_err(|error| map_read_error(error, &directory, "read_skill_directory"))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| map_read_error(error, &directory, "read_skill_directory_entry"))?;
+    names.sort();
+    for name in names {
+        *entries += 1;
+        if *entries > MAX_FILES {
+            return Err(AppError::invalid_input(
+                "sourcePath",
+                "Skill 文件数量超出限制",
+            ));
+        }
+        let child_relative = relative.join(&name);
+        let child = root.join(&child_relative);
+        let metadata = fs::symlink_metadata(&child)
+            .map_err(|error| map_read_error(error, &child, "lstat_skill_entry"))?;
+        let file_type = metadata.file_type();
+        let kind: u8 = if file_type.is_symlink() {
+            b'L'
+        } else if file_type.is_dir() {
+            b'D'
+        } else if file_type.is_file() {
+            b'F'
+        } else {
+            b'S'
+        };
+        hasher.update([kind]);
+        hasher.update(child_relative.as_os_str().as_bytes());
+        hasher.update([0]);
+        hasher.update(metadata.len().to_be_bytes());
+        hasher.update((metadata.mode() & 0o7777).to_be_bytes());
+        hasher.update(metadata.mtime().to_be_bytes());
+        hasher.update(metadata.mtime_nsec().to_be_bytes());
+        if file_type.is_symlink() {
+            let target = fs::read_link(&child)
+                .map_err(|error| map_read_error(error, &child, "read_skill_link"))?;
+            hasher.update(target.as_os_str().as_bytes());
+        } else if file_type.is_dir() {
+            stat_walk(root, &child_relative, depth + 1, hasher, entries)?;
+        }
+    }
+    Ok(())
 }
 
 fn conflict_from_central_inspection(diagnostic_code: Option<&'static str>) -> AppError {

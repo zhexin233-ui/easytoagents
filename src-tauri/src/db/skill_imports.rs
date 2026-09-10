@@ -62,7 +62,7 @@ pub(crate) fn get_preview(
 
 pub(crate) fn state_fingerprint(connection: &Connection) -> Result<String, AppError> {
     let mut statement = connection
-        .prepare("SELECT id, row_version FROM skills ORDER BY id")
+        .prepare_cached("SELECT id, row_version FROM skills ORDER BY id")
         .map_err(|_| AppError::database("skills", "read_skill_import_state"))?;
     let rows = statement
         .query_map([], |row| {

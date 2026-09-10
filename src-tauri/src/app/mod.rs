@@ -71,16 +71,36 @@ impl AppPaths {
         )
     }
 
+    /// 启动期一次性：建齐私有目录并对整棵数据树做权限审计。全树审计会递归
+    /// `chmod` + `canonicalize` 每个快照与 Skill 文件，只应在 `AppState` 初始化时跑一次。
     pub fn initialize(&self) -> Result<(), AppError> {
-        for directory in self.private_directories() {
-            ensure_private_directory(directory)?;
-        }
+        self.ensure_directories()?;
         audit_private_tree(&self.data_root)?;
         Ok(())
     }
 
-    pub fn audit_permissions(&self) -> Result<(), AppError> {
-        audit_private_tree(&self.data_root).map(|_| ())
+    /// 只保证私有目录存在（幂等、廉价），不做全树审计；供 `Database::open` 等复用。
+    pub fn ensure_directories(&self) -> Result<(), AppError> {
+        for directory in self.private_directories() {
+            ensure_private_directory(directory)?;
+        }
+        Ok(())
+    }
+
+    /// 写路径的作用域审计：只覆盖 `journals/` 与给定 run 的 `snapshots/<run_id>/`，
+    /// 不再每次 apply/restore 都遍历全部历史快照与中央 Skill 库。
+    pub fn audit_run_scope<'a>(
+        &self,
+        run_ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), AppError> {
+        audit_private_tree(&self.journals)?;
+        for run_id in run_ids {
+            let run_directory = self.snapshots.join(run_id);
+            if fs::symlink_metadata(&run_directory).is_ok() {
+                audit_private_tree(&run_directory)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn data_root(&self) -> &Path {
@@ -212,10 +232,10 @@ impl AppState {
         environment_ready: Option<EnvironmentReadyNotifier>,
         github_proxy: Option<String>,
     ) -> Result<Self, AppError> {
+        // 唯一的全树审计：`Database::open` 与写路径都只做作用域内审计。
         paths.initialize()?;
         let mut database = Database::open(&paths)?;
         migrate_legacy_central_skill_directories(&mut database, &paths)?;
-        paths.audit_permissions()?;
         // 中断的同步等待用户显式回滚；对账只处理无活动写入者的记账漂移。
         // 中断状态不缓存在 AppState 里：`get_interrupted_run` 与 `restore_snapshot`
         // 每次都从 sync_runs 重新检测，缓存副本从未被读取，只会随时间陈旧。
@@ -442,6 +462,20 @@ mod tests {
         symlink(&outside, &linked).unwrap();
 
         assert!(AppPaths::from_data_root(linked.join("private-data")).is_err());
+    }
+
+    #[test]
+    fn startup_runs_exactly_one_full_tree_audit() {
+        let temporary = tempdir().unwrap();
+        let isolated_root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(isolated_root.join("audit-budget-data")).unwrap();
+        crate::security::AUDIT_TREE_CALLS.with(|count| count.set(0));
+        let _state = AppState::initialize(paths).unwrap();
+        // `AppPaths::initialize` 一次；`Database::open` 与其它初始化步骤不再重复全树审计。
+        assert_eq!(
+            crate::security::AUDIT_TREE_CALLS.with(std::cell::Cell::get),
+            1
+        );
     }
 
     #[test]

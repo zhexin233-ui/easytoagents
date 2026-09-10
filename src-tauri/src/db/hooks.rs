@@ -42,7 +42,7 @@ pub fn list_hooks(database: &Database) -> Result<Vec<HookRecord>, AppError> {
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(&format!(
+        .prepare_cached(&format!(
             "SELECT {HOOK_COLUMNS} FROM hooks ORDER BY name COLLATE NOCASE, id"
         ))
         .map_err(|_| AppError::database(&path, "prepare_list_hooks"))?;
@@ -188,6 +188,48 @@ pub fn delete_hook(
 }
 
 /// 该 Hook 的全局分配列表：(工具, 生效事件)。事件随分配存储（迁移 0016）。
+/// 一条语句取回全部 Hook 的全局分配（工具 + 生效事件），供列表接口一次组装。
+pub fn global_assignments_for_all_hooks(
+    database: &Database,
+) -> Result<std::collections::BTreeMap<String, Vec<(Tool, HookEvent)>>, AppError> {
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached(
+            "SELECT hook_id, tool, event FROM hook_global_assignments ORDER BY hook_id, tool",
+        )
+        .map_err(|_| AppError::database(&path, "prepare_all_hook_global_tools"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                tool_from_database(row.get(1)?)?,
+                event_from_database(row.get(2)?)?,
+            ))
+        })
+        .map_err(|_| AppError::database(&path, "query_all_hook_global_tools"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| AppError::database(&path, "decode_all_hook_global_tools"))?;
+    let mut grouped = std::collections::BTreeMap::<String, Vec<(Tool, HookEvent)>>::new();
+    for (hook_id, tool, event) in rows {
+        grouped.entry(hook_id).or_default().push((tool, event));
+    }
+    Ok(grouped)
+}
+
+pub(crate) fn hook_row_versions(
+    database: &Database,
+    ids: &[&str],
+) -> Result<std::collections::BTreeMap<String, i64>, AppError> {
+    super::skills::row_versions_by_id(
+        database.connection(),
+        &database.path().to_string_lossy(),
+        "hooks",
+        ids,
+        "hook_row_versions",
+    )
+}
+
 pub fn global_assignments_for_hook(
     database: &Database,
     hook_id: &str,
@@ -195,7 +237,7 @@ pub fn global_assignments_for_hook(
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT tool, event FROM hook_global_assignments
              WHERE hook_id = ?1 ORDER BY tool",
         )
@@ -402,7 +444,7 @@ pub fn list_assigned_hooks(
     };
     let mut statement = database
         .connection()
-        .prepare(sql)
+        .prepare_cached(sql)
         .map_err(|_| AppError::database(&path, "prepare_list_assigned_hooks"))?;
     let records = statement
         .query_map(
@@ -424,7 +466,7 @@ pub fn project_assignment_events(
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT hook_id, event FROM hook_project_assignments
              WHERE project_id = ?1 AND tool = ?2",
         )
@@ -469,7 +511,7 @@ pub fn list_managed_hook_items(
     let path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, resource_id, external_key, last_applied_item_hash, row_version
              FROM managed_items
              WHERE target_id = ?1 AND resource_kind = 'hook'

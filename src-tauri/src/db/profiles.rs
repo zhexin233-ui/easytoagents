@@ -262,7 +262,7 @@ pub fn list_provider_profiles(
     let database_path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, tool, name, api_base_url, api_key, default_model, config_json,
                     is_active, row_version
              FROM provider_profiles WHERE tool = ?1
@@ -459,7 +459,7 @@ pub fn list_prompt_profiles(database: &Database) -> Result<Vec<PromptProfileReco
     let database_path = database.path().to_string_lossy();
     let mut statement = database
         .connection()
-        .prepare(
+        .prepare_cached(
             "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode,
                     is_active_cursor, is_active_opencode, imported_from_path, row_version
              FROM prompt_profiles

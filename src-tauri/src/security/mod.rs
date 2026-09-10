@@ -448,8 +448,16 @@ pub fn ensure_private_file(path: &Path) -> Result<(), AppError> {
         .map_err(|_| permission_error(path, "set_file_permissions"))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// 测试用：统计树审计被调用的次数，守住"启动一次、写路径只审计作用域"的预算。
+    pub(crate) static AUDIT_TREE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// 审计并修复应用私有树：目录 `0700`、普通文件 `0600`，拒绝链接和特殊文件。
 pub fn audit_private_tree(root: &Path) -> Result<Vec<PermissionEntry>, AppError> {
+    #[cfg(test)]
+    AUDIT_TREE_CALLS.with(|count| count.set(count.get() + 1));
     reject_symlink_components(root)?;
     let mut entries = Vec::new();
     let mut visited = HashSet::new();

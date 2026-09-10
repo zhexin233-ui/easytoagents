@@ -1,13 +1,19 @@
 //! 公开 GitHub 单目录 Skill 的固定提交、受限下载边界。
 
 use std::{
+    collections::HashMap,
     fs::{self, OpenOptions},
     io::Write,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex, OnceLock, PoisonError,
+    },
     time::{Duration, Instant},
 };
 
+use futures_util::StreamExt;
 use percent_encoding::percent_decode_str;
 use reqwest::{header, redirect::Policy, Client, Proxy, Response, StatusCode, Url};
 use serde::Deserialize;
@@ -104,13 +110,45 @@ struct DownloadFile {
     expected_size: u64,
 }
 
+/// 单次导入内并发下载的文件数。GitHub raw 对单 IP 的并发很宽松，6 路足以把
+/// 数十个小文件的往返时间摊平，又不会触发限流。
+const DOWNLOAD_CONCURRENCY: usize = 6;
+
 struct GithubDownloader {
     client: Client,
     api_base: Url,
     raw_base: Url,
     deadline: Instant,
-    requests: usize,
-    metadata_bytes: usize,
+    requests: AtomicUsize,
+    metadata_bytes: AtomicUsize,
+}
+
+/// 按代理配置复用 `reqwest::Client`（内部连接池）；`Client` 是 `Arc` 句柄，clone 廉价。
+fn shared_client(proxy: Option<&str>) -> Result<Client, AppError> {
+    static CLIENTS: OnceLock<Mutex<HashMap<Option<String>, Client>>> = OnceLock::new();
+    let proxy = proxy
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let clients = CLIENTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut clients = clients.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(client) = clients.get(&proxy) {
+        return Ok(client.clone());
+    }
+    let mut client_builder = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(Policy::none())
+        // 避免 macOS headless/沙箱中读取系统动态代理存储；只使用显式注入的代理。
+        .no_proxy();
+    if let Some(proxy) = proxy.as_deref() {
+        client_builder = client_builder.proxy(
+            Proxy::all(proxy)
+                .map_err(|_| AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 配置无效"))?,
+        );
+    }
+    let client = client_builder.build().map_err(|_| download_error())?;
+    clients.insert(proxy, client.clone());
+    Ok(client)
 }
 
 /// `proxy` 由调用方显式注入（发布进程在 setup 里从 shell 环境读一次），
@@ -120,51 +158,52 @@ pub(crate) async fn download_github_skill(
     proxy: Option<&str>,
 ) -> Result<DownloadedGithubSkill, AppError> {
     let link = parse_github_tree_link(input)?;
-    let mut client_builder = Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .redirect(Policy::none())
-        // 避免 macOS headless/沙箱中读取系统动态代理存储；只使用显式注入的代理。
-        .no_proxy();
-    if let Some(proxy) = proxy.map(str::trim).filter(|value| !value.is_empty()) {
-        client_builder = client_builder.proxy(
-            Proxy::all(proxy)
-                .map_err(|_| AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 配置无效"))?,
-        );
-    }
-    let client = client_builder.build().map_err(|_| download_error())?;
-    let mut downloader = GithubDownloader {
-        client,
+    let downloader = GithubDownloader {
+        client: shared_client(proxy)?,
         api_base: Url::parse(GITHUB_API).map_err(|_| download_error())?,
         raw_base: Url::parse(GITHUB_RAW).map_err(|_| download_error())?,
         deadline: Instant::now() + OVERALL_TIMEOUT,
-        requests: 0,
-        metadata_bytes: 0,
+        requests: AtomicUsize::new(0),
+        metadata_bytes: AtomicUsize::new(0),
     };
     downloader.download(link).await
 }
 
 impl GithubDownloader {
-    async fn download(&mut self, link: GithubTreeLink) -> Result<DownloadedGithubSkill, AppError> {
+    async fn download(&self, link: GithubTreeLink) -> Result<DownloadedGithubSkill, AppError> {
         let resolved = self.resolve(link).await?;
         let subtree_sha = self.find_subtree(&resolved).await?;
         let files = self.list_files_for(&resolved, &subtree_sha).await?;
-        let directory = tempfile::Builder::new()
-            .prefix("easytoagents-github-skill-")
-            .tempdir()
-            .map_err(|_| download_error())?;
-        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
-            .map_err(|_| download_error())?;
-        for file in &files {
-            self.download_file(&resolved, file, directory.path())
-                .await?;
+        // 文件并发下载到内存（总量已由 validate_tree_files 限定在 MAX_TOTAL_BYTES 内），
+        // 任一文件失败即整体失败，此时尚未创建任何目录，无需回滚。
+        // 用显式的 FuturesUnordered 维持并发窗口，而不是 `stream::map` 闭包：
+        // 闭包推导出的高阶生命周期会让 Tauri async 命令的 `FnOnce` 约束报
+        // "implementation is not general enough"。
+        let mut queue = files.iter();
+        let mut pending = futures_util::stream::FuturesUnordered::new();
+        for file in queue.by_ref().take(DOWNLOAD_CONCURRENCY) {
+            pending.push(self.download_file(&resolved, file));
         }
+        let mut contents = Vec::with_capacity(files.len());
+        while let Some(downloaded) = pending.next().await {
+            contents.push(downloaded?);
+            if let Some(file) = queue.next() {
+                pending.push(self.download_file(&resolved, file));
+            }
+        }
+        drop(pending);
+        // 落盘是同步阻塞 IO（create_new + fsync），交给阻塞线程池而不是 tokio worker。
+        let directory =
+            tauri::async_runtime::spawn_blocking(move || write_downloaded_files(contents))
+                .await
+                .map_err(|_| download_error())??;
         Ok(DownloadedGithubSkill {
             directory,
             normalized_url: resolved.normalized_url,
         })
     }
 
-    async fn resolve(&mut self, link: GithubTreeLink) -> Result<ResolvedGithubTree, AppError> {
+    async fn resolve(&self, link: GithubTreeLink) -> Result<ResolvedGithubTree, AppError> {
         let max_split = link.ambiguous_segments.len().saturating_sub(1);
         if max_split == 0 || link.ambiguous_segments.len() > MAX_DEPTH + MAX_REF_CANDIDATES {
             return Err(AppError::invalid_input(
@@ -216,7 +255,7 @@ impl GithubDownloader {
         Err(AppError::not_found("githubSkill", "GitHub ref 或目录"))
     }
 
-    async fn find_subtree(&mut self, resolved: &ResolvedGithubTree) -> Result<String, AppError> {
+    async fn find_subtree(&self, resolved: &ResolvedGithubTree) -> Result<String, AppError> {
         let mut tree_sha = resolved.root_tree_sha.clone();
         for segment in &resolved.directory {
             let endpoint = api_url(
@@ -249,7 +288,7 @@ impl GithubDownloader {
     }
 
     async fn list_files_for(
-        &mut self,
+        &self,
         resolved: &ResolvedGithubTree,
         subtree_sha: &str,
     ) -> Result<Vec<DownloadFile>, AppError> {
@@ -271,11 +310,10 @@ impl GithubDownloader {
     }
 
     async fn download_file(
-        &mut self,
+        &self,
         resolved: &ResolvedGithubTree,
         file: &DownloadFile,
-        destination_root: &Path,
-    ) -> Result<(), AppError> {
+    ) -> Result<(PathBuf, Vec<u8>), AppError> {
         let mut path_segments = vec![
             resolved.owner.clone(),
             resolved.repository.clone(),
@@ -290,24 +328,13 @@ impl GithubDownloader {
         if bytes.len() as u64 != file.expected_size {
             return Err(download_error());
         }
-        let destination = destination_root.join(&file.relative);
-        if let Some(parent) = destination.parent() {
-            create_private_directories(destination_root, parent)?;
-        }
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&destination)
-            .map_err(|_| download_error())?;
-        output.write_all(&bytes).map_err(|_| download_error())?;
-        output.sync_all().map_err(|_| download_error())?;
-        Ok(())
+        Ok((file.relative.clone(), bytes))
     }
 
-    async fn request(&mut self, url: Url, allow_not_found: bool) -> Result<Response, AppError> {
-        self.requests = self.requests.checked_add(1).ok_or_else(download_error)?;
-        if self.requests > MAX_REQUESTS {
+    async fn request(&self, url: Url, allow_not_found: bool) -> Result<Response, AppError> {
+        // fetch_add 返回旧值；并发调用下每个请求拿到唯一序号，超限判断保持严格。
+        let request_index = self.requests.fetch_add(1, Ordering::SeqCst);
+        if request_index >= MAX_REQUESTS {
             return Err(AppError::invalid_input(
                 "url",
                 "GitHub 下载请求数量超出限制",
@@ -357,19 +384,45 @@ impl GithubDownloader {
     }
 
     async fn read_json<T: for<'de> Deserialize<'de>>(
-        &mut self,
+        &self,
         response: Response,
     ) -> Result<T, AppError> {
         let bytes = read_limited(response, MAX_METADATA_RESPONSE_BYTES).await?;
-        self.metadata_bytes = self
+        let total = self
             .metadata_bytes
+            .fetch_add(bytes.len(), Ordering::SeqCst)
             .checked_add(bytes.len())
             .ok_or_else(download_error)?;
-        if self.metadata_bytes > MAX_METADATA_TOTAL_BYTES {
+        if total > MAX_METADATA_TOTAL_BYTES {
             return Err(AppError::invalid_input("url", "GitHub 元数据大小超出限制"));
         }
         serde_json::from_slice(&bytes).map_err(|_| download_error())
     }
+}
+
+/// 把已下载的文件一次性写入新的私有临时目录（0700 目录、0600 文件、逐文件 fsync）。
+fn write_downloaded_files(contents: Vec<(PathBuf, Vec<u8>)>) -> Result<TempDir, AppError> {
+    let directory = tempfile::Builder::new()
+        .prefix("easytoagents-github-skill-")
+        .tempdir()
+        .map_err(|_| download_error())?;
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .map_err(|_| download_error())?;
+    for (relative, bytes) in contents {
+        let destination = directory.path().join(&relative);
+        if let Some(parent) = destination.parent() {
+            create_private_directories(directory.path(), parent)?;
+        }
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&destination)
+            .map_err(|_| download_error())?;
+        output.write_all(&bytes).map_err(|_| download_error())?;
+        output.sync_all().map_err(|_| download_error())?;
+    }
+    Ok(directory)
 }
 
 fn validate_tree_files(tree: TreeResponse) -> Result<Vec<DownloadFile>, AppError> {
@@ -647,7 +700,11 @@ mod tests {
         fs,
         io::{Read, Write},
         net::TcpListener,
-        sync::{Arc, Mutex},
+        os::unix::fs::PermissionsExt,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
         thread,
         time::{Duration, Instant},
     };
@@ -660,7 +717,9 @@ mod tests {
         validate_remote_relative_path, validate_tree_files, GithubDownloader, TreeEntry,
         TreeResponse, OVERALL_TIMEOUT,
     };
-    use crate::{app::AppPaths, db::Database, skills::import_downloaded_github_skill};
+    use crate::{
+        app::AppPaths, db::Database, error::ErrorCode, skills::import_downloaded_github_skill,
+    };
 
     #[test]
     fn parses_public_tree_link_without_guessing_ref_boundary() {
@@ -806,13 +865,13 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        let mut downloader = GithubDownloader {
+        let downloader = GithubDownloader {
             client,
             api_base: base.clone(),
             raw_base: base,
             deadline: Instant::now() + OVERALL_TIMEOUT,
-            requests: 0,
-            metadata_bytes: 0,
+            requests: AtomicUsize::new(0),
+            metadata_bytes: AtomicUsize::new(0),
         };
 
         let downloaded = tauri::async_runtime::block_on(downloader.download(
@@ -835,6 +894,212 @@ mod tests {
             .iter()
             .filter(|request| request.starts_with("/acme/repo/"))
             .all(|request| request.contains(&commit_sha) && !request.contains("/main/")));
+        Ok(())
+    }
+
+    fn tree_fixture_responses(commit_sha: &str, files: &[(&str, &[u8])]) -> Vec<(String, Vec<u8>)> {
+        let root_tree_sha = "a".repeat(40);
+        let subtree_sha = "b".repeat(40);
+        let entries = files
+            .iter()
+            .enumerate()
+            .map(|(index, (path, body))| {
+                format!(
+                    r#"{{"path":"{path}","mode":"100644","type":"blob","sha":"{}","size":{}}}"#,
+                    format!("{index:x}").repeat(40)[..40].to_owned(),
+                    body.len()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut responses = vec![
+            (
+                "/repos/acme/repo/commits/main".to_owned(),
+                format!(
+                    r#"{{"sha":"{commit_sha}","commit":{{"tree":{{"sha":"{root_tree_sha}"}}}}}}"#,
+                )
+                .into_bytes(),
+            ),
+            (
+                format!("/repos/acme/repo/git/trees/{root_tree_sha}"),
+                format!(
+                    r#"{{"tree":[{{"path":"demo","mode":"040000","type":"tree","sha":"{subtree_sha}"}}],"truncated":false}}"#,
+                )
+                .into_bytes(),
+            ),
+            (
+                format!("/repos/acme/repo/git/trees/{subtree_sha}?recursive=1"),
+                format!(r#"{{"tree":[{entries}],"truncated":false}}"#).into_bytes(),
+            ),
+        ];
+        for (path, body) in files {
+            responses.push((
+                format!("/acme/repo/{commit_sha}/demo/{path}"),
+                body.to_vec(),
+            ));
+        }
+        responses
+    }
+
+    fn local_downloader(base: Url) -> GithubDownloader {
+        GithubDownloader {
+            client: Client::builder()
+                .redirect(Policy::none())
+                .no_proxy()
+                .build()
+                .unwrap(),
+            api_base: base.clone(),
+            raw_base: base,
+            deadline: Instant::now() + OVERALL_TIMEOUT,
+            requests: AtomicUsize::new(0),
+            metadata_bytes: AtomicUsize::new(0),
+        }
+    }
+
+    /// 每个连接在独立线程上处理并故意停留一段时间，记录同时在途的最大连接数。
+    fn spawn_slow_http_fixture(
+        responses: Vec<(String, Vec<u8>)>,
+        hold: Duration,
+    ) -> (Url, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let peak = Arc::new(AtomicUsize::new(0));
+        let observed_peak = Arc::clone(&peak);
+        let responses = Arc::new(responses);
+        let server = thread::spawn(move || {
+            let in_flight = Arc::new(AtomicUsize::new(0));
+            let mut workers = Vec::new();
+            for _ in 0..responses.len() {
+                let (mut stream, _) = listener.accept().unwrap();
+                let responses = Arc::clone(&responses);
+                let in_flight = Arc::clone(&in_flight);
+                let observed_peak = Arc::clone(&observed_peak);
+                workers.push(thread::spawn(move || {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    observed_peak.fetch_max(now, Ordering::SeqCst);
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    let mut chunk = [0_u8; 1024];
+                    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let read = stream.read(&mut chunk).unwrap();
+                        if read == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&chunk[..read]);
+                    }
+                    let request = String::from_utf8(request).unwrap();
+                    let path = request.split_whitespace().nth(1).unwrap().to_owned();
+                    let body = responses
+                        .iter()
+                        .find_map(|(expected, body)| (expected == &path).then_some(body.as_slice()))
+                        .unwrap_or_default()
+                        .to_vec();
+                    if path.starts_with("/acme/repo/") {
+                        thread::sleep(hold);
+                    }
+                    let status = if body.is_empty() {
+                        "404 Not Found"
+                    } else {
+                        "200 OK"
+                    };
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .unwrap();
+                    stream.write_all(&body).unwrap();
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                }));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+        });
+        (
+            Url::parse(&format!("http://{address}/")).unwrap(),
+            peak,
+            server,
+        )
+    }
+
+    #[test]
+    fn files_download_concurrently_and_land_in_one_private_directory(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let commit_sha = "c".repeat(40);
+        let files: Vec<(String, Vec<u8>)> = (0..8)
+            .map(|index| {
+                (
+                    if index == 0 {
+                        "SKILL.md".to_owned()
+                    } else {
+                        format!("references/file-{index}.txt")
+                    },
+                    format!("payload-{index}").into_bytes(),
+                )
+            })
+            .collect();
+        let file_refs = files
+            .iter()
+            .map(|(path, body)| (path.as_str(), body.as_slice()))
+            .collect::<Vec<_>>();
+        let (base, peak, server) = spawn_slow_http_fixture(
+            tree_fixture_responses(&commit_sha, &file_refs),
+            Duration::from_millis(150),
+        );
+        let downloader = local_downloader(base);
+        let started = Instant::now();
+        let downloaded = tauri::async_runtime::block_on(downloader.download(
+            parse_github_tree_link("https://github.com/acme/repo/tree/main/demo")?,
+        ))?;
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        // 8 个文件各停留 150ms：串行至少 1.2s，6 路并发应当明显更快。
+        assert!(
+            peak.load(Ordering::SeqCst) >= 2,
+            "峰值并发连接数：{}",
+            peak.load(Ordering::SeqCst)
+        );
+        assert!(elapsed < Duration::from_millis(1_000), "耗时：{elapsed:?}");
+        for (path, body) in &files {
+            assert_eq!(fs::read(downloaded.path().join(path))?, *body);
+        }
+        assert_eq!(
+            fs::metadata(downloaded.path())?.permissions().mode() & 0o777,
+            0o700
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_file_fails_the_whole_download_before_any_file_is_written(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let commit_sha = "c".repeat(40);
+        let files: Vec<(&str, &[u8])> = vec![
+            ("SKILL.md", b"---\nname: x\ndescription: y\n---\nbody"),
+            ("references/present.txt", b"present"),
+            ("references/missing.txt", b"never served"),
+        ];
+        let mut responses = tree_fixture_responses(&commit_sha, &files);
+        // 让第三个文件 404：fixture 用空 body 表示 404。
+        let missing = format!("/acme/repo/{commit_sha}/demo/references/missing.txt");
+        for (path, body) in &mut responses {
+            if *path == missing {
+                body.clear();
+            }
+        }
+        let (base, _peak, server) = spawn_slow_http_fixture(responses, Duration::from_millis(20));
+        let downloader = local_downloader(base);
+        let error = tauri::async_runtime::block_on(downloader.download(parse_github_tree_link(
+            "https://github.com/acme/repo/tree/main/demo",
+        )?))
+        .unwrap_err();
+        server.join().unwrap();
+        // 任一文件失败即整体失败；目录只在全部文件下载成功后才创建，
+        // 所以失败路径不会留下半成品（见 `download` 的写盘顺序）。
+        assert_eq!(error.code(), ErrorCode::NotFound);
         Ok(())
     }
 

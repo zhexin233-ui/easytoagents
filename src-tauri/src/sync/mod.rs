@@ -18,7 +18,7 @@ use std::{
 
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use specta::Type;
 use uuid::Uuid;
@@ -192,7 +192,7 @@ pub fn scan_target(
         Err(_) => return TargetScan::ParseError,
     };
     let managed_projection = match adapter.project_managed(&document, ownership) {
-        Ok(projection) => canonical_json(&projection),
+        Ok(projection) => projection,
         Err(_) => return TargetScan::ParseError,
     };
     let managed_hash = hash_json(&managed_projection);
@@ -308,25 +308,11 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// `serde_json::Map` 在本 crate 未开启 `preserve_order`，底层是 `BTreeMap`，
+/// 序列化天然按键有序；不再深拷贝重建对象再序列化。
+/// `tests::serde_json_serializes_object_keys_in_sorted_order` 守住这个前提。
 pub fn hash_json(value: &Value) -> String {
-    hash_bytes(
-        &serde_json::to_vec(&canonical_json(value)).expect("serde_json::Value 必须始终可以序列化"),
-    )
-}
-
-pub(crate) fn canonical_json(value: &Value) -> Value {
-    match value {
-        Value::Object(object) => Value::Object(
-            object
-                .iter()
-                .map(|(key, value)| (key.clone(), canonical_json(value)))
-                .collect::<BTreeMap<_, _>>()
-                .into_iter()
-                .collect::<Map<_, _>>(),
-        ),
-        Value::Array(values) => Value::Array(values.iter().map(canonical_json).collect()),
-        _ => value.clone(),
-    }
+    hash_bytes(&serde_json::to_vec(value).expect("serde_json::Value 必须始终可以序列化"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -675,7 +661,7 @@ pub fn build_preview_plan(
             ),
             _ => (None, None, Value::Null),
         };
-        let desired_projection = canonical_json(&request.desired_projection);
+        let desired_projection = request.desired_projection.clone();
         let desired_hash = hash_json(&desired_projection);
         let current_matches_desired = current_managed_hash.as_ref() == Some(&desired_hash);
 
@@ -1288,6 +1274,24 @@ mod tests {
                 claude_customization_policy_probe: &ConservativeClaudeCustomizationPolicyProbe,
             })
             .unwrap()
+    }
+
+    /// `hash_json` 直接序列化 `Value`，依赖 serde_json 未开启 `preserve_order`
+    /// （`Map` 为 `BTreeMap`）。一旦有人打开该特性，这里会首先失败。
+    #[test]
+    fn serde_json_serializes_object_keys_in_sorted_order() {
+        let value = json!({ "b": 1, "a": { "z": true, "m": [3, { "y": 1, "x": 2 }] } });
+        assert_eq!(
+            serde_json::to_string(&value).unwrap(),
+            r#"{"a":{"m":[3,{"x":2,"y":1}],"z":true},"b":1}"#
+        );
+        let mut reordered = serde_json::Map::new();
+        reordered.insert("b".to_owned(), json!(1));
+        reordered.insert("a".to_owned(), json!(2));
+        assert_eq!(
+            super::hash_json(&serde_json::Value::Object(reordered)),
+            super::hash_json(&json!({"a": 2, "b": 1}))
+        );
     }
 
     #[test]
