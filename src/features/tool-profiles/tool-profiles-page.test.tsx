@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -127,9 +128,11 @@ function renderPage(tool: ProviderProfileDto["tool"] = "claude") {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <ToolProfilesPage tool={tool} />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={[`/${tool}`]}>
+      <QueryClientProvider client={client}>
+        <ToolProfilesPage tool={tool} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -229,9 +232,10 @@ describe("ToolProfilesPage", () => {
     expect(
       screen.queryByRole("button", { name: "新增渠道" }),
     ).not.toBeInTheDocument();
+    // 走 react-router 的 Link，而不是写死 hash 地址；MemoryRouter 下 href 为路由路径。
     expect(screen.getByRole("link", { name: "管理提示词" })).toHaveAttribute(
       "href",
-      "#/prompts",
+      "/prompts",
     );
     expect(commands.listProviderProfiles).not.toHaveBeenCalled();
     expect(commands.createProviderProfile).not.toHaveBeenCalled();

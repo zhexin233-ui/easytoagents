@@ -355,6 +355,7 @@ function renderPage() {
       <QueryClientProvider client={client}>
         <Routes>
           <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+          <Route path="/projects" element={<p>项目列表路由已渲染</p>} />
         </Routes>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -1024,6 +1025,54 @@ describe("ProjectDetailPage", () => {
 
     fireEvent.click(collapseToggle);
     expect(screen.queryByText("Claude · MCP")).not.toBeInTheDocument();
+  });
+
+  it("工具配置状态为 Hook 目标渲染 Hooks 标签而不是空文案", async () => {
+    vi.mocked(commands.getProject).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...project,
+        targets: [
+          ...project.targets,
+          {
+            tool: "claude",
+            artifactKind: "hook",
+            targetPath: "/isolated/projects/detail/.claude/settings.json",
+            capability: "supported",
+            policy: "allowed",
+            trust: "not_required",
+            status: "missing",
+            diagnosticCode: null,
+          },
+        ],
+      },
+    });
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "展开工具配置状态" }),
+    );
+    expect(screen.getByText("Claude · Hooks")).toBeVisible();
+    expect(screen.queryByText(/^Claude · $/)).not.toBeInTheDocument();
+  });
+
+  it("项目不可用时“返回项目列表”通过路由跳转而不是改写 location", async () => {
+    vi.mocked(commands.getProject).mockResolvedValue({
+      status: "error",
+      error: {
+        code: "NOT_FOUND",
+        message: "项目不存在",
+        details: {},
+        recoverable: false,
+        action: null,
+      },
+    });
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "返回项目列表" }),
+    );
+    expect(await screen.findByText("项目列表路由已渲染")).toBeVisible();
   });
 
   it("切换资源或平台会重置尚未提交的 Git exclude 选择", async () => {

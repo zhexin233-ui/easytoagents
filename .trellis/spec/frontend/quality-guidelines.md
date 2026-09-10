@@ -27,6 +27,13 @@ scanning and native-resource views cover supported MCP and Skill resources only.
   `"direct"`.
 - Collapsing loading, empty, RPC error, policy-blocked, override, and conflict states
   into one generic message.
+- Navigating with `window.location.assign("#/...")` or a raw `<a href="#/...">`.
+  Route changes go through react-router (`useNavigate` / `<Link to>`), so the
+  router state stays authoritative and tests can assert the destination with
+  `MemoryRouter`.
+- Deriving a form control `id` from its label text. Use `useId()` (or an explicit
+  `id` prop) to link `<label htmlFor>` to the input so copy changes cannot break
+  the accessible association.
 
 ## Required Patterns
 
@@ -623,6 +630,10 @@ projectAssignmentMutation.mutate(input);
   All manual/automatic Apply results notify.
 - Notify only after required invalidation resolves. MCP readopt notifies before
   regenerating preview; a later failure replaces that success notification.
+- Every central page's `applyMutation.onSuccess` (MCP, Hooks, Skills, Prompts)
+  closes the preview, awaits the page's query-family refresh, then notifies.
+  Apply changes native target status, so skipping the refresh leaves status
+  cards stale until the next unrelated mutation.
 
 ### 4. Tests Required
 
@@ -643,6 +654,8 @@ projectAssignmentMutation.mutate(input);
   asserts zero `applyProjectNativeResourcePreview` calls until confirm.
 - Settings page: toggle persists both directions and surfaces read failures
   without rendering the toggle.
+- Apply-success tests on each central page assert the list query was refetched
+  (compare the list command's call count before and after Apply).
 - Shared-notification fake-timer tests cover 3,000 ms expiry, replacement, and
   unmount cleanup. Central-page tests cover representative CRUD, assignment,
   import/takeover, empty preview, manual/direct Apply, correct role,
@@ -746,6 +759,12 @@ notify({ kind: "success", message: "已应用" });
 - Project detail derives `activeTool = visibleTools.includes(toolView) ?
   toolView : (visibleTools[0] ?? toolView)` at render time; the `toolView`
   state itself is never pruned in an effect.
+- Every page that keeps a selected-tool `useState` (project detail, Hooks page,
+  any future per-tool view) applies the same render-time clamp and renders
+  **all** tool-dependent regions from the clamped value: the selector buttons,
+  the status/target card, the per-tool import entry, and the event/assignment
+  grouping. Filtering only the selector buttons while other regions still read
+  the raw state leaves a disabled tool's status and import entry visible.
 
 ### 4. Validation & Error Matrix
 
@@ -772,8 +791,10 @@ notify({ kind: "success", message: "已应用" });
 - `settings-dialog.test`: default checked states, toggle payload carries full
   `{ applyMode, enabledTools }` in canonical order.
 - One hide-assertion per surface: app-shell (top bar), mcp/skills (icon column
-  + status card), dashboard (tool card), project-detail (`activeTool` fallback
-  when the selected tool is disabled — assert no unselected intermediate state).
+  + status card), dashboard (tool card), project-detail and hooks page
+  (`activeTool` fallback when the selected tool is disabled — assert the first
+  enabled tool's status card is shown, the disabled tool's import entry is
+  absent, and there is no unselected intermediate state).
 - Every `getAppSettings` mock must include `enabledTools`; TS enforces it.
 
 ### 7. Wrong vs Correct

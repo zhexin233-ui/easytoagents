@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
   commands,
@@ -83,6 +83,7 @@ const PROJECT_RESOURCE_VIEWS = [
 
 export function ProjectDetailPage() {
   const { projectId = "" } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const projectQuery = useQuery(projectQueryOptions(projectId));
   const settingsQuery = useQuery(appSettingsQueryOptions());
@@ -241,7 +242,7 @@ export function ProjectDetailPage() {
             profileErrorText(projectQuery.error) ?? "项目不存在或已移除。"
           }
           actionLabel="返回项目列表"
-          onAction={() => window.location.assign("#/projects")}
+          onAction={() => void navigate("/projects")}
         />
       </main>
     );
@@ -1460,15 +1461,16 @@ function toolLabel(tool: Tool) {
   return toolMetadata(tool).label;
 }
 
+// 用 Record 穷举 ArtifactKind：后端新增资源种类时这里会直接编译失败，
+// 而不是像 switch 那样静默返回 undefined 渲染出空标签。
+const ARTIFACT_LABELS: Record<ArtifactKind, string> = {
+  provider: "Provider",
+  prompt: "提示词",
+  mcp: "MCP",
+  skill: "Skills",
+  hook: "Hooks",
+};
+
 function artifactLabel(kind: ArtifactKind) {
-  switch (kind) {
-    case "provider":
-      return "Provider";
-    case "prompt":
-      return "提示词";
-    case "mcp":
-      return "MCP";
-    case "skill":
-      return "Skills";
-  }
+  return ARTIFACT_LABELS[kind];
 }

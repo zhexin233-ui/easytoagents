@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Power, PowerOff, Trash2 } from "lucide-react";
 
@@ -1044,7 +1044,8 @@ function SensitiveField({
   onKeep: (keep: boolean) => void;
   onChange: (value: string) => void;
 }) {
-  const id = label === "Headers JSON" ? "mcp-headers-json" : "mcp-env-json";
+  // 用 useId 关联 label 与输入框，不再按 label 文案推断 id；改文案不会破坏可访问性关联。
+  const id = useId();
   return (
     <div className="space-y-2 text-sm">
       <label htmlFor={id} className="block font-medium">

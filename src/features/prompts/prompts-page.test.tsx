@@ -722,6 +722,8 @@ describe("PromptsPage", () => {
     expect(
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
+    const listCallsBeforeApply = vi.mocked(commands.listPromptProfiles).mock
+      .calls.length;
     fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
     await waitFor(() =>
       expect(commands.applyProfilePreview).toHaveBeenCalledWith({
@@ -736,6 +738,10 @@ describe("PromptsPage", () => {
     expect(screen.getAllByText("已应用 1 个目标，可从快照恢复。")).toHaveLength(
       1,
     );
+    // 应用成功后与其它中央页面一致地刷新提示词列表。
+    expect(
+      vi.mocked(commands.listPromptProfiles).mock.calls.length,
+    ).toBeGreaterThan(listCallsBeforeApply);
   });
 
   it("直接应用模式下编辑已分配提示词保存后自动同步并 Apply", async () => {

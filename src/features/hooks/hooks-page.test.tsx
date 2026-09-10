@@ -201,6 +201,35 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("HooksPage 中央列表", () => {
+  it("关闭 Claude 后工具视图夹逼到第一个启用工具，不再展示 Claude 状态与入口", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["codex", "cursor", "zcode"],
+      },
+    });
+    renderPage();
+
+    const section = (
+      await screen.findByRole("heading", { name: "工具事件分组" })
+    ).closest("section");
+    if (!section) throw new Error("未找到工具事件分组");
+    // 默认选中值仍是 claude，但渲染期按启用工具夹逼到 codex。
+    expect(
+      await within(section).findByText("/isolated/home/.codex/hooks.json"),
+    ).toBeVisible();
+    expect(
+      within(section).queryByText("/isolated/home/.claude/settings.json"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "查看 Claude Hooks" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "查看 Codex Hooks" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("空库展示引导文案与四工具全局目标状态", async () => {
     renderPage();
     expect(await screen.findByText(/中央库尚无 Hook/)).toBeInTheDocument();

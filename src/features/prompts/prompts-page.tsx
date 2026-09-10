@@ -214,9 +214,10 @@ export function PromptsPage() {
           artifactKind: "prompt",
         }),
       ),
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       const successMessage = `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`;
       setOpenPreview(null);
+      await refresh();
       notify({ kind: "success", message: successMessage });
     },
     onError: (error) => {

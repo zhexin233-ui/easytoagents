@@ -96,7 +96,12 @@ export function HooksPage() {
   const directApply = settingsQuery.data?.applyMode === "direct";
   const enabledTools = useEnabledTools();
   const visibleTools = filterEnabledTools(HOOK_TOOLS, enabledTools);
-  const [activeTool, setActiveTool] = useState<Tool>("claude");
+  const [selectedTool, setActiveTool] = useState<Tool>("claude");
+  // 选中工具被关闭时在 render 期夹逼到第一个启用工具；selectedTool 本身保持，
+  // 重新启用后恢复原选中态。与项目详情页的工具视图口径一致。
+  const activeTool = visibleTools.some((tool) => tool === selectedTool)
+    ? selectedTool
+    : (visibleTools[0] ?? selectedTool);
   const [form, setForm] = useState<HookFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
   const saveInFlight = useRef(false);

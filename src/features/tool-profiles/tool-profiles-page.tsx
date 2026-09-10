@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import type { ArtifactKind, PreviewPlan, Tool } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
@@ -198,7 +199,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               </code>
             ) : null}
             <Button asChild className="mt-3" size="sm" variant="outline">
-              <a href="#/prompts">管理提示词</a>
+              <Link to="/prompts">管理提示词</Link>
             </Button>
           </section>
         ) : null}

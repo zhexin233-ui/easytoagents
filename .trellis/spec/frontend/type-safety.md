@@ -8,9 +8,9 @@
 
 The frontend uses strict TypeScript with generated Specta bindings as the
 Rust/Tauri contract. `strict`, `noUncheckedIndexedAccess`,
-`exactOptionalPropertyTypes`, `isolatedModules`, and `noEmit` are enabled.
-ESLint forbids explicit `any`, type assertions, and floating promises in
-handwritten TypeScript.
+`exactOptionalPropertyTypes`, `noImplicitReturns`, `isolatedModules`, and
+`noEmit` are enabled. ESLint forbids explicit `any`, type assertions, and
+floating promises in handwritten TypeScript.
 
 ---
 
@@ -49,6 +49,22 @@ Frontend boundary code must:
   affected by `noUncheckedIndexedAccess`.
 - Use discriminated unions and exhaustive `switch` statements for generated or
   local state values.
+- Map a generated string enum (`Tool`, `ArtifactKind`, status codes) to labels or
+  metadata with a `Record<Enum, T>` constant, not a `switch` without `default`.
+  A `Record` fails to compile when the Rust enum gains a variant; a `switch`
+  silently returns `undefined` and renders an empty label (the `artifactLabel`
+  / `hook` defect). `noImplicitReturns` catches the function-level symptom, but
+  the `Record` is the primary guard.
+
+```ts
+const ARTIFACT_LABELS: Record<ArtifactKind, string> = {
+  provider: "Provider",
+  prompt: "提示词",
+  mcp: "MCP",
+  skill: "Skills",
+  hook: "Hooks",
+};
+```
 
 ```ts
 export function unwrapResult<T>(result: Result<T, AppError>): T {
