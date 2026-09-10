@@ -37,7 +37,7 @@
       "icons/icon.ico"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "管理 Claude 与 Codex 的本地配置",
+    "shortDescription": "管理 Claude、Codex、Cursor、ZCode 与 OpenCode 的本地配置",
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

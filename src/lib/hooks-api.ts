@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import { commands, type Tool } from "@/bindings/commands";
-import { unwrapResult } from "@/lib/profile-api";
+import { unwrapResult } from "@/lib/rpc";
 
 export const hooksKeys = {
   all: ["hooks"] as const,
@@ -40,5 +40,19 @@ export function globalHookStatusesQueryOptions() {
     queryKey: hooksKeys.globalStatuses(),
     queryFn: async () =>
       unwrapResult(await commands.listGlobalHookTargetStatuses()),
+  });
+}
+
+/** 一次"检测并导入"请求的只读发现结果；`requestId` 让每次打开对话框都重新扫描。 */
+export function hookImportQueryOptions(tool: Tool, requestId: string) {
+  return queryOptions({
+    queryKey: ["hook-import", tool, requestId] as const,
+    queryFn: async () =>
+      unwrapResult(await commands.discoverHookImport({ tool })),
+    retry: false,
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }

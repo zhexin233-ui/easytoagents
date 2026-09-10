@@ -25,12 +25,17 @@ src/
 │   └── use-dialog-focus.ts      # Shared component behavior
 ├── features/
 │   ├── dashboard/
+│   ├── hooks/
 │   ├── mcp/
 │   ├── onboarding/
 │   ├── projects/
+│   ├── prompts/
+│   ├── settings/
 │   ├── skills/
 │   └── tool-profiles/           # Domain pages and co-located tests
 ├── lib/                          # Typed API/query helpers and shared utilities
+│   ├── rpc.ts                   # unwrapResult / ProfileRpcError / profileErrorText
+│   └── <domain>-api.ts          # Query keys + queryOptions per domain
 ├── test/
 │   └── setup.ts                 # Vitest DOM matcher setup
 ├── index.css                     # Global Tailwind/theme styles
@@ -49,7 +54,14 @@ src/
 - Put reusable primitives and their CVA variants under `src/components/ui/`.
 - Put generated-command wrappers, query keys, and `queryOptions` factories in
   `src/lib/<domain>-api.ts`; pages call those helpers and generated `commands`
-  rather than raw Tauri `invoke`.
+  rather than raw Tauri `invoke`. Every `queryOptions` factory lives in an
+  `-api.ts` module, never inside a component file, so query keys stay
+  discoverable and invalidation targets are not hidden in dialogs.
+- `src/lib/rpc.ts` owns the generated-result unwrapping (`unwrapResult`),
+  `ProfileRpcError`, and `profileErrorText`. `profile-api.ts` re-exports them for
+  compatibility; new code imports from `@/lib/rpc`.
+- No `.gitkeep` placeholders: an empty feature directory is a missing feature,
+  not a reservation. Create the directory together with its first file.
 - Co-locate tests as `*.test.tsx`. Shared test setup belongs in `src/test/`.
 
 ---
@@ -76,7 +88,8 @@ src/
   dialog composed from `Button`, `BlockingState`, `SyncStatusBadge`, and
   `useDialogFocus`.
 - `src/lib/profile-api.ts` demonstrates generated command use, stable query-key
-  factories, `queryOptions`, and structured RPC error translation.
+  factories, and `queryOptions`; `src/lib/rpc.ts` holds the structured RPC error
+  translation it builds on.
 
 ## Forbidden Patterns
 

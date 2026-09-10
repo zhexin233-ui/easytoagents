@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, queryOptions } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   commands,
@@ -12,7 +12,8 @@ import {
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
-import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import { hookImportQueryOptions } from "@/lib/hooks-api";
+import { profileErrorText, unwrapResult } from "@/lib/rpc";
 import { toolMetadata } from "@/lib/tool-metadata";
 
 interface HookImportDialogProps {
@@ -205,17 +206,4 @@ export function HookImportDialog(props: HookImportDialogProps) {
       </section>
     </div>
   );
-}
-
-function hookImportQueryOptions(tool: Tool, requestId: string) {
-  return queryOptions({
-    queryKey: ["hook-import", tool, requestId] as const,
-    queryFn: async () =>
-      unwrapResult(await commands.discoverHookImport({ tool })),
-    retry: false,
-    staleTime: Infinity,
-    gcTime: 0,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  });
 }

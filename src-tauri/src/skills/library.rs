@@ -1369,7 +1369,7 @@ fn parse_skill_frontmatter(text: &str) -> Result<(String, Value), AppError> {
             "SKILL.md 必须包含非空工作流正文",
         ));
     }
-    let frontmatter: Value = serde_yaml::from_str(&text[start..end])
+    let frontmatter: Value = serde_yaml_ng::from_str(&text[start..end])
         .map_err(|_| AppError::invalid_input("SKILL.md", "SKILL.md frontmatter 不是合法 YAML"))?;
     let object = frontmatter
         .as_object()
