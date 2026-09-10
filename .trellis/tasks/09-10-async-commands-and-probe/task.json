@@ -3,7 +3,7 @@
   "name": "async-commands-and-probe",
   "title": "Tauri 命令异步化与启动探测并行",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
