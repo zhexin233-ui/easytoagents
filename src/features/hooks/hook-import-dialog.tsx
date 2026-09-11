@@ -11,6 +11,11 @@ import {
   type Tool,
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { hookImportQueryOptions } from "@/lib/hooks-api";
 import { profileErrorText, unwrapResult } from "@/lib/rpc";
@@ -43,23 +48,20 @@ export function HookImportDialog(props: HookImportDialogProps) {
   const close = () => {
     if (!confirm.isPending) props.onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(true, close);
+  const { dialogRef } = useDialogFocus(true, close);
   const preview = query.data;
   const error = profileErrorText(query.error ?? confirm.error);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="hook-import-title"
-        aria-describedby="hook-import-description"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={close}
+        labelledBy="hook-import-title"
+        describedBy="hook-import-description"
+        className="max-h-[90vh]"
       >
-        <div className="flex items-start justify-between gap-4">
+        <DialogHeader>
           <h2 id="hook-import-title" className="text-xl font-semibold">
             导入 {toolMetadata(props.tool).label} 全局 Hooks
           </h2>
@@ -71,7 +73,7 @@ export function HookImportDialog(props: HookImportDialogProps) {
           >
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <p
           id="hook-import-description"
           className="text-muted-foreground mt-3 text-sm"
@@ -86,10 +88,7 @@ export function HookImportDialog(props: HookImportDialogProps) {
           </p>
         ) : null}
         {error ? (
-          <p
-            role="alert"
-            className="mt-4 text-sm text-red-700 dark:text-red-300"
-          >
+          <p role="alert" className="text-destructive mt-4 text-sm">
             {error} 请重新检测后再确认。
           </p>
         ) : null}
@@ -147,7 +146,7 @@ export function HookImportDialog(props: HookImportDialogProps) {
                       {candidate.command}
                     </code>
                     {candidate.reason ? (
-                      <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                      <p className="text-warning mt-2 text-xs">
                         {candidate.reason}
                       </p>
                     ) : null}
@@ -203,7 +202,7 @@ export function HookImportDialog(props: HookImportDialogProps) {
               : `确认导入所选项（${selectedIds.length}）`}
           </Button>
         </div>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }

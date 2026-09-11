@@ -9,10 +9,14 @@ import {
   type Tool,
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
-import { hooksKeys } from "@/lib/hooks-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
-import { projectKeys } from "@/lib/projects-api";
+import { invalidateProjectScope } from "@/lib/projects-api";
 
 interface ProjectHookPickerDialogProps {
   project: ProjectDto;
@@ -44,10 +48,7 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
         }),
       ),
     onSuccess: async (_result, { option }) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: projectKeys.all }),
-        queryClient.invalidateQueries({ queryKey: hooksKeys.all }),
-      ]);
+      await invalidateProjectScope(queryClient, ["project", "hook"]);
       props.onAssigned(
         `${option.name} 已加入项目 ${props.eventLabel} 分组（${props.event}）。`,
       );
@@ -59,24 +60,21 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
   const close = () => {
     if (!assign.isPending) props.onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(true, close);
+  const { dialogRef } = useDialogFocus(true, close);
   const available = props.options.filter(
     (option) => option.state === "available" && option.selectable,
   );
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="project-hook-picker-title"
-        aria-describedby="project-hook-picker-description"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card max-h-[90vh] w-full max-w-2xl overflow-auto rounded-xl p-6 shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={close}
+        labelledBy="project-hook-picker-title"
+        describedBy="project-hook-picker-description"
+        className="max-h-[90vh] max-w-2xl"
       >
-        <div className="flex items-start justify-between gap-4">
+        <DialogHeader>
           <h2 id="project-hook-picker-title" className="text-xl font-semibold">
             添加到项目 {props.eventLabel}（{props.event}）
           </h2>
@@ -88,7 +86,7 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
           >
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <p
           id="project-hook-picker-description"
           className="text-muted-foreground mt-3 text-sm"
@@ -96,10 +94,7 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
           项目追加只更新中央意图；原生写入仍需生成项目预览并 Apply。
         </p>
         {error ? (
-          <p
-            role="alert"
-            className="mt-4 text-sm text-red-700 dark:text-red-300"
-          >
+          <p role="alert" className="text-destructive mt-4 text-sm">
             {error}
           </p>
         ) : null}
@@ -134,7 +129,7 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
             </div>
           ))}
         </div>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }

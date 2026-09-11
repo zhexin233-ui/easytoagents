@@ -2,7 +2,14 @@ import type { ArtifactKind, PreviewPlan, Tool } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { toneClass } from "@/lib/tone-class";
 
 interface ChangePreviewDialogProps {
   preview: PreviewPlan | null;
@@ -25,7 +32,7 @@ export function ChangePreviewDialog({
   onClose,
   onApply,
 }: ChangePreviewDialogProps) {
-  const { dialogRef, onKeyDown } = useDialogFocus(preview !== null, onClose);
+  const { dialogRef } = useDialogFocus(preview !== null, onClose);
 
   if (!preview) {
     return null;
@@ -36,21 +43,15 @@ export function ChangePreviewDialog({
   );
 
   return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
-      role="presentation"
-    >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="change-preview-title"
-        aria-describedby="change-preview-description"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={onClose}
+        labelledBy="change-preview-title"
+        describedBy="change-preview-description"
+        className="max-h-[88vh]"
       >
-        <div className="flex items-start justify-between gap-4">
+        <DialogHeader>
           <div>
             <p className="text-muted-foreground text-sm">持久化预览</p>
             <h2
@@ -63,15 +64,15 @@ export function ChangePreviewDialog({
           <Button variant="outline" size="sm" onClick={onClose}>
             关闭
           </Button>
-        </div>
+        </DialogHeader>
 
         <div className="mt-5 space-y-4">
           {preview.warningCodes.length > 0 ? (
             <section
               aria-label="预览警告"
-              className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40"
+              className={`rounded-lg border p-4 ${toneClass("warning")}`}
             >
-              <ul className="list-disc pl-5 text-sm text-amber-800 dark:text-amber-300">
+              <ul className="text-warning list-disc pl-5 text-sm">
                 {preview.warningCodes.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
@@ -90,14 +91,14 @@ export function ChangePreviewDialog({
                 />
               </div>
               {target.warningCodes.length > 0 ? (
-                <ul className="mt-3 list-disc pl-5 text-sm text-amber-800 dark:text-amber-300">
+                <ul className="text-warning mt-3 list-disc pl-5 text-sm">
                   {target.warningCodes.map((warning) => (
                     <li key={warning}>{warning}</li>
                   ))}
                 </ul>
               ) : null}
               {target.baselineMismatchedItems.length > 0 ? (
-                <p className="mt-3 text-sm text-amber-800 dark:text-amber-300">
+                <p className="text-warning mt-3 text-sm">
                   内容不一致的受管条目：
                   {target.baselineMismatchedItems.join("、")}
                 </p>
@@ -140,7 +141,7 @@ export function ChangePreviewDialog({
         >
           非受管字段与表会被保留。Apply 会再次校验目标 hash 与数据库版本。
         </p>
-        <div className="mt-6 flex justify-end gap-3">
+        <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             取消
           </Button>
@@ -150,8 +151,8 @@ export function ChangePreviewDialog({
           >
             {applying ? "正在应用…" : "应用这份预览"}
           </Button>
-        </div>
-      </section>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </DialogOverlay>
   );
 }

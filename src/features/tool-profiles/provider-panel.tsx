@@ -1,29 +1,32 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   commands,
   type ClaudeCredentialEnvKey,
-  type PreviewPlan,
   type ProviderImportPreviewDto,
   type ProviderProfileDto,
   type Tool,
 } from "@/bindings/commands";
 import { FormDialog } from "@/components/form-dialog";
 import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
 import { useEnabledTools } from "@/components/use-enabled-tools";
+import { useNotify } from "@/components/use-notify";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import {
   profileErrorText,
   profileKeys,
   providerProfilesQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
+import { toneClass } from "@/lib/tone-class";
 import { toolMetadata } from "@/lib/tool-metadata";
 
 interface ProviderPanelProps {
   tool: Tool;
   directApply: boolean;
-  onPreview: (preview: PreviewPlan) => void;
+  onPreview: () => void;
 }
 
 interface ProviderFormState {
@@ -64,10 +67,10 @@ export function ProviderPanel({
   const [editing, setEditing] = useState<ProviderProfileDto | null>(null);
   const [form, setForm] = useState<ProviderFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
-  const saveInFlight = useRef(false);
+  const submitGuard = useSubmitGuard();
   const [importPreview, setImportPreview] =
     useState<ProviderImportPreviewDto | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { notify } = useNotify();
 
   const refresh = async () => {
     await queryClient.invalidateQueries({
@@ -118,15 +121,18 @@ export function ProviderPanel({
       setEditing(null);
       setForm(emptyForm);
       setFormOpen(false);
-      setNotice("中央渠道档案已保存，原生配置尚未修改。");
+      notify({
+        kind: "success",
+        message: "中央渠道档案已保存，原生配置尚未修改。",
+      });
     },
     onSettled: () => {
-      saveInFlight.current = false;
+      submitGuard.end();
     },
   });
 
   const openForm = (profile: ProviderProfileDto | null) => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     saveMutation.reset();
     if (profile) {
       editProfile(profile, setEditing, setForm);
@@ -138,7 +144,7 @@ export function ProviderPanel({
   };
 
   const closeForm = () => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     setFormOpen(false);
     setEditing(null);
     setForm(emptyForm);
@@ -146,24 +152,17 @@ export function ProviderPanel({
   };
 
   const activateMutation = useMutation({
-    mutationFn: async (profile: ProviderProfileDto) => {
+    mutationFn: async (profile: ProviderProfileDto) =>
       unwrapResult(
         await commands.setActiveProviderProfile(tool, {
           id: profile.id,
           rowVersion: profile.rowVersion,
         }),
-      );
-      return unwrapResult(await commands.previewProviderSync(tool));
-    },
+      ),
     onSuccess: onPreview,
     // 生效档案的中央写入发生在预览之前；即使预览因策略或路径状态失败，
     // 也必须刷新列表，避免 UI 继续把旧档案显示为生效。
     onSettled: refresh,
-  });
-  const previewMutation = useMutation({
-    mutationFn: async () =>
-      unwrapResult(await commands.previewProviderSync(tool)),
-    onSuccess: onPreview,
   });
   const copyMutation = useMutation({
     mutationFn: async (profile: ProviderProfileDto) =>
@@ -180,7 +179,10 @@ export function ProviderPanel({
       await queryClient.invalidateQueries({
         queryKey: profileKeys.providers(targetTool),
       });
-      setNotice("已按目标工具重新校验并创建独立渠道档案。");
+      notify({
+        kind: "success",
+        message: "已按目标工具重新校验并创建独立渠道档案。",
+      });
     },
   });
   const deleteMutation = useMutation({
@@ -192,7 +194,10 @@ export function ProviderPanel({
         }),
       ),
     onSuccess: async () => {
-      setNotice("中央渠道档案已删除；如需清理原生字段，请生成新的渠道预览。");
+      notify({
+        kind: "success",
+        message: "中央渠道档案已删除；如需清理原生字段，请生成新的渠道预览。",
+      });
       await refresh();
     },
   });
@@ -200,19 +205,19 @@ export function ProviderPanel({
     mutationFn: async () =>
       unwrapResult(await commands.discoverProviderImport(tool)),
     onMutate: () => {
-      setNotice(null);
       setImportPreview(null);
     },
     onSuccess: (preview) => {
       setImportPreview(preview);
       if (!preview) {
-        setNotice(
-          profilesQuery.data?.length
+        notify({
+          kind: "success",
+          message: profilesQuery.data?.length
             ? "已有中央渠道档案，暂不支持再次接管原生渠道。"
             : tool === "opencode"
               ? "未检测到可导入渠道。请确认配置中的默认模型（model）引用了自定义 provider，且该渠道包含名称、npm 和 baseURL；内置渠道暂不支持导入。"
               : "未检测到可导入的已有渠道配置。",
-        );
+        });
       }
     },
   });
@@ -230,14 +235,16 @@ export function ProviderPanel({
     },
     onSuccess: async () => {
       setImportPreview(null);
-      setNotice("已有渠道已无写入接管，原生文件内容保持不变。");
+      notify({
+        kind: "success",
+        message: "已有渠道已无写入接管，原生文件内容保持不变。",
+      });
       await refresh();
     },
   });
 
   const mutationError = [
     activateMutation.error,
-    previewMutation.error,
     copyMutation.error,
     deleteMutation.error,
     discoverMutation.error,
@@ -248,8 +255,8 @@ export function ProviderPanel({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (saveInFlight.current || saveMutation.isPending) return;
-    saveInFlight.current = true;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
+    if (!submitGuard.begin()) return;
     saveMutation.mutate();
   };
 
@@ -279,33 +286,24 @@ export function ProviderPanel({
           >
             {discoverMutation.isPending ? "正在检测…" : "检测已有配置"}
           </Button>
-          <Button size="sm" onClick={() => previewMutation.mutate()}>
+          <Button size="sm" onClick={onPreview}>
             {directApply ? "直接应用渠道同步" : "预览渠道同步"}
           </Button>
         </div>
       </div>
 
-      {notice ? (
-        <p
-          role="status"
-          className="mt-4 text-sm text-emerald-700 dark:text-emerald-300"
-        >
-          {notice}
-        </p>
-      ) : null}
       {mutationError ? (
-        <p role="alert" className="mt-4 text-sm text-red-700 dark:text-red-300">
+        <p role="alert" className="text-destructive mt-4 text-sm">
           {mutationError}
         </p>
       ) : null}
-
       {profilesQuery.isPending ? (
         <p role="status" className="text-muted-foreground mt-5 text-sm">
           正在加载渠道档案…
         </p>
       ) : null}
       {profilesQuery.isError ? (
-        <p role="alert" className="mt-5 text-sm text-red-700 dark:text-red-300">
+        <p role="alert" className="text-destructive mt-5 text-sm">
           {profileErrorText(profilesQuery.error)}
         </p>
       ) : null}
@@ -323,7 +321,9 @@ export function ProviderPanel({
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-medium">{profile.name}</p>
                   {profile.isActive ? (
-                    <span className="inline-flex shrink-0 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    <span
+                      className={`text-success inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium ${toneClass("success")}`}
+                    >
                       当前生效
                     </span>
                   ) : null}
@@ -380,7 +380,7 @@ export function ProviderPanel({
       </ul>
 
       {importPreview ? (
-        <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40">
+        <div className={`mt-5 rounded-lg border p-4 ${toneClass("warning")}`}>
           <p className="font-medium">发现已有渠道，仅生成了导入预览</p>
           <p className="mt-1 text-sm break-all">{importPreview.targetPath}</p>
           <p className="text-muted-foreground mt-1 text-xs">
@@ -638,23 +638,4 @@ function parseExtraEnv(text: string): Record<string, string> {
     entries[key] = line.slice(separator + 1);
   }
   return entries;
-}
-
-function Field({
-  label,
-  id,
-  children,
-}: {
-  label: string;
-  id: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="mb-1 block text-sm font-medium">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
 }

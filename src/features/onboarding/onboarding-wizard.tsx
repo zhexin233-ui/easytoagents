@@ -13,10 +13,16 @@ import {
 import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { profileErrorText, profileKeys, unwrapResult } from "@/lib/profile-api";
+import { toneClass } from "@/lib/tone-class";
 import {
   PROFILE_TOOLS,
   filterEnabledTools,
@@ -81,7 +87,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   const [choices, setChoices] = useState<Choices>(() => readChoices());
   const [previews, setPreviews] = useState<WizardPreview[]>([]);
   const [hasAppliedPreview, setHasAppliedPreview] = useState(false);
-  const { dialogRef, onKeyDown } = useDialogFocus(true, onClose);
+  const { dialogRef } = useDialogFocus(true, onClose);
 
   const detectMutation = useMutation({
     mutationFn: async () => {
@@ -318,18 +324,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
     });
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="onboarding-title"
-        aria-describedby="onboarding-description"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl p-6 shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={onClose}
+        labelledBy="onboarding-title"
+        describedBy="onboarding-description"
+        className="max-h-[90vh] max-w-4xl"
       >
-        <div className="flex items-start justify-between gap-4">
+        <DialogHeader>
           <div>
             <p className="text-muted-foreground text-sm">首次接管向导</p>
             <h2 id="onboarding-title" className="mt-1 text-xl font-semibold">
@@ -339,7 +342,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
           <Button variant="outline" size="sm" onClick={onClose}>
             暂停向导
           </Button>
-        </div>
+        </DialogHeader>
         <p
           id="onboarding-description"
           className="text-muted-foreground mt-3 text-sm"
@@ -442,7 +445,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     <p
                       key={error}
                       role="alert"
-                      className="mt-2 text-xs text-amber-800 dark:text-amber-300"
+                      className="text-warning mt-2 text-xs"
                     >
                       {error}
                     </p>
@@ -537,7 +540,9 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         {step === "preview" ? (
           <div className="mt-6 space-y-4">
             {previewWarnings.length > 0 ? (
-              <ul className="list-disc rounded-lg border border-amber-200 bg-amber-50 p-4 pl-9 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+              <ul
+                className={`text-warning list-disc rounded-lg border p-4 pl-9 text-sm ${toneClass("warning")}`}
+              >
                 {previewWarnings.map((warning, index) => (
                   <li key={`${warning}-${index}`}>{warning}</li>
                 ))}
@@ -567,13 +572,13 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                       {target.errorCode ? (
                         <p
                           role="alert"
-                          className="mt-2 text-xs text-red-700 dark:text-red-300"
+                          className="text-destructive mt-2 text-xs"
                         >
                           阻止应用：{target.errorCode}
                         </p>
                       ) : null}
                       {target.warningCodes.length > 0 ? (
-                        <ul className="mt-2 list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">
+                        <ul className="text-warning mt-2 list-disc pl-5 text-xs">
                           {target.warningCodes.map((warning) => (
                             <li key={warning}>{warning}</li>
                           ))}
@@ -606,7 +611,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         ) : null}
 
         {step === "done" ? (
-          <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/40">
+          <div className={`mt-6 rounded-lg border p-5 ${toneClass("success")}`}>
             <p className="font-semibold">向导已完成</p>
             <p className="mt-2 text-sm">
               已选择项完成导入与显式应用；跳过或未选择的工具保持非受管。
@@ -616,8 +621,8 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             </Button>
           </div>
         ) : null}
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }
 

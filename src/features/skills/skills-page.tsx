@@ -4,8 +4,6 @@ import { Eye, FolderMinus, RefreshCw } from "lucide-react";
 
 import {
   commands,
-  type ApplySkillPreviewInput,
-  type PreviewPlan,
   type SkillContentPreviewDto,
   type SkillDto,
   type Tool,
@@ -18,14 +16,20 @@ import {
   CentralListCardFooter,
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
-import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
+import { useImportDialogState } from "@/features/sync/use-import-dialog-state";
+import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
 import { SkillDirectoryImportDialog } from "@/features/skills/skill-directory-import-dialog";
 import { SkillGithubImportDialog } from "@/features/skills/skill-github-import-dialog";
 import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
@@ -36,29 +40,12 @@ import {
   toolMetadata,
 } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
-import {
-  appSettingsQueryOptions,
-  canAutoApplyPreview,
-} from "@/lib/settings-api";
+import { appSettingsQueryOptions } from "@/lib/settings-api";
 import {
   globalSkillStatusesQueryOptions,
   skillKeys,
   skillsQueryOptions,
 } from "@/lib/skills-api";
-
-interface OpenSkillPreview {
-  plan: PreviewPlan;
-  tool: Tool;
-}
-
-interface SkillPreviewRequest {
-  tool: Tool;
-  autoApply: boolean;
-}
-
-interface SkillApplyRequest {
-  input: ApplySkillPreviewInput;
-}
 
 export function SkillsPage() {
   const queryClient = useQueryClient();
@@ -73,26 +60,26 @@ export function SkillsPage() {
   const [listLayout, setListLayout] = usePersistedCentralListLayout("skills");
   const [openDirectoryImport, setOpenDirectoryImport] = useState(false);
   const [openGithubImport, setOpenGithubImport] = useState(false);
-  const { notification, notify } = useNotify();
+  const { notify } = useNotify();
   const [contentPreview, setContentPreview] =
     useState<SkillContentPreviewDto | null>(null);
-  const [openPreview, setOpenPreview] = useState<OpenSkillPreview | null>(null);
-  const [openImport, setOpenImport] = useState<{
-    tool: Tool;
-    requestId: string;
-  } | null>(null);
+  const importDialog = useImportDialogState();
   const [adoptTarget, setAdoptTarget] = useState<SkillDto | null>(null);
   const adoptInFlight = useRef(false);
   const adoptTitleId = useId();
   const adoptDescriptionId = useId();
   const closeContentPreview = () => setContentPreview(null);
-  const { dialogRef: contentDialogRef, onKeyDown: onContentDialogKeyDown } =
-    useDialogFocus(contentPreview !== null, closeContentPreview);
+  const { dialogRef: contentDialogRef } = useDialogFocus(
+    contentPreview !== null,
+    closeContentPreview,
+  );
   const closeAdoptDialog = () => {
     if (!adoptInFlight.current) setAdoptTarget(null);
   };
-  const { dialogRef: adoptDialogRef, onKeyDown: onAdoptDialogKeyDown } =
-    useDialogFocus(adoptTarget !== null, closeAdoptDialog);
+  const { dialogRef: adoptDialogRef } = useDialogFocus(
+    adoptTarget !== null,
+    closeAdoptDialog,
+  );
 
   const invalidateSkills = async () => {
     await queryClient.invalidateQueries({ queryKey: skillKeys.all });
@@ -182,7 +169,7 @@ export function SkillsPage() {
         });
         return;
       }
-      previewMutation.mutate({ tool, autoApply: true });
+      requestPreview(tool, true);
     },
     onError: (error) => {
       notify({
@@ -192,66 +179,40 @@ export function SkillsPage() {
     },
   });
 
-  const previewMutation = useMutation({
-    mutationFn: async ({ tool }: SkillPreviewRequest) => ({
-      tool,
-      plan: unwrapResult(
-        await commands.previewSkillSync({
-          tool,
-          projectId: null,
-          excludeFromGit: false,
-        }),
-      ),
-    }),
-    onSuccess: ({ plan, tool }, { autoApply }) => {
-      if (plan.targets.length === 0) {
-        notify({
-          kind: "success",
-          message: "当前工具没有需要同步的全局 Skill。",
-        });
-        setOpenPreview(null);
-        return;
-      }
-      if (autoApply && canAutoApplyPreview(plan)) {
-        applyMutation.mutate({
-          input: {
-            previewId: plan.previewId,
-            tool,
-            projectId: null,
-          },
-        });
-        return;
-      }
-      setOpenPreview({ plan, tool });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "生成 Skills 全局预览失败。",
-      });
-    },
-  });
-
-  const applyMutation = useMutation({
-    mutationFn: async ({ input }: SkillApplyRequest) =>
-      unwrapResult(await commands.applySkillPreview(input)),
-    onSuccess: async (result) => {
-      const successMessage = `已应用 ${result.appliedTargets} 个 Skills 目标，并创建 ${result.snapshotCount} 份快照。`;
-      setOpenPreview(null);
-      await invalidateSkills();
-      notify({ kind: "success", message: successMessage });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "应用 Skills 全局同步失败。",
-      });
+  const {
+    openPreview,
+    requestPreview,
+    previewMutation,
+    applyMutation,
+    closePreview,
+    openPersistedPreview,
+  } = useSyncPreviewFlow({
+    artifactKind: "skill",
+    directApply,
+    preview: (tool) =>
+      commands.previewSkillSync({
+        tool,
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    apply: ({ previewId, tool }) =>
+      commands.applySkillPreview({
+        previewId,
+        tool,
+        projectId: null,
+      }),
+    invalidate: invalidateSkills,
+    messages: {
+      previewFailed: "生成 Skills 全局预览失败。",
+      applyFailed: "应用 Skills 全局同步失败。",
+      empty: "当前工具没有需要同步的全局 Skill。",
+      applied: (result) =>
+        `已应用 ${result.appliedTargets} 个 Skills 目标，并创建 ${result.snapshotCount} 份快照。`,
     },
   });
 
   return (
     <main className="p-6 lg:p-8">
-      <Notify notification={notification} />
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">应用私有中央库</p>
         <h1 className="mt-1 text-2xl font-semibold">Skills</h1>
@@ -290,10 +251,7 @@ export function SkillsPage() {
             </p>
           ) : null}
           {skillsQuery.isError ? (
-            <p
-              role="alert"
-              className="mt-4 text-sm text-red-700 dark:text-red-300"
-            >
+            <p role="alert" className="text-destructive mt-4 text-sm">
               {profileErrorText(skillsQuery.error)}
             </p>
           ) : null}
@@ -405,7 +363,7 @@ export function SkillsPage() {
                           …
                         </p>
                         {skill.diagnosticCode ? (
-                          <p className="mt-1 text-xs break-all text-red-700 dark:text-red-300">
+                          <p className="text-destructive mt-1 text-xs break-all">
                             {skill.diagnosticCode}
                           </p>
                         ) : null}
@@ -475,10 +433,7 @@ export function SkillsPage() {
           </p>
         ) : null}
         {statusesQuery.isError ? (
-          <p
-            role="alert"
-            className="mt-4 text-sm text-red-700 dark:text-red-300"
-          >
+          <p role="alert" className="text-destructive mt-4 text-sm">
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
@@ -517,7 +472,7 @@ export function SkillsPage() {
                     </p>
                   ) : null}
                   {status.diagnosticCode ? (
-                    <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                    <p className="text-warning mt-2 text-xs">
                       诊断码：<code>{status.diagnosticCode}</code>
                     </p>
                   ) : null}
@@ -528,11 +483,8 @@ export function SkillsPage() {
                       disabled={presentation.previewBlocked}
                       aria-label={`检测并导入 ${toolMetadata(status.tool).label} 全局 Skills`}
                       onClick={() => {
-                        if (openImport) return;
-                        setOpenImport({
-                          tool: status.tool,
-                          requestId: crypto.randomUUID(),
-                        });
+                        if (importDialog.state) return;
+                        importDialog.open(status.tool);
                       }}
                     >
                       {status.diagnosticCode ===
@@ -548,12 +500,7 @@ export function SkillsPage() {
                           previewMutation.isPending ||
                           presentation.previewBlocked
                         }
-                        onClick={() =>
-                          previewMutation.mutate({
-                            tool: status.tool,
-                            autoApply: directApply,
-                          })
-                        }
+                        onClick={() => requestPreview(status.tool, directApply)}
                       >
                         {previewMutation.isPending
                           ? "正在生成…"
@@ -569,17 +516,14 @@ export function SkillsPage() {
       </section>
 
       {contentPreview ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
-          <section
-            ref={contentDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="skill-content-title"
-            tabIndex={-1}
-            onKeyDown={onContentDialogKeyDown}
-            className="bg-card max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
+        <DialogOverlay>
+          <DialogContent
+            dialogRef={contentDialogRef}
+            onClose={closeContentPreview}
+            labelledBy="skill-content-title"
+            className="max-h-[88vh]"
           >
-            <div className="flex items-start justify-between gap-3">
+            <DialogHeader>
               <div>
                 <p className="text-muted-foreground text-sm">
                   中央副本只读内容
@@ -594,7 +538,7 @@ export function SkillsPage() {
               <Button variant="outline" size="sm" onClick={closeContentPreview}>
                 关闭
               </Button>
-            </div>
+            </DialogHeader>
             <pre className="bg-muted mt-4 overflow-auto rounded p-4 text-xs leading-5">
               {contentPreview.skillMd}
             </pre>
@@ -609,26 +553,20 @@ export function SkillsPage() {
                 目录文件列表为空。
               </p>
             ) : null}
-          </section>
-        </div>
+          </DialogContent>
+        </DialogOverlay>
       ) : null}
 
       {adoptTarget ? (
-        <div
-          role="presentation"
-          className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
-        >
-          <section
-            ref={adoptDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={adoptTitleId}
-            aria-describedby={adoptDescriptionId}
-            tabIndex={-1}
-            onKeyDown={onAdoptDialogKeyDown}
-            className="bg-card w-full max-w-lg rounded-xl p-6 shadow-xl"
+        <DialogOverlay>
+          <DialogContent
+            dialogRef={adoptDialogRef}
+            onClose={closeAdoptDialog}
+            labelledBy={adoptTitleId}
+            describedBy={adoptDescriptionId}
+            className="max-w-lg"
           >
-            <div className="flex items-start justify-between gap-3">
+            <DialogHeader>
               <div>
                 <h2 id={adoptTitleId} className="text-xl font-semibold">
                   同步更改
@@ -649,7 +587,7 @@ export function SkillsPage() {
               >
                 关闭
               </Button>
-            </div>
+            </DialogHeader>
             {adoptMutation.isPending ? (
               <p role="status" className="text-muted-foreground mt-4 text-sm">
                 正在采纳当前中央文件…
@@ -677,8 +615,8 @@ export function SkillsPage() {
                 {adoptMutation.isPending ? "正在采纳…" : "是"}
               </Button>
             </div>
-          </section>
-        </div>
+          </DialogContent>
+        </DialogOverlay>
       ) : null}
 
       {openDirectoryImport ? (
@@ -712,18 +650,13 @@ export function SkillsPage() {
         />
       ) : null}
 
-      {openImport ? (
+      {importDialog.state ? (
         <SkillImportDialog
-          key={openImport.tool}
-          tool={openImport.tool}
-          requestId={openImport.requestId}
-          onClose={() => setOpenImport(null)}
-          onRescan={() =>
-            setOpenImport({
-              tool: openImport.tool,
-              requestId: crypto.randomUUID(),
-            })
-          }
+          key={importDialog.state.requestId}
+          tool={importDialog.state.tool}
+          requestId={importDialog.state.requestId}
+          onClose={importDialog.close}
+          onRescan={importDialog.rescan}
           onImported={async (result) => {
             await queryClient.invalidateQueries(
               { queryKey: skillKeys.all },
@@ -733,7 +666,7 @@ export function SkillsPage() {
               kind: "success",
               message: `已复制 ${result.createdCount} 项 Skill 到中央库；原有安装未变，尚未自动分配或同步。中央副本不会随原安装自动更新。`,
             });
-            setOpenImport(null);
+            importDialog.close();
           }}
           onTakeoverPrepared={async (result) => {
             await queryClient.invalidateQueries(
@@ -744,9 +677,9 @@ export function SkillsPage() {
               kind: "success",
               message: `已为 ${result.assignedCount + result.reusedCount} 项 Skill 准备接管；请审阅持久化预览后显式应用。`,
             });
-            setOpenImport(null);
+            importDialog.close();
             // 接管无条件进入预览，即使全局偏好是 direct 也不会自动 Apply。
-            setOpenPreview({ plan: result.plan, tool: result.tool });
+            openPersistedPreview(result.plan, result.tool);
           }}
         />
       ) : null}
@@ -756,14 +689,11 @@ export function SkillsPage() {
         tool={openPreview?.tool ?? "claude"}
         artifactKind="skill"
         applying={applyMutation.isPending}
-        onClose={() => setOpenPreview(null)}
+        onClose={closePreview}
         onApply={(previewId, tool) =>
           applyMutation.mutate({
-            input: {
-              previewId,
-              tool,
-              projectId: null,
-            },
+            previewId,
+            tool,
           })
         }
       />

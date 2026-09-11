@@ -1,31 +1,23 @@
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import type { ArtifactKind, PreviewPlan, Tool } from "@/bindings/commands";
+import { commands, type Tool } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { Button } from "@/components/ui/button";
+import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
 import { ProviderPanel } from "@/features/tool-profiles/provider-panel";
 import {
   profileErrorText,
+  profileKeys,
   toolProfileStatusQueryOptions,
-  unwrapResult,
 } from "@/lib/profile-api";
-import {
-  appSettingsQueryOptions,
-  canAutoApplyPreview,
-} from "@/lib/settings-api";
+import { appSettingsQueryOptions } from "@/lib/settings-api";
+import { toneClass } from "@/lib/tone-class";
 import { toolMetadata } from "@/lib/tool-metadata";
-import { commands } from "@/bindings/commands";
 
 interface ToolProfilesPageProps {
   tool: Tool;
-}
-
-interface OpenPreview {
-  plan: PreviewPlan;
-  artifactKind: ArtifactKind;
 }
 
 // 安装探针诊断码 → 用户可读原因。未知码只展示原始码，不猜测语义。
@@ -43,35 +35,31 @@ function installationProbeDiagnosticText(code: string): string {
 }
 
 export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
+  const queryClient = useQueryClient();
   const statusQuery = useQuery(toolProfileStatusQueryOptions(tool));
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
-  const [openPreview, setOpenPreview] = useState<OpenPreview | null>(null);
-  const [applyMessage, setApplyMessage] = useState<string | null>(null);
-  const applyMutation = useMutation({
-    mutationFn: async (preview: OpenPreview) =>
-      unwrapResult(
-        await commands.applyProfilePreview({
-          previewId: preview.plan.previewId,
-          tool,
-          artifactKind: preview.artifactKind,
+  const { openPreview, requestPreview, applyMutation, closePreview } =
+    useSyncPreviewFlow({
+      artifactKind: "provider",
+      directApply,
+      preview: (previewTool) => commands.previewProviderSync(previewTool),
+      apply: ({ previewId, tool: previewTool }) =>
+        commands.applyProfilePreview({
+          previewId,
+          tool: previewTool,
+          artifactKind: "provider",
         }),
-      ),
-    onSuccess: (result) => {
-      setApplyMessage(`已应用 ${result.appliedTargets} 个目标，可从快照恢复。`);
-      setOpenPreview(null);
-    },
-  });
-
-  // 直接应用模式下仍先生成持久化预览；与预览对话框 Apply 可用条件一致的无冲突
-  // 预览才跳过确认，冲突或错误一律回退到人工确认。
-  const handlePreview = (plan: PreviewPlan, artifactKind: ArtifactKind) => {
-    if (directApply && canAutoApplyPreview(plan)) {
-      applyMutation.mutate({ plan, artifactKind });
-      return;
-    }
-    setOpenPreview({ plan, artifactKind });
-  };
+      invalidate: async () => {
+        await queryClient.invalidateQueries({ queryKey: profileKeys.all });
+      },
+      messages: {
+        previewFailed: "生成渠道预览失败。",
+        applyFailed: "应用渠道预览失败。",
+        applied: (result) =>
+          `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`,
+      },
+    });
 
   const metadata = toolMetadata(tool);
   const title = metadata.label;
@@ -108,7 +96,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
         {statusQuery.data ? (
           <section className="bg-card rounded-lg border p-4 text-sm">
             {statusQuery.data.availability === "installed" ? (
-              <p className="font-medium text-emerald-800 dark:text-emerald-300">
+              <p className="text-success font-medium">
                 已安全检测到 {title}
                 {statusQuery.data.installationVersion
                   ? ` ${statusQuery.data.installationVersion}`
@@ -116,19 +104,19 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               </p>
             ) : null}
             {statusQuery.data.availability === "unavailable" ? (
-              <p className="font-medium text-red-700 dark:text-red-300">
+              <p className="text-destructive font-medium">
                 未在发布进程的安全搜索路径中检测到 {title}
                 ；原生目标保持不可应用。
               </p>
             ) : null}
             {statusQuery.data.availability === "unsupported" ? (
-              <p className="font-medium text-amber-800 dark:text-amber-300">
+              <p className="text-warning font-medium">
                 {title}
                 安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
               </p>
             ) : null}
             {statusQuery.data.installationProbeDiagnostic ? (
-              <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+              <p className="text-warning mt-2 text-xs">
                 {installationProbeDiagnosticText(
                   statusQuery.data.installationProbeDiagnostic,
                 )}
@@ -138,29 +126,29 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
             ) : null}
             <p>{statusQuery.data.newSessionNotice}</p>
             {statusQuery.data.bearerTokenWarning ? (
-              <p className="mt-2 text-amber-800 dark:text-amber-300">
+              <p className="text-warning mt-2">
                 {statusQuery.data.bearerTokenWarning}
               </p>
             ) : null}
             {statusQuery.data.promptOverride === "present" ? (
-              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
+              <p className="text-warning mt-2 font-medium">
                 检测到更高优先级的 Codex 指令来源（如 AGENTS.override.md）；当前
                 AGENTS.md 可能被遮蔽。
               </p>
             ) : null}
             {statusQuery.data.promptOverride === "unknown" ? (
-              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
+              <p className="text-warning mt-2 font-medium">
                 无法安全确认 Codex 指令遮蔽状态，请检查 AGENTS.override.md
                 后再应用。
               </p>
             ) : null}
             {statusQuery.data.providerPolicy === "blocked" ? (
-              <p className="mt-2 font-medium text-red-700 dark:text-red-300">
+              <p className="text-destructive mt-2 font-medium">
                 Claude Provider 由宿主平台管理，本应用不会覆盖渠道配置。
               </p>
             ) : null}
             {statusQuery.data.providerPolicy === "unknown" ? (
-              <p className="mt-2 font-medium text-amber-800 dark:text-amber-300">
+              <p className="text-warning mt-2 font-medium">
                 无法确认 Claude Provider
                 是否由宿主管理；渠道预览将保持阻止状态。
               </p>
@@ -175,20 +163,15 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
         {statusQuery.isError ? (
           <p
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
+            className={`rounded-lg border p-4 text-sm ${toneClass("destructive")}`}
           >
             {profileErrorText(statusQuery.error)}
-          </p>
-        ) : null}
-        {applyMessage ? (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/60 dark:bg-emerald-950/40">
-            {applyMessage}
           </p>
         ) : null}
         {applyError ? (
           <p
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40"
+            className={`rounded-lg border p-4 text-sm ${toneClass("destructive")}`}
           >
             {applyError}
           </p>
@@ -200,7 +183,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
           <ProviderPanel
             tool={tool}
             directApply={directApply}
-            onPreview={(plan) => handlePreview(plan, "provider")}
+            onPreview={() => requestPreview(tool, directApply)}
           />
         ) : null}
         {!metadata.capabilities.provider &&
@@ -230,13 +213,16 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
 
       <ChangePreviewDialog
         preview={openPreview?.plan ?? null}
-        tool={tool}
-        artifactKind={openPreview?.artifactKind ?? "provider"}
+        tool={openPreview?.tool ?? tool}
+        artifactKind="provider"
         applying={applyMutation.isPending}
-        onClose={() => setOpenPreview(null)}
+        onClose={closePreview}
         onApply={() => {
           if (openPreview) {
-            applyMutation.mutate(openPreview);
+            applyMutation.mutate({
+              previewId: openPreview.plan.previewId,
+              tool: openPreview.tool,
+            });
           }
         }}
       />

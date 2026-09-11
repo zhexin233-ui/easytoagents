@@ -469,9 +469,7 @@ describe("ToolProfilesPage", () => {
       }),
     );
     expect(
-      await within(section).findByText(
-        "中央渠道档案已保存，原生配置尚未修改。",
-      ),
+      await screen.findByText("中央渠道档案已保存，原生配置尚未修改。"),
     ).toBeVisible();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(within(section).getByRole("listitem")).toHaveTextContent("新渠道");
@@ -603,7 +601,7 @@ describe("ToolProfilesPage", () => {
       await within(section).findByRole("button", { name: "检测已有配置" }),
     );
     expect(
-      await within(section).findByText("未检测到可导入的已有渠道配置。"),
+      await screen.findByText("未检测到可导入的已有渠道配置。"),
     ).toBeVisible();
   });
 
@@ -619,9 +617,7 @@ describe("ToolProfilesPage", () => {
       within(section).getByRole("button", { name: "检测已有配置" }),
     );
     expect(
-      await within(section).findByText(
-        "已有中央渠道档案，暂不支持再次接管原生渠道。",
-      ),
+      await screen.findByText("已有中央渠道档案，暂不支持再次接管原生渠道。"),
     ).toBeVisible();
   });
 
@@ -632,9 +628,7 @@ describe("ToolProfilesPage", () => {
       await within(section).findByRole("button", { name: "检测已有配置" }),
     );
     expect(
-      await within(section).findByText(
-        /默认模型（model）引用了自定义 provider/,
-      ),
+      await screen.findByText(/默认模型（model）引用了自定义 provider/),
     ).toBeVisible();
     expect(commands.discoverProviderImport).toHaveBeenCalledWith("opencode");
   });
@@ -726,9 +720,12 @@ describe("ToolProfilesPage", () => {
 
     fireEvent.click(activateButton);
 
-    expect(await within(section).findByRole("alert")).toHaveTextContent(
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "POLICY_BLOCKED：宿主策略禁止生成预览",
     );
+    expect(
+      screen.getAllByText("POLICY_BLOCKED：宿主策略禁止生成预览"),
+    ).toHaveLength(1);
     await waitFor(() => expect(listProviderProfiles).toHaveBeenCalledTimes(1));
   });
 
@@ -871,8 +868,13 @@ describe("ToolProfilesPage", () => {
       await within(section).findByRole("button", { name: "预览渠道同步" }),
     );
 
-    expect(await within(section).findByRole("alert")).toHaveTextContent(
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。",
     );
+    expect(
+      screen.getAllByText(
+        "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。",
+      ),
+    ).toHaveLength(1);
   });
 });

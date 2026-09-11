@@ -1,17 +1,16 @@
-import { useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Power, PowerOff, Trash2 } from "lucide-react";
 
 import {
   commands,
-  type ApplyHookPreviewInput,
   type HookDto,
   type HookEvent,
-  type PreviewPlan,
   type Tool,
   type UpdateHookInput,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { Field } from "@/components/ui/field";
 import {
   CentralList,
   CentralListCard,
@@ -20,12 +19,15 @@ import {
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
-import { Notify } from "@/components/notify";
+import { ToolIconToggle } from "@/components/tool-icon-toggle";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
+import { useImportDialogState } from "@/features/sync/use-import-dialog-state";
+import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import {
   globalHookStatusesQueryOptions,
@@ -38,11 +40,7 @@ import {
   filterEnabledTools,
   toolMetadata,
 } from "@/lib/tool-metadata";
-import {
-  appSettingsQueryOptions,
-  canAutoApplyPreview,
-} from "@/lib/settings-api";
-import { cn } from "@/lib/utils";
+import { appSettingsQueryOptions } from "@/lib/settings-api";
 import {
   HOOK_EVENT_GROUPS,
   HOOK_EVENT_OPTIONS,
@@ -61,20 +59,6 @@ interface HookFormState {
   command: string;
   timeout: string;
   enabled: boolean;
-}
-
-interface OpenHookPreview {
-  plan: PreviewPlan;
-  tool: Tool;
-}
-
-interface HookPreviewRequest {
-  tool: Tool;
-  autoApply: boolean;
-}
-
-interface HookApplyRequest {
-  input: ApplyHookPreviewInput;
 }
 
 const emptyForm: HookFormState = {
@@ -102,17 +86,14 @@ export function HooksPage() {
   const activeTool = visibleTools.some((tool) => tool === selectedTool)
     ? selectedTool
     : (visibleTools[0] ?? selectedTool);
+  const visibleEventGroups = useVisibleHookEventGroups(activeTool);
   const [form, setForm] = useState<HookFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
-  const saveInFlight = useRef(false);
+  const submitGuard = useSubmitGuard();
   const [formError, setFormError] = useState<string | null>(null);
-  const { notification, notify } = useNotify();
+  const { notify } = useNotify();
   const [listLayout, setListLayout] = usePersistedCentralListLayout("hooks");
-  const [openPreview, setOpenPreview] = useState<OpenHookPreview | null>(null);
-  const [openImport, setOpenImport] = useState<{
-    tool: Tool;
-    requestId: string;
-  } | null>(null);
+  const importDialog = useImportDialogState();
   const [openPicker, setOpenPicker] = useState<{
     tool: Tool;
     event: HookEvent;
@@ -142,12 +123,12 @@ export function HooksPage() {
       });
     },
     onSettled: () => {
-      saveInFlight.current = false;
+      submitGuard.end();
     },
   });
 
   const openForm = (state: HookFormState) => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     saveMutation.reset();
     setFormError(null);
     setForm(state);
@@ -155,7 +136,7 @@ export function HooksPage() {
   };
 
   const closeForm = () => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     setFormOpen(false);
     setForm(emptyForm);
     setFormError(null);
@@ -238,81 +219,45 @@ export function HooksPage() {
     },
   });
 
-  const previewMutation = useMutation({
-    mutationFn: async ({ tool }: HookPreviewRequest) => ({
-      tool,
-      plan: unwrapResult(
-        await commands.previewHookSync({
-          tool,
-          projectId: null,
-          excludeFromGit: false,
-        }),
-      ),
-    }),
-    onSuccess: ({ plan, tool }, { autoApply }) => {
-      if (plan.targets.length === 0) {
-        notify({
-          kind: "success",
-          message:
-            "暂无启用且已分配到该工具的中央 Hook。可先在事件分组中添加，或通过“检测并导入已有 Hooks”纳入已有配置。",
-        });
-        setOpenPreview(null);
-        return;
-      }
-      if (autoApply && canAutoApplyPreview(plan)) {
-        applyMutation.mutate({
-          input: {
-            previewId: plan.previewId,
-            tool,
-            projectId: null,
-          },
-        });
-        return;
-      }
-      setOpenPreview({ plan, tool });
+  const {
+    openPreview,
+    requestPreview,
+    previewMutation,
+    applyMutation,
+    readoptMutation,
+    closePreview,
+  } = useSyncPreviewFlow({
+    artifactKind: "hook",
+    directApply,
+    preview: (tool) =>
+      commands.previewHookSync({
+        tool,
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    apply: ({ previewId, tool }) =>
+      commands.applyHookPreview({
+        previewId,
+        tool,
+        projectId: null,
+      }),
+    readopt: (tool) => commands.readoptHookTarget({ tool, projectId: null }),
+    invalidate: invalidateHooks,
+    messages: {
+      previewFailed: "生成 Hooks 全局预览失败。",
+      applyFailed: "应用 Hooks 全局同步失败。",
+      readoptFailed: "重新接管 Hooks 目标失败。",
+      empty:
+        "暂无启用且已分配到该工具的中央 Hook。可先在事件分组中添加，或通过“检测并导入已有 Hooks”纳入已有配置。",
+      applied: (result) =>
+        `已应用 ${result.appliedTargets} 个 Hooks 目标，并创建 ${result.snapshotCount} 份快照。`,
     },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "生成 Hooks 全局预览失败。",
-      });
-    },
-  });
-
-  const applyMutation = useMutation({
-    mutationFn: async ({ input }: HookApplyRequest) =>
-      unwrapResult(await commands.applyHookPreview(input)),
-    onSuccess: async (result) => {
-      const successMessage = `已应用 ${result.appliedTargets} 个 Hooks 目标，并创建 ${result.snapshotCount} 份快照。`;
-      setOpenPreview(null);
-      await invalidateHooks();
-      notify({ kind: "success", message: successMessage });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "应用 Hooks 全局同步失败。",
-      });
-    },
-  });
-
-  const readoptMutation = useMutation({
-    mutationFn: async ({ tool }: { tool: Tool }) =>
-      unwrapResult(await commands.readoptHookTarget({ tool, projectId: null })),
-    onSuccess: async (result, { tool }) => {
-      setOpenPreview(null);
-      await invalidateHooks();
+    onReadopted: (result, tool) => {
       notify({
         kind: "success",
         message: `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
       });
-      previewMutation.mutate({ tool, autoApply: directApply });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "重新接管 Hooks 目标失败。",
-      });
+      requestPreview(tool, directApply);
     },
   });
 
@@ -329,7 +274,6 @@ export function HooksPage() {
 
   return (
     <main className="p-6 lg:p-8">
-      <Notify notification={notification} />
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">中央配置库</p>
         <h1 className="mt-1 text-2xl font-semibold">Hooks</h1>
@@ -365,10 +309,7 @@ export function HooksPage() {
             </p>
           ) : null}
           {hooksQuery.isError ? (
-            <p
-              role="alert"
-              className="mt-4 text-sm text-red-700 dark:text-red-300"
-            >
+            <p role="alert" className="text-destructive mt-4 text-sm">
               {profileErrorText(hooksQuery.error)}
             </p>
           ) : null}
@@ -532,10 +473,7 @@ export function HooksPage() {
           </p>
         ) : null}
         {statusesQuery.isError ? (
-          <p
-            role="alert"
-            className="mt-3 text-sm text-red-700 dark:text-red-300"
-          >
+          <p role="alert" className="text-destructive mt-3 text-sm">
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
@@ -558,7 +496,7 @@ export function HooksPage() {
               </p>
             ) : null}
             {toolStatus.diagnosticCode ? (
-              <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+              <p className="text-warning mt-2 text-xs">
                 诊断码：<code>{toolStatus.diagnosticCode}</code>
               </p>
             ) : null}
@@ -567,11 +505,8 @@ export function HooksPage() {
               size="sm"
               variant="outline"
               onClick={() => {
-                if (openImport) return;
-                setOpenImport({
-                  tool: activeTool,
-                  requestId: crypto.randomUUID(),
-                });
+                if (importDialog.state) return;
+                importDialog.open(activeTool);
               }}
             >
               检测并导入已有 Hooks
@@ -583,12 +518,7 @@ export function HooksPage() {
                 disabled={
                   previewMutation.isPending || toolPresentation?.previewBlocked
                 }
-                onClick={() =>
-                  previewMutation.mutate({
-                    tool: activeTool,
-                    autoApply: directApply,
-                  })
-                }
+                onClick={() => requestPreview(activeTool, directApply)}
               >
                 {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
               </Button>
@@ -596,18 +526,14 @@ export function HooksPage() {
           </article>
         ) : null}
         <div className="mt-5 space-y-5">
-          {HOOK_EVENT_GROUPS.map((group) => {
-            const supportedEvents = group.events.filter((item) =>
-              hookEventSupportedByTool(activeTool, item.event),
-            );
-            if (supportedEvents.length === 0) return null;
+          {visibleEventGroups.map((group) => {
             return (
               <div key={group.label}>
                 <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
                   {group.label}
                 </h3>
                 <div className="mt-2 space-y-3">
-                  {supportedEvents.map(({ event, label }) => {
+                  {group.events.map(({ event, label }) => {
                     const assigned = (hooksQuery.data ?? []).filter((hook) =>
                       hook.globalAssignments.some(
                         (assignment) =>
@@ -708,12 +634,12 @@ export function HooksPage() {
         onClose={closeForm}
         onSubmit={(event) => {
           event.preventDefault();
-          if (saveInFlight.current || saveMutation.isPending) return;
+          if (submitGuard.isInFlight() || saveMutation.isPending) return;
           setFormError(null);
           saveMutation.reset();
           try {
             validateForm(form);
-            saveInFlight.current = true;
+            if (!submitGuard.begin()) return;
             saveMutation.mutate(form);
           } catch (error) {
             setFormError(
@@ -810,20 +736,15 @@ export function HooksPage() {
         </label>
       </FormDialog>
 
-      {openImport ? (
+      {importDialog.state ? (
         <HookImportDialog
-          key={openImport.requestId}
-          tool={openImport.tool}
-          requestId={openImport.requestId}
-          onClose={() => setOpenImport(null)}
-          onRescan={() =>
-            setOpenImport({
-              tool: openImport.tool,
-              requestId: crypto.randomUUID(),
-            })
-          }
+          key={importDialog.state.requestId}
+          tool={importDialog.state.tool}
+          requestId={importDialog.state.requestId}
+          onClose={importDialog.close}
+          onRescan={importDialog.rescan}
           onImported={async (result) => {
-            setOpenImport(null);
+            importDialog.close();
             await invalidateHooks();
             notify({
               kind: "success",
@@ -844,7 +765,7 @@ export function HooksPage() {
             setOpenPicker(null);
             notify({ kind: "success", message });
             if (directApply) {
-              previewMutation.mutate({ tool: activeTool, autoApply: true });
+              requestPreview(activeTool, true);
             }
           }}
         />
@@ -858,17 +779,31 @@ export function HooksPage() {
         readopting={readoptMutation.isPending}
         onReadopt={() => {
           if (openPreview) {
-            readoptMutation.mutate({ tool: openPreview.tool });
+            readoptMutation.mutate(openPreview.tool);
           }
         }}
-        onClose={() => setOpenPreview(null)}
+        onClose={closePreview}
         onApply={(previewId, tool) => {
           applyMutation.mutate({
-            input: { previewId, tool, projectId: null },
+            previewId,
+            tool,
           });
         }}
       />
     </main>
+  );
+}
+
+function useVisibleHookEventGroups(tool: Tool) {
+  return useMemo(
+    () =>
+      HOOK_EVENT_GROUPS.map((group) => ({
+        ...group,
+        events: group.events.filter((item) =>
+          hookEventSupportedByTool(tool, item.event),
+        ),
+      })).filter((group) => group.events.length > 0),
+    [tool],
   );
 }
 
@@ -884,36 +819,13 @@ function HookToolViewButton({
   selected,
   onClick,
 }: HookToolViewButtonProps) {
-  const metadata = toolMetadata(tool);
-  const label = `查看 ${metadata.label} Hooks`;
-
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      className={cn(
-        "size-8 p-0 shadow-none",
-        selected
-          ? "border-slate-300 bg-slate-50 shadow-sm dark:border-slate-600 dark:bg-slate-800"
-          : "border-slate-200 bg-transparent dark:border-slate-700",
-      )}
-      aria-label={label}
-      aria-pressed={selected}
-      title={label}
+    <ToolIconToggle
+      tool={tool}
+      active={selected}
+      label={`查看 ${toolMetadata(tool).label} Hooks`}
       onClick={onClick}
-    >
-      <img
-        src={metadata.icon}
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className={cn(
-          "size-5 object-contain transition-[opacity,filter]",
-          selected ? "opacity-100" : "opacity-25 grayscale",
-        )}
-      />
-    </Button>
+    />
   );
 }
 
@@ -974,19 +886,4 @@ function parseTimeout(text: string): number | null {
     throw new Error("超时秒数必须是 1–3600 的整数，或留空。");
   }
   return value;
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block space-y-2 text-sm">
-      <span className="font-medium">{label}</span>
-      {children}
-    </label>
-  );
 }

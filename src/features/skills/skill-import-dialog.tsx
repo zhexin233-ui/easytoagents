@@ -12,9 +12,16 @@ import {
   type Tool,
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { skillImportQueryOptions } from "@/lib/skills-api";
+import { toneClass } from "@/lib/tone-class";
 import { toolMetadata } from "@/lib/tool-metadata";
 
 interface SkillImportDialogProps {
@@ -85,7 +92,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
   const close = () => {
     if (!operationInFlight.current) props.onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(true, close);
+  const { dialogRef } = useDialogFocus(true, close);
   const preview = query.data;
   const error = profileErrorText(
     query.error ?? confirm.error ?? takeover.error,
@@ -182,27 +189,22 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
           </p>
         ) : null}
         {candidate.reason ? (
-          <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
-            {candidate.reason}
-          </p>
+          <p className="text-warning mt-2 text-xs">{candidate.reason}</p>
         ) : null}
       </article>
     );
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-xl shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={close}
+        labelledBy={titleId}
+        describedBy={descriptionId}
+        className="flex max-h-[calc(100dvh-2rem)] max-w-3xl min-w-0 flex-col overflow-hidden p-0"
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
+        <DialogHeader className="shrink-0 border-b p-6">
           <div className="min-w-0">
             <h2 id={titleId} className="text-xl font-semibold">
               导入 {toolMetadata(props.tool).label} 全局 Skills
@@ -224,7 +226,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
           >
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <form
           aria-labelledby={titleId}
           className="flex min-h-0 flex-col"
@@ -257,10 +259,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               <p role="status">正在检测已有全局 Skills…</p>
             ) : null}
             {error ? (
-              <p
-                role="alert"
-                className="text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="text-destructive text-sm">
                 {copied ? "已复制到中央库，但列表刷新失败：" : ""}
                 {error} 请重新检测后再确认。
               </p>
@@ -303,7 +302,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                         <p className="mt-2">{source.message}</p>
                       ) : null}
                       {source.diagnosticCode ? (
-                        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                        <p className="text-warning mt-2 text-xs">
                           诊断码：<code>{source.diagnosticCode}</code>
                         </p>
                       ) : null}
@@ -344,14 +343,14 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                 ) : null}
                 {takeoverCandidates?.length ? (
                   <section
-                    className="space-y-3 rounded-lg border border-amber-200 p-4 dark:border-amber-900/60"
+                    className={`space-y-3 rounded-lg border p-4 ${toneClass("warning")}`}
                     aria-labelledby="takeover-skills-title"
                   >
                     <div>
                       <h3 id="takeover-skills-title" className="font-semibold">
                         接管正式目录
                       </h3>
-                      <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+                      <p className="text-warning mt-1 text-xs">
                         继续后只生成变更预览。确认 Apply
                         时，入口才会替换为中央链接；外链源不变，目录原件会先保存为完整树快照。
                       </p>
@@ -364,7 +363,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               </>
             ) : null}
           </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-3 border-t px-6 py-4">
+          <DialogFooter className="shrink-0 border-t px-6 py-4">
             <Button
               type="button"
               variant="outline"
@@ -422,9 +421,9 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                 ? "正在生成预览…"
                 : `预览接管所选项（${selectedTakeoverCandidateIds.length}）`}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }

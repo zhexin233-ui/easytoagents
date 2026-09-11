@@ -1,5 +1,11 @@
 import { useId, type FormEvent, type ReactNode } from "react";
 
+import {
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 
@@ -33,26 +39,20 @@ export function FormDialog({
   const close = () => {
     if (!pending) onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(open, close);
+  const { dialogRef } = useDialogFocus(open, close);
 
   if (!open) return null;
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
-    >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl min-w-0 flex-col overflow-hidden rounded-xl shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={close}
+        labelledBy={titleId}
+        describedBy={descriptionId}
+        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 flex-col overflow-hidden p-0"
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
+        <DialogHeader className="shrink-0 border-b p-6">
           <div className="min-w-0">
             <h2 id={titleId} className="text-xl font-semibold">
               {title}
@@ -73,7 +73,7 @@ export function FormDialog({
           >
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <form
           aria-labelledby={titleId}
           className="flex min-h-0 flex-col"
@@ -89,10 +89,7 @@ export function FormDialog({
           <div className="min-h-0 space-y-4 overflow-y-auto p-6">
             {children}
             {error ? (
-              <p
-                role="alert"
-                className="text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="text-destructive text-sm">
                 {error}
               </p>
             ) : null}
@@ -102,7 +99,7 @@ export function FormDialog({
               </p>
             ) : null}
           </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-3 border-t px-6 py-4">
+          <DialogFooter className="shrink-0 border-t px-6 py-4">
             <Button
               type="button"
               variant="outline"
@@ -114,9 +111,9 @@ export function FormDialog({
             <Button type="submit" disabled={pending || submitDisabled}>
               {pending ? "正在保存…" : submitLabel}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }

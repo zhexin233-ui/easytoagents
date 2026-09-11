@@ -1,8 +1,61 @@
-import { cn } from "@/lib/utils";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from "react";
 
-export interface NotifyMessage {
-  kind: "success" | "error";
-  message: string;
+import { cn } from "@/lib/utils";
+import { toneClass } from "@/lib/tone-class";
+import {
+  NotifyContext,
+  notifyDurationMs,
+  type Notification,
+  type NotifyMessage,
+} from "@/components/notify-context";
+
+export function NotifyProvider({ children }: PropsWithChildren) {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const timersRef = useRef(
+    new Map<number, ReturnType<typeof globalThis.setTimeout>>(),
+  );
+
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const timeoutId of timers.values()) {
+        globalThis.clearTimeout(timeoutId);
+      }
+      timers.clear();
+    };
+  }, []);
+
+  const notify = useCallback((next: NotifyMessage) => {
+    const id = Date.now() + Math.random();
+    setNotifications((current) => [...current, { ...next, id }]);
+    const timeoutId = globalThis.setTimeout(() => {
+      timersRef.current.delete(id);
+      setNotifications((current) => current.filter((item) => item.id !== id));
+    }, notifyDurationMs);
+    timersRef.current.set(id, timeoutId);
+  }, []);
+
+  const clear = useCallback(() => {
+    for (const timeoutId of timersRef.current.values()) {
+      globalThis.clearTimeout(timeoutId);
+    }
+    timersRef.current.clear();
+    setNotifications([]);
+  }, []);
+
+  return (
+    <NotifyContext.Provider value={{ notifications, notify, clear }}>
+      {children}
+      <NotifyViewport notifications={notifications} />
+    </NotifyContext.Provider>
+  );
 }
 
 interface NotifyProps {
@@ -19,13 +72,30 @@ export function Notify({ notification }: NotifyProps) {
       role={failure ? "alert" : "status"}
       aria-atomic="true"
       className={cn(
-        "fixed top-4 right-4 z-[60] w-[min(calc(100vw-2rem),24rem)] rounded-lg border p-4 text-sm shadow-lg",
-        failure
-          ? "border-red-200 bg-red-50 text-red-950 dark:border-red-900/60 dark:bg-red-950/90 dark:text-red-200"
-          : "border-emerald-200 bg-emerald-50 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/90 dark:text-emerald-200",
+        "w-full rounded-lg border p-4 text-sm shadow-lg",
+        toneClass(failure ? "destructive" : "success"),
       )}
     >
       {notification.message}
+    </div>
+  );
+}
+
+export function NotifyViewport({
+  notifications,
+}: {
+  notifications?: readonly Notification[];
+}) {
+  const context = useContext(NotifyContext);
+  const visible = notifications ?? context?.notifications ?? [];
+  return (
+    <div
+      aria-label="通知"
+      className="fixed top-4 right-4 z-[60] flex w-[min(calc(100vw-2rem),24rem)] flex-col gap-3"
+    >
+      {visible.map((notification) => (
+        <Notify key={notification.id} notification={notification} />
+      ))}
     </div>
   );
 }

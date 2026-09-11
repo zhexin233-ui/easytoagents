@@ -250,7 +250,7 @@ describe("McpPage", () => {
     expect(commands.previewMcpSync).not.toHaveBeenCalled();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
-  it("直接应用模式下自动同步的预览与 Apply 失败都只使用失败通知", async () => {
+  it("直接应用模式下自动同步的预览与 Apply 失败通知按队列堆叠", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
@@ -301,9 +301,9 @@ describe("McpPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "ATOMIC_WRITE_FAILED：MCP 应用失败",
-      ),
+      expect(
+        screen.getByText("ATOMIC_WRITE_FAILED：MCP 应用失败"),
+      ).toHaveAttribute("role", "alert"),
     );
     expect(
       screen.getAllByText("ATOMIC_WRITE_FAILED：MCP 应用失败"),
@@ -473,7 +473,7 @@ describe("McpPage", () => {
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
   });
-  it("重新接管后的预览失败替换成功通知且不重复呈现", async () => {
+  it("重新接管后的预览失败与成功通知按队列呈现且不重复", async () => {
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
     vi.mocked(commands.previewMcpSync)
@@ -523,11 +523,15 @@ describe("McpPage", () => {
     expect(
       screen.getAllByText("DATABASE_ERROR：重新生成预览失败"),
     ).toHaveLength(1);
+    const readoptStatus = screen.getByText(
+      "已以当前内容重新接管（刷新 2 个、清理 1 个条目基线）；正在重新生成预览。",
+    );
+    expect(readoptStatus).toHaveAttribute("role", "status");
     expect(
-      screen.queryByText(
+      screen.getAllByText(
         "已以当前内容重新接管（刷新 2 个、清理 1 个条目基线）；正在重新生成预览。",
       ),
-    ).toBeNull();
+    ).toHaveLength(1);
   });
   it.each([
     [

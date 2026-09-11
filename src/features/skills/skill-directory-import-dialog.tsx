@@ -4,6 +4,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 import { commands, type SkillDto } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 
@@ -36,7 +42,7 @@ export function SkillDirectoryImportDialog(
   const close = () => {
     if (!importInFlight.current) props.onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(true, close);
+  const { dialogRef } = useDialogFocus(true, close);
 
   const selectDirectory = () => {
     setDirectoryError(null);
@@ -56,21 +62,15 @@ export function SkillDirectoryImportDialog(
   };
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
-    >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl min-w-0 flex-col overflow-hidden rounded-xl shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={close}
+        labelledBy={titleId}
+        describedBy={descriptionId}
+        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 flex-col overflow-hidden p-0"
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
+        <DialogHeader className="shrink-0 border-b p-6">
           <div className="min-w-0">
             <h2 id={titleId} className="text-xl font-semibold">
               从本地目录导入
@@ -93,7 +93,7 @@ export function SkillDirectoryImportDialog(
           >
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <form
           aria-labelledby={titleId}
           className="flex min-h-0 flex-col"
@@ -131,18 +131,12 @@ export function SkillDirectoryImportDialog(
               选择目录
             </Button>
             {directoryError ? (
-              <p
-                role="alert"
-                className="text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="text-destructive text-sm">
                 {directoryError}
               </p>
             ) : null}
             {importMutation.isError ? (
-              <p
-                role="alert"
-                className="text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="text-destructive text-sm">
                 {profileErrorText(importMutation.error)}
               </p>
             ) : null}
@@ -152,7 +146,7 @@ export function SkillDirectoryImportDialog(
               </p>
             ) : null}
           </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-3 border-t px-6 py-4">
+          <DialogFooter className="shrink-0 border-t px-6 py-4">
             <Button
               type="button"
               variant="outline"
@@ -167,9 +161,9 @@ export function SkillDirectoryImportDialog(
             >
               {importMutation.isPending ? "正在安全导入…" : "复制到中央库"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }

@@ -337,7 +337,7 @@ describe("PromptsPage", () => {
     confirmSpy.mockRestore();
   });
 
-  it("启用与手动预览失败依次替换为唯一错误通知", async () => {
+  it("启用与手动预览失败通知按队列堆叠", async () => {
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",
       data: [promptProfile],
@@ -372,18 +372,23 @@ describe("PromptsPage", () => {
       screen.getByRole("button", { name: "预览 Claude 全局同步" }),
     );
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "DATABASE_ERROR：提示词预览暂不可用",
-      ),
+      expect(
+        screen.getByText("DATABASE_ERROR：提示词预览暂不可用"),
+      ).toHaveAttribute("role", "alert"),
     );
-    expect(screen.getByRole("alert")).toHaveAttribute("aria-atomic", "true");
+    expect(
+      screen.getByText("DATABASE_ERROR：提示词预览暂不可用"),
+    ).toHaveAttribute("aria-atomic", "true");
     expect(
       screen.getAllByText("DATABASE_ERROR：提示词预览暂不可用"),
     ).toHaveLength(1);
-    expect(screen.queryByText("CONFLICT：全局启用已过期")).toBeNull();
+    expect(screen.getByText("CONFLICT：全局启用已过期")).toHaveAttribute(
+      "role",
+      "alert",
+    );
   });
 
-  it("检测无结果与检测失败分别显示唯一结果通知", async () => {
+  it("检测无结果与检测失败通知按队列分别呈现", async () => {
     vi.mocked(commands.discoverPromptImport)
       .mockResolvedValueOnce({ status: "ok", data: null })
       .mockResolvedValueOnce({
@@ -414,7 +419,10 @@ describe("PromptsPage", () => {
     expect(screen.getAllByText("PARSE_ERROR：已有提示词无法解析")).toHaveLength(
       1,
     );
-    expect(screen.queryByText("未发现可导入的已有提示词。")).toBeNull();
+    expect(screen.getByText("未发现可导入的已有提示词。")).toHaveAttribute(
+      "role",
+      "status",
+    );
   });
 
   it("确认导入成功保留 payload 并只显示一次成功通知", async () => {
@@ -776,7 +784,7 @@ describe("PromptsPage", () => {
     ).toHaveAttribute("role", "status");
   });
 
-  it("直接应用模式下自动同步的预览与 Apply 失败都只使用失败通知", async () => {
+  it("直接应用模式下自动同步的预览与 Apply 失败通知按队列堆叠", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
@@ -830,9 +838,9 @@ describe("PromptsPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "ATOMIC_WRITE_FAILED：提示词应用失败",
-      ),
+      expect(
+        screen.getByText("ATOMIC_WRITE_FAILED：提示词应用失败"),
+      ).toHaveAttribute("role", "alert"),
     );
     expect(
       screen.getAllByText("ATOMIC_WRITE_FAILED：提示词应用失败"),

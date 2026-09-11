@@ -1,15 +1,13 @@
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Power, PowerOff, Trash2 } from "lucide-react";
 
 import {
   commands,
-  type ApplyMcpPreviewInput,
   type JsonValue,
   type McpServerDto,
   type McpServerInput,
   type McpTransport,
-  type PreviewPlan,
   type Tool,
   type UpdateMcpServerInput,
 } from "@/bindings/commands";
@@ -22,13 +20,16 @@ import {
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
-import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
+import { useImportDialogState } from "@/features/sync/use-import-dialog-state";
+import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import {
   globalMcpStatusesQueryOptions,
   mcpKeys,
@@ -41,10 +42,7 @@ import {
   toolMetadata,
 } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
-import {
-  appSettingsQueryOptions,
-  canAutoApplyPreview,
-} from "@/lib/settings-api";
+import { appSettingsQueryOptions } from "@/lib/settings-api";
 import { McpImportDialog } from "@/features/mcp/mcp-import-dialog";
 
 interface McpFormState {
@@ -64,23 +62,9 @@ interface McpFormState {
   enabled: boolean;
 }
 
-interface OpenMcpPreview {
-  plan: PreviewPlan;
-  tool: Tool;
-}
-
 interface McpSaveVariables {
   state: McpFormState;
   globalTools: Tool[];
-}
-
-interface McpPreviewRequest {
-  tool: Tool;
-  autoApply: boolean;
-}
-
-interface McpApplyRequest {
-  input: ApplyMcpPreviewInput;
 }
 
 const emptyForm: McpFormState = {
@@ -112,15 +96,11 @@ export function McpPage() {
   );
   const [form, setForm] = useState<McpFormState>(emptyForm);
   const [formOpen, setFormOpen] = useState(false);
-  const saveInFlight = useRef(false);
+  const submitGuard = useSubmitGuard();
   const [formError, setFormError] = useState<string | null>(null);
-  const { notification, notify } = useNotify();
+  const { notify } = useNotify();
   const [listLayout, setListLayout] = usePersistedCentralListLayout("mcp");
-  const [openPreview, setOpenPreview] = useState<OpenMcpPreview | null>(null);
-  const [openImport, setOpenImport] = useState<{
-    tool: Tool;
-    requestId: string;
-  } | null>(null);
+  const importDialog = useImportDialogState();
   const invalidateMcp = async () => {
     await queryClient.invalidateQueries({ queryKey: mcpKeys.all });
   };
@@ -157,12 +137,12 @@ export function McpPage() {
       });
     },
     onSettled: () => {
-      saveInFlight.current = false;
+      submitGuard.end();
     },
   });
 
   const openForm = (state: McpFormState) => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     saveMutation.reset();
     setFormError(null);
     setForm(state);
@@ -170,7 +150,7 @@ export function McpPage() {
   };
 
   const closeForm = () => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     setFormOpen(false);
     setForm(emptyForm);
     setFormError(null);
@@ -259,7 +239,7 @@ export function McpPage() {
     onSuccess: async (_result, { tool }) => {
       await invalidateMcp();
       if (directApply) {
-        previewMutation.mutate({ tool, autoApply: true });
+        requestPreview(tool, true);
       }
     },
     onError: (error) => {
@@ -270,87 +250,50 @@ export function McpPage() {
     },
   });
 
-  const previewMutation = useMutation({
-    mutationFn: async ({ tool }: McpPreviewRequest) => ({
-      tool,
-      plan: unwrapResult(
-        await commands.previewMcpSync({
-          tool,
-          projectId: null,
-          excludeFromGit: false,
-        }),
-      ),
-    }),
-    onSuccess: ({ plan, tool }, { autoApply }) => {
-      if (plan.targets.length === 0) {
-        notify({
-          kind: "success",
-          message:
-            "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
-        });
-        setOpenPreview(null);
-        return;
-      }
-      if (autoApply && canAutoApplyPreview(plan)) {
-        applyMutation.mutate({
-          input: {
-            previewId: plan.previewId,
-            tool,
-            projectId: null,
-          },
-        });
-        return;
-      }
-      setOpenPreview({ plan, tool });
+  const {
+    openPreview,
+    requestPreview,
+    previewMutation,
+    applyMutation,
+    readoptMutation,
+    closePreview,
+  } = useSyncPreviewFlow({
+    artifactKind: "mcp",
+    directApply,
+    preview: (tool) =>
+      commands.previewMcpSync({
+        tool,
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    apply: ({ previewId, tool }) =>
+      commands.applyMcpPreview({
+        previewId,
+        tool,
+        projectId: null,
+      }),
+    readopt: (tool) => commands.readoptMcpTarget({ tool, projectId: null }),
+    invalidate: invalidateMcp,
+    messages: {
+      previewFailed: "生成 MCP 全局预览失败。",
+      applyFailed: "应用 MCP 全局同步失败。",
+      readoptFailed: "重新接管 MCP 目标失败。",
+      empty:
+        "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
+      applied: (result) =>
+        `已应用 ${result.appliedTargets} 个 MCP 目标，并创建 ${result.snapshotCount} 份快照。`,
     },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "生成 MCP 全局预览失败。",
-      });
-    },
-  });
-
-  const applyMutation = useMutation({
-    mutationFn: async ({ input }: McpApplyRequest) =>
-      unwrapResult(await commands.applyMcpPreview(input)),
-    onSuccess: async (result) => {
-      const successMessage = `已应用 ${result.appliedTargets} 个 MCP 目标，并创建 ${result.snapshotCount} 份快照。`;
-      setOpenPreview(null);
-      await invalidateMcp();
-      notify({ kind: "success", message: successMessage });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "应用 MCP 全局同步失败。",
-      });
-    },
-  });
-
-  const readoptMutation = useMutation({
-    mutationFn: async ({ tool }: { tool: Tool }) =>
-      unwrapResult(await commands.readoptMcpTarget({ tool, projectId: null })),
-    onSuccess: async (result, { tool }) => {
-      setOpenPreview(null);
-      await invalidateMcp();
+    onReadopted: (result, tool) => {
       notify({
         kind: "success",
         message: `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
       });
-      previewMutation.mutate({ tool, autoApply: directApply });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "重新接管 MCP 目标失败。",
-      });
+      requestPreview(tool, directApply);
     },
   });
 
   return (
     <main className="p-6 lg:p-8">
-      <Notify notification={notification} />
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">中央配置库</p>
         <h1 className="mt-1 text-2xl font-semibold">MCP</h1>
@@ -386,10 +329,7 @@ export function McpPage() {
             </p>
           ) : null}
           {serversQuery.isError ? (
-            <p
-              role="alert"
-              className="mt-4 text-sm text-red-700 dark:text-red-300"
-            >
+            <p role="alert" className="text-destructive mt-4 text-sm">
               {profileErrorText(serversQuery.error)}
             </p>
           ) : null}
@@ -557,10 +497,7 @@ export function McpPage() {
           </p>
         ) : null}
         {statusesQuery.isError ? (
-          <p
-            role="alert"
-            className="mt-3 text-sm text-red-700 dark:text-red-300"
-          >
+          <p role="alert" className="text-destructive mt-3 text-sm">
             {profileErrorText(statusesQuery.error)}
           </p>
         ) : null}
@@ -601,7 +538,7 @@ export function McpPage() {
                     </p>
                   ) : null}
                   {status.diagnosticCode ? (
-                    <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                    <p className="text-warning mt-2 text-xs">
                       诊断码：<code>{status.diagnosticCode}</code>
                     </p>
                   ) : null}
@@ -611,11 +548,8 @@ export function McpPage() {
                     variant="outline"
                     disabled={presentation.previewBlocked}
                     onClick={() => {
-                      if (openImport) return;
-                      setOpenImport({
-                        tool: status.tool,
-                        requestId: crypto.randomUUID(),
-                      });
+                      if (importDialog.state) return;
+                      importDialog.open(status.tool);
                     }}
                   >
                     检测并导入已有 MCP
@@ -627,12 +561,7 @@ export function McpPage() {
                       disabled={
                         previewMutation.isPending || presentation.previewBlocked
                       }
-                      onClick={() =>
-                        previewMutation.mutate({
-                          tool: status.tool,
-                          autoApply: directApply,
-                        })
-                      }
+                      onClick={() => requestPreview(status.tool, directApply)}
                     >
                       {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
                     </Button>
@@ -658,12 +587,12 @@ export function McpPage() {
         onClose={closeForm}
         onSubmit={(event) => {
           event.preventDefault();
-          if (saveInFlight.current || saveMutation.isPending) return;
+          if (submitGuard.isInFlight() || saveMutation.isPending) return;
           setFormError(null);
           saveMutation.reset();
           try {
             validateForm(form);
-            saveInFlight.current = true;
+            if (!submitGuard.begin()) return;
             saveMutation.mutate({
               state: form,
               globalTools: form.id
@@ -824,20 +753,15 @@ export function McpPage() {
         </label>
       </FormDialog>
 
-      {openImport ? (
+      {importDialog.state ? (
         <McpImportDialog
-          key={openImport.requestId}
-          tool={openImport.tool}
-          requestId={openImport.requestId}
-          onClose={() => setOpenImport(null)}
-          onRescan={() =>
-            setOpenImport({
-              tool: openImport.tool,
-              requestId: crypto.randomUUID(),
-            })
-          }
+          key={importDialog.state.requestId}
+          tool={importDialog.state.tool}
+          requestId={importDialog.state.requestId}
+          onClose={importDialog.close}
+          onRescan={importDialog.rescan}
           onImported={async (result) => {
-            setOpenImport(null);
+            importDialog.close();
             await invalidateMcp();
             const summary = `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。`;
             if (!directApply) {
@@ -866,18 +790,15 @@ export function McpPage() {
         readopting={readoptMutation.isPending}
         onReadopt={() => {
           if (openPreview) {
-            readoptMutation.mutate({ tool: openPreview.tool });
+            readoptMutation.mutate(openPreview.tool);
           }
         }}
-        onClose={() => setOpenPreview(null)}
+        onClose={closePreview}
         onApply={() => {
           if (openPreview) {
             applyMutation.mutate({
-              input: {
-                previewId: openPreview.plan.previewId,
-                tool: openPreview.tool,
-                projectId: null,
-              },
+              previewId: openPreview.plan.previewId,
+              tool: openPreview.tool,
             });
           }
         }}
@@ -1012,21 +933,6 @@ function isJsonValue(value: unknown): value is JsonValue {
 
 function isJsonObject(value: unknown): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block space-y-2 text-sm">
-      <span className="font-medium">{label}</span>
-      {children}
-    </label>
-  );
 }
 
 function SensitiveField({

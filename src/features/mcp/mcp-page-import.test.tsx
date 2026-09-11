@@ -263,9 +263,9 @@ describe("McpPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "暂无启用且已分配到该工具的中央 MCP",
-    );
+    const status =
+      await screen.findByText(/暂无启用且已分配到该工具的中央 MCP/);
+    expect(status).toHaveAttribute("role", "status");
     expect(
       screen.queryByRole("dialog", { name: "确认原生配置变更" }),
     ).not.toBeInTheDocument();

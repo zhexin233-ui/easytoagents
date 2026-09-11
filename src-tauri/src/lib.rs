@@ -40,6 +40,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<domain::SkillStatus>()
         .typ::<domain::TargetType>()
         .typ::<domain::HookEvent>()
+        .typ::<domain::ToolCapabilities>()
+        .typ::<domain::HookEventSupport>()
         .typ::<adapters::TargetFormat>()
         .typ::<adapters::CapabilityState>()
         .typ::<adapters::ToolAvailabilityState>()
@@ -167,6 +169,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<settings::ApplyMode>()
         .typ::<settings::AppSettingsDto>()
         .typ::<settings::UpdateAppSettingsInput>()
+        .constant("TOOL_CAPABILITIES", domain::tool_capabilities())
+        .constant("HOOK_EVENT_SUPPORT", domain::hook_event_support())
         .commands(collect_commands![
             commands::get_app_info,
             commands::environment::get_environment_state,

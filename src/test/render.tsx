@@ -8,6 +8,8 @@ import {
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
 
+import { NotifyProvider } from "@/components/notify";
+
 type User = {
   click: (element: Element) => Promise<boolean>;
   type: (element: Element, text: string) => Promise<boolean>;
@@ -54,7 +56,9 @@ export function renderWithProviders(
   );
   const result = render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={initialEntries}>{content}</MemoryRouter>
+      <NotifyProvider>
+        <MemoryRouter initialEntries={initialEntries}>{content}</MemoryRouter>
+      </NotifyProvider>
     </QueryClientProvider>,
     renderOptions,
   );

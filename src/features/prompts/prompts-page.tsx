@@ -1,10 +1,14 @@
-import { useRef, useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
 
 import {
   commands,
-  type PreviewPlan,
   type PromptImportPreviewDto,
   type PromptProfileDto,
   type Tool,
@@ -18,12 +22,13 @@ import {
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
-import { Notify } from "@/components/notify";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { Button } from "@/components/ui/button";
 import { useNotify } from "@/components/use-notify";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
+import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import {
   profileErrorText,
   profileKeys,
@@ -31,29 +36,13 @@ import {
   toolProfileStatusQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
-import {
-  appSettingsQueryOptions,
-  canAutoApplyPreview,
-} from "@/lib/settings-api";
+import { appSettingsQueryOptions } from "@/lib/settings-api";
+import { toneClass } from "@/lib/tone-class";
 import {
   PROFILE_TOOLS,
   filterEnabledTools,
   toolMetadata,
 } from "@/lib/tool-metadata";
-
-interface OpenPreview {
-  plan: PreviewPlan;
-  tool: Tool;
-}
-
-interface PromptPreviewRequest {
-  tool: Tool;
-  autoApply: boolean;
-}
-
-interface PromptApplyRequest {
-  preview: OpenPreview;
-}
 
 interface PromptSaveVariables {
   globalTools: Tool[];
@@ -62,26 +51,28 @@ interface PromptSaveVariables {
 export function PromptsPage() {
   const queryClient = useQueryClient();
   const profilesQuery = useQuery(promptProfilesQueryOptions());
-  const statusQueries = {
-    claude: useQuery(toolProfileStatusQueryOptions("claude")),
-    codex: useQuery(toolProfileStatusQueryOptions("codex")),
-    cursor: useQuery(toolProfileStatusQueryOptions("cursor")),
-    zcode: useQuery(toolProfileStatusQueryOptions("zcode")),
-    opencode: useQuery(toolProfileStatusQueryOptions("opencode")),
-  };
+  const enabledTools = useEnabledTools();
+  const statusQueries = useQueries({
+    queries: PROFILE_TOOLS.map((tool) => ({
+      ...toolProfileStatusQueryOptions(tool),
+      enabled: enabledTools.has(tool),
+    })),
+  });
+  const statusQueryByTool = new Map(
+    PROFILE_TOOLS.map((tool, index) => [tool, statusQueries[index]] as const),
+  );
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
-  const tools = filterEnabledTools(PROFILE_TOOLS, useEnabledTools());
+  const tools = filterEnabledTools(PROFILE_TOOLS, enabledTools);
   const [listLayout, setListLayout] = usePersistedCentralListLayout("prompts");
   const [editing, setEditing] = useState<PromptProfileDto | null>(null);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [formOpen, setFormOpen] = useState(false);
-  const saveInFlight = useRef(false);
-  const { notification, notify } = useNotify();
+  const submitGuard = useSubmitGuard();
+  const { notify } = useNotify();
   const [importPreview, setImportPreview] =
     useState<PromptImportPreviewDto | null>(null);
-  const [openPreview, setOpenPreview] = useState<OpenPreview | null>(null);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: profileKeys.prompts });
@@ -127,12 +118,12 @@ export function PromptsPage() {
       });
     },
     onSettled: () => {
-      saveInFlight.current = false;
+      submitGuard.end();
     },
   });
 
   const openForm = (profile: PromptProfileDto | null) => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     saveMutation.reset();
     setEditing(profile);
     setName(profile?.name ?? "");
@@ -141,7 +132,7 @@ export function PromptsPage() {
   };
 
   const closeForm = () => {
-    if (saveInFlight.current || saveMutation.isPending) return;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
     setFormOpen(false);
     setEditing(null);
     setName("");
@@ -175,7 +166,7 @@ export function PromptsPage() {
         });
         return;
       }
-      previewMutation.mutate({ tool, autoApply: true });
+      requestPreview(tool, true);
     },
     onError: (error) => {
       notify({
@@ -185,46 +176,28 @@ export function PromptsPage() {
     },
   });
 
-  const previewMutation = useMutation({
-    mutationFn: async ({ tool }: PromptPreviewRequest) =>
-      unwrapResult(await commands.previewPromptSync(tool)),
-    onSuccess: (plan, { tool, autoApply }) => {
-      if (autoApply && canAutoApplyPreview(plan)) {
-        applyMutation.mutate({
-          preview: { plan, tool },
-        });
-        return;
-      }
-      setOpenPreview({ plan, tool });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "生成提示词全局预览失败。",
-      });
-    },
-  });
-
-  const applyMutation = useMutation({
-    mutationFn: async ({ preview }: PromptApplyRequest) =>
-      unwrapResult(
-        await commands.applyProfilePreview({
-          previewId: preview.plan.previewId,
-          tool: preview.tool,
-          artifactKind: "prompt",
-        }),
-      ),
-    onSuccess: async (result) => {
-      const successMessage = `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`;
-      setOpenPreview(null);
-      await refresh();
-      notify({ kind: "success", message: successMessage });
-    },
-    onError: (error) => {
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? "应用提示词全局同步失败。",
-      });
+  const {
+    openPreview,
+    requestPreview,
+    previewMutation,
+    applyMutation,
+    closePreview,
+  } = useSyncPreviewFlow({
+    artifactKind: "prompt",
+    directApply,
+    preview: (tool) => commands.previewPromptSync(tool),
+    apply: ({ previewId, tool }) =>
+      commands.applyProfilePreview({
+        previewId,
+        tool,
+        artifactKind: "prompt",
+      }),
+    invalidate: refresh,
+    messages: {
+      previewFailed: "生成提示词全局预览失败。",
+      applyFailed: "应用提示词全局同步失败。",
+      applied: (result) =>
+        `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`,
     },
   });
 
@@ -316,14 +289,13 @@ export function PromptsPage() {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (saveInFlight.current || saveMutation.isPending) return;
-    saveInFlight.current = true;
+    if (submitGuard.isInFlight() || saveMutation.isPending) return;
+    if (!submitGuard.begin()) return;
     saveMutation.mutate({ globalTools: editing?.globalTools ?? [] });
   };
 
   return (
     <main className="p-6 lg:p-8">
-      <Notify notification={notification} />
       <header className="mx-auto max-w-6xl">
         <p className="text-muted-foreground text-sm">提示词</p>
         <h1 className="mt-1 text-2xl font-semibold">全局提示词档案</h1>
@@ -363,10 +335,7 @@ export function PromptsPage() {
             </p>
           ) : null}
           {profilesQuery.isError ? (
-            <p
-              role="alert"
-              className="mt-5 text-sm text-red-700 dark:text-red-300"
-            >
+            <p role="alert" className="text-destructive mt-5 text-sm">
               {profileErrorText(profilesQuery.error)}
             </p>
           ) : null}
@@ -484,7 +453,9 @@ export function PromptsPage() {
           </CentralList>
 
           {importPreview ? (
-            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/40">
+            <div
+              className={`mt-5 rounded-lg border p-4 ${toneClass("warning")}`}
+            >
               <p className="font-medium">
                 发现已有提示词，仅生成了无写入导入预览
               </p>
@@ -524,7 +495,8 @@ export function PromptsPage() {
           </h2>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {tools.map((tool) => {
-              const statusQuery = statusQueries[tool];
+              const statusQuery = statusQueryByTool.get(tool);
+              if (!statusQuery) return null;
               const toolLabel = toolMetadata(tool).label;
               return (
                 <article key={tool} className="rounded-lg border p-4 text-sm">
@@ -546,10 +518,7 @@ export function PromptsPage() {
                     </p>
                   ) : null}
                   {statusQuery.isError ? (
-                    <p
-                      role="alert"
-                      className="mt-2 text-xs text-red-700 dark:text-red-300"
-                    >
+                    <p role="alert" className="text-destructive mt-2 text-xs">
                       {profileErrorText(statusQuery.error)}
                     </p>
                   ) : null}
@@ -562,13 +531,13 @@ export function PromptsPage() {
                         {statusQuery.data.newSessionNotice}
                       </p>
                       {statusQuery.data.promptOverride === "present" ? (
-                        <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                        <p className="text-warning mt-2 text-xs font-medium">
                           检测到更高优先级的 Codex 指令来源（如
                           AGENTS.override.md）；当前 AGENTS.md 可能被遮蔽。
                         </p>
                       ) : null}
                       {statusQuery.data.promptOverride === "unknown" ? (
-                        <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                        <p className="text-warning mt-2 text-xs font-medium">
                           无法安全确认 Codex 指令遮蔽状态，请检查
                           AGENTS.override.md 后再应用。
                         </p>
@@ -589,12 +558,7 @@ export function PromptsPage() {
                         size="sm"
                         variant="outline"
                         disabled={previewMutation.isPending}
-                        onClick={() =>
-                          previewMutation.mutate({
-                            tool,
-                            autoApply: directApply,
-                          })
-                        }
+                        onClick={() => requestPreview(tool, directApply)}
                       >
                         {previewMutation.isPending
                           ? "正在生成…"
@@ -660,11 +624,12 @@ export function PromptsPage() {
         tool={openPreview?.tool ?? "claude"}
         artifactKind="prompt"
         applying={applyMutation.isPending}
-        onClose={() => setOpenPreview(null)}
+        onClose={closePreview}
         onApply={() => {
           if (openPreview) {
             applyMutation.mutate({
-              preview: openPreview,
+              previewId: openPreview.plan.previewId,
+              tool: openPreview.tool,
             });
           }
         }}

@@ -64,7 +64,7 @@ export function RefreshEnvironmentButton({
         </p>
       ) : null}
       {refreshMutation.isError ? (
-        <p role="alert" className="text-red-700 dark:text-red-300">
+        <p role="alert" className="text-destructive">
           {profileErrorText(refreshMutation.error) ?? "重新检测失败。"}
         </p>
       ) : null}

@@ -302,7 +302,7 @@ describe("SkillsPage", () => {
     expect(commands.previewSkillSync).not.toHaveBeenCalled();
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
   });
-  it("直接应用模式下分配自动同步的预览与 Apply 失败都只使用失败通知", async () => {
+  it("直接应用模式下分配自动同步的预览与 Apply 失败通知按队列堆叠", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
@@ -352,9 +352,9 @@ describe("SkillsPage", () => {
       await screen.findByRole("button", { name: "Claude 全局已分配" }),
     );
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "ATOMIC_WRITE_FAILED：Skills 应用失败",
-      ),
+      expect(
+        screen.getByText("ATOMIC_WRITE_FAILED：Skills 应用失败"),
+      ).toHaveAttribute("role", "alert"),
     );
     expect(
       screen.getAllByText("ATOMIC_WRITE_FAILED：Skills 应用失败"),

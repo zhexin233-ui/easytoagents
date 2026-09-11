@@ -284,8 +284,8 @@ describe("SkillsPage", () => {
       screen.getAllByText("移出中央库失败：CONFLICT：中央 Skill 已变化"),
     ).toHaveLength(1);
     expect(
-      screen.queryByText("内容预览失败：CONFLICT：中央 Skill 已变化"),
-    ).toBeNull();
+      screen.getByText("内容预览失败：CONFLICT：中央 Skill 已变化"),
+    ).toHaveAttribute("role", "alert");
   });
   it("内容预览和移出中央库进行中时保留图标按钮状态语义", async () => {
     const contentPending =

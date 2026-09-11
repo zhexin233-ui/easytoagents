@@ -8,6 +8,11 @@ import {
 } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
@@ -85,7 +90,7 @@ export function SnapshotRestoreDialog({
     setDeleteSummary(null);
     onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(open, handleClose);
+  const { dialogRef } = useDialogFocus(open, handleClose);
 
   if (!open) {
     return null;
@@ -142,18 +147,15 @@ export function SnapshotRestoreDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="snapshot-restore-title"
-        aria-describedby="snapshot-restore-description"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card max-h-[88vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={handleClose}
+        labelledBy="snapshot-restore-title"
+        describedBy="snapshot-restore-description"
+        className="max-h-[88vh]"
       >
-        <div className="flex items-start justify-between gap-4">
+        <DialogHeader>
           <div>
             <p className="text-muted-foreground text-sm">私有恢复点</p>
             <h2
@@ -166,7 +168,7 @@ export function SnapshotRestoreDialog({
           <Button variant="outline" size="sm" onClick={handleClose}>
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <p
           id="snapshot-restore-description"
           className="text-muted-foreground mt-3 text-sm leading-6"
@@ -203,7 +205,7 @@ export function SnapshotRestoreDialog({
               存储方式：{snapshotStorageLabel(preview.storageKind)}
             </p>
             {preview.storageKind === "directory_tree" ? (
-              <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">
+              <p className="text-warning mt-2 text-sm">
                 该恢复会重新放回完整目录树。恢复后此 Skill
                 不再指向中央副本，后续同步会把它识别为外部拥有变更。
               </p>
@@ -293,7 +295,7 @@ export function SnapshotRestoreDialog({
                         {snapshotStorageLabel(snapshot.storageKind)}
                       </p>
                       {!snapshot.restorable ? (
-                        <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                        <p className="text-warning mt-2 text-xs">
                           旧目录占位快照不含目录内容，只能删除，不能恢复。
                         </p>
                       ) : null}
@@ -317,8 +319,8 @@ export function SnapshotRestoreDialog({
             ) : null}
           </div>
         )}
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }
 

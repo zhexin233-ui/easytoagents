@@ -1,4 +1,4 @@
-import type { Tool } from "@/bindings/commands";
+import { TOOL_CAPABILITIES, type Tool } from "@/bindings/commands";
 import claudeIconUrl from "@/assets/brand/claude-icon-square.svg";
 import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import cursorIconUrl from "@/assets/brand/cursor-icon.svg";
@@ -19,101 +19,73 @@ export interface ToolMetadata {
   };
 }
 
+type ToolCapability = ToolMetadata["capabilities"];
+
+function capabilitiesFor(tool: Tool): ToolCapability {
+  const capability = TOOL_CAPABILITIES.find((item) => item.tool === tool);
+  if (!capability) {
+    throw new Error(`后端未导出工具能力：${tool}`);
+  }
+  return {
+    provider: capability.provider,
+    promptGlobal: capability.promptGlobal,
+    mcp: capability.mcp,
+    skills: capability.skills,
+    hooks: capability.hooks,
+  };
+}
+
 export const TOOL_METADATA = {
   claude: {
     id: "claude",
     label: "Claude",
     icon: claudeIconUrl,
     profileRoute: "/claude",
-    capabilities: {
-      provider: true,
-      promptGlobal: true,
-      mcp: true,
-      skills: true,
-      hooks: true,
-    },
+    capabilities: capabilitiesFor("claude"),
   },
   codex: {
     id: "codex",
     label: "Codex",
     icon: codexIconUrl,
     profileRoute: "/codex",
-    capabilities: {
-      provider: true,
-      promptGlobal: true,
-      mcp: true,
-      skills: true,
-      hooks: true,
-    },
+    capabilities: capabilitiesFor("codex"),
   },
   cursor: {
     id: "cursor",
     label: "Cursor",
     icon: cursorIconUrl,
     profileRoute: "/cursor",
-    capabilities: {
-      provider: false,
-      promptGlobal: true,
-      mcp: true,
-      skills: true,
-      hooks: true,
-    },
+    capabilities: capabilitiesFor("cursor"),
   },
   zcode: {
     id: "zcode",
     label: "ZCode",
     icon: zcodeIconUrl,
     profileRoute: "/zcode",
-    capabilities: {
-      provider: true,
-      promptGlobal: true,
-      mcp: true,
-      skills: true,
-      hooks: true,
-    },
+    capabilities: capabilitiesFor("zcode"),
   },
   opencode: {
     id: "opencode",
     label: "OpenCode",
     icon: opencodeIconUrl,
     profileRoute: "/opencode",
-    capabilities: {
-      provider: true,
-      promptGlobal: true,
-      mcp: true,
-      skills: true,
-      hooks: false,
-    },
+    capabilities: capabilitiesFor("opencode"),
   },
 } as const satisfies Record<Tool, ToolMetadata>;
 
-export const PROFILE_TOOLS = [
-  "claude",
-  "codex",
-  "cursor",
-  "zcode",
-  "opencode",
-] as const satisfies readonly Tool[];
-export const MCP_TOOLS = [
-  "claude",
-  "codex",
-  "cursor",
-  "zcode",
-  "opencode",
-] as const satisfies readonly Tool[];
-export const SKILL_TOOLS = [
-  "claude",
-  "codex",
-  "cursor",
-  "zcode",
-  "opencode",
-] as const satisfies readonly Tool[];
-export const HOOK_TOOLS = [
-  "claude",
-  "codex",
-  "cursor",
-  "zcode",
-] as const satisfies readonly Tool[];
+const ALL_TOOLS: Tool[] = TOOL_CAPABILITIES.map(({ tool }) => tool);
+
+export const PROFILE_TOOLS = ALL_TOOLS.filter((tool) => {
+  const capabilities = capabilitiesFor(tool);
+  return capabilities.provider || capabilities.promptGlobal;
+});
+export const MCP_TOOLS = ALL_TOOLS.filter((tool) => capabilitiesFor(tool).mcp);
+export const SKILL_TOOLS = ALL_TOOLS.filter(
+  (tool) => capabilitiesFor(tool).skills,
+);
+export const HOOK_TOOLS = ALL_TOOLS.filter(
+  (tool) => capabilitiesFor(tool).hooks,
+);
 
 export const DEFAULT_ENABLED_TOOLS = [
   "claude",

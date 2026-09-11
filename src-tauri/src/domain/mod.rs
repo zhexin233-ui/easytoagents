@@ -71,6 +71,21 @@ impl Tool {
     }
 }
 
+/// 前端需要展示和过滤的工具能力。
+///
+/// 该结构是能力矩阵的唯一跨层来源；展示标签、图标和路由仍属于前端，
+/// 但哪些工具支持哪类受管资源必须由领域层决定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCapabilities {
+    pub tool: Tool,
+    pub provider: bool,
+    pub prompt_global: bool,
+    pub mcp: bool,
+    pub skills: bool,
+    pub hooks: bool,
+}
+
 /// 主实体统一使用 UUID 文本标识，避免各功能自行发明 ID 规则。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(transparent)]
@@ -142,6 +157,23 @@ string_enum! {
 }
 
 impl HookEvent {
+    /// 所有 canonical 事件的稳定顺序。
+    pub const ALL: [Self; 13] = [
+        Self::SessionStart,
+        Self::SessionEnd,
+        Self::UserPromptSubmit,
+        Self::PreToolUse,
+        Self::PermissionRequest,
+        Self::PostToolUse,
+        Self::PostToolUseFailure,
+        Self::SubagentStart,
+        Self::SubagentStop,
+        Self::PreCompact,
+        Self::PostCompact,
+        Self::Stop,
+        Self::Notification,
+    ];
+
     /// 官方 hooks 文档核验（2026-09-05）定义的每工具可配置事件集合：
     /// - Claude：settings.json `hooks` 键下出现的 10 个配置事件；
     /// - Codex：hooks.json 的 11 个事件；
@@ -225,6 +257,41 @@ impl HookEvent {
             _ => self.as_str(),
         }
     }
+}
+
+/// 由后端事件支持矩阵导出的、供前端过滤选择器的单条能力记录。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+pub struct HookEventSupport {
+    pub tool: Tool,
+    pub event: HookEvent,
+}
+
+/// 导出给 specta 的工具能力常量。
+pub fn tool_capabilities() -> Vec<ToolCapabilities> {
+    Tool::ALL
+        .into_iter()
+        .map(|tool| ToolCapabilities {
+            tool,
+            provider: !matches!(tool, Tool::Cursor),
+            prompt_global: true,
+            mcp: true,
+            skills: true,
+            hooks: !matches!(tool, Tool::Opencode),
+        })
+        .collect()
+}
+
+/// 导出给 specta 的 Hook 事件支持常量。
+pub fn hook_event_support() -> Vec<HookEventSupport> {
+    Tool::ALL
+        .into_iter()
+        .flat_map(|tool| {
+            HookEvent::ALL
+                .into_iter()
+                .filter(move |event| event.supported_for_tool(tool))
+                .map(move |event| HookEventSupport { tool, event })
+        })
+        .collect()
 }
 
 string_enum! {

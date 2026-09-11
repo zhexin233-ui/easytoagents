@@ -1,17 +1,26 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import type { DashboardToolSummaryDto } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { RefreshEnvironmentButton } from "@/components/refresh-environment-button";
-import { SnapshotRestoreDialog } from "@/components/snapshot-restore-dialog";
 import { Button } from "@/components/ui/button";
 import { useEnabledTools } from "@/components/use-enabled-tools";
-import { OnboardingWizard } from "@/features/onboarding/onboarding-wizard";
 import { dashboardSummaryQueryOptions } from "@/lib/dashboard-api";
 import { profileErrorText } from "@/lib/profile-api";
 import { toolMetadata } from "@/lib/tool-metadata";
+
+const OnboardingWizard = lazy(() =>
+  import("@/features/onboarding/onboarding-wizard").then((module) => ({
+    default: module.OnboardingWizard,
+  })),
+);
+const SnapshotRestoreDialog = lazy(() =>
+  import("@/components/snapshot-restore-dialog").then((module) => ({
+    default: module.SnapshotRestoreDialog,
+  })),
+);
 
 export function DashboardPage() {
   const dashboardQuery = useQuery(dashboardSummaryQueryOptions());
@@ -156,20 +165,33 @@ export function DashboardPage() {
         </>
       ) : null}
 
-      <OnboardingWizard
-        open={wizardOpen}
-        onClose={() => setWizardOpen(false)}
-      />
-      <SnapshotRestoreDialog
-        open={restoreOpen}
-        onClose={() => setRestoreOpen(false)}
-        initialSnapshotId={
-          dashboardQuery.data?.interruptedRun?.targets.find(
-            (target) => target.snapshotId,
-          )?.snapshotId ?? null
-        }
-      />
+      {wizardOpen ? (
+        <Suspense fallback={<DialogLoading label="正在打开检测向导…" />}>
+          <OnboardingWizard open onClose={() => setWizardOpen(false)} />
+        </Suspense>
+      ) : null}
+      {restoreOpen ? (
+        <Suspense fallback={<DialogLoading label="正在打开恢复点…" />}>
+          <SnapshotRestoreDialog
+            open
+            onClose={() => setRestoreOpen(false)}
+            initialSnapshotId={
+              dashboardQuery.data?.interruptedRun?.targets.find(
+                (target) => target.snapshotId,
+              )?.snapshotId ?? null
+            }
+          />
+        </Suspense>
+      ) : null}
     </main>
+  );
+}
+
+function DialogLoading({ label }: { label: string }) {
+  return (
+    <p role="status" className="sr-only">
+      {label}
+    </p>
   );
 }
 

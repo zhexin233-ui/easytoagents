@@ -1,14 +1,48 @@
+import { lazy } from "react";
 import { createHashRouter, RouterProvider } from "react-router-dom";
 
 import { AppShell } from "@/app/app-shell";
-import { DashboardPage } from "@/features/dashboard/dashboard-page";
-import { HooksPage } from "@/features/hooks/hooks-page";
-import { McpPage } from "@/features/mcp/mcp-page";
-import { PromptsPage } from "@/features/prompts/prompts-page";
-import { ProjectDetailPage } from "@/features/projects/project-detail-page";
-import { ProjectsPage } from "@/features/projects/projects-page";
-import { SkillsPage } from "@/features/skills/skills-page";
-import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
+
+const DashboardPage = lazy(() =>
+  import("@/features/dashboard/dashboard-page").then((module) => ({
+    default: module.DashboardPage,
+  })),
+);
+const HooksPage = lazy(() =>
+  import("@/features/hooks/hooks-page").then((module) => ({
+    default: module.HooksPage,
+  })),
+);
+const McpPage = lazy(() =>
+  import("@/features/mcp/mcp-page").then((module) => ({
+    default: module.McpPage,
+  })),
+);
+const PromptsPage = lazy(() =>
+  import("@/features/prompts/prompts-page").then((module) => ({
+    default: module.PromptsPage,
+  })),
+);
+const ProjectDetailPage = lazy(() =>
+  import("@/features/projects/detail/page").then((module) => ({
+    default: module.ProjectDetailPage,
+  })),
+);
+const ProjectsPage = lazy(() =>
+  import("@/features/projects/projects-page").then((module) => ({
+    default: module.ProjectsPage,
+  })),
+);
+const SkillsPage = lazy(() =>
+  import("@/features/skills/skills-page").then((module) => ({
+    default: module.SkillsPage,
+  })),
+);
+const ToolProfilesPage = lazy(() =>
+  import("@/features/tool-profiles/tool-profiles-page").then((module) => ({
+    default: module.ToolProfilesPage,
+  })),
+);
 
 const router = createHashRouter([
   {

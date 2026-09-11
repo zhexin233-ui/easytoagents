@@ -1,5 +1,5 @@
 import type { ChangeKind, SyncStatus } from "@/bindings/commands";
-import { cn } from "@/lib/utils";
+import { toneClass } from "@/lib/tone-class";
 
 const statusLabels: Record<SyncStatus, string> = {
   in_sync: "✓ 已同步",
@@ -58,16 +58,15 @@ export function SyncStatusBadge({
   const statusLabel = label ?? labels?.[status] ?? statusLabels[status];
   return (
     <span
-      className={cn(
-        "inline-flex rounded-full border px-2 py-1 text-xs font-medium",
+      className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${toneClass(
         resolvedTone === "blocked"
-          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+          ? "destructive"
           : resolvedTone === "warning"
-            ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
+            ? "warning"
             : resolvedTone === "muted"
-              ? "bg-muted text-muted-foreground border-transparent"
-              : "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300",
-      )}
+              ? "neutral"
+              : "success",
+      )}`}
     >
       {changeKind ? `${changeLabels[changeKind]} · ` : ""}
       {statusLabel}

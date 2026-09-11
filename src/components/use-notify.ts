@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 
-import type { NotifyMessage } from "@/components/notify";
+import {
+  notifyDurationMs,
+  NotifyContext,
+  type NotifyMessage,
+} from "@/components/notify-context";
 
-export const notifyDurationMs = 3_000;
+export { notifyDurationMs };
 
 export function useNotify() {
   const [notification, setNotification] = useState<NotifyMessage | null>(null);
+  const context = useContext(NotifyContext);
 
   useEffect(() => {
     if (!notification) return undefined;
@@ -20,6 +25,14 @@ export function useNotify() {
   const notify = useCallback((next: NotifyMessage) => {
     setNotification({ ...next });
   }, []);
+  const clear = useCallback(() => setNotification(null), []);
 
-  return { notification, notify };
+  if (context) {
+    return {
+      notification: context.notifications.at(-1) ?? null,
+      notify: context.notify,
+      clear: context.clear,
+    };
+  }
+  return { notification, notify, clear };
 }

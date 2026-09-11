@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { type Tool } from "@/bindings/commands";
@@ -10,5 +11,8 @@ import { DEFAULT_ENABLED_TOOLS } from "@/lib/tool-metadata";
  */
 export function useEnabledTools(): ReadonlySet<Tool> {
   const { data } = useQuery(appSettingsQueryOptions());
-  return new Set(data?.enabledTools ?? DEFAULT_ENABLED_TOOLS);
+  return useMemo(
+    () => new Set(data?.enabledTools ?? DEFAULT_ENABLED_TOOLS),
+    [data?.enabledTools],
+  );
 }

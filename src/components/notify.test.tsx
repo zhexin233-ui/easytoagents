@@ -4,10 +4,11 @@ import {
   render,
   renderHook,
   screen,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Notify } from "@/components/notify";
+import { Notify, NotifyProvider } from "@/components/notify";
 import { notifyDurationMs, useNotify } from "@/components/use-notify";
 
 afterEach(() => {
@@ -30,6 +31,48 @@ describe("Notify", () => {
 });
 
 describe("useNotify", () => {
+  it("NotifyProvider 按队列保留连续通知，并分别自动消失", () => {
+    vi.useFakeTimers();
+
+    function Trigger() {
+      const { notify } = useNotify();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => notify({ kind: "success", message: "第一条" })}
+          >
+            第一条
+          </button>
+          <button
+            type="button"
+            onClick={() => notify({ kind: "error", message: "第二条" })}
+          >
+            第二条
+          </button>
+        </>
+      );
+    }
+
+    render(
+      <NotifyProvider>
+        <Trigger />
+      </NotifyProvider>,
+    );
+    act(() => screen.getByRole("button", { name: "第一条" }).click());
+    act(() => screen.getByRole("button", { name: "第二条" }).click());
+
+    expect(screen.getByRole("status")).toHaveTextContent("第一条");
+    expect(screen.getByRole("alert")).toHaveTextContent("第二条");
+
+    act(() => {
+      vi.advanceTimersByTime(notifyDurationMs);
+    });
+    const viewport = screen.getByLabelText("通知");
+    expect(within(viewport).queryByText("第一条")).not.toBeInTheDocument();
+    expect(within(viewport).queryByText("第二条")).not.toBeInTheDocument();
+  });
+
   it("通知展示三秒后自动消失", () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useNotify());

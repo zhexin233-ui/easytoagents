@@ -724,7 +724,8 @@ async confirmHookImport(input: ConfirmHookImportInput) : Promise<Result<HookImpo
 
 /** user-defined constants **/
 
-
+export const TOOL_CAPABILITIES = [{"hooks":true,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"claude"},{"hooks":true,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"codex"},{"hooks":true,"mcp":true,"promptGlobal":true,"provider":false,"skills":true,"tool":"cursor"},{"hooks":true,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"zcode"},{"hooks":false,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"opencode"}] as const;
+export const HOOK_EVENT_SUPPORT = [{"event":"SessionStart","tool":"claude"},{"event":"SessionEnd","tool":"claude"},{"event":"UserPromptSubmit","tool":"claude"},{"event":"PreToolUse","tool":"claude"},{"event":"PermissionRequest","tool":"claude"},{"event":"PostToolUse","tool":"claude"},{"event":"SubagentStop","tool":"claude"},{"event":"PreCompact","tool":"claude"},{"event":"Stop","tool":"claude"},{"event":"Notification","tool":"claude"},{"event":"SessionStart","tool":"codex"},{"event":"SessionEnd","tool":"codex"},{"event":"UserPromptSubmit","tool":"codex"},{"event":"PreToolUse","tool":"codex"},{"event":"PermissionRequest","tool":"codex"},{"event":"PostToolUse","tool":"codex"},{"event":"SubagentStart","tool":"codex"},{"event":"SubagentStop","tool":"codex"},{"event":"PreCompact","tool":"codex"},{"event":"PostCompact","tool":"codex"},{"event":"Stop","tool":"codex"},{"event":"SessionStart","tool":"cursor"},{"event":"SessionEnd","tool":"cursor"},{"event":"PreToolUse","tool":"cursor"},{"event":"PostToolUse","tool":"cursor"},{"event":"PostToolUseFailure","tool":"cursor"},{"event":"SubagentStart","tool":"cursor"},{"event":"SubagentStop","tool":"cursor"},{"event":"PreCompact","tool":"cursor"},{"event":"Stop","tool":"cursor"},{"event":"SessionStart","tool":"zcode"},{"event":"UserPromptSubmit","tool":"zcode"},{"event":"PreToolUse","tool":"zcode"},{"event":"PermissionRequest","tool":"zcode"},{"event":"PostToolUse","tool":"zcode"},{"event":"PostToolUseFailure","tool":"zcode"},{"event":"Stop","tool":"zcode"}] as const;
 
 /** user-defined types **/
 
@@ -802,6 +803,10 @@ export type HookDto = { id: string; name: string; event: HookEvent; matcher: str
  * [`HookEvent::supported_for_tool`] 定义，不支持的组合必须 fail closed。
  */
 export type HookEvent = "SessionStart" | "SessionEnd" | "UserPromptSubmit" | "PreToolUse" | "PermissionRequest" | "PostToolUse" | "PostToolUseFailure" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "Stop" | "Notification"
+/**
+ * 由后端事件支持矩阵导出的、供前端过滤选择器的单条能力记录。
+ */
+export type HookEventSupport = { tool: Tool; event: HookEvent }
 /**
  * 全局分配上的生效事件（可因工具而异）。
  */
@@ -971,6 +976,13 @@ export type TargetType = "file" | "directory" | "symlink" | "missing"
  */
 export type Tool = "claude" | "codex" | "cursor" | "zcode" | "opencode"
 export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
+/**
+ * 前端需要展示和过滤的工具能力。
+ *
+ * 该结构是能力矩阵的唯一跨层来源；展示标签、图标和路由仍属于前端，
+ * 但哪些工具支持哪类受管资源必须由领域层决定。
+ */
+export type ToolCapabilities = { tool: Tool; provider: boolean; promptGlobal: boolean; mcp: boolean; skills: boolean; hooks: boolean }
 export type ToolInstallationDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; installationProbeDiagnostic: string | null }
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null;
 /**

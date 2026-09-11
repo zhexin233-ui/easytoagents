@@ -1,4 +1,8 @@
-import type { HookEvent, Tool } from "@/bindings/commands";
+import {
+  HOOK_EVENT_SUPPORT,
+  type HookEvent,
+  type Tool,
+} from "@/bindings/commands";
 
 export const HOOK_EVENT_OPTIONS: HookEvent[] = [
   "SessionStart",
@@ -69,61 +73,12 @@ export function isHookEvent(value: string): value is HookEvent {
   return HOOK_EVENT_SET.has(value);
 }
 
-/// 前端侧事件支持矩阵（与后端 HookEvent::supported_for_tool 同一口径），
-/// 用于过滤每个工具可见的事件分组与分配入口。
+/// 后端导出的支持记录用于过滤每个工具可见的事件分组与分配入口。
 export function hookEventSupportedByTool(
   tool: Tool,
   event: HookEvent,
 ): boolean {
-  const supported: Record<Tool, HookEvent[]> = {
-    claude: [
-      "SessionStart",
-      "SessionEnd",
-      "UserPromptSubmit",
-      "PreToolUse",
-      "PermissionRequest",
-      "PostToolUse",
-      "Notification",
-      "SubagentStop",
-      "Stop",
-      "PreCompact",
-    ],
-    codex: [
-      "SessionStart",
-      "SessionEnd",
-      "UserPromptSubmit",
-      "PreToolUse",
-      "PermissionRequest",
-      "PostToolUse",
-      "PreCompact",
-      "PostCompact",
-      "SubagentStart",
-      "SubagentStop",
-      "Stop",
-    ],
-    cursor: [
-      "SessionStart",
-      "SessionEnd",
-      "PreToolUse",
-      "PostToolUse",
-      "PostToolUseFailure",
-      "SubagentStart",
-      "SubagentStop",
-      "PreCompact",
-      "Stop",
-    ],
-    zcode: [
-      "SessionStart",
-      "UserPromptSubmit",
-      "PreToolUse",
-      "PermissionRequest",
-      "PostToolUse",
-      "PostToolUseFailure",
-      "Stop",
-    ],
-    // OpenCode 的插件回调不是当前 command-only HookEvent 合同；保留工具
-    // 类型键但不暴露任何可分配事件。
-    opencode: [],
-  };
-  return supported[tool].includes(event);
+  return HOOK_EVENT_SUPPORT.some(
+    (support) => support.tool === tool && support.event === event,
+  );
 }

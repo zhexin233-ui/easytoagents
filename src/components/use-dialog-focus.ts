@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 const focusableSelector = [
   "button:not([disabled])",
@@ -9,8 +9,13 @@ const focusableSelector = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 
-export function useDialogFocus(open: boolean, onClose: () => void) {
-  const dialogRef = useRef<HTMLElement>(null);
+export function useDialogFocus(
+  open: boolean,
+  onClose: () => void,
+  externalDialogRef?: RefObject<HTMLElement | null>,
+) {
+  const internalDialogRef = useRef<HTMLElement>(null);
+  const dialogRef = externalDialogRef ?? internalDialogRef;
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -25,7 +30,7 @@ export function useDialogFocus(open: boolean, onClose: () => void) {
     const first = dialog?.querySelector<HTMLElement>(focusableSelector);
     (first ?? dialog)?.focus();
     return () => previousFocusRef.current?.focus();
-  }, [open]);
+  }, [dialogRef, open]);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {

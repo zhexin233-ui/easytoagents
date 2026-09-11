@@ -9,6 +9,11 @@ import {
 import { RefreshEnvironmentButton } from "@/components/refresh-environment-button";
 import { type ThemePreference } from "@/components/use-theme";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { appSettingsQueryOptions, settingsKeys } from "@/lib/settings-api";
@@ -50,7 +55,7 @@ export function SettingsDialog({
     },
   });
 
-  const { dialogRef, onKeyDown } = useDialogFocus(open, onClose);
+  const { dialogRef } = useDialogFocus(open, onClose);
 
   if (!open) {
     return null;
@@ -88,21 +93,15 @@ export function SettingsDialog({
   };
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
-    >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-dialog-title"
-        aria-describedby="settings-dialog-description"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card max-h-[calc(100dvh-2rem)] w-full max-w-2xl min-w-0 overflow-auto rounded-xl shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={onClose}
+        labelledBy="settings-dialog-title"
+        describedBy="settings-dialog-description"
+        className="max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 p-0"
       >
-        <div className="flex items-start justify-between gap-4 border-b p-6">
+        <DialogHeader className="border-b p-6">
           <div className="min-w-0">
             <p className="text-muted-foreground text-sm">应用偏好</p>
             <h2
@@ -121,7 +120,7 @@ export function SettingsDialog({
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
             关闭
           </Button>
-        </div>
+        </DialogHeader>
 
         <div className="space-y-4 p-6">
           <section
@@ -152,18 +151,12 @@ export function SettingsDialog({
               </p>
             ) : null}
             {settingsQuery.isError ? (
-              <p
-                role="alert"
-                className="mt-3 text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="text-destructive mt-3 text-sm">
                 {profileErrorText(settingsQuery.error)}
               </p>
             ) : null}
             {updateMutation.isError ? (
-              <p
-                role="alert"
-                className="mt-3 text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="text-destructive mt-3 text-sm">
                 {profileErrorText(updateMutation.error)}
               </p>
             ) : null}
@@ -246,8 +239,8 @@ export function SettingsDialog({
             ) : null}
           </section>
         </div>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }
 

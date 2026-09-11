@@ -8,6 +8,11 @@ import {
   type Tool,
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { hooksKeys } from "@/lib/hooks-api";
@@ -58,21 +63,18 @@ export function HookAssignmentPickerDialog(
   const close = () => {
     if (!assign.isPending) props.onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(true, close);
+  const { dialogRef } = useDialogFocus(true, close);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="hook-picker-title"
-        aria-describedby="hook-picker-description"
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card max-h-[90vh] w-full max-w-2xl overflow-auto rounded-xl p-6 shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={close}
+        labelledBy="hook-picker-title"
+        describedBy="hook-picker-description"
+        className="max-h-[90vh] max-w-2xl"
       >
-        <div className="flex items-start justify-between gap-4">
+        <DialogHeader>
           <h2 id="hook-picker-title" className="text-xl font-semibold">
             添加到 {props.eventLabel}（{props.event}）
           </h2>
@@ -84,7 +86,7 @@ export function HookAssignmentPickerDialog(
           >
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <p
           id="hook-picker-description"
           className="text-muted-foreground mt-3 text-sm"
@@ -93,10 +95,7 @@ export function HookAssignmentPickerDialog(
           Hook；分配只更新中央意图，原生写入仍需预览后 Apply。
         </p>
         {error ? (
-          <p
-            role="alert"
-            className="mt-4 text-sm text-red-700 dark:text-red-300"
-          >
+          <p role="alert" className="text-destructive mt-4 text-sm">
             {error}
           </p>
         ) : null}
@@ -143,7 +142,7 @@ export function HookAssignmentPickerDialog(
             );
           })}
         </div>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }

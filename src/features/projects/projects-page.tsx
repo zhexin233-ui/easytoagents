@@ -7,10 +7,11 @@ import { commands, type ProjectDto } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
-import { mcpKeys } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
-import { projectKeys, projectsQueryOptions } from "@/lib/projects-api";
-import { skillKeys } from "@/lib/skills-api";
+import {
+  invalidateProjectScope,
+  projectsQueryOptions,
+} from "@/lib/projects-api";
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
@@ -19,11 +20,7 @@ export function ProjectsPage() {
   const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const invalidateProjects = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: projectKeys.all }),
-      queryClient.invalidateQueries({ queryKey: mcpKeys.projects() }),
-      queryClient.invalidateQueries({ queryKey: skillKeys.projects() }),
-    ]);
+    await invalidateProjectScope(queryClient, ["project"]);
   };
   const registerMutation = useMutation({
     mutationFn: async () =>
@@ -139,11 +136,7 @@ export function ProjectsPage() {
       </section>
 
       <div className="mx-auto mt-4 max-w-6xl" aria-live="polite">
-        {message ? (
-          <p className="text-sm text-emerald-800 dark:text-emerald-300">
-            {message}
-          </p>
-        ) : null}
+        {message ? <p className="text-success text-sm">{message}</p> : null}
         {operationError ? (
           <BlockingState
             title="项目操作未完成"

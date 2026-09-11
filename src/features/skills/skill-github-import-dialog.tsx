@@ -3,6 +3,12 @@ import { useMutation } from "@tanstack/react-query";
 
 import { commands, type SkillDto } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
+import {
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+} from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 
@@ -39,25 +45,19 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
   const close = () => {
     if (!importInFlight.current) props.onClose();
   };
-  const { dialogRef, onKeyDown } = useDialogFocus(true, close);
+  const { dialogRef } = useDialogFocus(true, close);
   const normalizedInput = url.trim();
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
-    >
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className="bg-card flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl min-w-0 flex-col overflow-hidden rounded-xl shadow-xl"
+    <DialogOverlay>
+      <DialogContent
+        dialogRef={dialogRef}
+        onClose={close}
+        labelledBy={titleId}
+        describedBy={descriptionId}
+        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 flex-col overflow-hidden p-0"
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b p-6">
+        <DialogHeader className="shrink-0 border-b p-6">
           <div className="min-w-0">
             <h2 id={titleId} className="text-xl font-semibold">
               从 GitHub 导入
@@ -80,7 +80,7 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
           >
             关闭
           </Button>
-        </div>
+        </DialogHeader>
         <form
           aria-labelledby={titleId}
           className="flex min-h-0 flex-col"
@@ -121,10 +121,7 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
               }}
             />
             {importMutation.isError && !committed ? (
-              <p
-                role="alert"
-                className="text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="text-destructive text-sm">
                 {profileErrorText(importMutation.error)}
               </p>
             ) : null}
@@ -134,16 +131,13 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
               </p>
             ) : null}
             {committed && refreshError ? (
-              <p
-                role="alert"
-                className="text-sm text-amber-800 dark:text-amber-300"
-              >
+              <p role="alert" className="text-warning text-sm">
                 Skill 已复制到中央库，但列表刷新失败：{refreshError}
                 。请关闭后刷新页面查看；为避免重复导入，本次链接不能再次提交。
               </p>
             ) : null}
           </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-3 border-t px-6 py-4">
+          <DialogFooter className="shrink-0 border-t px-6 py-4">
             <Button
               type="button"
               variant="outline"
@@ -162,9 +156,9 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
             >
               {importMutation.isPending ? "正在下载并导入…" : "复制到中央库"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </section>
-    </div>
+      </DialogContent>
+    </DialogOverlay>
   );
 }
