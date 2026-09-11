@@ -3,7 +3,7 @@
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::{
-    db::Database,
+    db::{column_tool, Database},
     domain::{
         validate_global_assignment, validate_project_assignment, EntityId, McpTransport, Tool,
         TrustStatus,
@@ -213,7 +213,7 @@ pub fn global_tools_for_all_mcp(
         })?;
     let rows = statement
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, tool_from_database(row.get(1)?)?))
+            Ok((row.get::<_, String>(0)?, column_tool(row, 1)?))
         })
         .map_err(|error| {
             AppError::database(&path, "query_all_mcp_global_tools").with_source(error)
@@ -241,7 +241,7 @@ pub fn global_tools_for_mcp(database: &Database, mcp_id: &str) -> Result<Vec<Too
             AppError::database(&path, "prepare_mcp_global_tools").with_source(error)
         })?;
     let tools = statement
-        .query_map([mcp_id], |row| tool_from_database(row.get(0)?))
+        .query_map([mcp_id], |row| column_tool(row, 0))
         .map_err(|error| AppError::database(&path, "query_mcp_global_tools").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| AppError::database(&path, "decode_mcp_global_tools").with_source(error))?;
@@ -653,17 +653,6 @@ fn transport_from_database(value: String) -> rusqlite::Result<McpTransport> {
     match value.as_str() {
         "stdio" => Ok(McpTransport::Stdio),
         "streamable_http" => Ok(McpTransport::StreamableHttp),
-        _ => Err(rusqlite::Error::InvalidQuery),
-    }
-}
-
-fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
-    match value.as_str() {
-        "claude" => Ok(Tool::Claude),
-        "codex" => Ok(Tool::Codex),
-        "cursor" => Ok(Tool::Cursor),
-        "zcode" => Ok(Tool::Zcode),
-        "opencode" => Ok(Tool::Opencode),
         _ => Err(rusqlite::Error::InvalidQuery),
     }
 }

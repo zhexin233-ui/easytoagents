@@ -15,7 +15,7 @@ import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { invalidateProjectScope } from "@/lib/projects-api";
 import { toolMetadata } from "@/lib/tool-metadata";
 
-import { ProjectAssignmentsSection } from "../assignment-card";
+import { ProjectAssignmentsSection } from "./project-assignments-section";
 import { OptionTag, ProjectOptionRow } from "../option-row";
 import { projectBlocked } from "./shared";
 

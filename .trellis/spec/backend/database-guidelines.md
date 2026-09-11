@@ -29,6 +29,10 @@ without reading or deleting files under a registered project root.
   protection can be bypassed by changing a key after creation.
 - Use `prepare_cached` for every statement in `src/db/`; SQLite's statement cache
   makes repeated list/lookup calls skip re-parsing.
+- Decode a `tool` column with `db::column_tool(row, index)`; it is the single
+  `Tool::from_stable_str` entry point for SQLite rows and maps unknown values to
+  `rusqlite::Error::InvalidQuery` like the other `*_from_database` helpers. Never
+  hand-write a `"claude" => Tool::Claude` match in a row mapper.
 - Keep cross-cutting synchronization SQL (`sync_runs`, `sync_items`,
   `snapshots`, `managed_targets`, and active-writer checks) in `src/db/sync.rs`.
   Services and the apply engine should call typed helpers instead of embedding

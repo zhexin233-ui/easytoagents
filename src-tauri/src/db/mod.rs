@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     app::AppPaths,
+    domain::Tool,
     error::AppError,
     security::{create_private_file, ensure_private_directory, ensure_private_file},
 };
@@ -25,6 +26,16 @@ pub mod projects;
 pub(crate) mod skill_imports;
 pub mod skills;
 pub(crate) mod sync;
+
+/// 数据库列 → `Tool` 的唯一解码入口。
+///
+/// 字符串到工具枚举的映射只允许经 `Tool::from_stable_str`，新增工具时
+/// 只需改 `domain/mod.rs` 的 `string_enum!` 定义；非法列值沿用 db 层既有的
+/// `InvalidQuery` 约定，由调用方包成 `AppError::database(...)`。
+pub(crate) fn column_tool(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Tool> {
+    let value: String = row.get(index)?;
+    Tool::from_stable_str(&value).ok_or(rusqlite::Error::InvalidQuery)
+}
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {

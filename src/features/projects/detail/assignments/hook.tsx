@@ -21,7 +21,7 @@ import {
 } from "@/features/hooks/hook-events";
 import { ProjectHookPickerDialog } from "@/features/projects/project-hook-picker-dialog";
 
-import { ProjectAssignmentsSection } from "../assignment-card";
+import { ProjectAssignmentsSection } from "./project-assignments-section";
 import { projectBlocked } from "./shared";
 
 export function ProjectHookAssignments({

@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, FolderMinus, RefreshCw } from "lucide-react";
 
@@ -30,6 +30,7 @@ import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
 import { useImportDialogState } from "@/features/sync/use-import-dialog-state";
 import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { SkillDirectoryImportDialog } from "@/features/skills/skill-directory-import-dialog";
 import { SkillGithubImportDialog } from "@/features/skills/skill-github-import-dialog";
 import { SkillImportDialog } from "@/features/skills/skill-import-dialog";
@@ -65,7 +66,7 @@ export function SkillsPage() {
     useState<SkillContentPreviewDto | null>(null);
   const importDialog = useImportDialogState();
   const [adoptTarget, setAdoptTarget] = useState<SkillDto | null>(null);
-  const adoptInFlight = useRef(false);
+  const adoptGuard = useSubmitGuard();
   const adoptTitleId = useId();
   const adoptDescriptionId = useId();
   const closeContentPreview = () => setContentPreview(null);
@@ -74,7 +75,7 @@ export function SkillsPage() {
     closeContentPreview,
   );
   const closeAdoptDialog = () => {
-    if (!adoptInFlight.current) setAdoptTarget(null);
+    if (!adoptGuard.isInFlight()) setAdoptTarget(null);
   };
   const { dialogRef: adoptDialogRef } = useDialogFocus(
     adoptTarget !== null,
@@ -145,7 +146,7 @@ export function SkillsPage() {
       });
     },
     onSettled: () => {
-      adoptInFlight.current = false;
+      adoptGuard.end();
     },
   });
 
@@ -606,9 +607,9 @@ export function SkillsPage() {
                 type="button"
                 disabled={adoptMutation.isPending}
                 onClick={() => {
-                  if (!adoptTarget || adoptInFlight.current) return;
+                  if (!adoptTarget) return;
+                  if (!adoptGuard.begin()) return;
                   adoptDialogRef.current?.focus();
-                  adoptInFlight.current = true;
                   adoptMutation.mutate(adoptTarget);
                 }}
               >

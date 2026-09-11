@@ -17,7 +17,10 @@ application-state Context.
 
 - **Local UI state:** dialog visibility, selected tool/project, form fields,
   pending preview, and operation-specific messages use `useState` in the owning
-  page or component.
+  page or component. Form field state does not live at the page level: the
+  page keeps `formOpen`, the initial draft, and the submit callback, while a
+  dedicated form component (for example `McpFormDialog`) owns the draft and its
+  validation error so keystrokes re-render only the form.
 - **Server state:** profiles, projects, MCP servers, Skills, status, previews,
   and dashboard data use TanStack Query and generated Tauri commands.
 - **Persistent browser state:** onboarding choices and page-scoped MCP/Skills

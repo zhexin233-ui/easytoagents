@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import { commands, type SkillDto } from "@/bindings/commands";
@@ -10,6 +10,7 @@ import {
   DialogOverlay,
 } from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 
 interface SkillGithubImportDialogProps {
@@ -23,7 +24,7 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
   const [url, setUrl] = useState("");
   const [committed, setCommitted] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const importInFlight = useRef(false);
+  const importGuard = useSubmitGuard();
   const importMutation = useMutation({
     mutationFn: async (githubUrl: string) =>
       unwrapResult(await commands.importGithubSkill({ url: githubUrl })),
@@ -39,11 +40,11 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
       }
     },
     onSettled: () => {
-      importInFlight.current = false;
+      importGuard.end();
     },
   });
   const close = () => {
-    if (!importInFlight.current) props.onClose();
+    if (!importGuard.isInFlight()) props.onClose();
   };
   const { dialogRef } = useDialogFocus(true, close);
   const normalizedInput = url.trim();
@@ -86,15 +87,9 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
-            if (
-              importInFlight.current ||
-              committed ||
-              normalizedInput.length === 0
-            ) {
-              return;
-            }
+            if (committed || normalizedInput.length === 0) return;
+            if (!importGuard.begin()) return;
             dialogRef.current?.focus();
-            importInFlight.current = true;
             setRefreshError(null);
             importMutation.mutate(normalizedInput);
           }}

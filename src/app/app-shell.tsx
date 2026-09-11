@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useId, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -17,6 +17,7 @@ import {
   DialogOverlay,
 } from "@/components/ui/dialog";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { invalidateEnvironmentDependents } from "@/lib/environment-api";
 import { mcpKeys } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
@@ -226,11 +227,11 @@ function ProjectNavSection({
     useState<ProjectDto | null>(null);
   const [renameDisplayName, setRenameDisplayName] = useState("");
   const [renameSubmitting, setRenameSubmitting] = useState(false);
-  const renameInFlightRef = useRef(false);
+  const renameGuard = useSubmitGuard();
   const [removeDialogProject, setRemoveDialogProject] =
     useState<ProjectDto | null>(null);
   const [removeSubmitting, setRemoveSubmitting] = useState(false);
-  const removeInFlightRef = useRef(false);
+  const removeGuard = useSubmitGuard();
   const { notify } = useNotify();
   const projects = projectsQuery.data ?? [];
   const renameMutation = useMutation({
@@ -252,7 +253,7 @@ function ProjectNavSection({
         queryClient.invalidateQueries({ queryKey: mcpKeys.projects() }),
         queryClient.invalidateQueries({ queryKey: skillKeys.projects() }),
       ]);
-      renameInFlightRef.current = false;
+      renameGuard.end();
       setRenameSubmitting(false);
       setRenameDialogProject(null);
       setRenameDisplayName("");
@@ -262,7 +263,7 @@ function ProjectNavSection({
       });
     },
     onError: () => {
-      renameInFlightRef.current = false;
+      renameGuard.end();
       setRenameSubmitting(false);
     },
   });
@@ -280,7 +281,7 @@ function ProjectNavSection({
         queryClient.invalidateQueries({ queryKey: mcpKeys.projects() }),
         queryClient.invalidateQueries({ queryKey: skillKeys.projects() }),
       ]);
-      removeInFlightRef.current = false;
+      removeGuard.end();
       setRemoveSubmitting(false);
       setRemoveDialogProject(null);
       notify({
@@ -294,7 +295,7 @@ function ProjectNavSection({
       }
     },
     onError: (error, project) => {
-      removeInFlightRef.current = false;
+      removeGuard.end();
       setRemoveSubmitting(false);
       notify({
         kind: "error",
@@ -317,7 +318,7 @@ function ProjectNavSection({
     renameDisplayName === renameDialogProject?.displayName;
 
   const requestRename = (project: ProjectDto) => {
-    if (renameBusy || removeBusy || renameInFlightRef.current) return;
+    if (renameBusy || removeBusy || renameGuard.isInFlight()) return;
     renameMutation.reset();
     setRenameDisplayName(project.displayName);
     setRenameDialogProject(project);
@@ -327,7 +328,7 @@ function ProjectNavSection({
     if (
       renameMutation.isPending ||
       renameSubmitting ||
-      renameInFlightRef.current
+      renameGuard.isInFlight()
     ) {
       return;
     }
@@ -341,12 +342,11 @@ function ProjectNavSection({
       !renameDialogProject ||
       renameSubmitDisabled ||
       renameMutation.isPending ||
-      renameSubmitting ||
-      renameInFlightRef.current
+      renameSubmitting
     ) {
       return;
     }
-    renameInFlightRef.current = true;
+    if (!renameGuard.begin()) return;
     setRenameSubmitting(true);
     renameMutation.mutate();
   };
@@ -356,7 +356,7 @@ function ProjectNavSection({
       removeBusy ||
       renameBusy ||
       hasBlockedNativeResources(project.nativeResources) ||
-      removeInFlightRef.current
+      removeGuard.isInFlight()
     ) {
       return;
     }
@@ -366,22 +366,17 @@ function ProjectNavSection({
 
   const cancelRemove = () => {
     if (removeBusy && removeMutation.isPending) return;
-    removeInFlightRef.current = false;
+    removeGuard.end();
     setRemoveSubmitting(false);
     removeMutation.reset();
     setRemoveDialogProject(null);
   };
 
   const confirmRemove = () => {
-    if (
-      !removeDialogProject ||
-      removeMutation.isPending ||
-      removeSubmitting ||
-      removeInFlightRef.current
-    ) {
+    if (!removeDialogProject || removeMutation.isPending || removeSubmitting) {
       return;
     }
-    removeInFlightRef.current = true;
+    if (!removeGuard.begin()) return;
     setRemoveSubmitting(true);
     removeMutation.mutate(removeDialogProject);
   };

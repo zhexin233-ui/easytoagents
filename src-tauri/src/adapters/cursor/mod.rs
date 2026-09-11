@@ -42,141 +42,85 @@ impl ToolAdapter for CursorAdapter {
         };
         let cursor_home = environment.home().join(".cursor");
         let mut targets = vec![
-            descriptor(
-                ArtifactKind::Provider,
-                Scope::Global,
-                None,
-                None,
-                TargetFormat::Json,
-                vec![],
-                vec![],
-                TargetCapability::unsupported("CURSOR_PROVIDER_UNSUPPORTED"),
-                SymlinkPolicy::Reject,
-            ),
+            TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Provider, Scope::Global)
+                .format(TargetFormat::Json)
+                .capability(TargetCapability::unsupported("CURSOR_PROVIDER_UNSUPPORTED"))
+                .build(),
             // 全局规则：官方 `~/.cursor/rules` 目录内的受管单文件。
-            descriptor(
-                ArtifactKind::Prompt,
-                Scope::Global,
-                None,
-                Some(path_text(&cursor_home.join("rules/easytoagents.mdc"))?),
-                TargetFormat::CursorMdc,
-                vec!["$document"],
-                vec![],
-                supported_capability.clone(),
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Mcp,
-                Scope::Global,
-                None,
-                Some(path_text(&cursor_home.join("mcp.json"))?),
-                TargetFormat::Json,
-                vec!["mcpServers"],
-                vec![
+            TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Prompt, Scope::Global)
+                .path(Some(path_text(
+                    &cursor_home.join("rules/easytoagents.mdc"),
+                )?))
+                .format(TargetFormat::CursorMdc)
+                .managed_selectors(["$document"])
+                .capability(supported_capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Mcp, Scope::Global)
+                .path(Some(path_text(&cursor_home.join("mcp.json"))?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["mcpServers"])
+                .sensitive_selectors([
                     "mcpServers/*/headers",
                     "mcpServers/*/env",
                     "mcpServers/*/auth",
-                ],
-                supported_capability.clone(),
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Skill,
-                Scope::Global,
-                None,
-                Some(path_text(&cursor_home.join("skills"))?),
-                TargetFormat::SymlinkDirectory,
-                vec!["$children"],
-                vec![],
-                supported_capability.clone(),
-                SymlinkPolicy::ManagedChildrenOnly,
-            ),
+                ])
+                .capability(supported_capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Skill, Scope::Global)
+                .path(Some(path_text(&cursor_home.join("skills"))?))
+                .format(TargetFormat::SymlinkDirectory)
+                .managed_selectors(["$children"])
+                .capability(supported_capability.clone())
+                .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                .build(),
             // Hooks：独立 `~/.cursor/hooks.json`（官方合同，2026-09-05 核验），
             // 事件键为 camelCase；接管结构性的 `version` 与 `hooks` 两个顶层键，
             // 其余未知顶层键保留为非受管内容。
-            descriptor(
-                ArtifactKind::Hook,
-                Scope::Global,
-                None,
-                Some(path_text(&cursor_home.join("hooks.json"))?),
-                TargetFormat::Json,
-                vec!["version", "hooks"],
-                vec![],
-                supported_capability.clone(),
-                SymlinkPolicy::Reject,
-            ),
+            TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Hook, Scope::Global)
+                .path(Some(path_text(&cursor_home.join("hooks.json"))?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["version", "hooks"])
+                .capability(supported_capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
             let root = Path::new(project_root.as_str());
+            let project_root = Some(project_root.as_str().to_owned());
             targets.extend([
-                descriptor(
-                    ArtifactKind::Mcp,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".cursor/mcp.json"))?),
-                    TargetFormat::Json,
-                    vec!["mcpServers"],
-                    vec![
+                TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Mcp, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".cursor/mcp.json"))?))
+                    .format(TargetFormat::Json)
+                    .managed_selectors(["mcpServers"])
+                    .sensitive_selectors([
                         "mcpServers/*/headers",
                         "mcpServers/*/env",
                         "mcpServers/*/auth",
-                    ],
-                    supported_capability.clone(),
-                    SymlinkPolicy::Reject,
-                ),
-                descriptor(
-                    ArtifactKind::Skill,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".cursor/skills"))?),
-                    TargetFormat::SymlinkDirectory,
-                    vec!["$children"],
-                    vec![],
-                    supported_capability.clone(),
-                    SymlinkPolicy::ManagedChildrenOnly,
-                ),
-                descriptor(
-                    ArtifactKind::Hook,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".cursor/hooks.json"))?),
-                    TargetFormat::Json,
-                    vec!["version", "hooks"],
-                    vec![],
-                    supported_capability.clone(),
-                    SymlinkPolicy::Reject,
-                ),
+                    ])
+                    .capability(supported_capability.clone())
+                    .build(),
+                TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Skill, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".cursor/skills"))?))
+                    .format(TargetFormat::SymlinkDirectory)
+                    .managed_selectors(["$children"])
+                    .capability(supported_capability.clone())
+                    .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                    .build(),
+                TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Hook, Scope::Project)
+                    .project_root(project_root)
+                    .path(Some(path_text(&root.join(".cursor/hooks.json"))?))
+                    .format(TargetFormat::Json)
+                    .managed_selectors(["version", "hooks"])
+                    .capability(supported_capability.clone())
+                    .build(),
             ]);
         }
 
         crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
         Ok(targets)
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn descriptor(
-    artifact_kind: ArtifactKind,
-    scope: Scope,
-    project_root: Option<String>,
-    path: Option<String>,
-    format: TargetFormat,
-    managed_selector_roots: Vec<&str>,
-    sensitive_selectors: Vec<&str>,
-    capability: TargetCapability,
-    symlink_policy: SymlinkPolicy,
-) -> TargetDescriptor {
-    TargetDescriptor::builder(Tool::Cursor, artifact_kind, scope)
-        .project_root(project_root.clone())
-        .allowed_root(project_root)
-        .path(path)
-        .format(format)
-        .managed_selectors(managed_selector_roots)
-        .sensitive_selectors(sensitive_selectors)
-        .capability(capability)
-        .symlink_policy(symlink_policy)
-        .build()
 }
 
 #[cfg(test)]

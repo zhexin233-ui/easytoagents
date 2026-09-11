@@ -13,7 +13,7 @@ import {
   type ProjectNativeResourceDto,
   type SkillProjectOptionDto,
 } from "@/bindings/commands";
-import { ProjectDetailPage } from "@/features/projects/project-detail-page";
+import { ProjectDetailPage } from "@/features/projects/detail/page";
 import { makeProject } from "@/test/fixtures/dtos";
 import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 

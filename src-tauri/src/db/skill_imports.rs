@@ -4,6 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
 
 use crate::{
+    db::column_tool,
     domain::{EntityId, Tool},
     error::AppError,
     sync::hash_json,
@@ -39,17 +40,9 @@ pub(crate) fn get_preview(
             "SELECT tool, context_json, status FROM skill_import_previews WHERE id = ?1",
             [id],
             |row| {
-                let tool: String = row.get(0)?;
                 Ok(SkillImportPreviewRecord {
                     id: id.to_owned(),
-                    tool: match tool.as_str() {
-                        "claude" => Tool::Claude,
-                        "codex" => Tool::Codex,
-                        "cursor" => Tool::Cursor,
-                        "zcode" => Tool::Zcode,
-                        "opencode" => Tool::Opencode,
-                        _ => return Err(rusqlite::Error::InvalidQuery),
-                    },
+                    tool: column_tool(row, 0)?,
                     context_json: row.get(1)?,
                     status: row.get(2)?,
                 })

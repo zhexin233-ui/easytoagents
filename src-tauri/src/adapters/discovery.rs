@@ -171,11 +171,6 @@ impl TargetDescriptorBuilder {
         self
     }
 
-    pub(crate) fn allowed_root(mut self, allowed_root: Option<String>) -> Self {
-        self.descriptor.allowed_root = allowed_root;
-        self
-    }
-
     pub(crate) fn format(mut self, format: TargetFormat) -> Self {
         self.descriptor.format = format;
         self
@@ -224,6 +219,8 @@ impl TargetDescriptorBuilder {
         self
     }
 
+    /// Project 目标的安全边界先落在 project_root；Global 目标的边界由
+    /// `populate_descriptor_allowed_roots` 统一填充，Adapter 不自行指定。
     pub(crate) fn build(self) -> TargetDescriptor {
         let mut descriptor = self.descriptor;
         if descriptor.allowed_root.is_none() {
@@ -369,11 +366,35 @@ pub(crate) fn native_mcp_container(tool: Tool) -> &'static [&'static str] {
     }
 }
 
+/// Global 目标的外部写入安全边界：同步发现（`populate_descriptor_allowed_roots`）
+/// 与快照恢复（`overview::global_allowed_root`）共用这一份映射，任何工具的
+/// 全局根变更只改这里。
+///
+/// Claude 的用户级 MCP 文件例外地位于 home 下；Codex 全局 Skills 位于
+/// `CODEX_HOME/skills`，恢复根与同步写入根一致；ZCode 全局目标都位于
+/// `~/.zcode` 之下（v2、cli、AGENTS.md、skills）。
+pub(crate) fn global_root_for(
+    environment: &ExplicitEnvironment,
+    tool: Tool,
+    artifact_kind: ArtifactKind,
+) -> PathBuf {
+    match (tool, artifact_kind) {
+        (Tool::Claude, ArtifactKind::Mcp) => environment.home().to_path_buf(),
+        (Tool::Claude, _) => environment.claude_config_dir().to_path_buf(),
+        (Tool::Codex, _) => environment.codex_home().to_path_buf(),
+        (Tool::Cursor, _) => environment.home().join(".cursor"),
+        (Tool::Zcode, _) => environment.home().join(".zcode"),
+        (Tool::Opencode, ArtifactKind::Provider | ArtifactKind::Mcp) => {
+            environment.opencode_config_file_root()
+        }
+        (Tool::Opencode, _) => environment.opencode_config_dir().to_path_buf(),
+    }
+}
+
 /// 为每个 Adapter 发现的目标填充外部写入安全边界。
 ///
-/// Project 目标只能写入项目根；Global 目标使用工具实际的配置根。Claude 的
-/// 用户级 MCP 文件例外地位于 home 下，因此显式保留这一边界，避免服务层
-/// 再按工具复制一份判断。
+/// Project 目标只能写入项目根；Global 目标使用 `global_root_for` 给出的
+/// 工具实际配置根，避免服务层再按工具复制一份判断。
 pub(crate) fn populate_descriptor_allowed_roots(
     environment: &ExplicitEnvironment,
     descriptors: &mut [TargetDescriptor],
@@ -387,17 +408,7 @@ pub(crate) fn populate_descriptor_allowed_roots(
                 .ok_or_else(|| {
                     AppError::invalid_input("projectRoot", "项目目标缺少 project_root")
                 })?,
-            Scope::Global => match (descriptor.tool, descriptor.artifact_kind) {
-                (Tool::Claude, ArtifactKind::Mcp) => environment.home().to_path_buf(),
-                (Tool::Claude, _) => environment.claude_config_dir().to_path_buf(),
-                (Tool::Codex, _) => environment.codex_home().to_path_buf(),
-                (Tool::Cursor, _) => environment.home().join(".cursor"),
-                (Tool::Zcode, _) => environment.home().join(".zcode"),
-                (Tool::Opencode, ArtifactKind::Provider | ArtifactKind::Mcp) => {
-                    environment.opencode_config_file_root()
-                }
-                (Tool::Opencode, _) => environment.opencode_config_dir().to_path_buf(),
-            },
+            Scope::Global => global_root_for(environment, descriptor.tool, descriptor.artifact_kind),
         };
         descriptor.allowed_root = Some(path_text(&root)?);
     }

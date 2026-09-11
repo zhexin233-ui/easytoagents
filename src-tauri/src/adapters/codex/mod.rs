@@ -61,129 +61,90 @@ impl ToolAdapter for CodexAdapter {
             });
 
         let mut targets = vec![
-            descriptor(
-                ArtifactKind::Provider,
-                Scope::Global,
-                None,
-                path_text(&config_path)?,
-                TargetFormat::Toml,
-                vec!["model", "model_provider", "model_providers"],
-                vec!["model_providers/*"],
-                capability.clone(),
-                TargetTrustState::NotRequired,
-                PromptOverrideState::NotApplicable,
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Prompt,
-                Scope::Global,
-                None,
-                path_text(&environment.codex_home().join("AGENTS.md"))?,
-                TargetFormat::Markdown,
-                vec!["$document"],
-                vec![],
-                capability.clone(),
-                TargetTrustState::NotRequired,
-                prompt_override,
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Mcp,
-                Scope::Global,
-                None,
-                path_text(&config_path)?,
-                TargetFormat::Toml,
-                vec!["mcp_servers"],
-                vec![
+            TargetDescriptor::builder(Tool::Codex, ArtifactKind::Provider, Scope::Global)
+                .path(Some(path_text(&config_path)?))
+                .format(TargetFormat::Toml)
+                .managed_selectors(["model", "model_provider", "model_providers"])
+                .sensitive_selectors(["model_providers/*"])
+                .capability(capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Codex, ArtifactKind::Prompt, Scope::Global)
+                .path(Some(path_text(
+                    &environment.codex_home().join("AGENTS.md"),
+                )?))
+                .format(TargetFormat::Markdown)
+                .managed_selectors(["$document"])
+                .capability(capability.clone())
+                .prompt_override(prompt_override)
+                .build(),
+            TargetDescriptor::builder(Tool::Codex, ArtifactKind::Mcp, Scope::Global)
+                .path(Some(path_text(&config_path)?))
+                .format(TargetFormat::Toml)
+                .managed_selectors(["mcp_servers"])
+                .sensitive_selectors([
                     "mcp_servers/*/http_headers",
                     "mcp_servers/*/env_http_headers",
                     "mcp_servers/*/env",
-                ],
-                capability.clone(),
-                TargetTrustState::NotRequired,
-                PromptOverrideState::NotApplicable,
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Skill,
-                Scope::Global,
-                None,
-                path_text(&environment.codex_home().join("skills"))?,
-                TargetFormat::SymlinkDirectory,
-                vec!["$children"],
-                vec![],
-                capability.clone(),
-                TargetTrustState::NotRequired,
-                PromptOverrideState::NotApplicable,
-                SymlinkPolicy::ManagedChildrenOnly,
-            ),
+                ])
+                .capability(capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Codex, ArtifactKind::Skill, Scope::Global)
+                .path(Some(path_text(&environment.codex_home().join("skills"))?))
+                .format(TargetFormat::SymlinkDirectory)
+                .managed_selectors(["$children"])
+                .capability(capability.clone())
+                .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                .build(),
             // Hooks 使用独立 hooks.json（官方推荐每层只用一种表示，避免与
             // config.toml 内联 [hooks] 混用触发合并警告）；只接管 `hooks`
             // 键，保留用户手写的顶层 description 等内容。
             // 信任审查由 Codex /hooks 完成，这里只呈现既有 trust 语义。
-            descriptor(
-                ArtifactKind::Hook,
-                Scope::Global,
-                None,
-                path_text(&environment.codex_home().join("hooks.json"))?,
-                TargetFormat::Json,
-                vec!["hooks"],
-                vec![],
-                capability.clone(),
-                TargetTrustState::NotRequired,
-                PromptOverrideState::NotApplicable,
-                SymlinkPolicy::Reject,
-            ),
+            TargetDescriptor::builder(Tool::Codex, ArtifactKind::Hook, Scope::Global)
+                .path(Some(path_text(
+                    &environment.codex_home().join("hooks.json"),
+                )?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["hooks"])
+                .capability(capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
             let root = Path::new(project_root.as_str());
+            let project_root = Some(project_root.as_str().to_owned());
             targets.extend([
-                descriptor(
-                    ArtifactKind::Mcp,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    path_text(&root.join(".codex/config.toml"))?,
-                    TargetFormat::Toml,
-                    vec!["mcp_servers"],
-                    vec![
+                TargetDescriptor::builder(Tool::Codex, ArtifactKind::Mcp, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".codex/config.toml"))?))
+                    .format(TargetFormat::Toml)
+                    .managed_selectors(["mcp_servers"])
+                    .sensitive_selectors([
                         "mcp_servers/*/http_headers",
                         "mcp_servers/*/env_http_headers",
                         "mcp_servers/*/env",
-                    ],
-                    capability.clone(),
-                    project_trust,
-                    PromptOverrideState::NotApplicable,
-                    SymlinkPolicy::Reject,
-                ),
-                descriptor(
-                    ArtifactKind::Skill,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    path_text(&root.join(".codex/skills"))?,
-                    TargetFormat::SymlinkDirectory,
-                    vec!["$children"],
-                    vec![],
-                    capability.clone(),
-                    project_trust,
-                    PromptOverrideState::NotApplicable,
-                    SymlinkPolicy::ManagedChildrenOnly,
-                ),
+                    ])
+                    .capability(capability.clone())
+                    .trust(project_trust)
+                    .build(),
+                TargetDescriptor::builder(Tool::Codex, ArtifactKind::Skill, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".codex/skills"))?))
+                    .format(TargetFormat::SymlinkDirectory)
+                    .managed_selectors(["$children"])
+                    .capability(capability.clone())
+                    .trust(project_trust)
+                    .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                    .build(),
                 // 项目级 hooks 只在项目 `.codex/` 层受信任时加载（官方合同），
                 // 与项目 MCP 相同的 trust 语义。
-                descriptor(
-                    ArtifactKind::Hook,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    path_text(&root.join(".codex/hooks.json"))?,
-                    TargetFormat::Json,
-                    vec!["hooks"],
-                    vec![],
-                    capability,
-                    project_trust,
-                    PromptOverrideState::NotApplicable,
-                    SymlinkPolicy::Reject,
-                ),
+                TargetDescriptor::builder(Tool::Codex, ArtifactKind::Hook, Scope::Project)
+                    .project_root(project_root)
+                    .path(Some(path_text(&root.join(".codex/hooks.json"))?))
+                    .format(TargetFormat::Json)
+                    .managed_selectors(["hooks"])
+                    .capability(capability)
+                    .trust(project_trust)
+                    .build(),
             ]);
         }
 
@@ -500,34 +461,6 @@ fn discover_openai_provider(
         extra_provider_fields: BTreeMap::new(),
         suggested_name: Some("Codex OAuth 登录".to_owned()),
     }))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn descriptor(
-    artifact_kind: ArtifactKind,
-    scope: Scope,
-    project_root: Option<String>,
-    path: String,
-    format: TargetFormat,
-    managed_selector_roots: Vec<&str>,
-    sensitive_selectors: Vec<&str>,
-    capability: TargetCapability,
-    trust: TargetTrustState,
-    prompt_override: PromptOverrideState,
-    symlink_policy: SymlinkPolicy,
-) -> TargetDescriptor {
-    TargetDescriptor::builder(Tool::Codex, artifact_kind, scope)
-        .project_root(project_root.clone())
-        .allowed_root(project_root)
-        .path(Some(path))
-        .format(format)
-        .managed_selectors(managed_selector_roots)
-        .sensitive_selectors(sensitive_selectors)
-        .capability(capability)
-        .trust(trust)
-        .prompt_override(prompt_override)
-        .symlink_policy(symlink_policy)
-        .build()
 }
 
 fn discover_prompt_override(path: &Path) -> PromptOverrideState {

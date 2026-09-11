@@ -6,11 +6,10 @@ type CommandFunction = (...args: never[]) => unknown;
 export function mockCommands<T extends Record<string, CommandFunction>>(
   actual: T,
 ) {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- 仅用于安全读取命令对象的自有键。
-  const hasOwn = Object.prototype.hasOwnProperty;
+  // 只替换命令对象的自有键，避免把原型链上的成员也 mock 掉。
   return Object.fromEntries(
     Object.keys(actual)
-      .filter((key) => hasOwn.call(actual, key))
+      .filter((key) => Object.hasOwn(actual, key))
       .map((key) => [key, vi.fn()]),
   );
 }

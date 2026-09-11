@@ -85,7 +85,10 @@ no-implicit-write and post-Apply invalidation contract.
 on every rescan so discovery results cannot be reused accidentally.
 `useSubmitGuard()` exposes synchronous `begin()`, `end()`, and `isInFlight()`;
 call `begin()` before starting a mutation and always call `end()` on settle.
-This closes the render-timing gap where `isPending` has not updated yet.
+This closes the render-timing gap where `isPending` has not updated yet. Every
+in-flight submit guard uses this hook; do not hand-roll `useRef(false)` flags.
+A ref is only acceptable for a different contract, such as a one-shot
+"attempted" latch that resets on rescan, and it must be commented as such.
 
 ---
 

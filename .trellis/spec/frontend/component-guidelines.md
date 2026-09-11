@@ -291,10 +291,14 @@ rules.
 
 - MCP、Provider、Prompt 的新增/编辑使用 `FormDialog`，页面默认只展示列表和操作入口，不平铺表单。新增按钮从空草稿打开，编辑按钮携带安全字段与当前行版本。
 - `FormDialog` 接收 `open`、`title`、`description`、`submitLabel`、`pending`、`error`、`onClose`、`onSubmit` 和 `children`；只负责弹窗交互，业务状态和 mutation 留在页面。
+- 表单字段 state 不与整页组件同层：草稿、字段 `onChange` 与本地校验错误放在独立的表单组件里（如 `McpFormDialog`），页面只保留 `formOpen`、初始草稿、mutation 与提交回调，并通过条件挂载传入初始值；这样击键只重渲染表单本身。
+- 表单内敏感字段的 `label`/`input` 关联使用 `useId()` 生成的 id，禁止用 label 文案推断 id。
 - 关闭、取消和 Escape 都清理草稿、编辑模式及旧保存/校验错误；失败保留输入并在弹窗内展示 `role="alert"`，成功等待查询刷新后关闭。CRUD 不触发隐式 Apply。
 - 保存期间禁用关闭/取消/提交；使用 `useSubmitGuard()` 的同步
   `begin/end/isInFlight` 合同阻止重复提交及关闭，不能只依赖下一次渲染才更新的
-  `isPending`。
+  `isPending`。所有"提交在途"守卫统一用 `useSubmitGuard`，不再手写
+  `useRef(false)`；只有语义不同的一次性尝试闩（例如同一份预览凭据只允许尝试一次、
+  须在重新检测后复位）才保留独立 ref，并注释说明。
 - 弹窗限制最大高度，表单内容内部滚动，标题与底部操作保持可见；窄屏不得使表单横向溢出。
 - 提交按钮变为 disabled 时，浏览器可能把焦点移到 `body`。提交前必须聚焦弹窗容器；`useDialogFocus` 在容器持焦时将 Tab 导向首个可用控件、Shift+Tab 导向末个可用控件，避免键盘焦点逃逸。
 

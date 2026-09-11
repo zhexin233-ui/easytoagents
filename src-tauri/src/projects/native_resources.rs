@@ -1040,14 +1040,7 @@ fn parse_state(value: &str) -> Result<ProjectNativeResourceState, AppError> {
 }
 
 fn parse_tool(value: &str) -> Result<Tool, AppError> {
-    match value {
-        "claude" => Ok(Tool::Claude),
-        "codex" => Ok(Tool::Codex),
-        "cursor" => Ok(Tool::Cursor),
-        "zcode" => Ok(Tool::Zcode),
-        "opencode" => Ok(Tool::Opencode),
-        _ => Err(AppError::invalid_input("tool", "工具类型无效")),
-    }
+    Tool::from_stable_str(value).ok_or_else(|| AppError::invalid_input("tool", "工具类型无效"))
 }
 
 fn parse_artifact(value: &str) -> Result<ArtifactKind, AppError> {

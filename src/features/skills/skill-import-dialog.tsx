@@ -19,6 +19,7 @@ import {
   DialogOverlay,
 } from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { skillImportQueryOptions } from "@/lib/skills-api";
 import { toneClass } from "@/lib/tone-class";
@@ -65,7 +66,9 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
   const [selectedImportIds, setSelectedImportIds] = useState<string[]>([]);
   const [selectedTakeoverIds, setSelectedTakeoverIds] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
-  const operationInFlight = useRef(false);
+  // 复制与接管共用一个在途守卫：同一时刻只允许一个 RPC 在途。
+  const operationGuard = useSubmitGuard();
+  // 一次性尝试闩：同一份预览凭据只允许尝试一次，仅在重新检测后复位；语义不同于在途守卫。
   const confirmAttempted = useRef(false);
   const takeoverAttempted = useRef(false);
   const confirm = useMutation({
@@ -77,7 +80,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
       await props.onImported(result);
     },
     onSettled: () => {
-      operationInFlight.current = false;
+      operationGuard.end();
     },
   });
   const takeover = useMutation({
@@ -86,11 +89,11 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
     retry: false,
     onSuccess: props.onTakeoverPrepared,
     onSettled: () => {
-      operationInFlight.current = false;
+      operationGuard.end();
     },
   });
   const close = () => {
-    if (!operationInFlight.current) props.onClose();
+    if (!operationGuard.isInFlight()) props.onClose();
   };
   const { dialogRef } = useDialogFocus(true, close);
   const preview = query.data;
@@ -159,7 +162,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               (mode === "copy" ? confirm.isError : takeover.isError)
             }
             onChange={(event) => {
-              if (operationInFlight.current) return;
+              if (operationGuard.isInFlight()) return;
               const checked = event.target.checked;
               setSelectedIds((current) =>
                 checked
@@ -239,8 +242,8 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
             ) {
               return;
             }
+            if (!operationGuard.begin()) return;
             confirmAttempted.current = true;
-            operationInFlight.current = true;
             // 禁用全部控件前保留容器焦点，覆盖提交与列表刷新阶段。
             dialogRef.current?.focus();
             confirm.mutate({
@@ -377,7 +380,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               variant="outline"
               disabled={busy || query.isPending}
               onClick={() => {
-                if (operationInFlight.current || query.isPending) return;
+                if (operationGuard.isInFlight() || query.isPending) return;
                 // 保留同一个弹窗与原始触发焦点，只更换扫描证据和选择状态。
                 dialogRef.current?.focus();
                 setSelectedImportIds([]);
@@ -408,8 +411,8 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                 ) {
                   return;
                 }
+                if (!operationGuard.begin()) return;
                 takeoverAttempted.current = true;
-                operationInFlight.current = true;
                 dialogRef.current?.focus();
                 takeover.mutate({
                   previewId: preview.previewId,

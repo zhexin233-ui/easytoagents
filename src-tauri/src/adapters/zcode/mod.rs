@@ -46,116 +46,87 @@ impl ToolAdapter for ZcodeAdapter {
         let mut targets = vec![
             // Provider 只在本机全局配置中存在；`models`/`source` 等 ZCode 自管字段
             // 通过 options/name/kind/enabled 子选择器保留，不整项覆盖。
-            descriptor(
-                ArtifactKind::Provider,
-                Scope::Global,
-                None,
-                Some(path_text(
+            TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Provider, Scope::Global)
+                .path(Some(path_text(
                     &environment.home().join(".zcode/v2/config.json"),
-                )?),
-                TargetFormat::Json,
-                vec!["provider"],
-                vec!["provider/*/options/apiKey"],
-                supported_capability.clone(),
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Prompt,
-                Scope::Global,
-                None,
-                Some(path_text(&environment.home().join(".zcode/AGENTS.md"))?),
-                TargetFormat::Markdown,
-                vec!["$document"],
-                vec![],
-                supported_capability.clone(),
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Mcp,
-                Scope::Global,
-                None,
-                Some(path_text(
+                )?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["provider"])
+                .sensitive_selectors(["provider/*/options/apiKey"])
+                .capability(supported_capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Prompt, Scope::Global)
+                .path(Some(path_text(
+                    &environment.home().join(".zcode/AGENTS.md"),
+                )?))
+                .format(TargetFormat::Markdown)
+                .managed_selectors(["$document"])
+                .capability(supported_capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Mcp, Scope::Global)
+                .path(Some(path_text(
                     &environment.home().join(".zcode/cli/config.json"),
-                )?),
-                TargetFormat::Json,
-                vec!["mcp"],
-                vec![
+                )?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["mcp"])
+                .sensitive_selectors([
                     "mcp/servers/*/headers",
                     "mcp/servers/*/env",
                     "mcp/servers/*/auth",
-                ],
-                supported_capability.clone(),
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Skill,
-                Scope::Global,
-                None,
-                Some(path_text(&environment.home().join(".zcode/skills"))?),
-                TargetFormat::SymlinkDirectory,
-                vec!["$children"],
-                vec![],
-                supported_capability.clone(),
-                SymlinkPolicy::ManagedChildrenOnly,
-            ),
+                ])
+                .capability(supported_capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Skill, Scope::Global)
+                .path(Some(path_text(&environment.home().join(".zcode/skills"))?))
+                .format(TargetFormat::SymlinkDirectory)
+                .managed_selectors(["$children"])
+                .capability(supported_capability.clone())
+                .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                .build(),
             // Hooks：与 MCP 同住 `~/.zcode/cli/config.json`，用选择器只接管
             // `hooks` 子树。官方要求配置文件 hooks 必须 `hooks.enabled: true`
             // 才会运行，由投影层恒写该开关（见 hooks/service.rs）。
-            descriptor(
-                ArtifactKind::Hook,
-                Scope::Global,
-                None,
-                Some(path_text(
+            TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Hook, Scope::Global)
+                .path(Some(path_text(
                     &environment.home().join(".zcode/cli/config.json"),
-                )?),
-                TargetFormat::Json,
-                vec!["hooks"],
-                vec![],
-                supported_capability.clone(),
-                SymlinkPolicy::Reject,
-            ),
+                )?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["hooks"])
+                .capability(supported_capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
             let root = Path::new(project_root.as_str());
+            let project_root = Some(project_root.as_str().to_owned());
             targets.extend([
-                descriptor(
-                    ArtifactKind::Mcp,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".zcode/config.json"))?),
-                    TargetFormat::Json,
-                    vec!["mcp"],
-                    vec![
+                TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Mcp, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".zcode/config.json"))?))
+                    .format(TargetFormat::Json)
+                    .managed_selectors(["mcp"])
+                    .sensitive_selectors([
                         "mcp/servers/*/headers",
                         "mcp/servers/*/env",
                         "mcp/servers/*/auth",
-                    ],
-                    supported_capability.clone(),
-                    SymlinkPolicy::Reject,
-                ),
-                descriptor(
-                    ArtifactKind::Skill,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".zcode/skills"))?),
-                    TargetFormat::SymlinkDirectory,
-                    vec!["$children"],
-                    vec![],
-                    supported_capability.clone(),
-                    SymlinkPolicy::ManagedChildrenOnly,
-                ),
-                descriptor(
-                    ArtifactKind::Hook,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".zcode/config.json"))?),
-                    TargetFormat::Json,
-                    vec!["hooks"],
-                    vec![],
-                    supported_capability,
-                    SymlinkPolicy::Reject,
-                ),
+                    ])
+                    .capability(supported_capability.clone())
+                    .build(),
+                TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Skill, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".zcode/skills"))?))
+                    .format(TargetFormat::SymlinkDirectory)
+                    .managed_selectors(["$children"])
+                    .capability(supported_capability.clone())
+                    .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                    .build(),
+                TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Hook, Scope::Project)
+                    .project_root(project_root)
+                    .path(Some(path_text(&root.join(".zcode/config.json"))?))
+                    .format(TargetFormat::Json)
+                    .managed_selectors(["hooks"])
+                    .capability(supported_capability)
+                    .build(),
             ]);
         }
 
@@ -317,30 +288,6 @@ impl ProviderCodec for ZcodeAdapter {
                 .or_else(|| Some(provider_id.clone())),
         }))
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn descriptor(
-    artifact_kind: ArtifactKind,
-    scope: Scope,
-    project_root: Option<String>,
-    path: Option<String>,
-    format: TargetFormat,
-    managed_selector_roots: Vec<&str>,
-    sensitive_selectors: Vec<&str>,
-    capability: TargetCapability,
-    symlink_policy: SymlinkPolicy,
-) -> TargetDescriptor {
-    TargetDescriptor::builder(Tool::Zcode, artifact_kind, scope)
-        .project_root(project_root.clone())
-        .allowed_root(project_root)
-        .path(path)
-        .format(format)
-        .managed_selectors(managed_selector_roots)
-        .sensitive_selectors(sensitive_selectors)
-        .capability(capability)
-        .symlink_policy(symlink_policy)
-        .build()
 }
 
 #[cfg(test)]

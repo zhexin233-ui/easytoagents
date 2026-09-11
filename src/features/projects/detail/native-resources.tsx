@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
@@ -11,6 +10,7 @@ import {
 } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { Button } from "@/components/ui/button";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { projectNativeResourcesQueryOptions } from "@/lib/projects-api";
 
@@ -38,7 +38,7 @@ export function ProjectNativeResources({
   const nativeQuery = useQuery({
     ...projectNativeResourcesQueryOptions(project.id, tool, artifactKind),
   });
-  const previewInFlight = useRef(false);
+  const previewGuard = useSubmitGuard();
   const nativePreview = useMutation({
     mutationFn: async (resource: ProjectNativeResourceDto) => {
       const action: ProjectNativeResourceAction = resource.canDisable
@@ -59,15 +59,15 @@ export function ProjectNativeResources({
   const previewError = profileErrorText(nativePreview.error);
 
   const runPreview = (resource: ProjectNativeResourceDto) => {
-    if (pending || previewInFlight.current) return;
+    if (pending) return;
     if (!resource.canDisable && !resource.canRestore) return;
-    previewInFlight.current = true;
+    if (!previewGuard.begin()) return;
     nativePreview.mutate(resource, {
       onSuccess: (plan) => {
         onPreview(plan, tool, artifactKind);
       },
       onSettled: () => {
-        previewInFlight.current = false;
+        previewGuard.end();
       },
     });
   };

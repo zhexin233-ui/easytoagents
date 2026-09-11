@@ -5,7 +5,7 @@
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::{
-    db::Database,
+    db::{column_tool, Database},
     domain::{ArtifactKind, Tool},
     error::AppError,
 };
@@ -126,7 +126,7 @@ pub fn get_import_preview(
             |row| {
                 Ok(ImportPreviewRecord {
                     id: row.get(0)?,
-                    tool: tool_from_database(row.get(1)?)?,
+                    tool: column_tool(row, 1)?,
                     artifact_kind: artifact_kind_from_database(row.get(2)?)?,
                     target_path: row.get(3)?,
                     observed_full_hash: row.get(4)?,
@@ -790,7 +790,7 @@ fn find_prompt_profile(
 }
 
 fn provider_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderProfileRecord> {
-    let tool = tool_from_database(row.get::<_, String>(1)?)?;
+    let tool = column_tool(row, 1)?;
     Ok(ProviderProfileRecord {
         id: row.get(0)?,
         tool,
@@ -817,17 +817,6 @@ fn prompt_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromptProfileRec
         imported_from_path: row.get(8)?,
         row_version: row.get(9)?,
     })
-}
-
-fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
-    match value.as_str() {
-        "claude" => Ok(Tool::Claude),
-        "codex" => Ok(Tool::Codex),
-        "cursor" => Ok(Tool::Cursor),
-        "zcode" => Ok(Tool::Zcode),
-        "opencode" => Ok(Tool::Opencode),
-        _ => Err(rusqlite::Error::InvalidQuery),
-    }
 }
 
 fn artifact_kind_from_database(value: String) -> rusqlite::Result<ArtifactKind> {

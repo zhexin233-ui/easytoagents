@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    db::{mcp, Database},
+    db::{column_tool, mcp, Database},
     domain::{EntityId, Tool},
     error::AppError,
     mcp::{McpImportResultDto, ValidatedMcpConfiguration},
@@ -61,17 +61,9 @@ pub(crate) fn get_preview(
     database.connection().query_row(
         "SELECT id, tool, target_path, observed_full_hash, context_json, redacted_preview_json, status
          FROM mcp_import_previews WHERE id = ?1", [id], |row| {
-            let tool: String = row.get(1)?;
             Ok(McpImportPreviewRecord {
                 id: row.get(0)?,
-                tool: match tool.as_str() {
-                    "claude" => Tool::Claude,
-                    "codex" => Tool::Codex,
-                    "cursor" => Tool::Cursor,
-                    "zcode" => Tool::Zcode,
-                    "opencode" => Tool::Opencode,
-                    _ => return Err(rusqlite::Error::InvalidQuery),
-                },
+                tool: column_tool(row, 1)?,
                 target_path: row.get(2)?, observed_full_hash: row.get(3)?,
                 context_json: row.get(4)?, redacted_preview_json: row.get(5)?, status: row.get(6)?,
             })

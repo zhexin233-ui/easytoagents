@@ -1,16 +1,8 @@
-import { useId, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Power, PowerOff, Trash2 } from "lucide-react";
 
-import {
-  commands,
-  type JsonValue,
-  type McpServerDto,
-  type McpServerInput,
-  type McpTransport,
-  type Tool,
-  type UpdateMcpServerInput,
-} from "@/bindings/commands";
+import { commands, type McpServerDto, type Tool } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import {
   CentralList,
@@ -19,11 +11,9 @@ import {
   CentralListCardFooter,
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
-import { FormDialog } from "@/components/form-dialog";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { usePersistedCentralListLayout } from "@/components/use-persisted-central-list-layout";
@@ -43,46 +33,20 @@ import {
 } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import { appSettingsQueryOptions } from "@/lib/settings-api";
+import { McpFormDialog } from "@/features/mcp/mcp-form-dialog";
+import {
+  createMcpInput,
+  editMcpForm,
+  emptyMcpForm,
+  type McpFormState,
+  updateMcpInput,
+} from "@/features/mcp/mcp-form";
 import { McpImportDialog } from "@/features/mcp/mcp-import-dialog";
-
-interface McpFormState {
-  id: string | null;
-  rowVersion: number | null;
-  name: string;
-  transport: McpTransport;
-  command: string;
-  args: string;
-  url: string;
-  headers: string;
-  env: string;
-  extra: string;
-  keepHeaders: boolean;
-  keepEnv: boolean;
-  keepExtra: boolean;
-  enabled: boolean;
-}
 
 interface McpSaveVariables {
   state: McpFormState;
   globalTools: Tool[];
 }
-
-const emptyForm: McpFormState = {
-  id: null,
-  rowVersion: null,
-  name: "",
-  transport: "stdio",
-  command: "",
-  args: "",
-  url: "",
-  headers: "{}",
-  env: "{}",
-  extra: "{}",
-  keepHeaders: false,
-  keepEnv: false,
-  keepExtra: false,
-  enabled: true,
-};
 
 export function McpPage() {
   const queryClient = useQueryClient();
@@ -94,10 +58,10 @@ export function McpPage() {
   const visibleStatuses = statusesQuery.data?.filter((status) =>
     enabledTools.has(status.tool),
   );
-  const [form, setForm] = useState<McpFormState>(emptyForm);
+  // 页面只持有弹窗开关与初始草稿；字段编辑状态由 McpFormDialog 自己维护。
   const [formOpen, setFormOpen] = useState(false);
+  const [formInitial, setFormInitial] = useState<McpFormState>(emptyMcpForm);
   const submitGuard = useSubmitGuard();
-  const [formError, setFormError] = useState<string | null>(null);
   const { notify } = useNotify();
   const [listLayout, setListLayout] = usePersistedCentralListLayout("mcp");
   const importDialog = useImportDialogState();
@@ -108,15 +72,18 @@ export function McpPage() {
   const saveMutation = useMutation({
     mutationFn: async ({ state }: McpSaveVariables) => {
       if (state.id && state.rowVersion !== null) {
-        return unwrapResult(await commands.updateMcpServer(updateInput(state)));
+        return unwrapResult(
+          await commands.updateMcpServer(updateMcpInput(state)),
+        );
       }
-      return unwrapResult(await commands.createMcpServer(createInput(state)));
+      return unwrapResult(
+        await commands.createMcpServer(createMcpInput(state)),
+      );
     },
     onSuccess: async (_result, { globalTools }) => {
       await invalidateMcp();
-      setForm(emptyForm);
-      setFormError(null);
       setFormOpen(false);
+      setFormInitial(emptyMcpForm);
       if (directApply && globalTools.length > 0) {
         notify({
           kind: "success",
@@ -144,16 +111,14 @@ export function McpPage() {
   const openForm = (state: McpFormState) => {
     if (submitGuard.isInFlight() || saveMutation.isPending) return;
     saveMutation.reset();
-    setFormError(null);
-    setForm(state);
+    setFormInitial(state);
     setFormOpen(true);
   };
 
   const closeForm = () => {
     if (submitGuard.isInFlight() || saveMutation.isPending) return;
     setFormOpen(false);
-    setForm(emptyForm);
-    setFormError(null);
+    setFormInitial(emptyMcpForm);
     saveMutation.reset();
   };
 
@@ -318,7 +283,7 @@ export function McpPage() {
                 value={listLayout}
                 onChange={setListLayout}
               />
-              <Button size="sm" onClick={() => openForm(emptyForm)}>
+              <Button size="sm" onClick={() => openForm(emptyMcpForm)}>
                 新增 MCP
               </Button>
             </div>
@@ -349,7 +314,7 @@ export function McpPage() {
                     className="size-8 p-0"
                     aria-label="编辑"
                     title="编辑"
-                    onClick={() => openForm(editForm(server))}
+                    onClick={() => openForm(editMcpForm(server))}
                   >
                     <Pencil aria-hidden="true" className="size-4" />
                   </Button>
@@ -573,185 +538,29 @@ export function McpPage() {
         ) : null}
       </section>
 
-      <FormDialog
-        open={formOpen}
-        title={form.id ? "编辑 MCP" : "新增 MCP"}
-        description={
-          directApply
-            ? "保存只更新中央 MCP；已分配工具会按直接应用模式自动同步。"
-            : "保存只更新中央 MCP，不会修改原生配置；原生写入仍需预览后确认 Apply。"
-        }
-        submitLabel="保存中央意图"
-        pending={saveMutation.isPending}
-        error={formError ?? profileErrorText(saveMutation.error)}
-        onClose={closeForm}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (submitGuard.isInFlight() || saveMutation.isPending) return;
-          setFormError(null);
-          saveMutation.reset();
-          try {
-            validateForm(form);
+      {formOpen ? (
+        <McpFormDialog
+          // 按记录 id 重挂载：切换编辑对象时草稿与本地校验错误必定重置，不依赖弹窗先关闭。
+          key={formInitial.id ?? "new"}
+          initialState={formInitial}
+          directApply={directApply}
+          pending={saveMutation.isPending}
+          saveError={profileErrorText(saveMutation.error)}
+          onClose={closeForm}
+          onSubmit={(state) => {
+            if (submitGuard.isInFlight() || saveMutation.isPending) return;
+            saveMutation.reset();
             if (!submitGuard.begin()) return;
             saveMutation.mutate({
-              state: form,
-              globalTools: form.id
-                ? (serversQuery.data?.find((item) => item.id === form.id)
+              state,
+              globalTools: state.id
+                ? (serversQuery.data?.find((item) => item.id === state.id)
                     ?.globalTools ?? [])
                 : [],
             });
-          } catch (error) {
-            setFormError(
-              error instanceof Error ? error.message : "表单内容无效。",
-            );
-          }
-        }}
-      >
-        <Field label="名称">
-          <input
-            className="field"
-            value={form.name}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                name: event.target.value,
-              }))
-            }
-            required
-          />
-        </Field>
-        <Field label="传输方式">
-          <select
-            className="field"
-            value={form.transport}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                transport:
-                  event.target.value === "streamable_http"
-                    ? "streamable_http"
-                    : "stdio",
-              }))
-            }
-          >
-            <option value="stdio">stdio</option>
-            <option value="streamable_http">streamable_http</option>
-          </select>
-        </Field>
-        {form.transport === "stdio" ? (
-          <>
-            <Field label="Command">
-              <input
-                className="field"
-                value={form.command}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    command: event.target.value,
-                  }))
-                }
-                required
-              />
-            </Field>
-            <Field label="Args（每行一项）">
-              <textarea
-                className="field min-h-24"
-                value={form.args}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    args: event.target.value,
-                  }))
-                }
-              />
-            </Field>
-            <SensitiveField
-              label="Env JSON"
-              value={form.env}
-              keep={form.keepEnv}
-              editing={form.id !== null}
-              onKeep={(keep) =>
-                setForm((current) => ({ ...current, keepEnv: keep }))
-              }
-              onChange={(env) => setForm((current) => ({ ...current, env }))}
-            />
-          </>
-        ) : (
-          <>
-            <Field label="URL">
-              <input
-                className="field"
-                type="url"
-                value={form.url}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    url: event.target.value,
-                  }))
-                }
-                required
-              />
-            </Field>
-            <SensitiveField
-              label="Headers JSON"
-              value={form.headers}
-              keep={form.keepHeaders}
-              editing={form.id !== null}
-              onKeep={(keep) =>
-                setForm((current) => ({ ...current, keepHeaders: keep }))
-              }
-              onChange={(headers) =>
-                setForm((current) => ({ ...current, headers }))
-              }
-            />
-          </>
-        )}
-        <div className="space-y-2 text-sm">
-          <label htmlFor="mcp-extra-json" className="block font-medium">
-            扩展字段 JSON
-          </label>
-          {form.id ? (
-            <label className="mb-2 flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={form.keepExtra}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    keepExtra: event.target.checked,
-                  }))
-                }
-              />
-              保持数据库中的扩展字段（不会回填敏感原值）
-            </label>
-          ) : null}
-          <textarea
-            id="mcp-extra-json"
-            className="field min-h-24 font-mono text-xs"
-            value={form.extra}
-            disabled={form.id !== null && form.keepExtra}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                extra: event.target.value,
-              }))
-            }
-          />
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={form.enabled}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                enabled: event.target.checked,
-              }))
-            }
-          />
-          启用（停用后下一份预览会安全移除已应用条目）
-        </label>
-      </FormDialog>
+          }}
+        />
+      ) : null}
 
       {importDialog.state ? (
         <McpImportDialog
@@ -804,178 +613,5 @@ export function McpPage() {
         }}
       />
     </main>
-  );
-}
-
-function createInput(form: McpFormState): McpServerInput {
-  return {
-    name: form.name,
-    transport: form.transport,
-    command: form.transport === "stdio" ? form.command : null,
-    args: form.transport === "stdio" ? lines(form.args) : [],
-    url: form.transport === "streamable_http" ? form.url : null,
-    headers:
-      form.transport === "streamable_http"
-        ? parseStringMap(form.headers, "Headers")
-        : {},
-    env: form.transport === "stdio" ? parseStringMap(form.env, "Env") : {},
-    extra: parseJsonValue(form.extra, "扩展字段"),
-    enabled: form.enabled,
-  };
-}
-
-function updateInput(form: McpFormState): UpdateMcpServerInput {
-  if (!form.id || form.rowVersion === null) {
-    throw new Error("编辑记录缺少 row_version。");
-  }
-  const base = createInput({
-    ...form,
-    headers: form.headers || "{}",
-    env: form.env || "{}",
-    extra: form.extra || "{}",
-  });
-  return {
-    id: form.id,
-    name: base.name,
-    transport: base.transport,
-    command: base.command,
-    args: base.args,
-    url: base.url,
-    headers:
-      form.transport === "streamable_http"
-        ? form.keepHeaders
-          ? { action: "keep" }
-          : { action: "replace", value: base.headers }
-        : { action: "clear" },
-    env:
-      form.transport === "stdio"
-        ? form.keepEnv
-          ? { action: "keep" }
-          : { action: "replace", value: base.env }
-        : { action: "clear" },
-    extra: form.keepExtra
-      ? { action: "keep" }
-      : { action: "replace", value: base.extra },
-    enabled: base.enabled,
-    rowVersion: form.rowVersion,
-  };
-}
-
-function editForm(server: McpServerDto): McpFormState {
-  return {
-    id: server.id,
-    rowVersion: server.rowVersion,
-    name: server.name,
-    transport: server.transport,
-    command: server.command ?? "",
-    args: server.args.join("\n"),
-    url: server.url ?? "",
-    headers: "{}",
-    env: "{}",
-    extra: "{}",
-    keepHeaders: true,
-    keepEnv: true,
-    keepExtra: true,
-    enabled: server.enabled,
-  };
-}
-
-function validateForm(form: McpFormState) {
-  if (!form.name.trim()) throw new Error("名称不能为空。");
-  if (form.transport === "stdio" && !form.command.trim())
-    throw new Error("stdio 必须填写 Command。");
-  if (form.transport === "streamable_http" && !form.url.trim())
-    throw new Error("streamable_http 必须填写 URL。");
-  if (!form.keepHeaders) parseStringMap(form.headers || "{}", "Headers");
-  if (!form.keepEnv) parseStringMap(form.env || "{}", "Env");
-  if (!form.keepExtra) parseJsonValue(form.extra || "{}", "扩展字段");
-}
-
-function lines(value: string): string[] {
-  return value
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parseStringMap(text: string, label: string): Record<string, string> {
-  const value = parseJsonValue(text || "{}", label);
-  if (!isJsonObject(value)) {
-    throw new Error(`${label} 必须是字符串值 JSON 对象。`);
-  }
-  const result: Record<string, string> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item !== "string") {
-      throw new Error(`${label} 必须是字符串值 JSON 对象。`);
-    }
-    result[key] = item;
-  }
-  return result;
-}
-
-function parseJsonValue(text: string, label: string): JsonValue {
-  let value: unknown;
-  try {
-    value = JSON.parse(text || "{}");
-  } catch {
-    throw new Error(`${label} 不是合法 JSON。`);
-  }
-  if (!isJsonValue(value)) throw new Error(`${label} 包含不支持的 JSON 值。`);
-  return value;
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null || ["boolean", "number", "string"].includes(typeof value))
-    return true;
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  return isJsonObject(value) && Object.values(value).every(isJsonValue);
-}
-
-function isJsonObject(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function SensitiveField({
-  label,
-  value,
-  keep,
-  editing,
-  onKeep,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  keep: boolean;
-  editing: boolean;
-  onKeep: (keep: boolean) => void;
-  onChange: (value: string) => void;
-}) {
-  // 用 useId 关联 label 与输入框，不再按 label 文案推断 id；改文案不会破坏可访问性关联。
-  const id = useId();
-  return (
-    <div className="space-y-2 text-sm">
-      <label htmlFor={id} className="block font-medium">
-        {label}
-      </label>
-      {editing ? (
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            checked={keep}
-            onChange={(event) => onKeep(event.target.checked)}
-          />
-          保持数据库中的敏感值（不会回填原值）
-        </label>
-      ) : null}
-      <input
-        id={id}
-        className="field font-mono text-xs"
-        type="password"
-        autoComplete="off"
-        value={value}
-        disabled={editing && keep}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </div>
   );
 }

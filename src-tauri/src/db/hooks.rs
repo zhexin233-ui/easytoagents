@@ -4,10 +4,14 @@ use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::{
     db::{
+        column_tool,
         mcp::{touch_versioned_row, verify_row_version},
         Database,
     },
-    domain::{validate_global_assignment, validate_project_assignment, EntityId, HookEvent, Tool},
+    domain::{
+        tool_capabilities, validate_global_assignment, validate_project_assignment, EntityId,
+        HookEvent, Tool,
+    },
     error::AppError,
 };
 
@@ -205,7 +209,7 @@ pub fn global_assignments_for_all_hooks(
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                tool_from_database(row.get(1)?)?,
+                hook_tool_from_row(row, 1)?,
                 event_from_database(row.get(2)?)?,
             ))
         })
@@ -240,7 +244,7 @@ pub fn global_assignments_for_hook(
     let assignments = statement
         .query_map([hook_id], |row| {
             Ok((
-                tool_from_database(row.get(0)?)?,
+                hook_tool_from_row(row, 0)?,
                 event_from_database(row.get(1)?)?,
             ))
         })
@@ -256,13 +260,17 @@ fn event_from_database(value: String) -> rusqlite::Result<HookEvent> {
     HookEvent::from_stable_str(&value).ok_or(rusqlite::Error::InvalidQuery)
 }
 
-fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
-    match value.as_str() {
-        "claude" => Ok(Tool::Claude),
-        "codex" => Ok(Tool::Codex),
-        "cursor" => Ok(Tool::Cursor),
-        "zcode" => Ok(Tool::Zcode),
-        _ => Err(rusqlite::Error::InvalidQuery),
+/// Hook 分配行只允许支持 Hooks 的工具；写入侧由服务层门禁，读取侧同样 fail-closed，
+/// 避免历史脏数据被静默当成合法分配。
+fn hook_tool_from_row(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Tool> {
+    let tool = column_tool(row, index)?;
+    if tool_capabilities()
+        .iter()
+        .any(|capability| capability.tool == tool && capability.hooks)
+    {
+        Ok(tool)
+    } else {
+        Err(rusqlite::Error::InvalidQuery)
     }
 }
 

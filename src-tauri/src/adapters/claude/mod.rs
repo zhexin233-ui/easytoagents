@@ -10,7 +10,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     adapters::{
         descriptor_path, path_text, ClaudeCustomizationPolicyProbeInput, ClaudeUserMcpProbeInput,
-        ClaudeUserMcpProbeResult, DiscoveryContext, ManagedOwnership, PolicyState, ProviderCodec,
+        ClaudeUserMcpProbeResult, DiscoveryContext, ManagedOwnership, ProviderCodec,
         ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
         ProviderCodecProfileInput, SymlinkPolicy, TargetCapability, TargetDescriptor, TargetFormat,
         ToolAdapter,
@@ -85,113 +85,81 @@ impl ToolAdapter for ClaudeAdapter {
         };
 
         let mut targets = vec![
-            descriptor(
-                ArtifactKind::Provider,
-                Scope::Global,
-                None,
-                Some(path_text(&settings_path)?),
-                TargetFormat::Json,
-                vec!["env"],
-                vec!["env"],
-                tool_capability.clone(),
-                environment.claude_provider_policy(),
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Prompt,
-                Scope::Global,
-                None,
-                Some(path_text(
+            TargetDescriptor::builder(Tool::Claude, ArtifactKind::Provider, Scope::Global)
+                .path(Some(path_text(&settings_path)?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["env"])
+                .sensitive_selectors(["env"])
+                .capability(tool_capability.clone())
+                .policy(environment.claude_provider_policy())
+                .build(),
+            TargetDescriptor::builder(Tool::Claude, ArtifactKind::Prompt, Scope::Global)
+                .path(Some(path_text(
                     &environment.claude_config_dir().join("CLAUDE.md"),
-                )?),
-                TargetFormat::Markdown,
-                vec!["$document"],
-                vec![],
-                tool_capability.clone(),
-                PolicyState::Allowed,
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Mcp,
-                Scope::Global,
-                None,
-                user_mcp_path,
-                TargetFormat::Json,
-                vec!["mcpServers"],
-                vec!["mcpServers/*/headers", "mcpServers/*/env"],
-                user_mcp_capability,
-                customization_policy.mcp,
-                SymlinkPolicy::Reject,
-            ),
-            descriptor(
-                ArtifactKind::Skill,
-                Scope::Global,
-                None,
-                Some(path_text(&environment.claude_config_dir().join("skills"))?),
-                TargetFormat::SymlinkDirectory,
-                vec!["$children"],
-                vec![],
-                tool_capability.clone(),
-                customization_policy.skill,
-                SymlinkPolicy::ManagedChildrenOnly,
-            ),
+                )?))
+                .format(TargetFormat::Markdown)
+                .managed_selectors(["$document"])
+                .capability(tool_capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Claude, ArtifactKind::Mcp, Scope::Global)
+                .path(user_mcp_path)
+                .format(TargetFormat::Json)
+                .managed_selectors(["mcpServers"])
+                .sensitive_selectors(["mcpServers/*/headers", "mcpServers/*/env"])
+                .capability(user_mcp_capability)
+                .policy(customization_policy.mcp)
+                .build(),
+            TargetDescriptor::builder(Tool::Claude, ArtifactKind::Skill, Scope::Global)
+                .path(Some(path_text(
+                    &environment.claude_config_dir().join("skills"),
+                )?))
+                .format(TargetFormat::SymlinkDirectory)
+                .managed_selectors(["$children"])
+                .capability(tool_capability.clone())
+                .policy(customization_policy.skill)
+                .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                .build(),
             // Hooks 与 Provider 共享 settings.json（官方 hooks 合同，2026-09-05 核验），
             // 用选择器只接管 `hooks` 子树，保留 `env` 等其他内容。
             // Claude 的 customization policy 只封锁 mcp/skills 自定义文件，
             // 不封锁核心 settings.json 合同，因此这里不做策略门禁。
-            descriptor(
-                ArtifactKind::Hook,
-                Scope::Global,
-                None,
-                Some(path_text(&settings_path)?),
-                TargetFormat::Json,
-                vec!["hooks"],
-                vec![],
-                tool_capability.clone(),
-                PolicyState::Allowed,
-                SymlinkPolicy::Reject,
-            ),
+            TargetDescriptor::builder(Tool::Claude, ArtifactKind::Hook, Scope::Global)
+                .path(Some(path_text(&settings_path)?))
+                .format(TargetFormat::Json)
+                .managed_selectors(["hooks"])
+                .capability(tool_capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
             let root = Path::new(project_root.as_str());
+            let project_root = Some(project_root.as_str().to_owned());
             targets.extend([
-                descriptor(
-                    ArtifactKind::Mcp,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".mcp.json"))?),
-                    TargetFormat::Json,
-                    vec!["mcpServers"],
-                    vec!["mcpServers/*/headers", "mcpServers/*/env"],
-                    tool_capability.clone(),
-                    customization_policy.mcp,
-                    SymlinkPolicy::Reject,
-                ),
-                descriptor(
-                    ArtifactKind::Skill,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".claude/skills"))?),
-                    TargetFormat::SymlinkDirectory,
-                    vec!["$children"],
-                    vec![],
-                    tool_capability.clone(),
-                    customization_policy.skill,
-                    SymlinkPolicy::ManagedChildrenOnly,
-                ),
-                descriptor(
-                    ArtifactKind::Hook,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(path_text(&root.join(".claude/settings.json"))?),
-                    TargetFormat::Json,
-                    vec!["hooks"],
-                    vec![],
-                    tool_capability,
-                    PolicyState::Allowed,
-                    SymlinkPolicy::Reject,
-                ),
+                TargetDescriptor::builder(Tool::Claude, ArtifactKind::Mcp, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".mcp.json"))?))
+                    .format(TargetFormat::Json)
+                    .managed_selectors(["mcpServers"])
+                    .sensitive_selectors(["mcpServers/*/headers", "mcpServers/*/env"])
+                    .capability(tool_capability.clone())
+                    .policy(customization_policy.mcp)
+                    .build(),
+                TargetDescriptor::builder(Tool::Claude, ArtifactKind::Skill, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(Some(path_text(&root.join(".claude/skills"))?))
+                    .format(TargetFormat::SymlinkDirectory)
+                    .managed_selectors(["$children"])
+                    .capability(tool_capability.clone())
+                    .policy(customization_policy.skill)
+                    .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                    .build(),
+                TargetDescriptor::builder(Tool::Claude, ArtifactKind::Hook, Scope::Project)
+                    .project_root(project_root)
+                    .path(Some(path_text(&root.join(".claude/settings.json"))?))
+                    .format(TargetFormat::Json)
+                    .managed_selectors(["hooks"])
+                    .capability(tool_capability)
+                    .build(),
             ]);
         }
 
@@ -344,30 +312,4 @@ impl ProviderCodec for ClaudeAdapter {
             suggested_name: None,
         }))
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn descriptor(
-    artifact_kind: ArtifactKind,
-    scope: Scope,
-    project_root: Option<String>,
-    path: Option<String>,
-    format: TargetFormat,
-    managed_selector_roots: Vec<&str>,
-    sensitive_selectors: Vec<&str>,
-    capability: TargetCapability,
-    policy: PolicyState,
-    symlink_policy: SymlinkPolicy,
-) -> TargetDescriptor {
-    TargetDescriptor::builder(Tool::Claude, artifact_kind, scope)
-        .project_root(project_root.clone())
-        .allowed_root(project_root)
-        .path(path)
-        .format(format)
-        .managed_selectors(managed_selector_roots)
-        .sensitive_selectors(sensitive_selectors)
-        .capability(capability)
-        .policy(policy)
-        .symlink_policy(symlink_policy)
-        .build()
 }

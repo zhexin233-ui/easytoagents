@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::{
-    adapters::{canonicalize_project_root, ExplicitEnvironment},
+    adapters::{canonicalize_project_root, global_root_for, ExplicitEnvironment},
     app::AppPaths,
     db::Database,
     domain::{ArtifactKind, Scope, SyncRunKind, SyncRunStatus, Tool},
@@ -356,59 +356,34 @@ pub fn snapshot_restore_context(
     Ok(SnapshotRestoreContext { allowed_root })
 }
 
+/// 全局快照的恢复根：身份解码走领域枚举的稳定字符串，根目录映射复用
+/// `adapters::global_root_for`，与同步发现时写入的 `allowed_root` 完全一致。
+/// 工具从未支持过的资源组合（Cursor Provider、OpenCode Hook）保持 fail-closed。
 fn global_allowed_root(
     environment: &ExplicitEnvironment,
     tool: &str,
     artifact_kind: &str,
 ) -> Result<PathBuf, AppError> {
-    let tool = match tool {
-        "claude" => Tool::Claude,
-        "codex" => Tool::Codex,
-        "cursor" => Tool::Cursor,
-        "zcode" => Tool::Zcode,
-        "opencode" => Tool::Opencode,
-        _ => {
-            return Err(AppError::conflict("snapshot", "快照包含未知工具身份"));
-        }
-    };
-    let artifact_kind = match artifact_kind {
-        "provider" => ArtifactKind::Provider,
-        "prompt" => ArtifactKind::Prompt,
-        "mcp" => ArtifactKind::Mcp,
-        "skill" => ArtifactKind::Skill,
-        "hook" => ArtifactKind::Hook,
-        _ => {
-            return Err(AppError::conflict("snapshot", "快照包含未知资源身份"));
-        }
-    };
-    Ok(match (tool, artifact_kind) {
-        (Tool::Claude, ArtifactKind::Mcp) => environment.home().to_path_buf(),
-        (Tool::Claude, _) => environment.claude_config_dir().to_path_buf(),
-        // Codex 全局 Skills 目标位于 CODEX_HOME/skills，恢复根与同步写入根一致。
-        (Tool::Codex, _) => environment.codex_home().to_path_buf(),
-        (
-            Tool::Cursor,
-            ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook | ArtifactKind::Prompt,
-        ) => environment.home().join(".cursor"),
+    let tool = Tool::from_stable_str(tool)
+        .ok_or_else(|| AppError::conflict("snapshot", "快照包含未知工具身份"))?;
+    let artifact_kind = ArtifactKind::from_stable_str(artifact_kind)
+        .ok_or_else(|| AppError::conflict("snapshot", "快照包含未知资源身份"))?;
+    match (tool, artifact_kind) {
         (Tool::Cursor, ArtifactKind::Provider) => {
             return Err(AppError::invalid_input(
                 "capability",
                 "Cursor 不支持 Provider 快照恢复",
             ));
         }
-        // ZCode 全局目标都位于 ~/.zcode 之下（v2、cli、AGENTS.md、skills）。
-        (Tool::Zcode, _) => environment.home().join(".zcode"),
         (Tool::Opencode, ArtifactKind::Hook) => {
             return Err(AppError::invalid_input(
                 "capability",
                 "OPENCODE_HOOKS_UNSUPPORTED",
             ));
         }
-        (Tool::Opencode, ArtifactKind::Provider | ArtifactKind::Mcp) => {
-            environment.opencode_config_file_root()
-        }
-        (Tool::Opencode, _) => environment.opencode_config_dir().to_path_buf(),
-    })
+        _ => {}
+    }
+    Ok(global_root_for(environment, tool, artifact_kind))
 }
 
 #[cfg(test)]

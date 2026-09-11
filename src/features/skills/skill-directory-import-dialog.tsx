@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -11,6 +11,7 @@ import {
   DialogOverlay,
 } from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 
 interface SkillDirectoryImportDialogProps {
@@ -25,7 +26,7 @@ export function SkillDirectoryImportDialog(
   const descriptionId = useId();
   const [sourcePath, setSourcePath] = useState("");
   const [directoryError, setDirectoryError] = useState<string | null>(null);
-  const importInFlight = useRef(false);
+  const importGuard = useSubmitGuard();
   const importMutation = useMutation({
     mutationFn: async (path: string) =>
       unwrapResult(await commands.importSkill({ sourcePath: path })),
@@ -36,11 +37,11 @@ export function SkillDirectoryImportDialog(
       props.onClose();
     },
     onSettled: () => {
-      importInFlight.current = false;
+      importGuard.end();
     },
   });
   const close = () => {
-    if (!importInFlight.current) props.onClose();
+    if (!importGuard.isInFlight()) props.onClose();
   };
   const { dialogRef } = useDialogFocus(true, close);
 
@@ -99,12 +100,10 @@ export function SkillDirectoryImportDialog(
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
-            if (importInFlight.current || !sourcePath) {
-              return;
-            }
+            if (!sourcePath) return;
+            if (!importGuard.begin()) return;
             // 提交按钮即将禁用，先保留弹窗焦点，避免浏览器将焦点移回页面。
             dialogRef.current?.focus();
-            importInFlight.current = true;
             importMutation.mutate(sourcePath);
           }}
         >

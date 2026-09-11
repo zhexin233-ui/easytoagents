@@ -63,50 +63,41 @@ impl ToolAdapter for OpencodeAdapter {
             .as_ref()
             .map_or(TargetFormat::Json, |path| format_for_path(path));
         let mut targets = vec![
-            descriptor(
-                ArtifactKind::Provider,
-                Scope::Global,
-                None,
-                config_path.clone(),
-                config_format,
-                vec!["model", "provider"],
-                vec!["provider/*/options/apiKey", "provider/*/options/headers"],
-                capability.clone(),
-            ),
-            descriptor(
-                ArtifactKind::Prompt,
-                Scope::Global,
-                None,
-                Some(environment.opencode_config_dir().join("AGENTS.md")),
-                TargetFormat::Markdown,
-                vec!["$document"],
-                Vec::new(),
-                capability.clone(),
-            ),
-            descriptor(
-                ArtifactKind::Mcp,
-                Scope::Global,
-                None,
-                config_path.clone(),
-                config_format,
-                vec!["mcp"],
-                vec![
+            TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Provider, Scope::Global)
+                .path(optional_path_text(config_path.as_deref()))
+                .format(config_format)
+                .managed_selectors(["model", "provider"])
+                .sensitive_selectors(["provider/*/options/apiKey", "provider/*/options/headers"])
+                .capability(capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Prompt, Scope::Global)
+                .path(optional_path_text(Some(
+                    &environment.opencode_config_dir().join("AGENTS.md"),
+                )))
+                .format(TargetFormat::Markdown)
+                .managed_selectors(["$document"])
+                .capability(capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Mcp, Scope::Global)
+                .path(optional_path_text(config_path.as_deref()))
+                .format(config_format)
+                .managed_selectors(["mcp"])
+                .sensitive_selectors([
                     "mcp/*/headers",
                     "mcp/*/environment",
                     "mcp/*/oauth/clientSecret",
-                ],
-                capability.clone(),
-            ),
-            descriptor(
-                ArtifactKind::Skill,
-                Scope::Global,
-                None,
-                Some(environment.opencode_config_dir().join("skills")),
-                TargetFormat::SymlinkDirectory,
-                vec!["$children"],
-                Vec::new(),
-                capability.clone(),
-            ),
+                ])
+                .capability(capability.clone())
+                .build(),
+            TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Skill, Scope::Global)
+                .path(optional_path_text(Some(
+                    &environment.opencode_config_dir().join("skills"),
+                )))
+                .format(TargetFormat::SymlinkDirectory)
+                .managed_selectors(["$children"])
+                .capability(capability.clone())
+                .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -115,31 +106,28 @@ impl ToolAdapter for OpencodeAdapter {
             let project_format = project_config
                 .as_ref()
                 .map_or(TargetFormat::Json, |path| format_for_path(path));
+            let project_root = Some(project_root.as_str().to_owned());
             targets.extend([
-                descriptor(
-                    ArtifactKind::Mcp,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    project_config,
-                    project_format,
-                    vec!["mcp"],
-                    vec![
+                TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Mcp, Scope::Project)
+                    .project_root(project_root.clone())
+                    .path(optional_path_text(project_config.as_deref()))
+                    .format(project_format)
+                    .managed_selectors(["mcp"])
+                    .sensitive_selectors([
                         "mcp/*/headers",
                         "mcp/*/environment",
                         "mcp/*/oauth/clientSecret",
-                    ],
-                    capability.clone(),
-                ),
-                descriptor(
-                    ArtifactKind::Skill,
-                    Scope::Project,
-                    Some(project_root.as_str().to_owned()),
-                    Some(root.join(".opencode/skills")),
-                    TargetFormat::SymlinkDirectory,
-                    vec!["$children"],
-                    Vec::new(),
-                    capability,
-                ),
+                    ])
+                    .capability(capability.clone())
+                    .build(),
+                TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Skill, Scope::Project)
+                    .project_root(project_root)
+                    .path(optional_path_text(Some(&root.join(".opencode/skills"))))
+                    .format(TargetFormat::SymlinkDirectory)
+                    .managed_selectors(["$children"])
+                    .capability(capability)
+                    .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                    .build(),
             ]);
         }
         crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
@@ -369,31 +357,10 @@ impl ProviderCodec for OpencodeAdapter {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn descriptor(
-    artifact_kind: ArtifactKind,
-    scope: Scope,
-    project_root: Option<String>,
-    path: Option<PathBuf>,
-    format: TargetFormat,
-    managed_selector_roots: Vec<&str>,
-    sensitive_selectors: Vec<&str>,
-    capability: TargetCapability,
-) -> TargetDescriptor {
-    TargetDescriptor::builder(Tool::Opencode, artifact_kind, scope)
-        .project_root(project_root.clone())
-        .allowed_root(project_root)
-        .path(path.and_then(|path| path.to_str().map(str::to_owned)))
-        .format(format)
-        .managed_selectors(managed_selector_roots)
-        .sensitive_selectors(sensitive_selectors)
-        .capability(capability)
-        .symlink_policy(if artifact_kind == ArtifactKind::Skill {
-            SymlinkPolicy::ManagedChildrenOnly
-        } else {
-            SymlinkPolicy::Reject
-        })
-        .build()
+/// OpenCode 目标可能没有配置文件（`config_path == None`）；非 UTF-8 路径与
+/// 缺失路径一样视为"无路径"，与既有描述符语义保持一致。
+fn optional_path_text(path: Option<&Path>) -> Option<String> {
+    path.and_then(|path| path.to_str().map(str::to_owned))
 }
 
 fn select_config_path(explicit: Option<&Path>, config_dir: &Path) -> Option<PathBuf> {

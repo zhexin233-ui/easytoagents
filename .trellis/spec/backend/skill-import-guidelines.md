@@ -94,7 +94,7 @@ Cursor 的同步目标只允许 `$HOME/.cursor/skills` 或登记项目的
 Desktop smoke 已验证指向中央 Skill 目录的符号链接可被发现；保留该证据，不能
 用目录命名猜测替代产品行为验证。
 
-> **Warning（历史教训）**：Codex 同步目标曾被错误定为 `HOME/.agents/skills`（假设其为跨工具约定），导致"应用显示已同步、Codex 看不到技能"。教训：**同步目标必须镜像工具真实读取的路径**（以工具自身行为为准验证，如 Codex 在 `$CODEX_HOME/skills/.system` 放内置技能），不要凭目录命名约定推断；同时同步/恢复的 allowed_root 必须与目标路径同步调整（见 `prepare_skill_sync` 与 `overview::global_allowed_root` 的 (Codex, Skill) 分支）。
+> **Warning（历史教训）**：Codex 同步目标曾被错误定为 `HOME/.agents/skills`（假设其为跨工具约定），导致"应用显示已同步、Codex 看不到技能"。教训：**同步目标必须镜像工具真实读取的路径**（以工具自身行为为准验证，如 Codex 在 `$CODEX_HOME/skills/.system` 放内置技能），不要凭目录命名约定推断；同时同步/恢复的 allowed_root 必须与目标路径同步调整（同步发现与快照恢复共用 `adapters::global_root_for` 的 `(Tool::Codex, _)` 分支，只改这一处）。
 
 - 只枚举来源根直属目录/目录链接，不递归搜索集合，不主动扫描插件缓存。
 - Codex 两个已知来源根的 `.system` 词法路径及可证明的真实目录树都排除。**排除不依赖当前扫描工具**：Claude 链接指向 Codex 内置树也必须排除。

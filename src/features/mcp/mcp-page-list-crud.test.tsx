@@ -546,4 +546,50 @@ describe("McpPage", () => {
     ).not.toBeInTheDocument();
     expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
   });
+  it("编辑弹窗中敏感字段的 label 通过生成 id 关联输入框，而不是按文案推断", async () => {
+    const httpServer = makeMcpServer({
+      id: "00000000-0000-4000-8000-000000000502",
+      name: "fixture-http",
+      transport: "streamable_http",
+      command: null,
+      args: [],
+      url: "https://example.test/mcp",
+      headerNames: ["Authorization"],
+      envNames: [],
+    });
+    vi.mocked(commands.listMcpServers).mockResolvedValue({
+      status: "ok",
+      data: [server, httpServer],
+    });
+    renderPage();
+
+    const editButtons = await screen.findAllByRole("button", { name: "编辑" });
+    const [editStdio, editHttp] = editButtons;
+    if (!editStdio || !editHttp) throw new Error("未找到两个编辑按钮");
+
+    fireEvent.click(editStdio);
+    let dialog = screen.getByRole("dialog", { name: "编辑 MCP" });
+    const envInput = within(dialog).getByLabelText("Env JSON");
+    const envLabel = within(dialog).getByText("Env JSON", {
+      selector: "label",
+    });
+    expect(envInput.id).not.toBe("");
+    expect(envLabel).toHaveAttribute("for", envInput.id);
+    expect(envInput.id).not.toMatch(/env/i);
+    expect(envInput.id).not.toMatch(/json/i);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(editHttp);
+    dialog = screen.getByRole("dialog", { name: "编辑 MCP" });
+    const headersInput = within(dialog).getByLabelText("Headers JSON");
+    const headersLabel = within(dialog).getByText("Headers JSON", {
+      selector: "label",
+    });
+    expect(headersInput.id).not.toBe("");
+    expect(headersLabel).toHaveAttribute("for", headersInput.id);
+    expect(headersInput.id).not.toMatch(/header/i);
+    expect(headersInput.id).not.toMatch(/json/i);
+    expect(headersInput.id).not.toBe(envInput.id);
+  });
 });

@@ -1,7 +1,7 @@
 //! Skill 中央记录、分配与逐目标 managed item 仓储。
 
 use crate::{
-    db::{sync::reject_active_writer as reject_active_writer_on, Database},
+    db::{column_tool, sync::reject_active_writer as reject_active_writer_on, Database},
     domain::{
         validate_global_assignment, validate_project_assignment, EntityId, SkillStatus, Tool,
         TrustStatus,
@@ -292,7 +292,7 @@ pub fn global_tools_for_all_skills(
         })?;
     let rows = statement
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, tool_from_database(row.get(1)?)?))
+            Ok((row.get::<_, String>(0)?, column_tool(row, 1)?))
         })
         .map_err(|error| {
             AppError::database(&path, "query_all_skill_global_tools").with_source(error)
@@ -348,7 +348,7 @@ pub fn global_tools_for_skill(database: &Database, skill_id: &str) -> Result<Vec
             AppError::database(&path, "prepare_skill_global_tools").with_source(error)
         })?;
     let tools = statement
-        .query_map([skill_id], |row| tool_from_database(row.get(0)?))
+        .query_map([skill_id], |row| column_tool(row, 0))
         .map_err(|error| AppError::database(&path, "query_skill_global_tools").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
@@ -757,17 +757,6 @@ fn project_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SkillProjectRec
         codex_trust_status: trust_from_database(row.get(3)?)?,
         row_version: row.get(4)?,
     })
-}
-
-fn tool_from_database(value: String) -> rusqlite::Result<Tool> {
-    match value.as_str() {
-        "claude" => Ok(Tool::Claude),
-        "codex" => Ok(Tool::Codex),
-        "cursor" => Ok(Tool::Cursor),
-        "zcode" => Ok(Tool::Zcode),
-        "opencode" => Ok(Tool::Opencode),
-        _ => Err(rusqlite::Error::InvalidQuery),
-    }
 }
 
 fn status_from_database(value: String) -> rusqlite::Result<SkillStatus> {

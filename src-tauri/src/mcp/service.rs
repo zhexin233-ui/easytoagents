@@ -736,6 +736,14 @@ fn http_url(value: &ValidatedMcpConfiguration) -> Result<String, AppError> {
         .ok_or_else(|| AppError::internal("streamable_http MCP 配置缺少已验证的 url"))
 }
 
+/// 把 env/headers 这类字符串映射投影为 JSON 对象。`BTreeMap<String, String>`
+/// 序列化实际不会失败，但生产路径不允许 `unwrap`；错误经 `with_source` 脱敏后
+/// 只保留内部原因，不把映射内容带出 RPC 边界。
+fn string_map_value(map: &BTreeMap<String, String>) -> Result<Value, AppError> {
+    serde_json::to_value(map)
+        .map_err(|error| AppError::internal("MCP 字符串映射序列化失败").with_source(error))
+}
+
 fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Value, AppError> {
     let mut object = value
         .extra
@@ -753,17 +761,14 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
                 );
             }
             if !value.env.is_empty() {
-                object.insert("env".to_owned(), serde_json::to_value(&value.env).unwrap());
+                object.insert("env".to_owned(), string_map_value(&value.env)?);
             }
         }
         (Tool::Claude | Tool::Cursor | Tool::Zcode, McpTransport::StreamableHttp) => {
             object.insert("type".to_owned(), Value::String("http".to_owned()));
             object.insert("url".to_owned(), Value::String(http_url(value)?));
             if !value.headers.is_empty() {
-                object.insert(
-                    "headers".to_owned(),
-                    serde_json::to_value(&value.headers).unwrap(),
-                );
+                object.insert("headers".to_owned(), string_map_value(&value.headers)?);
             }
         }
         (Tool::Codex, McpTransport::Stdio) => {
@@ -775,17 +780,14 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
                 );
             }
             if !value.env.is_empty() {
-                object.insert("env".to_owned(), serde_json::to_value(&value.env).unwrap());
+                object.insert("env".to_owned(), string_map_value(&value.env)?);
             }
             object.insert("enabled".to_owned(), Value::Bool(true));
         }
         (Tool::Codex, McpTransport::StreamableHttp) => {
             object.insert("url".to_owned(), Value::String(http_url(value)?));
             if !value.headers.is_empty() {
-                object.insert(
-                    "http_headers".to_owned(),
-                    serde_json::to_value(&value.headers).unwrap(),
-                );
+                object.insert("http_headers".to_owned(), string_map_value(&value.headers)?);
             }
             object.insert("enabled".to_owned(), Value::Bool(true));
         }
@@ -795,10 +797,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
             command.extend(value.args.iter().cloned().map(Value::String));
             object.insert("command".to_owned(), Value::Array(command));
             if !value.env.is_empty() {
-                object.insert(
-                    "environment".to_owned(),
-                    serde_json::to_value(&value.env).unwrap(),
-                );
+                object.insert("environment".to_owned(), string_map_value(&value.env)?);
             }
             object.insert("enabled".to_owned(), Value::Bool(value.enabled));
         }
@@ -806,10 +805,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
             object.insert("type".to_owned(), Value::String("remote".to_owned()));
             object.insert("url".to_owned(), Value::String(http_url(value)?));
             if !value.headers.is_empty() {
-                object.insert(
-                    "headers".to_owned(),
-                    serde_json::to_value(&value.headers).unwrap(),
-                );
+                object.insert("headers".to_owned(), string_map_value(&value.headers)?);
             }
             object.insert("enabled".to_owned(), Value::Bool(value.enabled));
         }

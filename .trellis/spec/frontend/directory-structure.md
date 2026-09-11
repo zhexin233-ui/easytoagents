@@ -82,8 +82,9 @@ src/
 
 - `src/app/router.tsx` is the route registry and imports pages from feature
   directories.
-- `src/features/projects/project-detail-page.tsx` demonstrates a domain page
-  with local subcomponents, React Query mutations, and co-located behavior tests.
+- `src/features/projects/detail/page.tsx` demonstrates a domain page composed
+  from `detail/assignments/*` subcomponents, React Query mutations, and
+  co-located behavior tests; there is no compatibility re-export shim.
 - `src/components/change-preview-dialog.tsx` demonstrates a shared accessible
   dialog composed from `Button`, `BlockingState`, `SyncStatusBadge`, and
   `useDialogFocus`.

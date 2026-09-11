@@ -34,12 +34,12 @@
 
 ## 跨子任务验收
 
-- [ ] A1-A12 每条都有对应的回归测试或明确的"不可测试"说明。
-- [ ] 主窗口在工具探测完成前可见；apply、restore、list_projects、list_skills 不再在主线程执行文件 IO。
-- [ ] `tool_adapter/allowed_root/descriptor_for/safe_row_version` 等重复函数各只剩一份实现。
-- [ ] 五个中央页面共用同一个预览应用流程 hook；`project-detail-page.tsx` 不超过 500 行。
-- [ ] 存在对 push 与 PR 执行 `pnpm check` 的 GitHub 工作流。
-- [ ] 最终集成审查：全部子任务归档后，在真实 Tauri 应用中走通"导入 → 分配 → 预览 → 应用 → 恢复"一次。
+- [x] A1-A12 每条都有对应的回归测试或明确的"不可测试"说明（A11、A12 不可测试，见子任务记录；A8 已补专门用例）。
+- [x] 主窗口在工具探测完成前可见；apply、restore、list_projects、list_skills 不再在主线程执行文件 IO（代码层面达成；启动体感待真机确认）。
+- [x] `tool_adapter/allowed_root/descriptor_for/safe_row_version` 等重复函数各只剩一份实现。
+- [x] 五个中央页面共用同一个预览应用流程 hook；项目详情页 `detail/page.tsx` 478 行（旧 `project-detail-page.tsx` shim 已删除）。
+- [x] 存在对 push 与 PR 执行 `pnpm check` 的 GitHub 工作流。
+- [ ] 最终集成审查：全部子任务归档后，在真实 Tauri 应用中走通"导入 → 分配 → 预览 → 应用 → 恢复"一次。（静态集成审查见 `research/final-integration-review.md`；真机走查清单见其第 5 节，待人工执行。）
 
 ## 范围外
 

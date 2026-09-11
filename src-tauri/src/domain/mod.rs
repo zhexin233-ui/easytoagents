@@ -631,6 +631,53 @@ mod tests {
         TargetType, Tool, TrustStatus,
     };
 
+    /// 字符串→`Tool` 的映射只允许经 `Tool::from_stable_str`（`string_enum!` 生成）。
+    /// 任何其它源文件手写 `"claude" => Tool::Claude` 这类字面量分派，都会让新增
+    /// 工具时漏改一处，因此这里扫描整个 crate 源码把它挡在测试期。
+    #[test]
+    fn tool_literal_dispatch_only_lives_in_domain() {
+        fn collect(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect(&path, files);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect(&root, &mut files);
+        assert!(files.len() > 50, "源码扫描数量异常：{}", files.len());
+        let arms: Vec<String> = Tool::ALL
+            .iter()
+            .map(|tool| format!("\"{}\" =>", tool.as_str()))
+            .collect();
+        let mut violations = Vec::new();
+        for file in files {
+            let relative = file.strip_prefix(&root).unwrap();
+            if relative == Path::new("domain/mod.rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&file).unwrap();
+            for (index, line) in source.lines().enumerate() {
+                if arms.iter().any(|arm| line.contains(arm)) {
+                    violations.push(format!(
+                        "{}:{} {}",
+                        relative.display(),
+                        index + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "字符串→Tool 只允许经 Tool::from_stable_str，发现手写分派：{violations:#?}"
+        );
+    }
+
     #[test]
     fn stable_enums_serialize_to_contract_values() {
         assert_eq!(

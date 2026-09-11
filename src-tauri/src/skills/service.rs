@@ -1274,17 +1274,9 @@ fn list_skill_managed_targets(database: &Database) -> Result<Vec<SkillManagedTar
         })?;
     let rows = statement
         .query_map([], |row| {
-            let tool = match row.get::<_, String>(1)?.as_str() {
-                "claude" => Tool::Claude,
-                "codex" => Tool::Codex,
-                "cursor" => Tool::Cursor,
-                "zcode" => Tool::Zcode,
-                "opencode" => Tool::Opencode,
-                _ => return Err(rusqlite::Error::InvalidQuery),
-            };
             Ok((
                 row.get::<_, String>(0)?,
-                tool,
+                crate::db::column_tool(row, 1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, String>(3)?,
             ))

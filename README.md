@@ -52,7 +52,7 @@ Hooks 采用统一事件模型：Claude（`settings.json` 的 `hooks` 键）与 
 ## 产品实景
 
 <p align="center">
-  <img src="docs/assets/app-overview.png" alt="EasyToAgents 深色模式总览：Claude 与 Codex 配置状态、项目、冲突、快照和最近同步" width="100%" />
+  <img src="docs/assets/app-overview.png" alt="EasyToAgents 深色模式总览：Claude、Codex、Cursor、ZCode 与 OpenCode 配置状态、项目、冲突、快照和最近同步" width="100%" />
 </p>
 
 <p align="center"><sub>总览界面 · 隔离空数据状态，不包含个人配置或项目路径</sub></p>
