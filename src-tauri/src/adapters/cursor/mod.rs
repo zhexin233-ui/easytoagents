@@ -12,8 +12,8 @@ use std::path::Path;
 
 use crate::{
     adapters::{
-        DiscoveryContext, PolicyState, PromptOverrideState, SymlinkPolicy, TargetCapability,
-        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter, ToolAvailabilityState,
+        path_text, DiscoveryContext, ProviderCodec, SymlinkPolicy, TargetCapability,
+        TargetDescriptor, TargetFormat, ToolAdapter, ToolAvailabilityState,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
@@ -25,6 +25,10 @@ pub struct CursorAdapter;
 impl ToolAdapter for CursorAdapter {
     fn tool(&self) -> Tool {
         Tool::Cursor
+    }
+
+    fn provider_codec(&self) -> Option<&dyn ProviderCodec> {
+        None
     }
 
     fn discover(&self, context: &DiscoveryContext<'_>) -> Result<Vec<TargetDescriptor>, AppError> {
@@ -146,6 +150,7 @@ impl ToolAdapter for CursorAdapter {
             ]);
         }
 
+        crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
         Ok(targets)
     }
 }
@@ -162,30 +167,16 @@ fn descriptor(
     capability: TargetCapability,
     symlink_policy: SymlinkPolicy,
 ) -> TargetDescriptor {
-    TargetDescriptor {
-        tool: Tool::Cursor,
-        artifact_kind,
-        scope,
-        project_root,
-        path,
-        format,
-        managed_selector_roots: managed_selector_roots
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        sensitive_selectors: sensitive_selectors.into_iter().map(str::to_owned).collect(),
-        capability,
-        policy: PolicyState::Allowed,
-        trust: TargetTrustState::NotRequired,
-        prompt_override: PromptOverrideState::NotApplicable,
-        symlink_policy,
-    }
-}
-
-fn path_text(path: &Path) -> Result<String, AppError> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::invalid_input("targetPath", "目标路径必须是 UTF-8"))
+    TargetDescriptor::builder(Tool::Cursor, artifact_kind, scope)
+        .project_root(project_root.clone())
+        .allowed_root(project_root)
+        .path(path)
+        .format(format)
+        .managed_selectors(managed_selector_roots)
+        .sensitive_selectors(sensitive_selectors)
+        .capability(capability)
+        .symlink_policy(symlink_policy)
+        .build()
 }
 
 #[cfg(test)]

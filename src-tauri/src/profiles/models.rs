@@ -32,6 +32,14 @@ impl ClaudeCredentialEnvKey {
             Self::AuthToken => "ANTHROPIC_AUTH_TOKEN",
         }
     }
+
+    pub fn from_stable_str(value: &str) -> Option<Self> {
+        match value {
+            "ANTHROPIC_API_KEY" => Some(Self::ApiKey),
+            "ANTHROPIC_AUTH_TOKEN" => Some(Self::AuthToken),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, Type)]

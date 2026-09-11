@@ -4,10 +4,9 @@ use rusqlite::OptionalExtension;
 
 use crate::{
     adapters::{
-        canonicalize_project_root, claude::ClaudeAdapter, codex::CodexAdapter,
-        cursor::CursorAdapter, opencode::OpencodeAdapter, zcode::ZcodeAdapter,
+        canonicalize_project_root, native_mcp_container, projection_value_at,
         ClaudeCustomizationPolicyProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
-        PolicyState, TargetDescriptor, TargetTrustState, ToolAdapter, ASSIGNABLE_MCP_TOOLS,
+        PolicyState, TargetDescriptor, TargetTrustState, ASSIGNABLE_MCP_TOOLS,
     },
     db::{
         hooks as hook_repository, mcp as mcp_repository, projects as repository,
@@ -360,22 +359,22 @@ fn observe_project(
         claude_user_mcp_probe: environment.claude_user_mcp_probe(),
         claude_customization_policy_probe: policy_probe,
     };
-    let claude_targets = ClaudeAdapter.discover(&context)?;
-    let codex_targets = CodexAdapter.discover(&context)?;
-    let cursor_targets = CursorAdapter.discover(&context)?;
-    let zcode_targets = ZcodeAdapter.discover(&context)?;
-    let opencode_targets = OpencodeAdapter.discover(&context)?;
-    let claude_project_targets = project_targets(claude_targets);
-    let codex_project_targets = project_targets(codex_targets);
-    let cursor_project_targets = project_targets(cursor_targets);
-    let zcode_project_targets = project_targets(zcode_targets);
-    let opencode_project_targets = project_targets(opencode_targets);
-    let claude_policy_status = claude_project_targets
+    let discovered_targets = Tool::ALL
+        .into_iter()
+        .map(|tool| tool.adapter().discover(&context))
+        .collect::<Result<Vec<_>, _>>()?;
+    let project_targets = discovered_targets
+        .into_iter()
+        .flat_map(project_targets)
+        .collect::<Vec<_>>();
+    let claude_policy_status = project_targets
         .iter()
+        .filter(|target| target.tool == Tool::Claude)
         .map(|target| target.policy)
         .fold(PolicyState::Allowed, merge_policy);
-    let codex_trust = codex_project_targets
+    let codex_trust = project_targets
         .iter()
+        .filter(|target| target.tool == Tool::Codex)
         .map(|target| target.trust)
         .next()
         .unwrap_or(TargetTrustState::Unknown);
@@ -384,12 +383,8 @@ fn observe_project(
         TargetTrustState::Untrusted => TrustStatus::Untrusted,
         TargetTrustState::Unknown | TargetTrustState::NotRequired => TrustStatus::Unknown,
     };
-    let targets = claude_project_targets
+    let targets = project_targets
         .into_iter()
-        .chain(codex_project_targets)
-        .chain(cursor_project_targets)
-        .chain(zcode_project_targets)
-        .chain(opencode_project_targets)
         .map(|descriptor| target_status(database, project_root.as_str(), descriptor))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ProjectObservation {
@@ -639,7 +634,7 @@ fn assess_managed_target(
         database,
         descriptor,
         &persisted.baseline.target_id,
-        scan_target(tool_adapter(descriptor.tool), descriptor, &ownership),
+        scan_target(descriptor.tool.adapter(), descriptor, &ownership),
     )?;
     let mut assessment = assess_drift(descriptor, &persisted.baseline, &scan);
     if assessment.status == SyncStatus::ExternalNonOwnedChange
@@ -668,7 +663,7 @@ fn verify_managed_item_baselines(
                 return Ok(scan);
             }
             match &scan {
-                TargetScan::Observed(observed) => json_value_at(
+                TargetScan::Observed(observed) => projection_value_at(
                     &observed.managed_projection,
                     native_mcp_container(descriptor.tool),
                 )
@@ -732,25 +727,6 @@ fn verify_managed_item_baselines(
     })
 }
 
-/// MCP 条目在原生文件中的容器路径；ZCode 是官方定义的嵌套键 `mcp.servers`。
-fn native_mcp_container(tool: Tool) -> &'static [&'static str] {
-    match tool {
-        Tool::Claude => &["mcpServers"],
-        Tool::Codex => &["mcp_servers"],
-        Tool::Cursor => &["mcpServers"],
-        Tool::Zcode => &["mcp", "servers"],
-        Tool::Opencode => &["mcp"],
-    }
-}
-
-fn json_value_at<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    Some(current)
-}
-
 fn status_from_unmanaged_scan(descriptor: &TargetDescriptor) -> (SyncStatus, Option<String>) {
     let ownership = match descriptor.artifact_kind {
         ArtifactKind::Mcp => ManagedOwnership::selectors([[descriptor
@@ -762,7 +738,7 @@ fn status_from_unmanaged_scan(descriptor: &TargetDescriptor) -> (SyncStatus, Opt
         ArtifactKind::Skill => ManagedOwnership::SymlinkNames(Vec::new()),
         ArtifactKind::Provider | ArtifactKind::Prompt => ManagedOwnership::WholeDocument,
     };
-    match scan_target(tool_adapter(descriptor.tool), descriptor, &ownership) {
+    match scan_target(descriptor.tool.adapter(), descriptor, &ownership) {
         TargetScan::Observed(_) => (
             SyncStatus::ExternalNonOwnedChange,
             Some("UNMANAGED_NATIVE_CONFIGURATION".to_owned()),
@@ -788,16 +764,6 @@ fn status_from_unmanaged_scan(descriptor: &TargetDescriptor) -> (SyncStatus, Opt
             SyncStatus::Failed,
             Some("NATIVE_CONFIGURATION_UNAVAILABLE".to_owned()),
         ),
-    }
-}
-
-fn tool_adapter(tool: Tool) -> &'static dyn ToolAdapter {
-    match tool {
-        Tool::Claude => &ClaudeAdapter,
-        Tool::Codex => &CodexAdapter,
-        Tool::Cursor => &CursorAdapter,
-        Tool::Zcode => &ZcodeAdapter,
-        Tool::Opencode => &OpencodeAdapter,
     }
 }
 

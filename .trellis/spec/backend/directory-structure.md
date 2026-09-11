@@ -30,7 +30,8 @@ src-tauri/
 │   │   ├── native_resources.rs # Project-native observation CAS and snapshot guards
 │   │   ├── profiles.rs
 │   │   ├── projects.rs
-│   │   └── skills.rs
+│   │   ├── skills.rs
+│   │   └── sync.rs             # sync_runs/sync_items/snapshots/managed_targets SQL
 │   ├── domain/                  # Shared domain types and validation
 │   ├── error.rs                 # Stable cross-layer error contract
 │   ├── git/                     # Read-only Git inspection
@@ -41,6 +42,7 @@ src-tauri/
 │   ├── security/                # Redaction and path safety
 │   ├── skills/                  # Skill import and synchronization
 │   ├── sync/                    # Preview, apply, snapshot and recovery engine
+│   │   └── apply/               # bounded validation/planning/mutation/restore fragments
 │   ├── lib.rs                   # Modules, command registration and app setup
 │   └── main.rs                  # Desktop entry point
 └── tests/                       # Crate-level integration tests
@@ -67,9 +69,12 @@ src-tauri/
   not embed Claude/Codex file parsing in commands or UI-facing DTOs.
 - Keep shared security behavior in `security/`, stable RPC failures in
   `error.rs`, and durable external writes/recovery in `sync/`.
-- Co-locate focused unit tests in `#[cfg(test)] mod tests`. Use `src-tauri/tests/`
-  when a test crosses command registration, generated bindings, SQLite, or
-  several service modules.
+- Co-locate focused unit tests in `#[cfg(test)] mod tests`. For modules whose
+  production source is already large, keep the same module namespace with
+  `#[cfg(test)] include!("tests.rs")`; this is a physical split only and must
+  not change test count or `super` visibility. Use `src-tauri/tests/` when a
+  test crosses command registration, generated bindings, SQLite, or several
+  service modules.
 
 ---
 
@@ -106,9 +111,14 @@ src-tauri/
 
 - `src-tauri/src/db/mod.rs` owns connection setup and the ordered embedded
   migration list. Entity-specific persistence is split into `db/mcp.rs`,
-  `db/native_resources.rs`, `db/profiles.rs`, `db/projects.rs`, and `db/skills.rs`.
+  `db/native_resources.rs`, `db/profiles.rs`, `db/projects.rs`,
+  `db/skills.rs`, and `db/sync.rs`; the latter owns sync-run, snapshot,
+  managed-target and active-writer queries.
 - `src-tauri/src/sync/` is the reference for a cross-cutting module with pure
   preview computation, durable apply, snapshots, journals, and recovery tests.
+  `sync/apply/mod.rs` includes the bounded `core`, `validate`, `plan`,
+  `fs_ops`, `snapshot`, `journal`, `mutation`, `finalize`, and `restore`
+  fragments; production Rust files must stay below 1500 lines.
 - `src-tauri/tests/command_smoke.rs`, `bindings.rs`, and `phase8_e2e.rs`
   demonstrate command registration, generated-binding, and end-to-end tests.
 

@@ -229,19 +229,6 @@ pub fn global_tools_for_all_mcp(
     Ok(grouped)
 }
 
-pub(crate) fn mcp_row_versions(
-    database: &Database,
-    ids: &[&str],
-) -> Result<std::collections::BTreeMap<String, i64>, AppError> {
-    super::skills::row_versions_by_id(
-        database.connection(),
-        &database.path().to_string_lossy(),
-        "mcp_servers",
-        ids,
-        "mcp_row_versions",
-    )
-}
-
 pub fn global_tools_for_mcp(database: &Database, mcp_id: &str) -> Result<Vec<Tool>, AppError> {
     let path = database.path().to_string_lossy();
     let mut statement = database

@@ -53,7 +53,12 @@ Cursor Prompt/Rules 证据矩阵（2026-09-06）：
 4. 把 Adapter 注册到实际支持资源的 registry。共享集合位于 `src-tauri/src/adapters/mod.rs`：
    - `PROFILE_TOOLS` 只含 Provider/Prompt 工具；
    - `ASSIGNABLE_MCP_TOOLS`、`ASSIGNABLE_SKILL_TOOLS` 分别列出可分配工具。
-5. 检索所有 `match Tool` 和二元分支；穷举分支必须明确处理新工具，不能用 `_` 把它误当成 Codex。
+5. 完成固定注册点：
+   - `domain::Tool` 枚举及其 `Tool::ALL` 稳定顺序；
+   - `adapters::adapter_for` 的单例映射与对应 `src-tauri/src/adapters/<tool>/mod.rs`；
+   - 数据库中保存工具值的表级 `CHECK` 约束及其前向迁移（如适用）。
+     业务代码通过 `tool.adapter()` 或能力集合迭代，不再要求为新增工具逐处检索并复制
+     `match Tool`；确需穷举时仍必须显式处理每个变体，不能用 `_` 把新工具误当成 Codex。
 
 ## 3. 安装探针与显式环境
 

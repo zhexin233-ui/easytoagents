@@ -53,6 +53,15 @@ ownership, disable/restore, and Apply.
   that production discovery wiring is complete.
 - Keep managed-selector ownership in `TargetDescriptor`; validate that adapter scans
   and renders cannot escape those roots.
+- Keep cross-resource synchronization contracts in typed helpers: `ManagedArtifact`
+  owns row-version collection, readopt item hashing, and target-status projection;
+  `ProviderCodec` owns tool-specific Provider ownership, rendering, and discovery.
+  Services may retain RPC-specific DTO wrappers, but must not duplicate the shared
+  projection algorithm.
+- When matching a managed Hook item during readopt, parse the canonical event name
+  and convert it with `HookEvent::native_key(tool)` before looking up the native
+  event tree. Cursor stores camelCase event keys while the central record uses the
+  stable PascalCase value.
 - Canonicalize map ordering before hashing. Persist full and managed hashes together so
   unmanaged-only drift can merge while managed drift blocks.
 - Redact each document-relative before/after projection before adding a diff envelope.
@@ -174,6 +183,81 @@ let preview = json!({ "before": raw, "after": desired });
 ```rust
 let environment = ExplicitEnvironment::new(home, claude_root, codex_root, availability)?;
 let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
+```
+
+## Scenario: Shared managed synchronization and adapter codecs
+
+### 1. Scope / Trigger
+
+- Trigger: deduplicating MCP/Skill/Hook synchronization code, moving Provider
+  projection/discovery into adapters, or extracting sync-table SQL from the apply
+  engine.
+
+### 2. Signatures
+
+- `ManagedArtifact::current_item_hash(observed, item, descriptor, claimed)` returns
+  the observed hash for one managed item or `None` when it is no longer present.
+- `collect_row_versions::<A>(connection, database_path, project, records, items)`
+  returns the deduplicated `DatabaseRowVersion` set used by preview persistence.
+- `ProviderCodec::{ownership, render, discover}` receive adapter-neutral values and
+  return `ManagedOwnership`, a redacted-safe projection, or a stable discovery fact.
+- `db::sync` typed helpers own `sync_runs`, `sync_items`, `snapshots`, and
+  cross-cutting `managed_targets`/active-writer statements.
+
+### 3. Contracts
+
+- The shared helpers preserve the existing RPC DTO names and field shapes; service
+  wrappers only map resource-specific fields or status diagnostics.
+- Adapter codecs must not depend on Profiles database records or read process
+  environment; Profiles retains orchestration, validation, redaction, and persistence.
+- Readopt is one SQLite `IMMEDIATE` transaction. A missing target clears its baseline
+  and managed items; an observed target refreshes both hashes and each surviving item.
+- Canonical Hook events are converted to the target's native key before projection
+  lookup, including Cursor's camelCase event names.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Resource/item row version exceeds `u32` | Stable invalid-input error; preview is not persisted |
+| Item is absent from an observed projection | Remove only that managed item during readopt |
+| Target is missing or unreadable during readopt | Clear baseline/items or return conflict; never write a native target |
+| Cursor Hook canonical event has no native mapping | Treat the item as absent; no guessed event key |
+| Cursor Provider codec requested | Explicit unsupported error and zero native reads/writes |
+| Sync SQL operation affects an unexpected row count | Preserve the existing database/stale error operation |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a Cursor `Stop` managed item matches the native `stop` array and refreshes
+  its hash without changing the central event value.
+- Base: an unchanged MCP/Skill/Hook preview collects project, resource, and item
+  versions once and serializes the same RPC DTO shape as before.
+- Bad: matching `external_key` directly against Cursor's tree, rendering a Provider
+  in Profiles with a new per-tool `match`, or embedding `sync_runs` SQL in Apply.
+
+### 6. Tests Required
+
+- Unit-test each ManagedArtifact hash path, including Cursor canonical-to-native Hook
+  conversion and duplicate-claim protection.
+- Test MCP/Skill/Hook preview row-version collection and readopt missing/drifted cases.
+- Test each Provider codec ownership/render/discovery contract and Cursor unsupported.
+- Run generated binding checks and the full backend/frontend quality gate after any
+  helper signature or descriptor field change.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let event = key.next()?; // central `Stop`, but Cursor stores `stop`
+let entries = projection["hooks"][event].as_array()?;
+```
+
+#### Correct
+
+```rust
+let event = HookEvent::from_stable_str(key.next()?)?.native_key(descriptor.tool);
+let entries = projection["hooks"][event].as_array()?;
 ```
 
 ## Scenario: Durable apply and conservative recovery

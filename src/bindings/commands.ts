@@ -942,7 +942,15 @@ export type TargetCapability = { state: CapabilityState; diagnosticCode: string 
 /**
  * Adapter 对一个原生目标的完整只读合同。
  */
-export type TargetDescriptor = { tool: Tool; artifactKind: ArtifactKind; scope: Scope; projectRoot: string | null; path: string | null; format: TargetFormat; managedSelectorRoots: string[]; sensitiveSelectors: string[]; capability: TargetCapability; policy: PolicyState; trust: TargetTrustState; promptOverride: PromptOverrideState; symlinkPolicy: SymlinkPolicy }
+export type TargetDescriptor = { tool: Tool; artifactKind: ArtifactKind; scope: Scope; projectRoot: string | null; path: string | null;
+/**
+ * 外部写入安全边界；Global 目标由 Adapter 显式提供，Project 目标通常等于 project_root。
+ */
+allowedRoot: string | null;
+/**
+ * MCP 受管投影所在的原生容器路径。
+ */
+mcpContainer: string[] | null; format: TargetFormat; managedSelectorRoots: string[]; sensitiveSelectors: string[]; capability: TargetCapability; policy: PolicyState; trust: TargetTrustState; promptOverride: PromptOverrideState; symlinkPolicy: SymlinkPolicy }
 export type TargetFormat = "json" |
 /**
  * OpenCode's JSON with comments/trailing commas. The parser keeps the

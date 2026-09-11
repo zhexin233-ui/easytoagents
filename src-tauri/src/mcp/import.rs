@@ -361,7 +361,7 @@ fn item_projection(tool: Tool, items: Map<String, Value>) -> Value {
 }
 
 fn read_native(environment: &ExplicitEnvironment, tool: Tool) -> Result<NativeMcp, AppError> {
-    let descriptor = service::descriptor_for(
+    let descriptor = service::mcp_target_descriptor(
         environment,
         tool,
         None,
@@ -392,7 +392,7 @@ fn read_native(environment: &ExplicitEnvironment, tool: Tool) -> Result<NativeMc
     }
     let container = service::native_container(tool);
     let scan = scan_target(
-        service::tool_adapter(tool),
+        tool.adapter(),
         &descriptor,
         &ManagedOwnership::selectors([container
             .iter()
@@ -407,12 +407,13 @@ fn read_native(environment: &ExplicitEnvironment, tool: Tool) -> Result<NativeMc
             items: Map::new(),
         }),
         TargetScan::Observed(observed) => {
-            let items = match service::projection_value_at(&observed.managed_projection, container)
-            {
-                None => Map::new(),
-                Some(Value::Object(items)) => items.clone(),
-                Some(_) => return Err(AppError::parse(path, "MCP")),
-            };
+            let items =
+                match crate::adapters::projection_value_at(&observed.managed_projection, container)
+                {
+                    None => Map::new(),
+                    Some(Value::Object(items)) => items.clone(),
+                    Some(_) => return Err(AppError::parse(path, "MCP")),
+                };
             Ok(NativeMcp {
                 descriptor,
                 full_hash: Some(observed.full_hash),

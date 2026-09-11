@@ -3,7 +3,7 @@
   "name": "backend-dedup-and-split",
   "title": "后端去重与大文件拆分",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

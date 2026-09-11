@@ -19,7 +19,13 @@ use reqwest::{header, redirect::Policy, Client, Proxy, Response, StatusCode, Url
 use serde::Deserialize;
 use tempfile::TempDir;
 
-use crate::error::{AppError, ErrorCode};
+use crate::{
+    error::{AppError, ErrorCode},
+    skills::limits::{
+        MAX_DEPTH, MAX_FILES, MAX_FILE_BYTES, MAX_RELATIVE_PATH_BYTES, MAX_SKILL_MD_BYTES,
+        MAX_TOTAL_BYTES,
+    },
+};
 
 const GITHUB_API: &str = "https://api.github.com/";
 const GITHUB_RAW: &str = "https://raw.githubusercontent.com/";
@@ -28,12 +34,6 @@ const MAX_REF_CANDIDATES: usize = 16;
 const MAX_REQUESTS: usize = 4_128;
 const MAX_METADATA_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_METADATA_TOTAL_BYTES: usize = 8 * 1024 * 1024;
-const MAX_FILES: usize = 4_096;
-const MAX_DEPTH: usize = 32;
-const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_SKILL_MD_BYTES: u64 = 512 * 1024;
-const MAX_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_RELATIVE_PATH_BYTES: usize = 1_024;
 const OVERALL_TIMEOUT: Duration = Duration::from_secs(120);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 

@@ -4,14 +4,18 @@
 //! representable by the command-only Hook model used by this application.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
 
+use serde_json::{json, Map, Value};
+
 use crate::{
     adapters::{
-        DiscoveryContext, PolicyState, PromptOverrideState, SymlinkPolicy, TargetCapability,
-        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter, ToolAvailabilityState,
+        descriptor_path, DiscoveryContext, ManagedOwnership, ProviderCodec, ProviderCodecDiscovery,
+        ProviderCodecInput, ProviderCodecOptions, ProviderCodecProfileInput, SymlinkPolicy,
+        TargetCapability, TargetDescriptor, TargetFormat, ToolAdapter, ToolAvailabilityState,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
@@ -23,6 +27,10 @@ pub struct OpencodeAdapter;
 impl ToolAdapter for OpencodeAdapter {
     fn tool(&self) -> Tool {
         Tool::Opencode
+    }
+
+    fn provider_codec(&self) -> Option<&dyn ProviderCodec> {
+        Some(self)
     }
 
     fn discover(&self, context: &DiscoveryContext<'_>) -> Result<Vec<TargetDescriptor>, AppError> {
@@ -134,7 +142,230 @@ impl ToolAdapter for OpencodeAdapter {
                 ),
             ]);
         }
+        crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
         Ok(targets)
+    }
+}
+
+impl ProviderCodec for OpencodeAdapter {
+    fn discovery_ownership(&self) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        Ok(crate::adapters::ManagedOwnership::selectors([
+            ["model"],
+            ["provider"],
+        ]))
+    }
+
+    fn ownership(
+        &self,
+        baseline: Option<&Value>,
+        desired: &Value,
+    ) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        let mut selectors = BTreeSet::<Vec<String>>::new();
+        for projection in [baseline, Some(desired)].into_iter().flatten() {
+            if projection.get("model").is_some() {
+                selectors.insert(vec!["model".to_owned()]);
+            }
+            let Some(providers) = projection.get("provider").and_then(Value::as_object) else {
+                continue;
+            };
+            for (provider_id, provider) in providers {
+                for leaf in ["npm", "name"] {
+                    selectors.insert(vec![
+                        "provider".to_owned(),
+                        provider_id.clone(),
+                        leaf.to_owned(),
+                    ]);
+                }
+                if provider.get("options").is_some() {
+                    for leaf in ["baseURL", "apiKey"] {
+                        selectors.insert(vec![
+                            "provider".to_owned(),
+                            provider_id.clone(),
+                            "options".to_owned(),
+                            leaf.to_owned(),
+                        ]);
+                    }
+                }
+                if let Some(models) = provider.get("models").and_then(Value::as_object) {
+                    for model_id in models.keys() {
+                        selectors.insert(vec![
+                            "provider".to_owned(),
+                            provider_id.clone(),
+                            "models".to_owned(),
+                            model_id.clone(),
+                        ]);
+                    }
+                }
+            }
+        }
+        if selectors.is_empty() {
+            return Err(AppError::invalid_input(
+                "managedOwnership",
+                "Provider 同步没有可证明拥有的字段",
+            ));
+        }
+        Ok(ManagedOwnership::Selectors(selectors.into_iter().collect()))
+    }
+
+    fn default_options(
+        &self,
+        input: &ProviderCodecInput<'_>,
+    ) -> Result<ProviderCodecOptions, AppError> {
+        Ok(ProviderCodecOptions {
+            opencode_npm: input.opencode_npm.map(str::to_owned),
+            opencode_api: input.opencode_api.map(str::to_owned),
+            ..ProviderCodecOptions::default()
+        })
+    }
+
+    fn render(&self, input: &ProviderCodecProfileInput<'_>) -> Result<Value, AppError> {
+        let provider_id = input.provider_id.ok_or_else(|| {
+            AppError::invalid_input("providerOptions", "OpenCode Provider 缺少稳定 provider id")
+        })?;
+        let npm = input.opencode_npm.ok_or_else(|| {
+            AppError::invalid_input("providerOptions", "OpenCode Provider 缺少 npm SDK")
+        })?;
+        let mut provider = input
+            .extra_provider_fields
+            .clone()
+            .into_iter()
+            .collect::<Map<_, _>>();
+        provider.insert("npm".to_owned(), Value::String(npm.to_owned()));
+        provider.insert("name".to_owned(), Value::String(input.name.to_owned()));
+        let mut options = provider
+            .remove("options")
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        if let Some(value) = input.api_base_url {
+            options.insert("baseURL".to_owned(), Value::String(value.to_owned()));
+        }
+        if let Some(value) = input.api_key {
+            options.insert("apiKey".to_owned(), Value::String(value.to_owned()));
+        } else {
+            options.remove("apiKey");
+        }
+        provider.insert("options".to_owned(), Value::Object(options));
+        let model_id = input.default_model.unwrap_or("default");
+        let mut models = provider
+            .remove("models")
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        models
+            .entry(model_id.to_owned())
+            .or_insert_with(|| json!({ "name": model_id }));
+        provider.insert("models".to_owned(), Value::Object(models));
+        let model_ref = format!("{provider_id}/{model_id}");
+        let mut root = Map::new();
+        root.insert("model".to_owned(), Value::String(model_ref));
+        root.insert(
+            "provider".to_owned(),
+            Value::Object(Map::from_iter([(
+                provider_id.to_owned(),
+                Value::Object(provider),
+            )])),
+        );
+        Ok(Value::Object(root))
+    }
+
+    fn discover(
+        &self,
+        descriptor: &TargetDescriptor,
+        managed_projection: &Value,
+        full_hash: &str,
+    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+        let target_path = descriptor_path(descriptor)?;
+        let root = managed_projection
+            .as_object()
+            .ok_or_else(|| AppError::parse(&target_path, "json"))?;
+        let model_ref = root
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let Some((provider_id, model_id)) = model_ref.split_once('/') else {
+            return Ok(None);
+        };
+        if provider_id.trim().is_empty() || model_id.trim().is_empty() {
+            return Ok(None);
+        }
+        let Some(entry) = root
+            .get("provider")
+            .and_then(Value::as_object)
+            .and_then(|providers| providers.get(provider_id))
+            .and_then(Value::as_object)
+        else {
+            return Ok(None);
+        };
+        let Some(npm) = entry.get("npm").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        if npm.trim().is_empty() || name.trim().is_empty() {
+            return Ok(None);
+        }
+        let Some(options) = entry.get("options").and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        let Some(api_base_url) = options.get("baseURL").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        if api_base_url.trim().is_empty() {
+            return Ok(None);
+        }
+        let api_key = options
+            .get("apiKey")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let mut managed_entry = Map::new();
+        for key in ["npm", "name"] {
+            if let Some(value) = entry.get(key) {
+                managed_entry.insert(key.to_owned(), value.clone());
+            }
+        }
+        let mut managed_options = Map::new();
+        for key in ["baseURL", "apiKey"] {
+            if let Some(value) = options.get(key) {
+                managed_options.insert(key.to_owned(), value.clone());
+            }
+        }
+        managed_entry.insert("options".to_owned(), Value::Object(managed_options));
+        if let Some(models) = entry.get("models").and_then(Value::as_object) {
+            if let Some(model) = models.get(model_id) {
+                managed_entry.insert(
+                    "models".to_owned(),
+                    Value::Object(Map::from_iter([(model_id.to_owned(), model.clone())])),
+                );
+            }
+        }
+        Ok(Some(ProviderCodecDiscovery {
+            target_path,
+            full_hash: full_hash.to_owned(),
+            projection: json!({
+                "model": model_ref,
+                "provider": { provider_id: Value::Object(managed_entry) },
+            }),
+            api_base_url: api_base_url.to_owned(),
+            api_key,
+            default_model: model_id.to_owned(),
+            credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
+            extra_env: BTreeMap::new(),
+            provider_id: Some(provider_id.to_owned()),
+            wire_api: None,
+            zcode_kind: None,
+            opencode_npm: Some(npm.to_owned()),
+            opencode_api: Some(if npm == "@ai-sdk/openai" {
+                "openai".to_owned()
+            } else {
+                "openai-compatible".to_owned()
+            }),
+            extra_provider_fields: entry
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "npm" | "name" | "options"))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            suggested_name: Some(name.to_owned()),
+        }))
     }
 }
 
@@ -149,28 +380,20 @@ fn descriptor(
     sensitive_selectors: Vec<&str>,
     capability: TargetCapability,
 ) -> TargetDescriptor {
-    TargetDescriptor {
-        tool: Tool::Opencode,
-        artifact_kind,
-        scope,
-        project_root,
-        path: path.and_then(|path| path.to_str().map(str::to_owned)),
-        format,
-        managed_selector_roots: managed_selector_roots
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        sensitive_selectors: sensitive_selectors.into_iter().map(str::to_owned).collect(),
-        capability,
-        policy: PolicyState::Allowed,
-        trust: TargetTrustState::NotRequired,
-        prompt_override: PromptOverrideState::NotApplicable,
-        symlink_policy: if artifact_kind == ArtifactKind::Skill {
+    TargetDescriptor::builder(Tool::Opencode, artifact_kind, scope)
+        .project_root(project_root.clone())
+        .allowed_root(project_root)
+        .path(path.and_then(|path| path.to_str().map(str::to_owned)))
+        .format(format)
+        .managed_selectors(managed_selector_roots)
+        .sensitive_selectors(sensitive_selectors)
+        .capability(capability)
+        .symlink_policy(if artifact_kind == ArtifactKind::Skill {
             SymlinkPolicy::ManagedChildrenOnly
         } else {
             SymlinkPolicy::Reject
-        },
-    }
+        })
+        .build()
 }
 
 fn select_config_path(explicit: Option<&Path>, config_dir: &Path) -> Option<PathBuf> {

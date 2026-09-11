@@ -7,12 +7,16 @@
 //!   `mcp.servers`（JSON；同一文件还承载 hooks 等非受管内容，必须用选择器只接管 MCP 子树）。
 //! - Skills：`~/.zcode/skills` 与 `<project>/.zcode/skills`（目录 + SKILL.md）。
 
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
+
+use serde_json::{json, Map, Value};
 
 use crate::{
     adapters::{
-        DiscoveryContext, PolicyState, PromptOverrideState, SymlinkPolicy, TargetCapability,
-        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter, ToolAvailabilityState,
+        descriptor_path, path_text, DiscoveryContext, ManagedOwnership, ProviderCodec,
+        ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
+        ProviderCodecProfileInput, SymlinkPolicy, TargetCapability, TargetDescriptor, TargetFormat,
+        ToolAdapter, ToolAvailabilityState,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
@@ -24,6 +28,10 @@ pub struct ZcodeAdapter;
 impl ToolAdapter for ZcodeAdapter {
     fn tool(&self) -> Tool {
         Tool::Zcode
+    }
+
+    fn provider_codec(&self) -> Option<&dyn ProviderCodec> {
+        Some(self)
     }
 
     fn discover(&self, context: &DiscoveryContext<'_>) -> Result<Vec<TargetDescriptor>, AppError> {
@@ -151,7 +159,163 @@ impl ToolAdapter for ZcodeAdapter {
             ]);
         }
 
+        crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
         Ok(targets)
+    }
+}
+
+impl ProviderCodec for ZcodeAdapter {
+    fn discovery_ownership(&self) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        Ok(crate::adapters::ManagedOwnership::selectors([["provider"]]))
+    }
+
+    fn ownership(
+        &self,
+        baseline: Option<&Value>,
+        desired: &Value,
+    ) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        let mut selectors = BTreeSet::<Vec<String>>::new();
+        for projection in [baseline, Some(desired)].into_iter().flatten() {
+            let Some(providers) = projection.get("provider").and_then(Value::as_object) else {
+                continue;
+            };
+            for provider_id in providers.keys() {
+                for leaf in ["name", "kind", "options", "enabled"] {
+                    selectors.insert(vec![
+                        "provider".to_owned(),
+                        provider_id.clone(),
+                        leaf.to_owned(),
+                    ]);
+                }
+            }
+        }
+        if selectors.is_empty() {
+            return Err(AppError::invalid_input(
+                "managedOwnership",
+                "Provider 同步没有可证明拥有的字段",
+            ));
+        }
+        Ok(ManagedOwnership::Selectors(selectors.into_iter().collect()))
+    }
+
+    fn default_options(
+        &self,
+        input: &ProviderCodecInput<'_>,
+    ) -> Result<ProviderCodecOptions, AppError> {
+        Ok(ProviderCodecOptions {
+            zcode_kind: input.zcode_kind.map(str::to_owned),
+            ..ProviderCodecOptions::default()
+        })
+    }
+
+    fn render(&self, input: &ProviderCodecProfileInput<'_>) -> Result<Value, AppError> {
+        let provider_id = input.provider_id.ok_or_else(|| {
+            AppError::invalid_input("providerOptions", "ZCode Provider 缺少稳定 provider id")
+        })?;
+        let mut options = Map::new();
+        if let Some(value) = input.api_base_url {
+            options.insert("baseURL".to_owned(), Value::String(value.to_owned()));
+        }
+        if let Some(value) = input.api_key {
+            options.insert("apiKey".to_owned(), Value::String(value.to_owned()));
+        }
+        let entry = json!({
+            "name": input.name,
+            "kind": input.zcode_kind.unwrap_or("anthropic"),
+            "options": Value::Object(options),
+            "enabled": true,
+        });
+        Ok(json!({ "provider": { provider_id: entry } }))
+    }
+
+    fn discover(
+        &self,
+        descriptor: &TargetDescriptor,
+        managed_projection: &Value,
+        full_hash: &str,
+    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+        const PROVIDER_KINDS: &[&str] = &["anthropic", "openai", "gemini"];
+        let entries = managed_projection
+            .get("provider")
+            .and_then(Value::as_object)
+            .ok_or_else(|| AppError::parse("~/.zcode/v2/config.json", "json"))?;
+        let enabled: Vec<&String> = entries
+            .iter()
+            .filter(|(_, value)| value.get("enabled").and_then(Value::as_bool) == Some(true))
+            .map(|(key, _)| key)
+            .collect();
+        let selected = match (enabled.len(), entries.len()) {
+            (1, _) => (enabled[0], &entries[enabled[0]]),
+            (0, 1) => entries
+                .iter()
+                .next()
+                .ok_or_else(|| AppError::parse("~/.zcode/v2/config.json", "json"))?,
+            _ => return Ok(None),
+        };
+        let (provider_id, entry) = selected;
+        if entry
+            .get("kind")
+            .and_then(Value::as_str)
+            .map_or(true, |kind| !PROVIDER_KINDS.contains(&kind))
+        {
+            return Ok(None);
+        }
+        let kind = entry
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("anthropic")
+            .to_owned();
+        let options = entry.get("options").and_then(Value::as_object);
+        let api_base_url = options
+            .and_then(|options| options.get("baseURL"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if api_base_url.is_empty() {
+            return Ok(None);
+        }
+        let api_key = options
+            .and_then(|options| options.get("apiKey"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let default_model = entry
+            .get("models")
+            .and_then(Value::as_object)
+            .map(|models| {
+                models
+                    .keys()
+                    .min_by(|a, b| a.cmp(b))
+                    .cloned()
+                    .unwrap_or_else(|| "unspecified".to_owned())
+            })
+            .unwrap_or_else(|| "unspecified".to_owned());
+        let mut managed_entry = Map::new();
+        for leaf in ["name", "kind", "options", "enabled"] {
+            if let Some(value) = entry.get(leaf) {
+                managed_entry.insert(leaf.to_owned(), value.clone());
+            }
+        }
+        Ok(Some(ProviderCodecDiscovery {
+            target_path: descriptor_path(descriptor)?,
+            full_hash: full_hash.to_owned(),
+            projection: json!({ "provider": { provider_id: Value::Object(managed_entry) } }),
+            api_base_url,
+            api_key,
+            default_model,
+            credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
+            extra_env: std::collections::BTreeMap::new(),
+            provider_id: Some(provider_id.clone()),
+            wire_api: None,
+            zcode_kind: Some(kind),
+            opencode_npm: None,
+            opencode_api: None,
+            extra_provider_fields: std::collections::BTreeMap::new(),
+            suggested_name: entry
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| Some(provider_id.clone())),
+        }))
     }
 }
 
@@ -167,30 +331,16 @@ fn descriptor(
     capability: TargetCapability,
     symlink_policy: SymlinkPolicy,
 ) -> TargetDescriptor {
-    TargetDescriptor {
-        tool: Tool::Zcode,
-        artifact_kind,
-        scope,
-        project_root,
-        path,
-        format,
-        managed_selector_roots: managed_selector_roots
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        sensitive_selectors: sensitive_selectors.into_iter().map(str::to_owned).collect(),
-        capability,
-        policy: PolicyState::Allowed,
-        trust: TargetTrustState::NotRequired,
-        prompt_override: PromptOverrideState::NotApplicable,
-        symlink_policy,
-    }
-}
-
-fn path_text(path: &Path) -> Result<String, AppError> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::invalid_input("targetPath", "目标路径必须是 UTF-8"))
+    TargetDescriptor::builder(Tool::Zcode, artifact_kind, scope)
+        .project_root(project_root.clone())
+        .allowed_root(project_root)
+        .path(path)
+        .format(format)
+        .managed_selectors(managed_selector_roots)
+        .sensitive_selectors(sensitive_selectors)
+        .capability(capability)
+        .symlink_policy(symlink_policy)
+        .build()
 }
 
 #[cfg(test)]
@@ -308,13 +458,13 @@ mod tests {
             &home,
             None,
             None,
-            ToolAvailability {
-                claude: ToolAvailabilityState::Installed,
-                codex: ToolAvailabilityState::Installed,
-                cursor: ToolAvailabilityState::Installed,
-                zcode: ToolAvailabilityState::Unavailable,
-                opencode: ToolAvailabilityState::Installed,
-            },
+            ToolAvailability::from_states([
+                ToolAvailabilityState::Installed,
+                ToolAvailabilityState::Installed,
+                ToolAvailabilityState::Installed,
+                ToolAvailabilityState::Unavailable,
+                ToolAvailabilityState::Installed,
+            ]),
         )
         .unwrap();
         let context = DiscoveryContext {

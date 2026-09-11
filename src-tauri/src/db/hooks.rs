@@ -223,19 +223,6 @@ pub fn global_assignments_for_all_hooks(
     Ok(grouped)
 }
 
-pub(crate) fn hook_row_versions(
-    database: &Database,
-    ids: &[&str],
-) -> Result<std::collections::BTreeMap<String, i64>, AppError> {
-    super::skills::row_versions_by_id(
-        database.connection(),
-        &database.path().to_string_lossy(),
-        "hooks",
-        ids,
-        "hook_row_versions",
-    )
-}
-
 pub fn global_assignments_for_hook(
     database: &Database,
     hook_id: &str,

@@ -31,14 +31,14 @@ pub fn discover_hook_import(
     input: &DiscoverHookImportInput,
 ) -> Result<HookImportPreviewDto, AppError> {
     let tool = input.tool;
-    let descriptor = service::descriptor_for(environment, tool, None)?;
+    let descriptor = service::hook_target_descriptor(environment, tool, None)?;
     let target_path = descriptor
         .path
         .clone()
         .ok_or_else(|| AppError::not_found("hookTarget", tool.as_str()))?;
     ensure_readable(&descriptor, &target_path)?;
     let scan = scan_target(
-        service_tool_adapter(tool),
+        tool.adapter(),
         &descriptor,
         &service::build_hook_ownership(tool),
     );
@@ -199,7 +199,7 @@ pub fn confirm_hook_import(
     }
     // 目标可用性（capability/policy）与事件支持按工具入口校验；
     // 定义复用中央 create 校验（含名称唯一性）。
-    let descriptor = service::descriptor_for(environment, input.tool, None)?;
+    let descriptor = service::hook_target_descriptor(environment, input.tool, None)?;
     ensure_readable(&descriptor, descriptor.path.as_deref().unwrap_or_default())?;
     let mut created = 0u32;
     for hook in &input.hooks {
@@ -211,10 +211,6 @@ pub fn confirm_hook_import(
         tool: input.tool,
         created_count: created,
     })
-}
-
-fn service_tool_adapter(tool: Tool) -> &'static dyn crate::adapters::ToolAdapter {
-    service::tool_adapter(tool)
 }
 
 fn ensure_readable(descriptor: &TargetDescriptor, path: &str) -> Result<(), AppError> {

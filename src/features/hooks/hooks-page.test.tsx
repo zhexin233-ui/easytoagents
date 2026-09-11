@@ -44,6 +44,8 @@ const hookTargetPreview: PreviewPlan = makePreviewPlan({
         scope: "global",
         projectRoot: null,
         path: "/isolated/home/.claude/settings.json",
+        allowedRoot: null,
+        mcpContainer: null,
         format: "json",
         managedSelectorRoots: ["hooks"],
         sensitiveSelectors: [],

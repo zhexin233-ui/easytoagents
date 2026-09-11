@@ -47,6 +47,8 @@ const promptPreview: PreviewPlan = makePreviewPlan({
         scope: "global",
         projectRoot: null,
         path: "/isolated/home/.claude/CLAUDE.md",
+        allowedRoot: null,
+        mcpContainer: null,
         format: "markdown",
         managedSelectorRoots: ["$document"],
         sensitiveSelectors: [],

@@ -1,13 +1,19 @@
 //! Codex 配置格式、目标矩阵与项目 trust 发现。
 
-use std::{fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::{
     adapters::{
-        DiscoveryContext, PolicyState, PromptOverrideState, SymlinkPolicy, TargetCapability,
-        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter,
+        descriptor_path, path_text, DiscoveryContext, ManagedOwnership, PromptOverrideState,
+        ProviderCodec, ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
+        ProviderCodecProfileInput, SymlinkPolicy, TargetCapability, TargetDescriptor, TargetFormat,
+        TargetTrustState, ToolAdapter,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
@@ -21,9 +27,13 @@ impl ToolAdapter for CodexAdapter {
         Tool::Codex
     }
 
+    fn provider_codec(&self) -> Option<&dyn ProviderCodec> {
+        Some(self)
+    }
+
     fn discover(&self, context: &DiscoveryContext<'_>) -> Result<Vec<TargetDescriptor>, AppError> {
         let environment = context.environment;
-        let availability = environment.availability().codex;
+        let availability = environment.tool_availability(Tool::Codex);
         let installed = availability.is_installed();
         let capability = match availability {
             crate::adapters::ToolAvailabilityState::Installed => TargetCapability::supported(),
@@ -177,8 +187,319 @@ impl ToolAdapter for CodexAdapter {
             ]);
         }
 
+        crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
         Ok(targets)
     }
+}
+
+impl ProviderCodec for CodexAdapter {
+    fn discovery_ownership(&self) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        Ok(crate::adapters::ManagedOwnership::selectors([
+            vec!["model"],
+            vec!["model_provider"],
+            vec!["model_providers"],
+        ]))
+    }
+
+    fn ownership(
+        &self,
+        baseline: Option<&Value>,
+        desired: &Value,
+    ) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        let mut selectors = BTreeSet::<Vec<String>>::new();
+        for projection in [baseline, Some(desired)].into_iter().flatten() {
+            if projection.get("model").is_some() {
+                selectors.insert(vec!["model".to_owned()]);
+            }
+            if projection.get("model_provider").is_some() {
+                selectors.insert(vec!["model_provider".to_owned()]);
+            }
+            if let Some(providers) = projection.get("model_providers").and_then(Value::as_object) {
+                selectors.extend(
+                    providers
+                        .keys()
+                        .map(|key| vec!["model_providers".to_owned(), key.clone()]),
+                );
+            }
+        }
+        if selectors.is_empty() {
+            return Err(AppError::invalid_input(
+                "managedOwnership",
+                "Provider 同步没有可证明拥有的字段",
+            ));
+        }
+        Ok(ManagedOwnership::Selectors(selectors.into_iter().collect()))
+    }
+
+    fn default_options(
+        &self,
+        input: &ProviderCodecInput<'_>,
+    ) -> Result<ProviderCodecOptions, AppError> {
+        Ok(ProviderCodecOptions {
+            wire_api: input.wire_api.map(str::to_owned),
+            ..ProviderCodecOptions::default()
+        })
+    }
+
+    fn render(&self, input: &ProviderCodecProfileInput<'_>) -> Result<Value, AppError> {
+        const OPENAI_PROVIDER_ID: &str = "openai";
+
+        let provider_id = input.provider_id.ok_or_else(|| {
+            AppError::invalid_input("providerOptions", "Codex Provider 缺少稳定 provider id")
+        })?;
+        validate_provider_id(provider_id)?;
+        if provider_id == OPENAI_PROVIDER_ID {
+            let mut root = Map::new();
+            if let Some(model) = input.default_model {
+                root.insert("model".to_owned(), Value::String(model.to_owned()));
+            }
+            root.insert(
+                "model_provider".to_owned(),
+                Value::String(OPENAI_PROVIDER_ID.to_owned()),
+            );
+            return Ok(Value::Object(root));
+        }
+
+        let mut provider = input
+            .extra_provider_fields
+            .clone()
+            .into_iter()
+            .collect::<Map<_, _>>();
+        provider.insert("name".to_owned(), Value::String(input.name.to_owned()));
+        if let Some(value) = input.api_base_url {
+            provider.insert("base_url".to_owned(), Value::String(value.to_owned()));
+        }
+        if let Some(value) = input.api_key {
+            provider.insert(
+                "experimental_bearer_token".to_owned(),
+                Value::String(value.to_owned()),
+            );
+        }
+        if let Some(value) = input.wire_api {
+            provider.insert("wire_api".to_owned(), Value::String(value.to_owned()));
+        }
+        let mut root = Map::new();
+        if let Some(model) = input.default_model {
+            root.insert("model".to_owned(), Value::String(model.to_owned()));
+        }
+        root.insert(
+            "model_provider".to_owned(),
+            Value::String(provider_id.to_owned()),
+        );
+        root.insert(
+            "model_providers".to_owned(),
+            Value::Object(Map::from_iter([(
+                provider_id.to_owned(),
+                Value::Object(provider),
+            )])),
+        );
+        Ok(Value::Object(root))
+    }
+
+    fn discover(
+        &self,
+        descriptor: &TargetDescriptor,
+        managed_projection: &Value,
+        full_hash: &str,
+    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+        const OPENAI_PROVIDER_ID: &str = "openai";
+        const RESERVED_PROVIDER_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
+        let default_model = managed_projection
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_default()
+            .to_owned();
+        if default_model.is_empty() {
+            return Ok(None);
+        }
+        let provider_id = match managed_projection
+            .get("model_provider")
+            .and_then(Value::as_str)
+        {
+            Some(value) if value.trim().is_empty() => return Ok(None),
+            Some(value) => value,
+            None => OPENAI_PROVIDER_ID,
+        };
+        if provider_id == OPENAI_PROVIDER_ID {
+            return discover_openai_provider(
+                descriptor,
+                managed_projection,
+                full_hash,
+                default_model,
+            );
+        }
+        if RESERVED_PROVIDER_IDS.contains(&provider_id) {
+            return Ok(None);
+        }
+        validate_provider_id(provider_id)?;
+        let Some(table) = managed_projection
+            .get("model_providers")
+            .and_then(Value::as_object)
+            .and_then(|providers| providers.get(provider_id))
+            .and_then(Value::as_object)
+        else {
+            return Ok(None);
+        };
+        let api_base_url = table
+            .get("base_url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if api_base_url.is_empty() {
+            return Ok(None);
+        }
+        let api_key = table
+            .get("experimental_bearer_token")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if !api_key
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(AppError::invalid_input(
+                "experimentalBearerToken",
+                "Codex 首次导入仅支持含直接 bearer token 的 Provider",
+            ));
+        }
+        let wire_api = match table.get("wire_api") {
+            None => None,
+            Some(Value::String(value)) => Some(value.clone()),
+            Some(_) => {
+                return Err(AppError::invalid_input(
+                    "wireApi",
+                    "Codex wire_api 必须是字符串",
+                ));
+            }
+        };
+        let suggested_name = match table.get("name") {
+            Some(Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
+            _ => {
+                return Err(AppError::invalid_input(
+                    "providerName",
+                    "Codex Provider name 必须是非空字符串",
+                ));
+            }
+        };
+        let managed_projection = Value::Object(Map::from_iter([
+            ("model".to_owned(), Value::String(default_model.clone())),
+            (
+                "model_provider".to_owned(),
+                Value::String(provider_id.to_owned()),
+            ),
+            (
+                "model_providers".to_owned(),
+                Value::Object(Map::from_iter([(
+                    provider_id.to_owned(),
+                    Value::Object(table.clone()),
+                )])),
+            ),
+        ]));
+        let extra_provider_fields = table
+            .iter()
+            .filter(|(key, _)| {
+                !matches!(
+                    key.as_str(),
+                    "name" | "base_url" | "experimental_bearer_token" | "wire_api"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        Ok(Some(ProviderCodecDiscovery {
+            target_path: descriptor_path(descriptor)?,
+            full_hash: full_hash.to_owned(),
+            projection: managed_projection,
+            api_base_url,
+            api_key,
+            default_model,
+            credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
+            extra_env: BTreeMap::new(),
+            provider_id: Some(provider_id.to_owned()),
+            wire_api,
+            zcode_kind: None,
+            opencode_npm: None,
+            opencode_api: None,
+            extra_provider_fields,
+            suggested_name,
+        }))
+    }
+}
+
+fn validate_provider_id(provider_id: &str) -> Result<(), AppError> {
+    if provider_id == "openai" {
+        return Ok(());
+    }
+    if provider_id.is_empty()
+        || provider_id.len() > 100
+        || ["openai", "ollama", "lmstudio"].contains(&provider_id)
+        || !provider_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(AppError::invalid_input(
+            "providerId",
+            "Codex provider id 非法或属于不支持接管的内置项",
+        ));
+    }
+    Ok(())
+}
+
+fn discover_openai_provider(
+    descriptor: &TargetDescriptor,
+    projection: &Value,
+    full_hash: &str,
+    default_model: String,
+) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+    let Some(config_path) = descriptor.path.as_deref() else {
+        return Err(AppError::invalid_input("targetPath", "目标路径不可用"));
+    };
+    let Some(codex_home) = Path::new(config_path).parent() else {
+        return Ok(None);
+    };
+    let Ok(content) = fs::read_to_string(codex_home.join("auth.json")) else {
+        return Ok(None);
+    };
+    let Ok(root) = serde_json::from_str::<Value>(&content) else {
+        return Ok(None);
+    };
+    let has_tokens = root
+        .get("tokens")
+        .and_then(Value::as_object)
+        .is_some_and(|tokens| {
+            ["access_token", "refresh_token", "id_token"]
+                .iter()
+                .any(|key| {
+                    tokens
+                        .get(*key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+        });
+    if !has_tokens {
+        return Ok(None);
+    }
+    let mut managed_projection = Map::new();
+    managed_projection.insert("model".to_owned(), Value::String(default_model.clone()));
+    if let Some(value) = projection.get("model_provider") {
+        managed_projection.insert("model_provider".to_owned(), value.clone());
+    }
+    Ok(Some(ProviderCodecDiscovery {
+        target_path: descriptor_path(descriptor)?,
+        full_hash: full_hash.to_owned(),
+        projection: Value::Object(managed_projection),
+        api_base_url: "https://api.openai.com/v1".to_owned(),
+        api_key: None,
+        default_model,
+        credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
+        extra_env: BTreeMap::new(),
+        provider_id: Some("openai".to_owned()),
+        wire_api: None,
+        zcode_kind: None,
+        opencode_npm: None,
+        opencode_api: None,
+        extra_provider_fields: BTreeMap::new(),
+        suggested_name: Some("Codex OAuth 登录".to_owned()),
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -195,24 +516,18 @@ fn descriptor(
     prompt_override: PromptOverrideState,
     symlink_policy: SymlinkPolicy,
 ) -> TargetDescriptor {
-    TargetDescriptor {
-        tool: Tool::Codex,
-        artifact_kind,
-        scope,
-        project_root,
-        path: Some(path),
-        format,
-        managed_selector_roots: managed_selector_roots
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        sensitive_selectors: sensitive_selectors.into_iter().map(str::to_owned).collect(),
-        capability,
-        policy: PolicyState::Allowed,
-        trust,
-        prompt_override,
-        symlink_policy,
-    }
+    TargetDescriptor::builder(Tool::Codex, artifact_kind, scope)
+        .project_root(project_root.clone())
+        .allowed_root(project_root)
+        .path(Some(path))
+        .format(format)
+        .managed_selectors(managed_selector_roots)
+        .sensitive_selectors(sensitive_selectors)
+        .capability(capability)
+        .trust(trust)
+        .prompt_override(prompt_override)
+        .symlink_policy(symlink_policy)
+        .build()
 }
 
 fn discover_prompt_override(path: &Path) -> PromptOverrideState {
@@ -285,10 +600,4 @@ fn read_discovery_file(path: &Path) -> DiscoveryFile {
     fs::read(path)
         .map(DiscoveryFile::File)
         .unwrap_or(DiscoveryFile::Unavailable)
-}
-
-fn path_text(path: &Path) -> Result<String, AppError> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::invalid_input("targetPath", "目标路径必须是 UTF-8"))
 }

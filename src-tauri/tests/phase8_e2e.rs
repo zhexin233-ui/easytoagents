@@ -255,12 +255,13 @@ unknown = "preserve"
 
     fn project_row_version(&self) -> u32 {
         self.database
-            .connection()
-            .query_row(
-                "SELECT row_version FROM projects WHERE id = ?1",
-                [&self.project_id],
-                |row| row.get(0),
-            )
+            .with_connection_for_tests(|connection| {
+                connection.query_row(
+                    "SELECT row_version FROM projects WHERE id = ?1",
+                    [&self.project_id],
+                    |row| row.get(0),
+                )
+            })
             .expect("读取项目 row_version 失败")
     }
 
@@ -1085,22 +1086,25 @@ fn audit_secret_surfaces(fixture: &Fixture, rpc_error: &easytoagents_lib::error:
 }
 
 fn query_audit_rows(database: &Database, sql: &str, columns: usize) -> String {
-    let mut statement = database.connection().prepare(sql).unwrap();
-    statement
-        .query_map([], |row| {
-            let mut values = Vec::new();
-            for column in 0..columns {
-                values.push(
-                    row.get::<_, String>(column)
-                        .or_else(|_| row.get::<_, i64>(column).map(|value| value.to_string()))?,
-                );
-            }
-            Ok(values.join("|"))
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
-        .join("\n")
+    database.with_connection_for_tests(|connection| {
+        let mut statement = connection.prepare(sql).unwrap();
+        statement
+            .query_map([], |row| {
+                let mut values = Vec::new();
+                for column in 0..columns {
+                    values.push(
+                        row.get::<_, String>(column).or_else(|_| {
+                            row.get::<_, i64>(column).map(|value| value.to_string())
+                        })?,
+                    );
+                }
+                Ok(values.join("|"))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join("\n")
+    })
 }
 
 fn assert_secrets_absent(surface: &str, content: &str) {

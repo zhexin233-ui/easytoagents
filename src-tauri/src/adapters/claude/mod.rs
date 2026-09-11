@@ -1,12 +1,19 @@
 //! Claude 配置格式、目标矩阵与管理策略发现。
 
-use std::path::Path;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
+
+use serde_json::{json, Map, Value};
 
 use crate::{
     adapters::{
-        ClaudeCustomizationPolicyProbeInput, ClaudeUserMcpProbeInput, ClaudeUserMcpProbeResult,
-        DiscoveryContext, PolicyState, PromptOverrideState, SymlinkPolicy, TargetCapability,
-        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter,
+        descriptor_path, path_text, ClaudeCustomizationPolicyProbeInput, ClaudeUserMcpProbeInput,
+        ClaudeUserMcpProbeResult, DiscoveryContext, ManagedOwnership, PolicyState, ProviderCodec,
+        ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
+        ProviderCodecProfileInput, SymlinkPolicy, TargetCapability, TargetDescriptor, TargetFormat,
+        ToolAdapter,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
@@ -20,9 +27,13 @@ impl ToolAdapter for ClaudeAdapter {
         Tool::Claude
     }
 
+    fn provider_codec(&self) -> Option<&dyn ProviderCodec> {
+        Some(self)
+    }
+
     fn discover(&self, context: &DiscoveryContext<'_>) -> Result<Vec<TargetDescriptor>, AppError> {
         let environment = context.environment;
-        let availability = environment.availability().claude;
+        let availability = environment.tool_availability(Tool::Claude);
         let installed = availability.is_installed();
         let tool_capability = match availability {
             crate::adapters::ToolAvailabilityState::Installed => TargetCapability::supported(),
@@ -184,7 +195,154 @@ impl ToolAdapter for ClaudeAdapter {
             ]);
         }
 
+        crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
         Ok(targets)
+    }
+}
+
+impl ProviderCodec for ClaudeAdapter {
+    fn discovery_ownership(&self) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        Ok(crate::adapters::ManagedOwnership::selectors([["env"]]))
+    }
+
+    fn ownership(
+        &self,
+        baseline: Option<&Value>,
+        desired: &Value,
+    ) -> Result<crate::adapters::ManagedOwnership, AppError> {
+        let mut selectors = BTreeSet::<Vec<String>>::new();
+        for projection in [baseline, Some(desired)].into_iter().flatten() {
+            if let Some(env) = projection.get("env").and_then(Value::as_object) {
+                selectors.extend(env.keys().map(|key| vec!["env".to_owned(), key.clone()]));
+            }
+        }
+        if selectors.is_empty() {
+            return Err(AppError::invalid_input(
+                "managedOwnership",
+                "Provider 同步没有可证明拥有的字段",
+            ));
+        }
+        Ok(ManagedOwnership::Selectors(selectors.into_iter().collect()))
+    }
+
+    fn default_options(
+        &self,
+        input: &ProviderCodecInput<'_>,
+    ) -> Result<ProviderCodecOptions, AppError> {
+        Ok(ProviderCodecOptions {
+            credential_env_key: input.credential_env_key.map(str::to_owned),
+            extra_env: input.extra_env.clone(),
+            ..ProviderCodecOptions::default()
+        })
+    }
+
+    fn render(&self, input: &ProviderCodecProfileInput<'_>) -> Result<Value, AppError> {
+        const BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
+        const MODEL_KEY: &str = "ANTHROPIC_MODEL";
+
+        let mut env = Map::new();
+        if let Some(value) = input.api_base_url {
+            env.insert(BASE_URL_KEY.to_owned(), Value::String(value.to_owned()));
+        }
+        if let (Some(key), Some(value)) = (input.credential_env_key, input.api_key) {
+            env.insert(key.to_owned(), Value::String(value.to_owned()));
+        }
+        if let Some(value) = input.default_model {
+            env.insert(MODEL_KEY.to_owned(), Value::String(value.to_owned()));
+        }
+        env.extend(
+            input
+                .extra_env
+                .iter()
+                .map(|(key, value)| (key.clone(), Value::String(value.clone()))),
+        );
+        Ok(json!({ "env": env }))
+    }
+
+    fn discover(
+        &self,
+        descriptor: &TargetDescriptor,
+        managed_projection: &Value,
+        full_hash: &str,
+    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+        const BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
+        const MODEL_KEY: &str = "ANTHROPIC_MODEL";
+        const DEFAULT_MODEL_KEYS: &[&str] = &[
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        ];
+        const API_KEY: &str = "ANTHROPIC_API_KEY";
+        const AUTH_TOKEN: &str = "ANTHROPIC_AUTH_TOKEN";
+
+        let Some(env) = managed_projection.get("env").and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        let api_base_url = env
+            .get(BASE_URL_KEY)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let default_model = std::iter::once(MODEL_KEY)
+            .chain(DEFAULT_MODEL_KEYS.iter().copied())
+            .find_map(|key| {
+                env.get(key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_owned)
+            });
+        let Some(default_model) = default_model else {
+            return Ok(None);
+        };
+        if api_base_url.is_empty() {
+            return Ok(None);
+        }
+        let auth_token = env.get(AUTH_TOKEN).and_then(Value::as_str);
+        let api_key = env.get(API_KEY).and_then(Value::as_str);
+        let (credential_env_key, credential) = if let Some(value) = auth_token {
+            (AUTH_TOKEN, Some(value.to_owned()))
+        } else {
+            (API_KEY, api_key.map(str::to_owned))
+        };
+        let extra_env = env
+            .iter()
+            .filter(|(key, value)| {
+                key.starts_with("ANTHROPIC_")
+                    && !matches!(
+                        key.as_str(),
+                        BASE_URL_KEY | MODEL_KEY | API_KEY | AUTH_TOKEN
+                    )
+                    && value.is_string()
+            })
+            .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_owned()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut projection_env = Map::new();
+        for key in [BASE_URL_KEY, MODEL_KEY, API_KEY, AUTH_TOKEN] {
+            if let Some(value) = env.get(key) {
+                projection_env.insert(key.to_owned(), value.clone());
+            }
+        }
+        for (key, value) in &extra_env {
+            projection_env.insert(key.clone(), Value::String(value.clone()));
+        }
+        Ok(Some(ProviderCodecDiscovery {
+            target_path: descriptor_path(descriptor)?,
+            full_hash: full_hash.to_owned(),
+            projection: json!({ "env": projection_env }),
+            api_base_url,
+            api_key: credential,
+            default_model,
+            credential_env_key: credential_env_key.to_owned(),
+            extra_env,
+            provider_id: None,
+            wire_api: None,
+            zcode_kind: None,
+            opencode_npm: None,
+            opencode_api: None,
+            extra_provider_fields: BTreeMap::new(),
+            suggested_name: None,
+        }))
     }
 }
 
@@ -201,28 +359,15 @@ fn descriptor(
     policy: PolicyState,
     symlink_policy: SymlinkPolicy,
 ) -> TargetDescriptor {
-    TargetDescriptor {
-        tool: Tool::Claude,
-        artifact_kind,
-        scope,
-        project_root,
-        path,
-        format,
-        managed_selector_roots: managed_selector_roots
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-        sensitive_selectors: sensitive_selectors.into_iter().map(str::to_owned).collect(),
-        capability,
-        policy,
-        trust: TargetTrustState::NotRequired,
-        prompt_override: PromptOverrideState::NotApplicable,
-        symlink_policy,
-    }
-}
-
-fn path_text(path: &Path) -> Result<String, AppError> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::invalid_input("targetPath", "目标路径必须是 UTF-8"))
+    TargetDescriptor::builder(Tool::Claude, artifact_kind, scope)
+        .project_root(project_root.clone())
+        .allowed_root(project_root)
+        .path(path)
+        .format(format)
+        .managed_selectors(managed_selector_roots)
+        .sensitive_selectors(sensitive_selectors)
+        .capability(capability)
+        .policy(policy)
+        .symlink_policy(symlink_policy)
+        .build()
 }

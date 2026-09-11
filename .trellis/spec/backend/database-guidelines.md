@@ -29,6 +29,10 @@ without reading or deleting files under a registered project root.
   protection can be bypassed by changing a key after creation.
 - Use `prepare_cached` for every statement in `src/db/`; SQLite's statement cache
   makes repeated list/lookup calls skip re-parsing.
+- Keep cross-cutting synchronization SQL (`sync_runs`, `sync_items`,
+  `snapshots`, `managed_targets`, and active-writer checks) in `src/db/sync.rs`.
+  Services and the apply engine should call typed helpers instead of embedding
+  those table statements beside filesystem orchestration.
 - List endpoints issue a constant number of statements: fetch the records, then one
   aggregated query for the per-record relation (`global_tools_for_all_skills`,
   `global_tools_for_all_mcp`, `global_assignments_for_all_hooks`) and assemble in

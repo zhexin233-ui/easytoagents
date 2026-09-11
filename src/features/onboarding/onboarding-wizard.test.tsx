@@ -59,6 +59,8 @@ const syncPreview: PreviewPlan = makePreviewPlan({
         scope: "global",
         projectRoot: null,
         path: "/isolated/home/.claude/settings.json",
+        allowedRoot: null,
+        mcpContainer: null,
         format: "json",
         managedSelectorRoots: ["env"],
         sensitiveSelectors: ["env"],

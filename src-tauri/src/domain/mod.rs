@@ -55,6 +55,22 @@ string_enum! {
     }
 }
 
+impl Tool {
+    /// 所有受支持工具的稳定注册顺序。
+    pub const ALL: [Self; 5] = [
+        Self::Claude,
+        Self::Codex,
+        Self::Cursor,
+        Self::Zcode,
+        Self::Opencode,
+    ];
+
+    /// 返回工具的唯一 Adapter 实例。
+    pub fn adapter(self) -> &'static dyn crate::adapters::ToolAdapter {
+        crate::adapters::adapter_for(self)
+    }
+}
+
 /// 主实体统一使用 UUID 文本标识，避免各功能自行发明 ID 规则。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(transparent)]
@@ -281,6 +297,37 @@ string_enum! {
         Invalid => "invalid",
         Missing => "missing",
     }
+}
+
+/// MCP、Skills 与 Hooks 共用的项目选择状态；各 RPC 模块保留历史别名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedProjectSelectionState {
+    Inherited,
+    Selected,
+    Available,
+}
+
+/// 三类受管资源共用的项目 DTO；字段顺序与现有 RPC 合同保持一致。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedProjectDto {
+    pub id: String,
+    pub display_name: String,
+    pub root_path: String,
+    pub codex_trust_status: TrustStatus,
+    pub row_version: u32,
+}
+
+/// 三类受管资源共用的目标状态 DTO；模块别名维持前端类型名称。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedTargetStatusDto {
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub target_path: Option<String>,
+    pub status: SyncStatus,
+    pub diagnostic_code: Option<String>,
 }
 
 string_enum! {
@@ -519,6 +566,10 @@ mod tests {
 
     #[test]
     fn stable_enums_serialize_to_contract_values() {
+        assert_eq!(
+            Tool::ALL.map(Tool::as_str),
+            ["claude", "codex", "cursor", "zcode", "opencode"]
+        );
         let values = [
             serde_json::to_value(Tool::Claude).unwrap(),
             serde_json::to_value(Tool::Codex).unwrap(),

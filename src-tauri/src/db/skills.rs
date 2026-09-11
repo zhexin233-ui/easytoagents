@@ -1,7 +1,7 @@
 //! Skill 中央记录、分配与逐目标 managed item 仓储。
 
 use crate::{
-    db::Database,
+    db::{sync::reject_active_writer as reject_active_writer_on, Database},
     domain::{
         validate_global_assignment, validate_project_assignment, EntityId, SkillStatus, Tool,
         TrustStatus,
@@ -92,15 +92,9 @@ pub(crate) fn insert_skill(
     value: &PreparedSkillRecord,
 ) -> Result<SkillRecord, AppError> {
     let path = database.path().to_string_lossy().into_owned();
-    let transaction = database
-        .connection_mut()
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| AppError::database(&path, "begin_insert_skill").with_source(error))?;
-    let record = insert_skill_in_transaction(&transaction, &path, value)?;
-    transaction
-        .commit()
-        .map_err(|error| AppError::database(&path, "commit_insert_skill").with_source(error))?;
-    Ok(record)
+    database.with_immediate_transaction(|transaction| {
+        insert_skill_in_transaction(transaction, &path, value)
+    })
 }
 
 /// 调用方持有同一个写事务；批量导入不能逐项提交。
@@ -143,23 +137,6 @@ pub(crate) fn insert_skill_in_transaction(
 
 pub(crate) fn reject_active_writer(database: &Database) -> Result<(), AppError> {
     reject_active_writer_on(database.connection(), &database.path().to_string_lossy())
-}
-
-fn reject_active_writer_on(connection: &rusqlite::Connection, path: &str) -> Result<(), AppError> {
-    let writer = connection
-        .query_row(
-            "SELECT id, status FROM sync_runs
-             WHERE status IN ('applying', 'restoring', 'rollback_failed')
-             LIMIT 1",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(|error| AppError::database(path, "check_skill_adopt_writer").with_source(error))?;
-    if let Some((id, status)) = writer {
-        return Err(AppError::write_in_progress(&id, &status));
-    }
-    Ok(())
 }
 
 pub(crate) fn adopt_skill_content(
@@ -329,21 +306,6 @@ pub fn global_tools_for_all_skills(
         grouped.entry(skill_id).or_default().push(tool);
     }
     Ok(grouped)
-}
-
-/// 批量读取一组 Skill 的当前 row_version（`WHERE id IN`），缺失的 id 不出现在结果里。
-pub(crate) fn skill_row_versions(
-    connection: &rusqlite::Connection,
-    database_path: &str,
-    ids: &[&str],
-) -> Result<std::collections::BTreeMap<String, i64>, AppError> {
-    row_versions_by_id(
-        connection,
-        database_path,
-        "skills",
-        ids,
-        "skill_row_versions",
-    )
 }
 
 /// 通用的 `SELECT id, row_version FROM <table> WHERE id IN (...)`。
