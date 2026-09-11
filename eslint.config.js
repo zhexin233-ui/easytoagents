@@ -42,4 +42,10 @@ export default defineConfig([
       "@typescript-eslint/no-floating-promises": "error",
     },
   },
+  {
+    files: ["**/*.test.{ts,tsx}", "**/*.test-helpers.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/unbound-method": "off",
+    },
+  },
 ]);

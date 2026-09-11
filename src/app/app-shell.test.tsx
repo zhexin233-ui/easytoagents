@@ -1,32 +1,24 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
-  cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useLocation } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/app/app-shell";
-import { commands, type ProjectDto } from "@/bindings/commands";
+import { commands } from "@/bindings/commands";
 import { themeStorageKey } from "@/components/use-theme";
+import { makeProject } from "@/test/fixtures/dtos";
+import { renderWithProviders } from "@/test/render";
 
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    listProjects: vi.fn(),
-    renameProject: vi.fn(),
-    removeProject: vi.fn(),
-    getAppSettings: vi.fn(),
-    updateAppSettings: vi.fn(),
-    getEnvironmentState: vi.fn(),
-    refreshEnvironment: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
 type EnvironmentReadyHandler = (succeeded: boolean) => void;
 
@@ -45,7 +37,7 @@ vi.mock("@/lib/tauri-events", () => ({
   },
 }));
 
-const project: ProjectDto = {
+const project = makeProject({
   id: "00000000-0000-4000-8000-000000000801",
   displayName: "侧栏项目",
   rootPath: "/isolated/projects/sidebar",
@@ -57,7 +49,7 @@ const project: ProjectDto = {
   nativeResources: { active: 1, disabled: 0, missing: 0, conflict: 0 },
   lastScannedAt: "2026-09-09T10:00:00Z",
   rowVersion: 7,
-};
+});
 
 function LocationProbe() {
   const { pathname } = useLocation();
@@ -65,16 +57,12 @@ function LocationProbe() {
 }
 
 function renderShell(initialEntry = "/") {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-        <LocationProbe />
-      </QueryClientProvider>
-    </MemoryRouter>,
+  return renderWithProviders(
+    <>
+      <AppShell />
+      <LocationProbe />
+    </>,
+    { initialEntries: [initialEntry] },
   );
 }
 
@@ -113,8 +101,6 @@ describe("AppShell 侧边栏设置入口", () => {
     localStorage.clear();
     document.documentElement.classList.remove("dark");
   });
-
-  afterEach(cleanup);
 
   it("收到 environment-ready 事件后重新拉取依赖环境的查询", async () => {
     renderShell();

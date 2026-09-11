@@ -1,13 +1,5 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   commands,
@@ -16,24 +8,14 @@ import {
   type ProviderImportPreviewDto,
 } from "@/bindings/commands";
 import { OnboardingWizard } from "@/features/onboarding/onboarding-wizard";
+import { renderWithProviders } from "@/test/render";
+import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    getToolProfileStatus: vi.fn(),
-    discoverProviderImport: vi.fn(),
-    discoverPromptImport: vi.fn(),
-    listProviderProfiles: vi.fn(),
-    listPromptProfiles: vi.fn(),
-    confirmProviderImport: vi.fn(),
-    confirmPromptImport: vi.fn(),
-    previewProviderSync: vi.fn(),
-    previewPromptSync: vi.fn(),
-    applyProfilePreview: vi.fn(),
-    completeOnboarding: vi.fn(),
-    getAppSettings: vi.fn(),
-    updateAppSettings: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
 const importPreview: ProviderImportPreviewDto = {
   previewId: "00000000-0000-4000-8000-000000000721",
@@ -65,14 +47,11 @@ const promptImportPreview: PromptImportPreviewDto = {
   body: "# fixture prompt",
 };
 
-const syncPreview: PreviewPlan = {
+const syncPreview: PreviewPlan = makePreviewPlan({
   previewId: "00000000-0000-4000-8000-000000000722",
-  scope: "global",
-  projectId: null,
   dbVersion: 1,
-  warningCodes: [],
   targets: [
-    {
+    makeTarget({
       targetId: "00000000-0000-4000-8000-000000000723",
       descriptor: {
         tool: "claude",
@@ -104,35 +83,29 @@ const syncPreview: PreviewPlan = {
       errorCode: null,
       git: null,
       excludeFromGit: false,
-    },
+    }),
   ],
-};
+});
 
-const promptSyncPreview: PreviewPlan = {
+const promptSyncPreview: PreviewPlan = makePreviewPlan({
   ...syncPreview,
   previewId: "00000000-0000-4000-8000-000000000726",
-  targets: syncPreview.targets.map((target) => ({
-    ...target,
-    targetId: "00000000-0000-4000-8000-000000000727",
-    descriptor: {
-      ...target.descriptor,
-      artifactKind: "prompt",
-      path: "/isolated/home/.claude/CLAUDE.md",
-    },
-  })),
-};
+  targets: [
+    makeTarget({
+      targetId: "00000000-0000-4000-8000-000000000727",
+      descriptor: {
+        ...syncPreview.targets[0]!.descriptor,
+        artifactKind: "prompt",
+        path: "/isolated/home/.claude/CLAUDE.md",
+      },
+    }),
+  ],
+});
 
 function renderWizard(onClose = vi.fn()) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
   return {
     onClose,
-    ...render(
-      <QueryClientProvider client={client}>
-        <OnboardingWizard open onClose={onClose} />
-      </QueryClientProvider>,
-    ),
+    ...renderWithProviders(<OnboardingWizard open onClose={onClose} />),
   };
 }
 
@@ -233,8 +206,6 @@ describe("OnboardingWizard", () => {
       },
     });
   });
-
-  afterEach(cleanup);
 
   it("按检测、选择、预览、应用推进，跳过 Codex 时保持其非受管", async () => {
     renderWizard();

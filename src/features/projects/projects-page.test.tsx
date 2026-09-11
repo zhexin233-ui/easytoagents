@@ -1,29 +1,19 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { commands, type ProjectDto } from "@/bindings/commands";
+import { commands } from "@/bindings/commands";
 import { ProjectsPage } from "@/features/projects/projects-page";
+import { renderWithProviders } from "@/test/render";
+import { makeProject } from "@/test/fixtures/dtos";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    listProjects: vi.fn(),
-    registerProject: vi.fn(),
-    rescanProject: vi.fn(),
-    removeProject: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
-const project: ProjectDto = {
+const project = makeProject({
   id: "00000000-0000-4000-8000-000000000701",
   displayName: "隔离项目",
   rootPath: "/isolated/projects/fixture",
@@ -51,19 +41,10 @@ const project: ProjectDto = {
   },
   lastScannedAt: "2026-08-24T10:00:00Z",
   rowVersion: 3,
-};
+});
 
 function renderPage() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <MemoryRouter>
-      <QueryClientProvider client={client}>
-        <ProjectsPage />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
+  return renderWithProviders(<ProjectsPage />);
 }
 
 describe("ProjectsPage", () => {
@@ -90,8 +71,6 @@ describe("ProjectsPage", () => {
       },
     });
   });
-
-  afterEach(cleanup);
 
   it("展示规范路径、Git/trust/policy 和非颜色唯一的目标状态", async () => {
     renderPage();

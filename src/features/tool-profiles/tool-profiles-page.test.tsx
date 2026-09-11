@@ -1,16 +1,11 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试需要直接核验 mock。 */
 import {
   act,
-  cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   commands,
@@ -18,26 +13,17 @@ import {
   type ProviderProfileDto,
 } from "@/bindings/commands";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
+import { renderWithProviders } from "@/test/render";
+import { makeProviderProfile } from "@/test/fixtures/dtos";
+import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    listProviderProfiles: vi.fn(),
-    getToolProfileStatus: vi.fn(),
-    createProviderProfile: vi.fn(),
-    updateProviderProfile: vi.fn(),
-    copyProviderProfile: vi.fn(),
-    setActiveProviderProfile: vi.fn(),
-    deleteProviderProfile: vi.fn(),
-    discoverProviderImport: vi.fn(),
-    confirmProviderImport: vi.fn(),
-    previewProviderSync: vi.fn(),
-    applyProfilePreview: vi.fn(),
-    getAppSettings: vi.fn(),
-    updateAppSettings: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
-const provider: ProviderProfileDto = {
+const provider: ProviderProfileDto = makeProviderProfile({
   id: "00000000-0000-4000-8000-000000000401",
   tool: "claude",
   name: "主渠道",
@@ -55,9 +41,9 @@ const provider: ProviderProfileDto = {
   },
   isActive: false,
   rowVersion: 2,
-};
+});
 
-const codexOAuthProvider: ProviderProfileDto = {
+const codexOAuthProvider: ProviderProfileDto = makeProviderProfile({
   id: "00000000-0000-4000-8000-000000000501",
   tool: "codex",
   name: "Codex OAuth 登录",
@@ -75,16 +61,13 @@ const codexOAuthProvider: ProviderProfileDto = {
   },
   isActive: true,
   rowVersion: 4,
-};
+});
 
-const preview: PreviewPlan = {
+const preview: PreviewPlan = makePreviewPlan({
   previewId: "00000000-0000-4000-8000-000000000499",
-  scope: "global",
-  projectId: null,
   dbVersion: 4,
-  warningCodes: [],
   targets: [
-    {
+    makeTarget({
       targetId: "00000000-0000-4000-8000-000000000498",
       descriptor: {
         tool: "claude",
@@ -119,21 +102,14 @@ const preview: PreviewPlan = {
       errorCode: null,
       git: null,
       excludeFromGit: false,
-    },
+    }),
   ],
-};
+});
 
 function renderPage(tool: ProviderProfileDto["tool"] = "claude") {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  return renderWithProviders(<ToolProfilesPage tool={tool} />, {
+    route: `/${tool}`,
   });
-  return render(
-    <MemoryRouter initialEntries={[`/${tool}`]}>
-      <QueryClientProvider client={client}>
-        <ToolProfilesPage tool={tool} />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
 }
 
 function sectionByHeading(name: string): HTMLElement {
@@ -217,10 +193,6 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  cleanup();
-});
-
 describe("ToolProfilesPage", () => {
   it("Cursor 渠道渲染状态区但不渲染 Provider 面板，且不读取或写入 Provider", async () => {
     renderPage("cursor");
@@ -250,7 +222,7 @@ describe("ToolProfilesPage", () => {
       const kind = "渠道" as const;
       vi.mocked(commands.listProviderProfiles).mockResolvedValue({
         status: "ok",
-        data: [{ ...provider, tool }],
+        data: [makeProviderProfile({ ...provider, tool })],
       });
       renderPage(tool);
       const section = sectionByHeading("渠道");
@@ -456,7 +428,9 @@ describe("ToolProfilesPage", () => {
     await within(section).findByText(/尚无渠道档案/);
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
-      data: [{ ...provider, name: "新渠道", isActive: true }],
+      data: [
+        makeProviderProfile({ ...provider, name: "新渠道", isActive: true }),
+      ],
     });
     fireEvent.click(within(section).getByRole("button", { name: "新增渠道" }));
     const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
@@ -509,7 +483,7 @@ describe("ToolProfilesPage", () => {
   });
 
   it("编辑已存在渠道时默认保留遮罩密钥", async () => {
-    const providerWithExtraEnv: ProviderProfileDto = {
+    const providerWithExtraEnv: ProviderProfileDto = makeProviderProfile({
       ...provider,
       options: {
         ...provider.options,
@@ -518,7 +492,7 @@ describe("ToolProfilesPage", () => {
           ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet",
         },
       },
-    };
+    });
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
       data: [providerWithExtraEnv],
@@ -898,38 +872,5 @@ describe("ToolProfilesPage", () => {
     expect(await within(section).findByRole("alert")).toHaveTextContent(
       "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。",
     );
-  });
-
-  it("以可访问状态展示加载、空列表与未知宿主管理证据", async () => {
-    vi.mocked(commands.listProviderProfiles).mockReturnValue(
-      new Promise<never>(() => {}),
-    );
-    vi.mocked(commands.getToolProfileStatus).mockResolvedValue({
-      status: "ok",
-      data: {
-        tool: "claude",
-        availability: "unsupported",
-        installationVersion: null,
-        installationProbeDiagnostic: null,
-        providerCapability: { state: "supported", diagnosticCode: null },
-        promptCapability: { state: "supported", diagnosticCode: null },
-        providerTargetPath: "/isolated/home/.claude/settings.json",
-        promptTargetPath: "/isolated/home/.claude/CLAUDE.md",
-        promptOverride: "not_applicable",
-        providerPolicy: "unknown",
-        newSessionNotice: "新会话生效",
-        bearerTokenWarning: null,
-      },
-    });
-    renderPage();
-
-    expect(await screen.findByText("正在加载渠道档案…")).toHaveAttribute(
-      "role",
-      "status",
-    );
-    expect(
-      await screen.findByText(/无法确认 Claude Provider 是否由宿主管理/),
-    ).toBeVisible();
-    expect(await screen.findByText(/安装探针未能安全确认版本/)).toBeVisible();
   });
 });

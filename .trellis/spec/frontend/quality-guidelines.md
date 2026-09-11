@@ -54,6 +54,26 @@ scanning and native-resource views cover supported MCP and Skill resources only.
 - Cover masked inputs, loading/error/empty states, policy/override notices, plan-level
   warnings, redacted previews, and the preview ID consumed by Apply.
 
+### Shared test infrastructure
+
+- Use `renderWithProviders` from `src/test/render.tsx` for page and dialog tests.
+  It creates a fresh `QueryClient` with query and mutation retries disabled,
+  `refetchOnWindowFocus` disabled, and a `MemoryRouter`; pass `queryClient` when
+  a test needs to inspect invalidation. Use `path` with `initialEntries` when
+  the rendered page reads route parameters.
+- Mock the generated command surface with `mockCommands(actual.commands)` from
+  `src/test/commands-mock.ts` inside the `vi.mock("@/bindings/commands", ...)`
+  factory. The factory derives mocks from `Object.keys`, so adding a generated
+  command cannot leave a stale hand-written mock list. Use `okResult` and
+  `errResult` for typed result unions.
+- Reuse DTO and preview builders from `src/test/fixtures/`; feature-specific
+  values belong in builder overrides rather than a second complete `PreviewPlan`
+  literal. Global DOM cleanup and jest-dom matchers are registered once in
+  `src/test/setup.ts`.
+- Keep scenario tests split by behavior when a file grows beyond 900 lines;
+  split files must retain the complete assertion set and initialize their own
+  command defaults in `beforeEach`.
+
 ## Code Review Checklist
 
 - No raw `invoke`, payload assertion, or secret-bearing UI state was introduced.

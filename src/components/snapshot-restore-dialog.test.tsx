@@ -1,26 +1,16 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
 import { useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands } from "@/bindings/commands";
 import { SnapshotRestoreDialog } from "@/components/snapshot-restore-dialog";
+import { renderWithProviders } from "@/test/render";
 
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    listSnapshots: vi.fn(),
-    deleteSnapshots: vi.fn(),
-    previewSnapshotRestore: vi.fn(),
-    restoreSnapshot: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
 function Harness() {
   const [open, setOpen] = useState(false);
@@ -33,14 +23,7 @@ function Harness() {
 }
 
 function renderHarness() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <Harness />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<Harness />);
 }
 
 describe("SnapshotRestoreDialog", () => {
@@ -86,8 +69,6 @@ describe("SnapshotRestoreDialog", () => {
       data: { deletedIds: [], failures: [] },
     });
   });
-
-  afterEach(cleanup);
 
   it("通过持久化恢复预览执行恢复，并在关闭后恢复触发按钮焦点", async () => {
     renderHarness();

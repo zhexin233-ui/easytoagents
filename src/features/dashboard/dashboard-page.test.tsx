@@ -1,15 +1,5 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   commands,
@@ -17,17 +7,13 @@ import {
   type DashboardSummaryDto,
 } from "@/bindings/commands";
 import { DashboardPage } from "@/features/dashboard/dashboard-page";
+import { renderWithProviders } from "@/test/render";
 
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    getDashboardSummary: vi.fn(),
-    listSnapshots: vi.fn(),
-    getAppSettings: vi.fn(),
-    updateAppSettings: vi.fn(),
-    getEnvironmentState: vi.fn(),
-    refreshEnvironment: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
 const summary: DashboardSummaryDto = {
   tools: [
@@ -73,21 +59,10 @@ const summary: DashboardSummaryDto = {
 };
 
 function renderDashboard() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <MemoryRouter>
-      <QueryClientProvider client={queryClient}>
-        <DashboardPage />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
+  return renderWithProviders(<DashboardPage />);
 }
 
 describe("DashboardPage", () => {
-  afterEach(cleanup);
-
   beforeEach(() => {
     vi.mocked(commands.getDashboardSummary).mockReset();
     vi.mocked(commands.listSnapshots).mockReset();

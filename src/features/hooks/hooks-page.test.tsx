@@ -1,13 +1,4 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -18,30 +9,17 @@ import {
 } from "@/bindings/commands";
 import { HooksPage } from "@/features/hooks/hooks-page";
 import { toolMetadata } from "@/lib/tool-metadata";
+import { renderWithProviders } from "@/test/render";
+import { makeHook } from "@/test/fixtures/dtos";
+import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    listHooks: vi.fn(),
-    getHook: vi.fn(),
-    createHook: vi.fn(),
-    updateHook: vi.fn(),
-    setHookEnabled: vi.fn(),
-    deleteHook: vi.fn(),
-    setGlobalHookAssignment: vi.fn(),
-    setProjectHookAssignment: vi.fn(),
-    listHookProjects: vi.fn(),
-    listHookProjectOptions: vi.fn(),
-    listGlobalHookTargetStatuses: vi.fn(),
-    getAppSettings: vi.fn(),
-    previewHookSync: vi.fn(),
-    applyHookPreview: vi.fn(),
-    readoptHookTarget: vi.fn(),
-    discoverHookImport: vi.fn(),
-    confirmHookImport: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
-const hook: HookDto = {
+const hook: HookDto = makeHook({
   id: "00000000-0000-4000-8000-000000000701",
   name: "block-rm",
   event: "PreToolUse",
@@ -52,16 +30,13 @@ const hook: HookDto = {
   scriptName: null,
   globalAssignments: [],
   rowVersion: 1,
-};
+});
 
-const hookTargetPreview: PreviewPlan = {
+const hookTargetPreview: PreviewPlan = makePreviewPlan({
   previewId: "00000000-0000-4000-8000-000000000799",
-  scope: "global",
-  projectId: null,
   dbVersion: 4,
-  warningCodes: [],
   targets: [
-    {
+    makeTarget({
       targetId: "00000000-0000-4000-8000-000000000798",
       descriptor: {
         tool: "claude",
@@ -93,19 +68,12 @@ const hookTargetPreview: PreviewPlan = {
       errorCode: null,
       git: null,
       excludeFromGit: false,
-    },
+    }),
   ],
-};
+});
 
 function renderPage() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <HooksPage />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<HooksPage />);
 }
 
 /// 工具事件分组区当前激活工具的状态卡；需要其他工具时先切换页签。
@@ -198,7 +166,7 @@ beforeEach(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => vi.clearAllMocks());
 
 describe("HooksPage 中央列表", () => {
   it("关闭 Claude 后工具视图夹逼到第一个启用工具，不再展示 Claude 状态与入口", async () => {
@@ -303,10 +271,10 @@ describe("HooksPage 中央列表", () => {
     vi.mocked(commands.listHooks).mockResolvedValue({
       status: "ok",
       data: [
-        {
+        makeHook({
           ...hook,
           globalAssignments: [{ tool: "claude", event: "PreToolUse" as const }],
-        },
+        }),
       ],
     });
     vi.mocked(commands.deleteHook).mockResolvedValue({
@@ -368,10 +336,10 @@ describe("HooksPage 事件分组分配", () => {
     vi.mocked(commands.listHooks).mockResolvedValue({
       status: "ok",
       data: [
-        {
+        makeHook({
           ...hook,
           globalAssignments: [{ tool: "claude", event: "PreToolUse" as const }],
-        },
+        }),
       ],
     });
     vi.mocked(commands.setGlobalHookAssignment).mockResolvedValue({
@@ -412,10 +380,10 @@ describe("HooksPage 事件分组分配", () => {
     vi.mocked(commands.listHooks).mockResolvedValue({
       status: "ok",
       data: [
-        {
+        makeHook({
           ...hook,
           globalAssignments: [{ tool: "claude", event: "PreToolUse" as const }],
-        },
+        }),
       ],
     });
     vi.mocked(commands.setGlobalHookAssignment).mockResolvedValue({

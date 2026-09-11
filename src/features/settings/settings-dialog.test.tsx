@@ -1,44 +1,29 @@
-/* eslint-disable @typescript-eslint/unbound-method -- 生成 command 是无 this 的函数集合，测试直接核验 mock。 */
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands, type AppSettingsDto } from "@/bindings/commands";
 import { SettingsDialog } from "@/features/settings/settings-dialog";
 import type { ThemePreference } from "@/components/use-theme";
+import { renderWithProviders } from "@/test/render";
 
-vi.mock("@/bindings/commands", () => ({
-  commands: {
-    getAppSettings: vi.fn(),
-    updateAppSettings: vi.fn(),
-    getEnvironmentState: vi.fn(),
-    refreshEnvironment: vi.fn(),
-  },
-}));
+vi.mock("@/bindings/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/bindings/commands")>();
+  const { mockCommands } = await import("@/test/commands-mock");
+  return { ...actual, commands: mockCommands(actual.commands) };
+});
 
 function renderDialog(
   props: Partial<Parameters<typeof SettingsDialog>[0]> = {},
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <SettingsDialog
-        open
-        onClose={() => {}}
-        themePreference="system"
-        onThemePreferenceChange={() => {}}
-        {...props}
-      />
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <SettingsDialog
+      open
+      onClose={() => {}}
+      themePreference="system"
+      onThemePreferenceChange={() => {}}
+      {...props}
+    />,
   );
 }
 
@@ -55,14 +40,7 @@ function ThemeStateHarness() {
 }
 
 function renderThemedDialog() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <ThemeStateHarness />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<ThemeStateHarness />);
 }
 
 async function applyModeCheckbox() {
@@ -70,8 +48,6 @@ async function applyModeCheckbox() {
     name: "直接应用（跳过预览确认对话框）",
   });
 }
-
-afterEach(cleanup);
 
 describe("SettingsDialog", () => {
   beforeEach(() => {
