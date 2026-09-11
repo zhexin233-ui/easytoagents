@@ -1457,3 +1457,25 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 57: 执行 P2 前端去重与页面拆分
+
+**Date**: 2026-09-11
+**Task**: 执行 P2 前端去重与页面拆分
+**Branch**: `main`
+
+### Summary
+
+完成前端共享预览流程、对话框/字段/工具切换原语、通知队列、项目详情拆分、懒加载、主题 token 与后端工具能力常量；通过 pnpm check、pnpm build、bindings:check 和静态验收。真实 Tauri 五页面手工走查未执行，已记录为后续外部验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6d2b3aa` | (see git log) |
+| `a4ff8b7` | (see git log) |
+
+### Status
+
+[OK] **Completed**
