@@ -85,7 +85,7 @@ pub fn update_mcp_server(
     input: &UpdateMcpServerInput,
 ) -> Result<McpServerDto, AppError> {
     let current = repository::get_mcp_server(database, &input.id)?;
-    let current_value = configuration_from_record(&current)?;
+    let current_value = configuration_from_record(&current, redactor)?;
     let value = ValidatedMcpConfiguration::from_update(
         input,
         &current_value.headers,
@@ -419,7 +419,7 @@ fn readopt_with_scan(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_readopt"))?;
+        .map_err(|error| AppError::database(&database_path, "begin_readopt").with_source(error))?;
     let (updated_items, removed_items) = match scan {
         TargetScan::Observed(observed) => {
             transaction
@@ -432,7 +432,9 @@ fn readopt_with_scan(
                         observed.managed_hash
                     ],
                 )
-                .map_err(|_| AppError::database(&database_path, "readopt_target_baseline"))?;
+                .map_err(|error| {
+                    AppError::database(&database_path, "readopt_target_baseline").with_source(error)
+                })?;
             let projection = projection_value_at(&observed.managed_projection, container)
                 .and_then(Value::as_object);
             let mut updated = 0u32;
@@ -447,8 +449,9 @@ fn readopt_with_scan(
                                  WHERE id = ?1 AND target_id = ?3",
                                 params![item.id, hash_json(value), baseline.target_id],
                             )
-                            .map_err(|_| {
+                            .map_err(|error| {
                                 AppError::database(&database_path, "readopt_item_baseline")
+                                    .with_source(error)
                             })?;
                         updated += 1;
                     }
@@ -458,8 +461,9 @@ fn readopt_with_scan(
                                 "DELETE FROM managed_items WHERE id = ?1 AND target_id = ?2",
                                 params![item.id, baseline.target_id],
                             )
-                            .map_err(|_| {
+                            .map_err(|error| {
                                 AppError::database(&database_path, "readopt_remove_item")
+                                    .with_source(error)
                             })?;
                         removed += 1;
                     }
@@ -473,7 +477,9 @@ fn readopt_with_scan(
                     "DELETE FROM managed_items WHERE target_id = ?1",
                     params![baseline.target_id],
                 )
-                .map_err(|_| AppError::database(&database_path, "readopt_clear_items"))?;
+                .map_err(|error| {
+                    AppError::database(&database_path, "readopt_clear_items").with_source(error)
+                })?;
             transaction
                 .execute(
                     "UPDATE managed_targets
@@ -481,7 +487,9 @@ fn readopt_with_scan(
                      WHERE id = ?1",
                     params![baseline.target_id],
                 )
-                .map_err(|_| AppError::database(&database_path, "readopt_clear_baseline"))?;
+                .map_err(|error| {
+                    AppError::database(&database_path, "readopt_clear_baseline").with_source(error)
+                })?;
             (0, existing_items.len().min(u32::MAX as usize) as u32)
         }
         _ => {
@@ -493,7 +501,7 @@ fn readopt_with_scan(
     };
     transaction
         .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_readopt"))?;
+        .map_err(|error| AppError::database(&database_path, "commit_readopt").with_source(error))?;
     Ok(ReadoptMcpTargetResultDto {
         target_path: descriptor.path.clone().unwrap_or_default(),
         updated_item_count: updated_items,
@@ -531,7 +539,9 @@ pub fn list_global_mcp_target_statuses(
                     let diagnostic_code = match descriptor.policy {
                         PolicyState::Blocked => "CLAUDE_POLICY_BLOCKED",
                         PolicyState::Unknown => crate::sync::ERROR_CLAUDE_POLICY_UNKNOWN,
-                        PolicyState::Allowed => unreachable!("allowed policy was handled above"),
+                        PolicyState::Allowed => {
+                            return Err(AppError::internal("allowed 策略不应进入阻断分支"))
+                        }
                     };
                     (SyncStatus::PolicyBlocked, Some(diagnostic_code.to_owned()))
                 } else {
@@ -683,8 +693,13 @@ fn prepare_mcp_sync(
             target: None,
         });
     }
-    let (managed_items, remove_managed_item_ids) =
-        build_managed_item_changes(input.tool, container, &desired_records, &existing_items)?;
+    let (managed_items, remove_managed_item_ids) = build_managed_item_changes(
+        input.tool,
+        container,
+        &desired_records,
+        &existing_items,
+        redactor,
+    )?;
     let row_versions = collect_row_versions(
         database,
         project.as_ref(),
@@ -827,7 +842,7 @@ fn build_desired_projection(
 ) -> Result<Value, AppError> {
     let mut servers = Map::new();
     for record in records {
-        let configuration = configuration_from_record(record)?;
+        let configuration = configuration_from_record(record, redactor)?;
         register_configuration_secrets(redactor, &configuration);
         servers.insert(record.name.clone(), native_mcp_item(tool, &configuration)?);
     }
@@ -836,6 +851,20 @@ fn build_desired_projection(
     } else {
         Ok(nest_at(container, Value::Object(servers)))
     }
+}
+
+fn stdio_command(value: &ValidatedMcpConfiguration) -> Result<String, AppError> {
+    value
+        .command
+        .clone()
+        .ok_or_else(|| AppError::internal("stdio MCP 配置缺少已验证的 command"))
+}
+
+fn http_url(value: &ValidatedMcpConfiguration) -> Result<String, AppError> {
+    value
+        .url
+        .clone()
+        .ok_or_else(|| AppError::internal("streamable_http MCP 配置缺少已验证的 url"))
 }
 
 fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Value, AppError> {
@@ -847,10 +876,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
     match (tool, value.transport) {
         (Tool::Claude | Tool::Cursor | Tool::Zcode, McpTransport::Stdio) => {
             object.insert("type".to_owned(), Value::String("stdio".to_owned()));
-            object.insert(
-                "command".to_owned(),
-                Value::String(value.command.clone().expect("stdio command 已验证")),
-            );
+            object.insert("command".to_owned(), Value::String(stdio_command(value)?));
             if !value.args.is_empty() {
                 object.insert(
                     "args".to_owned(),
@@ -863,10 +889,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
         }
         (Tool::Claude | Tool::Cursor | Tool::Zcode, McpTransport::StreamableHttp) => {
             object.insert("type".to_owned(), Value::String("http".to_owned()));
-            object.insert(
-                "url".to_owned(),
-                Value::String(value.url.clone().expect("HTTP URL 已验证")),
-            );
+            object.insert("url".to_owned(), Value::String(http_url(value)?));
             if !value.headers.is_empty() {
                 object.insert(
                     "headers".to_owned(),
@@ -875,10 +898,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
             }
         }
         (Tool::Codex, McpTransport::Stdio) => {
-            object.insert(
-                "command".to_owned(),
-                Value::String(value.command.clone().expect("stdio command 已验证")),
-            );
+            object.insert("command".to_owned(), Value::String(stdio_command(value)?));
             if !value.args.is_empty() {
                 object.insert(
                     "args".to_owned(),
@@ -891,10 +911,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
             object.insert("enabled".to_owned(), Value::Bool(true));
         }
         (Tool::Codex, McpTransport::StreamableHttp) => {
-            object.insert(
-                "url".to_owned(),
-                Value::String(value.url.clone().expect("HTTP URL 已验证")),
-            );
+            object.insert("url".to_owned(), Value::String(http_url(value)?));
             if !value.headers.is_empty() {
                 object.insert(
                     "http_headers".to_owned(),
@@ -905,9 +922,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
         }
         (Tool::Opencode, McpTransport::Stdio) => {
             object.insert("type".to_owned(), Value::String("local".to_owned()));
-            let mut command = vec![Value::String(
-                value.command.clone().expect("stdio command 已验证"),
-            )];
+            let mut command = vec![Value::String(stdio_command(value)?)];
             command.extend(value.args.iter().cloned().map(Value::String));
             object.insert("command".to_owned(), Value::Array(command));
             if !value.env.is_empty() {
@@ -920,10 +935,7 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
         }
         (Tool::Opencode, McpTransport::StreamableHttp) => {
             object.insert("type".to_owned(), Value::String("remote".to_owned()));
-            object.insert(
-                "url".to_owned(),
-                Value::String(value.url.clone().expect("HTTP URL 已验证")),
-            );
+            object.insert("url".to_owned(), Value::String(http_url(value)?));
             if !value.headers.is_empty() {
                 object.insert(
                     "headers".to_owned(),
@@ -1013,6 +1025,7 @@ fn build_managed_item_changes(
     _container: &[&str],
     desired: &[McpServerRecord],
     existing: &[ManagedMcpItemRecord],
+    redactor: &SecretRedactor,
 ) -> Result<(Vec<ManagedItemApply>, Vec<String>), AppError> {
     let mut by_resource = BTreeMap::new();
     let mut by_external_key = BTreeMap::new();
@@ -1033,7 +1046,7 @@ fn build_managed_item_changes(
     let mut used = BTreeSet::new();
     let mut updates = Vec::new();
     for record in desired {
-        let configuration = configuration_from_record(record)?;
+        let configuration = configuration_from_record(record, redactor)?;
         let native = native_mcp_item(tool, &configuration)?;
         let existing_item = by_resource
             .get(record.id.as_str())
@@ -1139,7 +1152,9 @@ fn ensure_mcp_target(
                 target_path,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "insert_mcp_managed_target"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "insert_mcp_managed_target").with_source(error)
+        })?;
     load_managed_target_baseline(database, &id)
 }
 
@@ -1175,7 +1190,9 @@ pub(super) fn find_mcp_target_baseline(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_mcp_managed_target"))
+        .map_err(|error| {
+            AppError::database(&database_path, "find_mcp_managed_target").with_source(error)
+        })
 }
 
 fn mcp_dto(
@@ -1195,7 +1212,7 @@ fn mcp_dto_with_tools(
     redactor: &SecretRedactor,
     global_tools: Vec<Tool>,
 ) -> Result<McpServerDto, AppError> {
-    let value = configuration_from_record(record)?;
+    let value = configuration_from_record(record, redactor)?;
     Ok(McpServerDto {
         id: record.id.clone(),
         name: record.name.clone(),
@@ -1224,20 +1241,29 @@ fn project_dto(project: &McpProjectRecord) -> Result<McpProjectDto, AppError> {
 
 pub(super) fn configuration_from_record(
     record: &McpServerRecord,
+    redactor: &SecretRedactor,
 ) -> Result<ValidatedMcpConfiguration, AppError> {
     let input = McpServerInput {
         name: record.name.clone(),
         transport: record.transport,
         command: record.command.clone(),
-        args: serde_json::from_str(&record.args_json)
-            .map_err(|_| AppError::invalid_input("args", "数据库中的 MCP args 无效"))?,
+        args: serde_json::from_str(&record.args_json).map_err(|error| {
+            AppError::invalid_input("args", "数据库中的 MCP args 无效")
+                .with_source_redacted(error, redactor)
+        })?,
         url: record.url.clone(),
-        headers: serde_json::from_str(&record.headers_json)
-            .map_err(|_| AppError::invalid_input("headers", "数据库中的 MCP headers 无效"))?,
-        env: serde_json::from_str(&record.env_json)
-            .map_err(|_| AppError::invalid_input("env", "数据库中的 MCP env 无效"))?,
-        extra: serde_json::from_str(&record.extra_json)
-            .map_err(|_| AppError::invalid_input("extra", "数据库中的 MCP extra 无效"))?,
+        headers: serde_json::from_str(&record.headers_json).map_err(|error| {
+            AppError::invalid_input("headers", "数据库中的 MCP headers 无效")
+                .with_source_redacted(error, redactor)
+        })?,
+        env: serde_json::from_str(&record.env_json).map_err(|error| {
+            AppError::invalid_input("env", "数据库中的 MCP env 无效")
+                .with_source_redacted(error, redactor)
+        })?,
+        extra: serde_json::from_str(&record.extra_json).map_err(|error| {
+            AppError::invalid_input("extra", "数据库中的 MCP extra 无效")
+                .with_source_redacted(error, redactor)
+        })?,
         enabled: record.enabled,
     };
     ValidatedMcpConfiguration::from_create(&input)
@@ -1356,8 +1382,9 @@ fn canonical_project(path: &str) -> Result<ProjectRoot, AppError> {
 }
 
 fn safe_row_version(value: i64) -> Result<u32, AppError> {
-    u32::try_from(value)
-        .map_err(|_| AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 范围"))
+    u32::try_from(value).map_err(|error| {
+        AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 范围").with_source(error)
+    })
 }
 
 fn load_target_status(
@@ -1377,7 +1404,7 @@ fn load_target_status(
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "load_mcp_target_status"))?;
+        .map_err(|error| AppError::database(&path, "load_mcp_target_status").with_source(error))?;
     status.map(parse_sync_status).transpose()
 }
 
@@ -3115,7 +3142,7 @@ enabled = true
             assert_eq!(fs::read(path).unwrap(), before);
             let stored = crate::db::mcp::get_mcp_server(&fixture.database, &central.id).unwrap();
             assert_eq!(
-                super::configuration_from_record(&stored).unwrap(),
+                super::configuration_from_record(&stored, &SecretRedactor::default()).unwrap(),
                 super::ValidatedMcpConfiguration::from_create(&input).unwrap()
             );
         }

@@ -208,10 +208,10 @@ fn prepare_skill_import_budgeted(
     }
 
     create_private_directory(&staging_path)?;
-    let staging_identity = FileIdentity::from_metadata(
-        &fs::symlink_metadata(&staging_path)
-            .map_err(|_| AppError::invalid_input("staging", "无法核验临时目录"))?,
-    );
+    let staging_identity =
+        FileIdentity::from_metadata(&fs::symlink_metadata(&staging_path).map_err(|error| {
+            AppError::invalid_input("staging", "无法核验临时目录").with_source(error)
+        })?);
     let result = (|| {
         let copied =
             digest_tree_budgeted(&source, Some(&staging_path), Some(source_identity), budget)?;
@@ -243,18 +243,17 @@ fn prepare_skill_import_budgeted(
             staging_path: staging_path.clone(),
             finalized: false,
             directory_identity: FileIdentity::from_metadata(
-                &fs::symlink_metadata(&staging_path)
-                    .map_err(|_| AppError::invalid_input("staging", "无法核验临时目录"))?,
+                &fs::symlink_metadata(&staging_path).map_err(|error| {
+                    AppError::invalid_input("staging", "无法核验临时目录").with_source(error)
+                })?,
             ),
         })
     })();
     if result.is_err() {
         let (directory, _) = open_directory_chain(&staging_path)?;
-        let actual = FileIdentity::from_metadata(
-            &directory
-                .metadata()
-                .map_err(|_| AppError::invalid_input("staging", "无法核验临时目录"))?,
-        );
+        let actual = FileIdentity::from_metadata(&directory.metadata().map_err(|error| {
+            AppError::invalid_input("staging", "无法核验临时目录").with_source(error)
+        })?);
         if actual.device != staging_identity.device
             || actual.inode != staging_identity.inode
             || actual.mode != staging_identity.mode
@@ -353,7 +352,8 @@ pub(crate) fn rename_import_exclusively(source: &Path, destination: &Path) -> Re
         return Err(AppError::atomic_write(
             &destination.to_string_lossy(),
             "rename_skill_into_central_library",
-        ));
+        )
+        .with_source(io::Error::last_os_error()));
     }
     Ok(())
 }
@@ -405,9 +405,9 @@ pub(super) fn verify_prepared_import_budgeted(
     let (directory, _) = open_directory_chain(path)?;
     ensure_same_identity(
         prepared.directory_identity,
-        &directory
-            .metadata()
-            .map_err(|_| AppError::invalid_input("centralSkill", "无法核验本次导入目录"))?,
+        &directory.metadata().map_err(|error| {
+            AppError::invalid_input("centralSkill", "无法核验本次导入目录").with_source(error)
+        })?,
         path,
     )?;
     if digest_tree_budgeted(path, None, Some(prepared.directory_identity), budget)?.hash
@@ -509,13 +509,15 @@ fn inspect_central_skill_tree(
             }));
         }
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-            return Err(AppError::permission(central_path, "lstat_central_skill"));
+            return Err(
+                AppError::permission(central_path, "lstat_central_skill").with_source(error)
+            );
         }
-        Err(_) => {
-            return Err(AppError::invalid_input(
-                "centralPath",
-                "中央 Skill 无法安全读取",
-            ))
+        Err(error) => {
+            return Err(
+                AppError::invalid_input("centralPath", "中央 Skill 无法安全读取")
+                    .with_source(error),
+            )
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -526,8 +528,9 @@ fn inspect_central_skill_tree(
             skill_md: None,
         }));
     }
-    let canonical = fs::canonicalize(path)
-        .map_err(|_| AppError::permission(central_path, "canonicalize_central_skill"))?;
+    let canonical = fs::canonicalize(path).map_err(|error| {
+        AppError::permission(central_path, "canonicalize_central_skill").with_source(error)
+    })?;
     if canonical != path {
         return Ok(Err(CentralSkillInspection {
             status: SkillStatus::Invalid,
@@ -721,8 +724,9 @@ pub(crate) fn quarantine_central_skill(
     let quarantine = paths
         .staging()
         .join(format!("skill-delete-{id}-{}", Uuid::new_v4()));
-    fs::rename(central_path, &quarantine)
-        .map_err(|_| AppError::atomic_write(central_path, "quarantine_central_skill"))?;
+    fs::rename(central_path, &quarantine).map_err(|error| {
+        AppError::atomic_write(central_path, "quarantine_central_skill").with_source(error)
+    })?;
     let post_rename_validation = (|| {
         sync_directory(paths.central_skills())?;
         sync_directory(paths.staging())?;
@@ -761,8 +765,9 @@ pub(crate) fn restore_quarantined_skill(
             ))
         }
     }
-    fs::rename(quarantine, central_path)
-        .map_err(|_| AppError::atomic_write(central_path, "restore_quarantined_skill"))?;
+    fs::rename(quarantine, central_path).map_err(|error| {
+        AppError::atomic_write(central_path, "restore_quarantined_skill").with_source(error)
+    })?;
     sync_directory(paths.staging())?;
     sync_directory(paths.central_skills())
 }
@@ -796,12 +801,17 @@ fn validate_source_root(paths: &AppPaths, source: &Path) -> Result<(), AppError>
             "Skill 来源必须是无相对片段的非根绝对路径",
         ));
     }
-    let metadata = fs::symlink_metadata(source).map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => AppError::not_found("skillSource", &source.to_string_lossy()),
-        io::ErrorKind::PermissionDenied => {
-            AppError::permission(&source.to_string_lossy(), "lstat_skill_source")
-        }
-        _ => AppError::invalid_input("sourcePath", "Skill 来源无法安全读取"),
+    let metadata = fs::symlink_metadata(source).map_err(|error| {
+        let app_error = match error.kind() {
+            io::ErrorKind::NotFound => {
+                AppError::not_found("skillSource", &source.to_string_lossy())
+            }
+            io::ErrorKind::PermissionDenied => {
+                AppError::permission(&source.to_string_lossy(), "lstat_skill_source")
+            }
+            _ => AppError::invalid_input("sourcePath", "Skill 来源无法安全读取"),
+        };
+        app_error.with_source(error)
     })?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(AppError::invalid_input(
@@ -809,8 +819,9 @@ fn validate_source_root(paths: &AppPaths, source: &Path) -> Result<(), AppError>
             "Skill 来源必须是真实目录，不能是符号链接",
         ));
     }
-    let canonical = fs::canonicalize(source).map_err(|_| {
+    let canonical = fs::canonicalize(source).map_err(|error| {
         AppError::permission(&source.to_string_lossy(), "canonicalize_skill_source")
+            .with_source(error)
     })?;
     if canonical.starts_with(paths.data_root()) {
         return Err(AppError::invalid_input(
@@ -819,8 +830,8 @@ fn validate_source_root(paths: &AppPaths, source: &Path) -> Result<(), AppError>
         ));
     }
     let skill_md = source.join("SKILL.md");
-    let skill_md_metadata =
-        fs::symlink_metadata(&skill_md).map_err(|error| match error.kind() {
+    let skill_md_metadata = fs::symlink_metadata(&skill_md).map_err(|error| {
+        let app_error = match error.kind() {
             io::ErrorKind::NotFound => {
                 AppError::invalid_input("SKILL.md", "Skill 目录缺少 SKILL.md")
             }
@@ -828,7 +839,9 @@ fn validate_source_root(paths: &AppPaths, source: &Path) -> Result<(), AppError>
                 AppError::permission(&skill_md.to_string_lossy(), "lstat_skill_md")
             }
             _ => AppError::invalid_input("SKILL.md", "SKILL.md 无法安全读取"),
-        })?;
+        };
+        app_error.with_source(error)
+    })?;
     if skill_md_metadata.file_type().is_symlink() || !skill_md_metadata.is_file() {
         return Err(AppError::invalid_input(
             "SKILL.md",
@@ -842,11 +855,13 @@ fn validate_source_root(paths: &AppPaths, source: &Path) -> Result<(), AppError>
 }
 
 fn canonical_source_directory(source: &Path) -> Result<(PathBuf, FileIdentity), AppError> {
-    let canonical = fs::canonicalize(source).map_err(|_| {
+    let canonical = fs::canonicalize(source).map_err(|error| {
         AppError::permission(&source.to_string_lossy(), "canonicalize_skill_source")
+            .with_source(error)
     })?;
-    let metadata = fs::symlink_metadata(&canonical)
-        .map_err(|_| AppError::not_found("skillSource", &canonical.to_string_lossy()))?;
+    let metadata = fs::symlink_metadata(&canonical).map_err(|error| {
+        AppError::not_found("skillSource", &canonical.to_string_lossy()).with_source(error)
+    })?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(AppError::invalid_input(
             "sourcePath",
@@ -874,8 +889,10 @@ fn digest_tree_budgeted(
     expected_root_identity: Option<FileIdentity>,
     budget: Option<&Cell<u64>>,
 ) -> Result<TreeDigest, AppError> {
-    let canonical_root = fs::canonicalize(source)
-        .map_err(|_| AppError::permission(&source.to_string_lossy(), "canonicalize_skill_tree"))?;
+    let canonical_root = fs::canonicalize(source).map_err(|error| {
+        AppError::permission(&source.to_string_lossy(), "canonicalize_skill_tree")
+            .with_source(error)
+    })?;
     if canonical_root != source {
         return Err(AppError::conflict(
             "sourcePath",
@@ -956,9 +973,10 @@ fn walk_directory(
                 "Skill 文件数量超出限制",
             ));
         }
-        let name = entry
-            .into_string()
-            .map_err(|_| AppError::invalid_input("sourcePath", "Skill 路径必须是 UTF-8"))?;
+        let name = entry.into_string().map_err(|_| {
+            AppError::invalid_input("sourcePath", "Skill 路径必须是 UTF-8")
+                .with_source("Skill 文件名包含无效 UTF-8")
+        })?;
         if name == "." || name == ".." || name.contains('/') || name.contains('\0') {
             return Err(AppError::invalid_input(
                 "sourcePath",
@@ -1028,10 +1046,9 @@ fn walk_directory(
                 if bytes.len() as u64 > MAX_SKILL_MD_BYTES {
                     return Err(AppError::invalid_input("SKILL.md", "SKILL.md 超出大小限制"));
                 }
-                limits.skill_md =
-                    Some(String::from_utf8(bytes.clone()).map_err(|_| {
-                        AppError::invalid_input("SKILL.md", "Skill 内容必须是 UTF-8")
-                    })?);
+                limits.skill_md = Some(String::from_utf8(bytes.clone()).map_err(|error| {
+                    AppError::invalid_input("SKILL.md", "Skill 内容必须是 UTF-8").with_source(error)
+                })?);
             }
             hash_file_record(hasher, &relative_text, metadata.mode(), &bytes);
             files.push(relative_text);
@@ -1053,8 +1070,9 @@ fn walk_directory(
             let target_text = path_text(&raw_target, "sourcePath")?;
             hash_record(hasher, b'L', &relative_text, target_text.as_bytes());
             if let Some(destination) = &destination_child {
-                symlink(&raw_target, destination).map_err(|_| {
+                symlink(&raw_target, destination).map_err(|error| {
                     AppError::atomic_write(&destination.to_string_lossy(), "copy_skill_symlink")
+                        .with_source(error)
                 })?;
             }
             files.push(relative_text);
@@ -1103,8 +1121,9 @@ fn copy_regular_file(
             .ok_or_else(|| AppError::invalid_input("budget", "Skills 批量读取超出 128 MiB 限制"))?;
         budget.set(remaining);
     }
-    let capacity = usize::try_from(metadata.len())
-        .map_err(|_| AppError::invalid_input("sourcePath", "Skill 文件大小超出平台限制"))?;
+    let capacity = usize::try_from(metadata.len()).map_err(|error| {
+        AppError::invalid_input("sourcePath", "Skill 文件大小超出平台限制").with_source(error)
+    })?;
     let mut bytes = Vec::with_capacity(capacity);
     (&input)
         .take(metadata.len() + 1)
@@ -1130,22 +1149,27 @@ fn copy_regular_file(
             .create_new(true)
             .mode(mode)
             .open(destination)
-            .map_err(|_| {
+            .map_err(|error| {
                 AppError::atomic_write(&destination.to_string_lossy(), "create_staged_skill_file")
+                    .with_source(error)
             })?;
         output
             .set_permissions(fs::Permissions::from_mode(mode))
-            .map_err(|_| {
+            .map_err(|error| {
                 AppError::permission(&destination.to_string_lossy(), "chmod_staged_skill_file")
+                    .with_source(error)
             })?;
-        output.write_all(&bytes).map_err(|_| {
+        output.write_all(&bytes).map_err(|error| {
             AppError::atomic_write(&destination.to_string_lossy(), "write_staged_skill_file")
+                .with_source(error)
         })?;
-        output.flush().map_err(|_| {
+        output.flush().map_err(|error| {
             AppError::atomic_write(&destination.to_string_lossy(), "flush_staged_skill_file")
+                .with_source(error)
         })?;
-        output.sync_all().map_err(|_| {
+        output.sync_all().map_err(|error| {
             AppError::atomic_write(&destination.to_string_lossy(), "sync_staged_skill_file")
+                .with_source(error)
         })?;
     }
     Ok(bytes)
@@ -1178,12 +1202,15 @@ fn validate_source_symlink(
         let target_path = source_root.join(&resolved);
         if components.peek().is_some() {
             directory =
-                open_directory_at_nofollow(&directory, segment, &target_path).map_err(|_| {
+                open_directory_at_nofollow(&directory, segment, &target_path).map_err(|error| {
                     AppError::invalid_input("sourcePath", "Skill 符号链接包含循环、断链或链接目录")
+                        .with_source(error)
                 })?;
         } else {
-            let metadata = lstat_at(&directory, segment, &target_path)
-                .map_err(|_| AppError::invalid_input("sourcePath", "Skill 符号链接目标无法读取"))?;
+            let metadata = lstat_at(&directory, segment, &target_path).map_err(|error| {
+                AppError::invalid_input("sourcePath", "Skill 符号链接目标无法读取")
+                    .with_source(error)
+            })?;
             if !metadata.is_file() || metadata.is_symlink() || metadata.nlink() != 1 {
                 return Err(AppError::invalid_input(
                     "sourcePath",
@@ -1191,8 +1218,9 @@ fn validate_source_symlink(
                 ));
             }
             let opened =
-                open_file_at_nofollow(&directory, segment, &target_path).map_err(|_| {
+                open_file_at_nofollow(&directory, segment, &target_path).map_err(|error| {
                     AppError::invalid_input("sourcePath", "Skill 符号链接目标无法安全打开")
+                        .with_source(error)
                 })?;
             ensure_same_identity(
                 metadata.identity,
@@ -1322,12 +1350,13 @@ fn current_errno() -> libc::c_int {
 
 fn c_path(path: &Path, field: &'static str) -> Result<CString, AppError> {
     CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| AppError::invalid_input(field, "路径不能包含 NUL"))
+        .map_err(|error| AppError::invalid_input(field, "路径不能包含 NUL").with_source(error))
 }
 
 fn c_name(name: &OsStr) -> Result<CString, AppError> {
-    CString::new(name.as_bytes())
-        .map_err(|_| AppError::invalid_input("sourcePath", "Skill 路径名不能包含 NUL"))
+    CString::new(name.as_bytes()).map_err(|error| {
+        AppError::invalid_input("sourcePath", "Skill 路径名不能包含 NUL").with_source(error)
+    })
 }
 
 fn open_directory_nofollow(path: &Path, operation: &'static str) -> Result<File, AppError> {
@@ -1438,8 +1467,9 @@ fn read_link_at(parent: &File, name: &OsStr, display_path: &Path) -> Result<Path
             "read_skill_symlink",
         ));
     }
-    let length = usize::try_from(length)
-        .map_err(|_| AppError::invalid_input("sourcePath", "Skill 链接目标长度无效"))?;
+    let length = usize::try_from(length).map_err(|error| {
+        AppError::invalid_input("sourcePath", "Skill 链接目标长度无效").with_source(error)
+    })?;
     if length == buffer.len() {
         return Err(AppError::invalid_input(
             "sourcePath",
@@ -1500,8 +1530,9 @@ fn parse_skill_frontmatter(text: &str) -> Result<(String, Value), AppError> {
             "SKILL.md 必须包含非空工作流正文",
         ));
     }
-    let frontmatter: Value = serde_yaml_ng::from_str(&text[start..end])
-        .map_err(|_| AppError::invalid_input("SKILL.md", "SKILL.md frontmatter 不是合法 YAML"))?;
+    let frontmatter: Value = serde_yaml_ng::from_str(&text[start..end]).map_err(|error| {
+        AppError::invalid_input("SKILL.md", "SKILL.md frontmatter 不是合法 YAML").with_source(error)
+    })?;
     let object = frontmatter
         .as_object()
         .ok_or_else(|| AppError::invalid_input("SKILL.md", "SKILL.md frontmatter 必须是对象"))?;
@@ -1571,7 +1602,9 @@ fn read_regular_utf8(path: &Path, limit: u64, field: &'static str) -> Result<Str
     if bytes.len() as u64 > limit {
         return Err(AppError::invalid_input(field, "Skill 内容超出大小限制"));
     }
-    String::from_utf8(bytes).map_err(|_| AppError::invalid_input(field, "Skill 内容必须是 UTF-8"))
+    String::from_utf8(bytes).map_err(|error| {
+        AppError::invalid_input(field, "Skill 内容必须是 UTF-8").with_source(error)
+    })
 }
 
 fn hash_record(hasher: &mut Sha256, kind: u8, path: &str, payload: &[u8]) {
@@ -1593,10 +1626,12 @@ fn hash_file_record(hasher: &mut Sha256, path: &str, mode: u32, bytes: &[u8]) {
 }
 
 fn create_private_directory(path: &Path) -> Result<(), AppError> {
-    fs::create_dir(path)
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_skill_directory"))?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|_| AppError::permission(&path.to_string_lossy(), "chmod_skill_directory"))?;
+    fs::create_dir(path).map_err(|error| {
+        AppError::atomic_write(&path.to_string_lossy(), "create_skill_directory").with_source(error)
+    })?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+        AppError::permission(&path.to_string_lossy(), "chmod_skill_directory").with_source(error)
+    })?;
     Ok(())
 }
 
@@ -1620,8 +1655,10 @@ fn remove_owned_directory(path: &Path, owner: &Path) -> Result<(), AppError> {
             ))
         }
     }
-    fs::remove_dir_all(path)
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "remove_owned_skill_tree"))?;
+    fs::remove_dir_all(path).map_err(|error| {
+        AppError::atomic_write(&path.to_string_lossy(), "remove_owned_skill_tree")
+            .with_source(error)
+    })?;
     sync_directory(owner)
 }
 
@@ -1660,7 +1697,10 @@ pub(crate) fn validate_central_skill_directory(
 pub(crate) fn sync_directory(path: &Path) -> Result<(), AppError> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "sync_skill_directory"))
+        .map_err(|error| {
+            AppError::atomic_write(&path.to_string_lossy(), "sync_skill_directory")
+                .with_source(error)
+        })
 }
 
 fn path_text(path: &Path, field: &'static str) -> Result<String, AppError> {
@@ -1670,11 +1710,12 @@ fn path_text(path: &Path, field: &'static str) -> Result<String, AppError> {
 }
 
 fn map_read_error(error: io::Error, path: &Path, operation: &'static str) -> AppError {
-    match error.kind() {
+    let app_error = match error.kind() {
         io::ErrorKind::NotFound => AppError::not_found("skillPath", &path.to_string_lossy()),
         io::ErrorKind::PermissionDenied => AppError::permission(&path.to_string_lossy(), operation),
         _ => AppError::invalid_input("sourcePath", "Skill 目录无法稳定读取"),
-    }
+    };
+    app_error.with_source(error)
 }
 
 /// 只持久化路径与身份；不包含技能正文或任意 frontmatter。

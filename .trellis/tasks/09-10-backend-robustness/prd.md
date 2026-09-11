@@ -20,7 +20,7 @@
 - A3：日志文件在私有目录生成且权限为 0600；一条测试断言日志中不含注入的假 API key。
 - A4：journal 枚举序列化与旧字符串逐一相等的测试；旧格式 journal 解析测试���
 - A5：`rg "\.expect\(|unreachable!" src-tauri/src --glob '!**/tests*'` 在非测试代码中仅剩启动期 `lib.rs`。
-- A6：`state_lock_error` 全仓库只有一处定义。
+- A6：不再定义或引用 `state_lock_error`；命令层通过 `commands/mod.rs` 的统一锁恢复 helper 处理锁访问，Rust 源码搜索结果为 0。
 - A7：`pnpm rust:check`、`pnpm check` 全绿。
 
 ## 范围外

@@ -1,5 +1,9 @@
+use std::sync::{Arc, PoisonError};
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
+
+use crate::{app::AppState, db::Database, error::AppError, security::SecretRedactor};
 
 pub mod environment;
 pub mod hooks;
@@ -15,6 +19,36 @@ pub mod skills;
 pub struct AppInfoDto {
     pub name: String,
     pub version: String,
+}
+
+/// 命令层唯一的加锁样板：取数据库锁后把可变引用交给闭包。锁从中毒中恢复，
+/// 所以这里没有"状态锁不可用"这种错误分支。
+pub(crate) fn with_db<T>(
+    state: &AppState,
+    run: impl FnOnce(&mut Database) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let mut database = state.database_guard();
+    run(&mut database)
+}
+
+/// 异步命令把数据库句柄移入 `spawn_blocking` 时使用的同一套锁恢复逻辑。
+/// 普通命令应优先使用 `with_db`，避免在命令文件中重复展开加锁样板。
+pub(crate) fn with_database_handle<T>(
+    database: Arc<std::sync::Mutex<Database>>,
+    run: impl FnOnce(&mut Database) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let mut database = database.lock().unwrap_or_else(PoisonError::into_inner);
+    run(&mut database)
+}
+
+/// 需要脱敏器的命令：数据库锁在前、脱敏器写锁在后，与 Apply 路径的锁序一致。
+pub(crate) fn with_db_and_redactor<T>(
+    state: &AppState,
+    run: impl FnOnce(&mut Database, &mut SecretRedactor) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let mut database = state.database_guard();
+    let mut redactor = state.redactor_write();
+    run(&mut database, &mut redactor)
 }
 
 #[tauri::command(async)]

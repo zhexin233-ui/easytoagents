@@ -88,7 +88,9 @@ pub fn dashboard_summary(
             [],
             |row| row.get::<_, u32>(0),
         )
-        .map_err(|_| AppError::database(&database_path, "count_dashboard_projects"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "count_dashboard_projects").with_source(error)
+        })?;
     let conflict_count = database
         .connection()
         .query_row(
@@ -102,9 +104,12 @@ pub fn dashboard_summary(
             [],
             |row| row.get::<_, u32>(0),
         )
-        .map_err(|_| AppError::database(&database_path, "count_dashboard_conflicts"))?;
-    let snapshot_count = u32::try_from(list_snapshots(database)?.len())
-        .map_err(|_| AppError::database(&database_path, "count_dashboard_snapshots"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "count_dashboard_conflicts").with_source(error)
+        })?;
+    let snapshot_count = u32::try_from(list_snapshots(database)?.len()).map_err(|error| {
+        AppError::database(&database_path, "count_dashboard_snapshots").with_source(error)
+    })?;
     let recent_sync_runs = recent_sync_runs(database)?;
     let interrupted_run = detect_interrupted_run(database, paths)?;
     let needs_onboarding = !onboarding_completed(database)?
@@ -138,7 +143,9 @@ pub fn complete_onboarding(
              ON CONFLICT(singleton) DO UPDATE SET completed_at = excluded.completed_at",
             [],
         )
-        .map_err(|_| AppError::database(&database_path, "complete_onboarding"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "complete_onboarding").with_source(error)
+        })?;
     Ok(CompleteOnboardingResultDto { completed: true })
 }
 
@@ -151,7 +158,9 @@ fn onboarding_completed(database: &Database) -> Result<bool, AppError> {
             [],
             |row| row.get(0),
         )
-        .map_err(|_| AppError::database(&database_path, "read_onboarding_state"))
+        .map_err(|error| {
+            AppError::database(&database_path, "read_onboarding_state").with_source(error)
+        })
 }
 
 fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryDto, AppError> {
@@ -167,7 +176,9 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|_| AppError::database(&database_path, "read_dashboard_provider"))?
+            .map_err(|error| {
+                AppError::database(&database_path, "read_dashboard_provider").with_source(error)
+            })?
     };
     let active_prompt_name = match tool {
         Tool::Claude | Tool::Codex | Tool::Zcode | Tool::Cursor | Tool::Opencode => database
@@ -183,7 +194,9 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|_| AppError::database(&database_path, "read_dashboard_prompt"))?,
+            .map_err(|error| {
+                AppError::database(&database_path, "read_dashboard_prompt").with_source(error)
+            })?,
     };
     let global_mcp_count = database
         .connection()
@@ -192,7 +205,9 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
             [tool.as_str()],
             |row| row.get::<_, u32>(0),
         )
-        .map_err(|_| AppError::database(&database_path, "count_dashboard_mcp"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "count_dashboard_mcp").with_source(error)
+        })?;
     let global_skill_count = database
         .connection()
         .query_row(
@@ -200,7 +215,9 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
             [tool.as_str()],
             |row| row.get::<_, u32>(0),
         )
-        .map_err(|_| AppError::database(&database_path, "count_dashboard_skills"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "count_dashboard_skills").with_source(error)
+        })?;
     Ok(DashboardToolSummaryDto {
         tool,
         active_provider_name,
@@ -220,7 +237,9 @@ fn recent_sync_runs(database: &Database) -> Result<Vec<RecentSyncRunDto>, AppErr
              ORDER BY started_at DESC, id DESC
              LIMIT 5",
         )
-        .map_err(|_| AppError::database(&database_path, "prepare_recent_sync_runs"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "prepare_recent_sync_runs").with_source(error)
+        })?;
     let runs = statement
         .query_map([], |row| {
             let scope = match row.get::<_, String>(3)?.as_str() {
@@ -248,9 +267,13 @@ fn recent_sync_runs(database: &Database) -> Result<Vec<RecentSyncRunDto>, AppErr
                 error_code,
             })
         })
-        .map_err(|_| AppError::database(&database_path, "query_recent_sync_runs"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "query_recent_sync_runs").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&database_path, "decode_recent_sync_runs"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "decode_recent_sync_runs").with_source(error)
+        })?;
     Ok(runs)
 }
 
@@ -296,7 +319,9 @@ pub fn snapshot_restore_context(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "load_snapshot_restore_context"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "load_snapshot_restore_context").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found("snapshot", snapshot_id))?;
     let allowed_root = match identity.0.as_str() {
         "global" if identity.3.is_none() && identity.4.is_none() => {

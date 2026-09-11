@@ -73,7 +73,9 @@ pub fn load_app_settings(database: &Database) -> Result<AppSettingsDto, AppError
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|_| AppError::database(&database_path, "read_app_setting"))
+            .map_err(|error| {
+                AppError::database(&database_path, "read_app_setting").with_source(error)
+            })
     };
     let apply_mode = match read_setting(APPLY_MODE_KEY)? {
         Some(stored) => ApplyMode::from_stable_str(&stored).ok_or_else(|| {
@@ -83,8 +85,9 @@ pub fn load_app_settings(database: &Database) -> Result<AppSettingsDto, AppError
     };
     let enabled_tools = match read_setting(ENABLED_TOOLS_KEY)? {
         Some(stored) => {
-            let parsed: Vec<Tool> = serde_json::from_str(&stored).map_err(|_| {
+            let parsed: Vec<Tool> = serde_json::from_str(&stored).map_err(|error| {
                 AppError::new(ErrorCode::DatabaseError, "应用设置包含未知取值", false)
+                    .with_source(error)
             })?;
             parsed
         }
@@ -101,12 +104,15 @@ pub fn save_app_settings(
     input: &UpdateAppSettingsInput,
 ) -> Result<AppSettingsDto, AppError> {
     let database_path = database.path().to_string_lossy().into_owned();
-    let enabled_tools = serde_json::to_string(&input.enabled_tools)
-        .map_err(|_| AppError::database(&database_path, "encode_app_setting"))?;
+    let enabled_tools = serde_json::to_string(&input.enabled_tools).map_err(|error| {
+        AppError::database(&database_path, "encode_app_setting").with_source(error)
+    })?;
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_write_app_setting"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_write_app_setting").with_source(error)
+        })?;
     transaction
         .execute(
             "INSERT INTO app_settings(key, value)
@@ -116,7 +122,9 @@ pub fn save_app_settings(
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
             params![APPLY_MODE_KEY, input.apply_mode.as_str()],
         )
-        .map_err(|_| AppError::database(&database_path, "write_app_setting"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "write_app_setting").with_source(error)
+        })?;
     transaction
         .execute(
             "INSERT INTO app_settings(key, value)
@@ -126,10 +134,12 @@ pub fn save_app_settings(
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
             params![ENABLED_TOOLS_KEY, enabled_tools],
         )
-        .map_err(|_| AppError::database(&database_path, "write_app_setting"))?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_write_app_setting"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "write_app_setting").with_source(error)
+        })?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_write_app_setting").with_source(error)
+    })?;
     Ok(AppSettingsDto {
         apply_mode: input.apply_mode,
         enabled_tools: input.enabled_tools.clone(),

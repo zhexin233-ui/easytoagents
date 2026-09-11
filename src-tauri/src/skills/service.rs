@@ -1038,7 +1038,9 @@ fn ensure_skill_target(
                 target_path,
             ],
         )
-        .map_err(|_| AppError::database(database_path, "insert_skill_managed_target"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "insert_skill_managed_target").with_source(error)
+        })?;
     find_skill_target_baseline(connection, database_path, descriptor, project_id)?
         .ok_or_else(|| AppError::database(database_path, "load_inserted_skill_managed_target"))
 }
@@ -1074,7 +1076,9 @@ fn find_skill_target_baseline(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "find_skill_managed_target"))
+        .map_err(|error| {
+            AppError::database(database_path, "find_skill_managed_target").with_source(error)
+        })
 }
 
 fn validate_ready_records<'a>(
@@ -1260,13 +1264,17 @@ fn persist_migrated_skill_directory(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_skill_directory_migration"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_skill_directory_migration").with_source(error)
+        })?;
     transaction
         .execute(
             "UPDATE skills SET central_path = ?2 WHERE id = ?1",
             params![skill_id, expected.to_string_lossy()],
         )
-        .map_err(|_| AppError::database(&database_path, "migrate_skill_central_path"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "migrate_skill_central_path").with_source(error)
+        })?;
     // 与 build_managed_item_changes 的 native 投影保持同一形状，避免迁移本身制造 managed item 漂移。
     let native = json!({
         "targetType": "symlink",
@@ -1280,11 +1288,14 @@ fn persist_migrated_skill_directory(
                  WHERE id = ?1 AND resource_kind = 'skill'",
                 params![item_id, item_hash],
             )
-            .map_err(|_| AppError::database(&database_path, "migrate_skill_managed_item_hash"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "migrate_skill_managed_item_hash")
+                    .with_source(error)
+            })?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_skill_directory_migration"))
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_skill_directory_migration").with_source(error)
+    })
 }
 
 /// 启动时对 Skills 受管目标做一次基线记账对账。目录迁移会改写受管链接并刷新
@@ -1316,7 +1327,10 @@ fn list_skill_managed_targets(database: &Database) -> Result<Vec<SkillManagedTar
              WHERE artifact_kind = 'skill'
              ORDER BY id",
         )
-        .map_err(|_| AppError::database(&database_path, "prepare_list_skill_managed_targets"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "prepare_list_skill_managed_targets")
+                .with_source(error)
+        })?;
     let rows = statement
         .query_map([], |row| {
             let tool = match row.get::<_, String>(1)?.as_str() {
@@ -1334,9 +1348,15 @@ fn list_skill_managed_targets(database: &Database) -> Result<Vec<SkillManagedTar
                 row.get::<_, String>(3)?,
             ))
         })
-        .map_err(|_| AppError::database(&database_path, "query_list_skill_managed_targets"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "query_list_skill_managed_targets")
+                .with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&database_path, "decode_list_skill_managed_targets"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "decode_list_skill_managed_targets")
+                .with_source(error)
+        })?;
     Ok(rows)
 }
 
@@ -1390,8 +1410,9 @@ fn reconcile_skill_target_baseline(
     if hash_json(&desired) != observed_hash {
         return Ok(());
     }
-    let desired_text = serde_json::to_string(&desired)
-        .map_err(|_| AppError::invalid_input("projection", "期望投影无法序列化"))?;
+    let desired_text = serde_json::to_string(&desired).map_err(|error| {
+        AppError::invalid_input("projection", "期望投影无法序列化").with_source(error)
+    })?;
     let database_path = database.path().to_string_lossy().into_owned();
     let updated = database
         .connection()
@@ -1403,7 +1424,9 @@ fn reconcile_skill_target_baseline(
                AND (baseline_full_hash IS NOT ?2 OR baseline_managed_hash IS NOT ?3)",
             params![target_id, full_hash, observed_hash, desired_text],
         )
-        .map_err(|_| AppError::database(&database_path, "reconcile_skill_target_baseline"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "reconcile_skill_target_baseline").with_source(error)
+        })?;
     if updated > 1 {
         return Err(AppError::database(
             &database_path,
@@ -1431,8 +1454,10 @@ fn skill_dto_with_tools(
     global_tools: Vec<Tool>,
 ) -> Result<SkillDto, AppError> {
     let inspection = inspect_record(paths, record, false)?;
-    let frontmatter: Value = serde_json::from_str(&record.frontmatter_json)
-        .map_err(|_| AppError::invalid_input("frontmatter", "数据库中的 Skill frontmatter 无效"))?;
+    let frontmatter: Value = serde_json::from_str(&record.frontmatter_json).map_err(|error| {
+        AppError::invalid_input("frontmatter", "数据库中的 Skill frontmatter 无效")
+            .with_source(error)
+    })?;
     let description = frontmatter
         .get("description")
         .and_then(Value::as_str)
@@ -1476,8 +1501,9 @@ fn canonical_project(path: &str) -> Result<ProjectRoot, AppError> {
 }
 
 fn safe_row_version(value: i64) -> Result<u32, AppError> {
-    u32::try_from(value)
-        .map_err(|_| AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 范围"))
+    u32::try_from(value).map_err(|error| {
+        AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 范围").with_source(error)
+    })
 }
 
 #[cfg(test)]

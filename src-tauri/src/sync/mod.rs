@@ -261,10 +261,11 @@ fn read_directory_entries(path: &Path) -> io::Result<BTreeMap<String, DirectoryE
     let mut entries = BTreeMap::new();
     for child in fs::read_dir(path)? {
         let child = child?;
-        let name = child
-            .file_name()
-            .into_string()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "目录项名称不是 UTF-8"))?;
+        let name = child.file_name().into_string().map_err(|_| {
+            // 文件名本身可能包含用户数据；不要把不可解码的原始字节复制到
+            // 后续 AppError source 或日志中。
+            io::Error::new(io::ErrorKind::InvalidData, "目录项名称不是 UTF-8")
+        })?;
         let metadata = fs::symlink_metadata(child.path())?;
         let entry_type = target_type(&metadata);
         let link_target = if entry_type == TargetType::Symlink {
@@ -312,7 +313,8 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
 /// 序列化天然按键有序；不再深拷贝重建对象再序列化。
 /// `tests::serde_json_serializes_object_keys_in_sorted_order` 守住这个前提。
 pub fn hash_json(value: &Value) -> String {
-    hash_bytes(&serde_json::to_vec(value).expect("serde_json::Value 必须始终可以序列化"))
+    // `Value` 的 Display 输出与 `to_vec` 相同（紧凑 JSON），且对任意 Value 都不会失败。
+    hash_bytes(value.to_string().as_bytes())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,7 +346,9 @@ pub fn load_managed_target_baseline(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "load_managed_target_baseline"))?
+        .map_err(|error| {
+            AppError::database(&path, "load_managed_target_baseline").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found("managedTarget", target_id))
 }
 
@@ -744,8 +748,9 @@ pub fn build_preview_plan(
         });
 
         let target_row_version =
-            u32::try_from(request.baseline.target_row_version).map_err(|_| {
+            u32::try_from(request.baseline.target_row_version).map_err(|error| {
                 AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 安全范围")
+                    .with_source(error)
             })?;
         let target_version = DatabaseRowVersion {
             entity_type: DatabaseEntityType::ManagedTarget,
@@ -891,8 +896,7 @@ fn fingerprint_row_versions(rows: &[DatabaseRowVersion]) -> u32 {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let digest =
-        Sha256::digest(serde_json::to_vec(&normalized).expect("row version 快照必须可以序列化"));
+    let digest = Sha256::digest(Value::from_iter(normalized).to_string().as_bytes());
     let mut bytes = [0_u8; 4];
     bytes.copy_from_slice(&digest[..4]);
     u32::from_be_bytes(bytes)
@@ -953,11 +957,11 @@ pub fn persist_preview(database: &mut Database, plan: &PreviewPlan) -> Result<()
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_preview"))?;
+        .map_err(|error| AppError::database(&database_path, "begin_preview").with_source(error))?;
     persist_preview_in_connection(&transaction, plan, &database_path)?;
     transaction
         .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_preview"))
+        .map_err(|error| AppError::database(&database_path, "commit_preview").with_source(error))
 }
 
 pub(crate) fn persist_preview_in_connection(
@@ -977,7 +981,9 @@ pub(crate) fn persist_preview_in_connection(
                 plan.db_version
             ],
         )
-        .map_err(|_| AppError::database(database_path, "insert_preview_run"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "insert_preview_run").with_source(error)
+        })?;
 
     for (target_order, target) in plan.targets.iter().enumerate() {
         let envelope = PersistedPreviewEnvelope {
@@ -999,10 +1005,12 @@ pub(crate) fn persist_preview_in_connection(
             skill_takeover_entries: target.skill_takeover_entries.clone(),
             project_native_action: target.project_native_action.clone(),
         };
-        let envelope_json = serde_json::to_string(&envelope)
-            .map_err(|_| AppError::database(database_path, "serialize_preview_item"))?;
-        let warning_codes_json = serde_json::to_string(&target.warning_codes)
-            .map_err(|_| AppError::database(database_path, "serialize_warning_codes"))?;
+        let envelope_json = serde_json::to_string(&envelope).map_err(|error| {
+            AppError::database(database_path, "serialize_preview_item").with_source(error)
+        })?;
+        let warning_codes_json = serde_json::to_string(&target.warning_codes).map_err(|error| {
+            AppError::database(database_path, "serialize_warning_codes").with_source(error)
+        })?;
         connection
             .execute(
                 "INSERT INTO sync_items(
@@ -1021,7 +1029,9 @@ pub(crate) fn persist_preview_in_connection(
                     target_order,
                 ],
             )
-            .map_err(|_| AppError::database(database_path, "insert_preview_item"))?;
+            .map_err(|error| {
+                AppError::database(database_path, "insert_preview_item").with_source(error)
+            })?;
     }
     Ok(())
 }
@@ -1054,7 +1064,10 @@ fn verify_preview_row_versions(
                 },
             )
             .optional()
-            .map_err(|_| AppError::database(database_path, "verify_preview_target_identity"))?
+            .map_err(|error| {
+                AppError::database(database_path, "verify_preview_target_identity")
+                    .with_source(error)
+            })?
             .ok_or_else(|| AppError::stale_preview(&plan.preview_id, &target.target_id))?;
         if u32::try_from(identity.0).ok() != Some(target.target_row_version) {
             return Err(AppError::stale_preview(&plan.preview_id, &target.target_id));
@@ -1091,7 +1104,9 @@ fn verify_preview_row_versions(
         let actual = transaction
             .query_row(&query, [&entity_id], |row| row.get::<_, i64>(0))
             .optional()
-            .map_err(|_| AppError::database(database_path, "verify_preview_row_version"))?;
+            .map_err(|error| {
+                AppError::database(database_path, "verify_preview_row_version").with_source(error)
+            })?;
         if actual.and_then(|value| u32::try_from(value).ok()) != Some(expected_version) {
             return Err(AppError::stale_preview(&plan.preview_id, &entity_id));
         }
@@ -1119,7 +1134,7 @@ pub fn load_persisted_preview(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "load_preview_run"))?
+        .map_err(|error| AppError::database(&path, "load_preview_run").with_source(error))?
         .ok_or_else(|| AppError::not_found("preview", preview_id))?;
 
     let mut statement = database
@@ -1131,7 +1146,7 @@ pub fn load_persisted_preview(
              JOIN managed_targets AS target ON target.id = item.target_id
              WHERE item.run_id = ?1 ORDER BY item.target_order, item.id",
         )
-        .map_err(|_| AppError::database(&path, "prepare_preview_items"))?;
+        .map_err(|error| AppError::database(&path, "prepare_preview_items").with_source(error))?;
     let rows = statement
         .query_map([preview_id], |row| {
             Ok((
@@ -1144,20 +1159,22 @@ pub fn load_persisted_preview(
                 row.get::<_, Option<String>>(6)?,
             ))
         })
-        .map_err(|_| AppError::database(&path, "query_preview_items"))?;
+        .map_err(|error| AppError::database(&path, "query_preview_items").with_source(error))?;
     let mut items = Vec::new();
     for row in rows {
         let (target_id, target_path, change_kind, status, envelope, warnings, error_code) =
-            row.map_err(|_| AppError::database(&path, "read_preview_item"))?;
+            row.map_err(|error| AppError::database(&path, "read_preview_item").with_source(error))?;
         items.push(PersistedPreviewItem {
             target_id,
             target_path,
             change_kind: parse_change_kind(&change_kind)?,
             status: parse_sync_status(&status)?,
-            envelope: serde_json::from_str(&envelope)
-                .map_err(|_| AppError::database(&path, "parse_preview_envelope"))?,
-            warning_codes: serde_json::from_str(&warnings)
-                .map_err(|_| AppError::database(&path, "parse_warning_codes"))?,
+            envelope: serde_json::from_str(&envelope).map_err(|error| {
+                AppError::database(&path, "parse_preview_envelope").with_source(error)
+            })?,
+            warning_codes: serde_json::from_str(&warnings).map_err(|error| {
+                AppError::database(&path, "parse_warning_codes").with_source(error)
+            })?,
             error_code: error_code.as_deref().map(parse_error_code).transpose()?,
         });
     }

@@ -54,12 +54,14 @@ pub fn list_mcp_servers(database: &Database) -> Result<Vec<McpServerRecord>, App
                     env_json, extra_json, enabled, row_version
              FROM mcp_servers ORDER BY name COLLATE NOCASE, id",
         )
-        .map_err(|_| AppError::database(&path, "prepare_list_mcp_servers"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_list_mcp_servers").with_source(error)
+        })?;
     let records = statement
         .query_map([], mcp_from_row)
-        .map_err(|_| AppError::database(&path, "query_list_mcp_servers"))?
+        .map_err(|error| AppError::database(&path, "query_list_mcp_servers").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_mcp_servers"))?;
+        .map_err(|error| AppError::database(&path, "decode_list_mcp_servers").with_source(error))?;
     Ok(records)
 }
 
@@ -76,7 +78,7 @@ pub fn get_mcp_server(database: &Database, id: &str) -> Result<McpServerRecord, 
             mcp_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "get_mcp_server"))?
+        .map_err(|error| AppError::database(&path, "get_mcp_server").with_source(error))?
         .ok_or_else(|| AppError::not_found("mcpServer", id))
 }
 
@@ -206,14 +208,20 @@ pub fn global_tools_for_all_mcp(
     let mut statement = database
         .connection()
         .prepare_cached("SELECT mcp_id, tool FROM mcp_global_assignments ORDER BY mcp_id, tool")
-        .map_err(|_| AppError::database(&path, "prepare_all_mcp_global_tools"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_all_mcp_global_tools").with_source(error)
+        })?;
     let rows = statement
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, tool_from_database(row.get(1)?)?))
         })
-        .map_err(|_| AppError::database(&path, "query_all_mcp_global_tools"))?
+        .map_err(|error| {
+            AppError::database(&path, "query_all_mcp_global_tools").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_all_mcp_global_tools"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_all_mcp_global_tools").with_source(error)
+        })?;
     let mut grouped = std::collections::BTreeMap::<String, Vec<Tool>>::new();
     for (mcp_id, tool) in rows {
         grouped.entry(mcp_id).or_default().push(tool);
@@ -242,12 +250,14 @@ pub fn global_tools_for_mcp(database: &Database, mcp_id: &str) -> Result<Vec<Too
             "SELECT tool FROM mcp_global_assignments
              WHERE mcp_id = ?1 ORDER BY tool",
         )
-        .map_err(|_| AppError::database(&path, "prepare_mcp_global_tools"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_mcp_global_tools").with_source(error)
+        })?;
     let tools = statement
         .query_map([mcp_id], |row| tool_from_database(row.get(0)?))
-        .map_err(|_| AppError::database(&path, "query_mcp_global_tools"))?
+        .map_err(|error| AppError::database(&path, "query_mcp_global_tools").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_mcp_global_tools"))?;
+        .map_err(|error| AppError::database(&path, "decode_mcp_global_tools").with_source(error))?;
     Ok(tools)
 }
 
@@ -263,7 +273,9 @@ pub fn set_global_assignment(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&path, "begin_set_mcp_global_assignment"))?;
+        .map_err(|error| {
+            AppError::database(&path, "begin_set_mcp_global_assignment").with_source(error)
+        })?;
     verify_row_version(
         &transaction,
         "mcp_servers",
@@ -280,7 +292,9 @@ pub fn set_global_assignment(
                 params![tool.as_str(), mcp_id],
                 |row| row.get::<_, i64>(0),
             )
-            .map_err(|_| AppError::database(&path, "count_mcp_project_assignments"))?;
+            .map_err(|error| {
+                AppError::database(&path, "count_mcp_project_assignments").with_source(error)
+            })?;
         validate_global_assignment(project_count > 0)?;
         transaction
             .execute(
@@ -294,7 +308,9 @@ pub fn set_global_assignment(
                 "DELETE FROM mcp_global_assignments WHERE tool = ?1 AND mcp_id = ?2",
                 params![tool.as_str(), mcp_id],
             )
-            .map_err(|_| AppError::database(&path, "delete_mcp_global_assignment"))?
+            .map_err(|error| {
+                AppError::database(&path, "delete_mcp_global_assignment").with_source(error)
+            })?
     };
     if changed == 1 {
         touch_versioned_row(
@@ -305,9 +321,9 @@ pub fn set_global_assignment(
             &path,
         )?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&path, "commit_set_mcp_global_assignment"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&path, "commit_set_mcp_global_assignment").with_source(error)
+    })?;
     get_mcp_server(database, mcp_id)
 }
 
@@ -327,7 +343,9 @@ pub fn set_project_assignment(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&path, "begin_set_mcp_project_assignment"))?;
+        .map_err(|error| {
+            AppError::database(&path, "begin_set_mcp_project_assignment").with_source(error)
+        })?;
     verify_row_version(
         &transaction,
         "mcp_servers",
@@ -353,7 +371,9 @@ pub fn set_project_assignment(
             params![tool.as_str(), mcp_id],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(&path, "read_mcp_global_assignment"))?;
+        .map_err(|error| {
+            AppError::database(&path, "read_mcp_global_assignment").with_source(error)
+        })?;
     // 全局项在项目层是只读继承：不仅禁止重复添加，也禁止通过伪造 RPC 请求
     // 把一个不存在的项目 assignment 当作“禁用全局项”移除。
     validate_project_assignment(globally_assigned)?;
@@ -372,7 +392,9 @@ pub fn set_project_assignment(
                  WHERE project_id = ?1 AND tool = ?2 AND mcp_id = ?3",
                 params![project_id, tool.as_str(), mcp_id],
             )
-            .map_err(|_| AppError::database(&path, "delete_mcp_project_assignment"))?
+            .map_err(|error| {
+                AppError::database(&path, "delete_mcp_project_assignment").with_source(error)
+            })?
     };
     if changed == 1 {
         touch_versioned_row(
@@ -390,9 +412,9 @@ pub fn set_project_assignment(
             &path,
         )?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&path, "commit_set_mcp_project_assignment"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&path, "commit_set_mcp_project_assignment").with_source(error)
+    })?;
     get_mcp_server(database, mcp_id)
 }
 
@@ -424,15 +446,16 @@ pub fn list_assigned_mcp_servers(
             None,
         ),
     };
-    let mut statement = database
-        .connection()
-        .prepare_cached(sql)
-        .map_err(|_| AppError::database(&path, "prepare_list_assigned_mcp"))?;
+    let mut statement = database.connection().prepare_cached(sql).map_err(|error| {
+        AppError::database(&path, "prepare_list_assigned_mcp").with_source(error)
+    })?;
     let records = statement
         .query_map(params![project_parameter, tool.as_str()], mcp_from_row)
-        .map_err(|_| AppError::database(&path, "query_list_assigned_mcp"))?
+        .map_err(|error| AppError::database(&path, "query_list_assigned_mcp").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_assigned_mcp"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_list_assigned_mcp").with_source(error)
+        })?;
     Ok(records)
 }
 
@@ -446,12 +469,16 @@ pub fn list_projects(database: &Database) -> Result<Vec<McpProjectRecord>, AppEr
              WHERE removed_at IS NULL
              ORDER BY display_name COLLATE NOCASE, root_path",
         )
-        .map_err(|_| AppError::database(&path, "prepare_list_mcp_projects"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_list_mcp_projects").with_source(error)
+        })?;
     let projects = statement
         .query_map([], project_from_row)
-        .map_err(|_| AppError::database(&path, "query_list_mcp_projects"))?
+        .map_err(|error| AppError::database(&path, "query_list_mcp_projects").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_mcp_projects"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_list_mcp_projects").with_source(error)
+        })?;
     Ok(projects)
 }
 
@@ -467,7 +494,7 @@ pub fn get_project(database: &Database, id: &str) -> Result<McpProjectRecord, Ap
             project_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "get_mcp_project"))?
+        .map_err(|error| AppError::database(&path, "get_mcp_project").with_source(error))?
         .ok_or_else(|| AppError::not_found("project", id))
 }
 
@@ -488,7 +515,9 @@ pub fn project_assignment_exists(
             params![project_id, tool.as_str(), mcp_id],
             |row| row.get(0),
         )
-        .map_err(|_| AppError::database(&path, "read_mcp_project_assignment"))
+        .map_err(|error| {
+            AppError::database(&path, "read_mcp_project_assignment").with_source(error)
+        })
 }
 
 pub fn list_managed_mcp_items(
@@ -504,7 +533,9 @@ pub fn list_managed_mcp_items(
              WHERE target_id = ?1 AND resource_kind = 'mcp'
              ORDER BY external_key COLLATE NOCASE, id",
         )
-        .map_err(|_| AppError::database(&path, "prepare_list_managed_mcp_items"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_list_managed_mcp_items").with_source(error)
+        })?;
     let items = statement
         .query_map([target_id], |row| {
             Ok(ManagedMcpItemRecord {
@@ -515,9 +546,13 @@ pub fn list_managed_mcp_items(
                 row_version: row.get(4)?,
             })
         })
-        .map_err(|_| AppError::database(&path, "query_list_managed_mcp_items"))?
+        .map_err(|error| {
+            AppError::database(&path, "query_list_managed_mcp_items").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_managed_mcp_items"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_list_managed_mcp_items").with_source(error)
+        })?;
     Ok(items)
 }
 
@@ -540,7 +575,9 @@ pub(crate) fn verify_row_version(
     let actual = transaction
         .query_row(&sql, [id], |row| row.get::<_, i64>(0))
         .optional()
-        .map_err(|_| AppError::database(database_path, "verify_assignment_row_version"))?
+        .map_err(|error| {
+            AppError::database(database_path, "verify_assignment_row_version").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found(resource, id))?;
     if u32::try_from(actual).ok() != Some(expected) {
         return Err(AppError::conflict(
@@ -562,7 +599,9 @@ pub(crate) fn touch_versioned_row(
         format!("UPDATE {table} SET updated_at = updated_at WHERE id = ?1 AND row_version = ?2");
     let updated = transaction
         .execute(&sql, params![id, expected])
-        .map_err(|_| AppError::database(database_path, "touch_assignment_owner"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "touch_assignment_owner").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::conflict(
             "rowVersion",
@@ -583,14 +622,17 @@ fn serialize_configuration_json(
     value: &ValidatedMcpConfiguration,
 ) -> Result<SerializedConfiguration, AppError> {
     Ok(SerializedConfiguration {
-        args: serde_json::to_string(&value.args)
-            .map_err(|_| AppError::invalid_input("args", "args 无法序列化"))?,
-        headers: serde_json::to_string(&value.headers)
-            .map_err(|_| AppError::invalid_input("headers", "headers 无法序列化"))?,
+        args: serde_json::to_string(&value.args).map_err(|error| {
+            AppError::invalid_input("args", "args 无法序列化").with_source(error)
+        })?,
+        headers: serde_json::to_string(&value.headers).map_err(|error| {
+            AppError::invalid_input("headers", "headers 无法序列化").with_source(error)
+        })?,
         env: serde_json::to_string(&value.env)
-            .map_err(|_| AppError::invalid_input("env", "env 无法序列化"))?,
-        extra: serde_json::to_string(&value.extra)
-            .map_err(|_| AppError::invalid_input("extra", "extra 无法序列化"))?,
+            .map_err(|error| AppError::invalid_input("env", "env 无法序列化").with_source(error))?,
+        extra: serde_json::to_string(&value.extra).map_err(|error| {
+            AppError::invalid_input("extra", "extra 无法序列化").with_source(error)
+        })?,
     })
 }
 
@@ -654,7 +696,7 @@ pub(super) fn map_mcp_write_error(
     operation: &'static str,
 ) -> AppError {
     let text = error.to_string();
-    if text.contains("UNIQUE constraint failed: mcp_servers.name") {
+    let app_error = if text.contains("UNIQUE constraint failed: mcp_servers.name") {
         AppError::conflict("name", "MCP 名称已存在（不区分大小写）")
     } else if text.contains("FOREIGN KEY constraint failed") {
         AppError::conflict("assignment", "MCP 仍有全局或项目分配，不能删除")
@@ -664,5 +706,6 @@ pub(super) fn map_mcp_write_error(
         AppError::conflict("assignment", "全局继承与项目分配不能重复")
     } else {
         AppError::database(database_path, operation)
-    }
+    };
+    app_error.with_source(error)
 }

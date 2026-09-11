@@ -4,8 +4,8 @@ pub mod tool_probe;
 
 use std::{
     fs,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
+    path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use serde::Serialize;
@@ -36,6 +36,7 @@ pub struct AppPaths {
     staging: PathBuf,
     journals: PathBuf,
     database_backups: PathBuf,
+    logs: PathBuf,
 }
 
 impl AppPaths {
@@ -57,6 +58,7 @@ impl AppPaths {
             staging: data_root.join("staging"),
             journals: data_root.join("journals"),
             database_backups: data_root.join("database-backups"),
+            logs: data_root.join("logs"),
             data_root,
         })
     }
@@ -93,11 +95,25 @@ impl AppPaths {
         &self,
         run_ids: impl IntoIterator<Item = &'a str>,
     ) -> Result<(), AppError> {
+        let run_ids = run_ids.into_iter().collect::<Vec<_>>();
+        for run_id in &run_ids {
+            validate_run_id(run_id)?;
+        }
         audit_private_tree(&self.journals)?;
         for run_id in run_ids {
             let run_directory = self.snapshots.join(run_id);
-            if fs::symlink_metadata(&run_directory).is_ok() {
-                audit_private_tree(&run_directory)?;
+            match fs::symlink_metadata(&run_directory) {
+                Ok(_) => {
+                    audit_private_tree(&run_directory)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(AppError::permission(
+                        &run_directory.to_string_lossy(),
+                        "lstat_snapshot_run",
+                    )
+                    .with_source(error));
+                }
             }
         }
         Ok(())
@@ -143,7 +159,11 @@ impl AppPaths {
         &self.database_backups
     }
 
-    fn private_directories(&self) -> [&Path; 7] {
+    pub fn logs(&self) -> &Path {
+        &self.logs
+    }
+
+    fn private_directories(&self) -> [&Path; 8] {
         [
             &self.data_root,
             &self.central_skills,
@@ -152,8 +172,28 @@ impl AppPaths {
             &self.staging,
             &self.journals,
             &self.database_backups,
+            &self.logs,
         ]
     }
+}
+
+/// run ID 只允许作为快照目录下的单一普通分量；在数据库 claim 前也不能让它
+/// 通过 `Path::join` 影响应用私有目录之外的权限审计范围。
+fn validate_run_id(run_id: &str) -> Result<(), AppError> {
+    let path = Path::new(run_id);
+    if run_id.is_empty()
+        || run_id.as_bytes().contains(&0)
+        || path.components().count() != 1
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(AppError::invalid_input(
+            "runId",
+            "同步 run 标识必须是单一安全路径段",
+        ));
+    }
+    Ok(())
 }
 
 /// 后台/刷新探测所需的全部显式输入；不读进程环境（那只在 setup 里做一次）。
@@ -258,6 +298,29 @@ impl AppState {
         &self.database
     }
 
+    /// 取得数据库锁；持锁线程 panic 留下的中毒标记直接恢复。数据库的每次写入都在
+    /// SQLite 事务里，panic 只会回滚未提交事务，不会留下需要拒绝后续命令的半状态。
+    pub fn database_guard(&self) -> MutexGuard<'_, Database> {
+        self.database.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn redactor_read(&self) -> RwLockReadGuard<'_, SecretRedactor> {
+        self.redactor.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn redactor_write(&self) -> RwLockWriteGuard<'_, SecretRedactor> {
+        self.redactor
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Apply/Restore/接管共用的写串行锁；同样从中毒中恢复（写入本身有 journal 与快照兜底）。
+    pub fn lock_write_operations(&self) -> MutexGuard<'_, ()> {
+        self.write_operations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// 可移进阻塞线程池的数据库句柄；锁语义与 `database()` 完全相同。
     pub fn database_handle(&self) -> Arc<Mutex<Database>> {
         Arc::clone(&self.database)
@@ -279,7 +342,7 @@ impl AppState {
     pub fn environment(&self) -> Result<Arc<ExplicitEnvironment>, AppError> {
         self.environment
             .read()
-            .map_err(|_| state_lock_error())?
+            .unwrap_or_else(PoisonError::into_inner)
             .clone()
             .ok_or_else(environment_probing_error)
     }
@@ -307,12 +370,18 @@ impl AppState {
                 .environment
                 .with_claude_provider_policy(probe.claude_provider_policy),
         );
-        *self.environment.write().map_err(|_| state_lock_error())? = Some(Arc::clone(&environment));
+        *self
+            .environment
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&environment));
         Ok(environment)
     }
 
     pub fn environment_state(&self) -> Result<EnvironmentStateDto, AppError> {
-        let environment = self.environment.read().map_err(|_| state_lock_error())?;
+        let environment = self
+            .environment
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
         Ok(match environment.as_deref() {
             None => EnvironmentStateDto {
                 probing: true,
@@ -336,10 +405,6 @@ impl AppState {
             },
         })
     }
-}
-
-fn state_lock_error() -> AppError {
-    AppError::new(ErrorCode::WriteInProgress, "应用状态锁不可用", false)
 }
 
 fn environment_probing_error() -> AppError {
@@ -462,6 +527,58 @@ mod tests {
         symlink(&outside, &linked).unwrap();
 
         assert!(AppPaths::from_data_root(linked.join("private-data")).is_err());
+    }
+
+    #[test]
+    fn audit_run_scope_rejects_path_traversal_and_empty_ids() {
+        let temporary = tempdir().unwrap();
+        let isolated_root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(isolated_root.join("audit-scope-data")).unwrap();
+        paths.ensure_directories().unwrap();
+
+        for run_id in ["", ".", "..", "../outside", "nested/run", "/tmp/outside"] {
+            assert!(
+                paths.audit_run_scope([run_id]).is_err(),
+                "不安全 run ID 不应进入权限审计：{run_id:?}"
+            );
+        }
+        paths.audit_run_scope(["safe-run"]).unwrap();
+    }
+
+    /// 持锁线程 panic 后锁被标记中毒；后续命令必须仍能拿到锁并正常工作，
+    /// 而不是永远返回"应用状态锁不可用"。
+    #[test]
+    fn a_panic_while_holding_the_database_lock_does_not_poison_later_commands() {
+        let temporary = tempdir().unwrap();
+        let isolated_root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(isolated_root.join("poison-data")).unwrap();
+        let state = std::sync::Arc::new(AppState::initialize(paths).unwrap());
+        let poisoner = std::sync::Arc::clone(&state);
+        let outcome = std::thread::spawn(move || {
+            let _database = poisoner.database().lock().unwrap();
+            let _redactor = poisoner.redactor().write().unwrap();
+            let _write = poisoner.write_operations().lock().unwrap();
+            panic!("模拟命令执行中 panic");
+        })
+        .join();
+        assert!(outcome.is_err());
+        assert!(state.database().is_poisoned());
+
+        let version =
+            crate::commands::with_db(&state, |database| database.schema_version()).unwrap();
+        assert_eq!(version, 20);
+        assert_eq!(state.redactor_read().redact_text("safe"), "safe");
+        drop(state.lock_write_operations());
+        let redacted = crate::commands::with_db_and_redactor(&state, |database, redactor| {
+            redactor.register_secret("poison-secret");
+            Ok((
+                database.schema_version()?,
+                redactor.redact_text("poison-secret"),
+            ))
+        })
+        .unwrap();
+        assert_eq!(redacted.0, 20);
+        assert_ne!(redacted.1, "poison-secret");
     }
 
     #[test]

@@ -511,12 +511,14 @@ pub fn discover_skill_import(
             &repository::SkillImportPreviewRecord {
                 id,
                 tool,
-                context_json: serde_json::to_string(&context)
-                    .map_err(|_| AppError::invalid_input("import", "导入证据无法序列化"))?,
+                context_json: serde_json::to_string(&context).map_err(|error| {
+                    AppError::invalid_input("import", "导入证据无法序列化").with_source(error)
+                })?,
                 status: "previewed".to_owned(),
             },
-            &serde_json::to_string(&preview)
-                .map_err(|_| AppError::invalid_input("import", "导入展示无法序列化"))?,
+            &serde_json::to_string(&preview).map_err(|error| {
+                AppError::invalid_input("import", "导入展示无法序列化").with_source(error)
+            })?,
         )?;
     }
     Ok(preview)
@@ -605,8 +607,9 @@ fn confirm_with_fault(
         ));
     }
     let record = repository::get_preview(database.connection(), &input.preview_id)?;
-    let context: ImportContext = serde_json::from_str(&record.context_json)
-        .map_err(|_| AppError::invalid_input("previewId", "导入证据无效，请重新检测"))?;
+    let context: ImportContext = serde_json::from_str(&record.context_json).map_err(|error| {
+        AppError::invalid_input("previewId", "导入证据无效，请重新检测").with_source(error)
+    })?;
     if context.version != CONTEXT_VERSION {
         return Err(AppError::stale_preview(&record.id, "skillImport"));
     }
@@ -661,7 +664,7 @@ fn confirm_with_fault(
     }
     let budget = Cell::new(MAX_READ_BYTES);
     validate_sources(environment, &selected, &budget, true)
-        .map_err(|_| AppError::stale_preview(&record.id, "skillImport"))?;
+        .map_err(|error| AppError::stale_preview(&record.id, "skillImport").with_source(error))?;
     let mut prepared: Vec<PreparedSkillImport> = Vec::new();
     let prepare_result = (|| {
         for (index, candidate) in selected.iter().enumerate() {
@@ -688,7 +691,9 @@ fn confirm_with_fault(
         let transaction = database
             .connection_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| AppError::database(&database_path, "begin_skill_import"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "begin_skill_import").with_source(error)
+            })?;
         repository::validate_preview(&transaction, &record, &context.central_state)?;
         validate_sources(environment, &selected, &budget, true)?;
         for (index, item) in prepared.iter_mut().enumerate() {
@@ -716,9 +721,9 @@ fn confirm_with_fault(
         fault("commit", prepared.len())?;
         commit_attempted = true;
         fault("uncertain_rollback", prepared.len())?;
-        transaction
-            .commit()
-            .map_err(|_| AppError::database(&database_path, "commit_skill_import"))?;
+        transaction.commit().map_err(|error| {
+            AppError::database(&database_path, "commit_skill_import").with_source(error)
+        })?;
         fault("after_commit", prepared.len())?;
         Ok(())
     })();
@@ -768,8 +773,10 @@ pub fn prepare_skill_takeover(
         ));
     }
     let record = repository::get_preview(database.connection(), &input.preview_id)?;
-    let context: ImportContext = serde_json::from_str(&record.context_json)
-        .map_err(|_| AppError::invalid_input("previewId", "接管证据无效，请重新检测"))?;
+    let context: ImportContext = serde_json::from_str(&record.context_json).map_err(|error| {
+        AppError::invalid_input("previewId", "接管证据无效，请重新检测")
+            .with_source_redacted(error, redactor)
+    })?;
     if context.version != CONTEXT_VERSION {
         return Err(AppError::stale_preview(&record.id, "skillTakeover"));
     }
@@ -806,7 +813,9 @@ pub fn prepare_skill_takeover(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_prepare_skill_takeover"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_prepare_skill_takeover").with_source(error)
+        })?;
     repository::validate_preview(&transaction, &record, &context.central_state)?;
     let mut entries = Vec::with_capacity(selected.len());
     let mut assigned_count = 0_u32;
@@ -869,12 +878,15 @@ pub fn prepare_skill_takeover(
                 rusqlite::params![record.tool.as_str(), skill_id],
                 |row| row.get::<_, bool>(0),
             )
-            .map_err(|_| AppError::database(&database_path, "read_takeover_assignment"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "read_takeover_assignment").with_source(error)
+            })?;
         if already_assigned {
             reused_count = reused_count.saturating_add(1);
         } else {
-            let row_version = u32::try_from(central.row_version)
-                .map_err(|_| AppError::invalid_input("rowVersion", "Skill 版本超出范围"))?;
+            let row_version = u32::try_from(central.row_version).map_err(|error| {
+                AppError::invalid_input("rowVersion", "Skill 版本超出范围").with_source(error)
+            })?;
             skills::set_global_assignment_in_connection(
                 &transaction,
                 &database_path,
@@ -923,9 +935,9 @@ pub fn prepare_skill_takeover(
     }
     crate::sync::persist_preview_in_connection(&transaction, &plan, &database_path)?;
     repository::consume_preview(&transaction, &record.id)?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_prepare_skill_takeover"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_prepare_skill_takeover").with_source(error)
+    })?;
     Ok(SkillTakeoverPreviewResultDto {
         tool: record.tool,
         assigned_count,
@@ -943,7 +955,7 @@ fn validate_takeover_candidate_entry(
     expected_fingerprint: &str,
 ) -> Result<(), AppError> {
     let current = library::inspect_skill_takeover_entry(&source.entry)
-        .map_err(|_| AppError::stale_preview(preview_id, "skillTakeover"))?;
+        .map_err(|error| AppError::stale_preview(preview_id, "skillTakeover").with_source(error))?;
     let current_type = match current.entry_type {
         SkillTakeoverEntryKind::ExternalSymlink => SkillTakeoverEntryType::ExternalSymlink,
         SkillTakeoverEntryKind::Directory => SkillTakeoverEntryType::Directory,
@@ -989,7 +1001,9 @@ fn committed_batch(
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()
-            .map_err(|_| AppError::database("skills", "verify_skill_import_commit"))?;
+            .map_err(|error| {
+                AppError::database("skills", "verify_skill_import_commit").with_source(error)
+            })?;
         match row {
             Some((path, hash)) if path == item.central_path && hash == item.content_hash => {
                 present += 1

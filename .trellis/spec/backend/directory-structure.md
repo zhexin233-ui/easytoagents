@@ -34,6 +34,7 @@ src-tauri/
 │   ├── domain/                  # Shared domain types and validation
 │   ├── error.rs                 # Stable cross-layer error contract
 │   ├── git/                     # Read-only Git inspection
+│   ├── logging.rs               # Structured private tracing sink
 │   ├── mcp/                     # MCP central intent and synchronization
 │   ├── profiles/                # Provider/prompt profile services
 │   ├── projects/                # Project registration, scanning, native resources
@@ -97,8 +98,9 @@ src-tauri/
       state: State<'_, AppState>,
       id: String,
   ) -> Result<ProjectDto, AppError> {
-      let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-      projects::get_project(&mut database, &*state.environment()?, &id)
+      with_db(&state, |database| {
+          projects::get_project(database, &*state.environment()?, &id)
+      })
   }
   ```
 

@@ -36,12 +36,18 @@ pub fn list_registered_projects(database: &Database) -> Result<Vec<ProjectRecord
              WHERE removed_at IS NULL
              ORDER BY display_name COLLATE NOCASE, root_path",
         )
-        .map_err(|_| AppError::database(&database_path, "prepare_list_projects"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "prepare_list_projects").with_source(error)
+        })?;
     let projects = statement
         .query_map([], project_from_row)
-        .map_err(|_| AppError::database(&database_path, "query_list_projects"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "query_list_projects").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&database_path, "decode_list_projects"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "decode_list_projects").with_source(error)
+        })?;
     Ok(projects)
 }
 
@@ -73,7 +79,7 @@ fn get_project_where(
         .connection()
         .query_row(&sql, [value], project_from_row)
         .optional()
-        .map_err(|_| AppError::database(&database_path, "get_project"))
+        .map_err(|error| AppError::database(&database_path, "get_project").with_source(error))
 }
 
 pub fn insert_project(
@@ -132,7 +138,9 @@ pub fn reactivate_project(
                 expected_row_version,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "reactivate_project"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "reactivate_project").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::conflict(
             "rowVersion",
@@ -166,7 +174,9 @@ pub fn update_project_scan(
                 expected_row_version,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "update_project_scan"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "update_project_scan").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::conflict("rowVersion", "项目已被其他操作更新"));
     }
@@ -189,7 +199,7 @@ pub fn update_project_display_name(
              WHERE id = ?1 AND row_version = ?3 AND removed_at IS NULL",
             params![id, display_name, expected_row_version],
         )
-        .map_err(|_| AppError::database(&database_path, "rename_project"))?;
+        .map_err(|error| AppError::database(&database_path, "rename_project").with_source(error))?;
     if updated != 1 {
         return Err(AppError::conflict("rowVersion", "项目已被其他操作更新"));
     }
@@ -206,7 +216,9 @@ pub fn soft_remove_project(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_remove_project"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_remove_project").with_source(error)
+        })?;
     let blocking_run = transaction
         .query_row(
             "SELECT id, status FROM sync_runs
@@ -217,7 +229,9 @@ pub fn soft_remove_project(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "check_project_active_run"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "check_project_active_run").with_source(error)
+        })?;
     if let Some((run_id, status)) = blocking_run {
         return Err(AppError::write_in_progress(&run_id, &status));
     }
@@ -238,19 +252,26 @@ pub fn soft_remove_project(
             [id],
             |row| row.get::<_, u32>(0),
         )
-        .map_err(|_| AppError::database(&database_path, "count_project_targets"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "count_project_targets").with_source(error)
+        })?;
     transaction
         .execute(
             "DELETE FROM mcp_project_assignments WHERE project_id = ?1",
             [id],
         )
-        .map_err(|_| AppError::database(&database_path, "remove_project_mcp_assignments"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "remove_project_mcp_assignments").with_source(error)
+        })?;
     transaction
         .execute(
             "DELETE FROM skill_project_assignments WHERE project_id = ?1",
             [id],
         )
-        .map_err(|_| AppError::database(&database_path, "remove_project_skill_assignments"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "remove_project_skill_assignments")
+                .with_source(error)
+        })?;
     let updated = transaction
         .execute(
             "UPDATE projects
@@ -258,13 +279,13 @@ pub fn soft_remove_project(
              WHERE id = ?1 AND row_version = ?2 AND removed_at IS NULL",
             params![id, expected_row_version],
         )
-        .map_err(|_| AppError::database(&database_path, "remove_project"))?;
+        .map_err(|error| AppError::database(&database_path, "remove_project").with_source(error))?;
     if updated != 1 {
         return Err(AppError::conflict("rowVersion", "项目已被其他操作更新"));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_remove_project"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_remove_project").with_source(error)
+    })?;
     Ok(RemoveProjectResult {
         managed_target_count,
     })

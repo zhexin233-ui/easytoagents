@@ -46,8 +46,9 @@ pub(crate) fn persist_preview(
                 record.redacted_preview_json
             ],
         )
-        .map_err(|_| {
+        .map_err(|error| {
             AppError::database(&database.path().to_string_lossy(), "persist_mcp_import")
+                .with_source(error)
         })?;
     Ok(())
 }
@@ -75,7 +76,7 @@ pub(crate) fn get_preview(
                 context_json: row.get(4)?, redacted_preview_json: row.get(5)?, status: row.get(6)?,
             })
         },
-    ).optional().map_err(|_| AppError::database(&database.path().to_string_lossy(), "get_mcp_import"))?
+    ).optional().map_err(|error| AppError::database(&database.path().to_string_lossy(), "get_mcp_import").with_source(error))?
         .ok_or_else(|| AppError::not_found("mcpImportPreview", id))
 }
 
@@ -86,7 +87,8 @@ pub(crate) fn state_fingerprint(
     tool: Tool,
     target_path: &str,
 ) -> Result<String, AppError> {
-    let read_error = |_| AppError::database(target_path, "read_mcp_import_state");
+    let read_error =
+        |error| AppError::database(target_path, "read_mcp_import_state").with_source(error);
     let mut state = Vec::new();
     let mut servers = connection
         .prepare_cached("SELECT id, row_version FROM mcp_servers ORDER BY id")
@@ -137,11 +139,12 @@ pub(crate) fn has_project_assignment(
             params![tool.as_str(), mcp_id],
             |row| row.get(0),
         )
-        .map_err(|_| {
+        .map_err(|error| {
             AppError::database(
                 &database.path().to_string_lossy(),
                 "read_import_project_assignment",
             )
+            .with_source(error)
         })
 }
 
@@ -158,12 +161,12 @@ pub(crate) fn adopt_import(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&path, "begin_mcp_import"))?;
+        .map_err(|error| AppError::database(&path, "begin_mcp_import").with_source(error))?;
     let actual = transaction.query_row(
         "SELECT tool, target_path, observed_full_hash, context_json, status FROM mcp_import_previews WHERE id = ?1",
         [&preview.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?,
             row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
-    ).optional().map_err(|_| AppError::database(&path, "validate_mcp_import"))?
+    ).optional().map_err(|error| AppError::database(&path, "validate_mcp_import").with_source(error))?
         .ok_or_else(|| AppError::not_found("mcpImportPreview", &preview.id))?;
     if actual.4 != "previewed" {
         return Err(AppError::preview_already_consumed(&preview.id, &actual.4));
@@ -183,7 +186,7 @@ pub(crate) fn adopt_import(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "check_mcp_import_writer"))?;
+        .map_err(|error| AppError::database(&path, "check_mcp_import_writer").with_source(error))?;
     if let Some((id, status)) = writer {
         return Err(AppError::write_in_progress(&id, &status));
     }
@@ -192,15 +195,16 @@ pub(crate) fn adopt_import(
     let target_id = baseline
         .map(|value| value.target_id.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let projection_json = serde_json::to_string(projection)
-        .map_err(|_| AppError::invalid_input("import", "导入基线无法序列化"))?;
+    let projection_json = serde_json::to_string(projection).map_err(|error| {
+        AppError::invalid_input("import", "导入基线无法序列化").with_source(error)
+    })?;
     let managed_hash = hash_json(projection);
     if let Some(baseline) = baseline {
         let updated = transaction.execute(
             "UPDATE managed_targets SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
              baseline_projection_json = ?4, last_status = 'in_sync' WHERE id = ?1 AND row_version = ?5",
             params![target_id, preview.observed_full_hash, managed_hash, projection_json, baseline.target_row_version],
-        ).map_err(|_| AppError::database(&path, "extend_mcp_import_baseline"))?;
+        ).map_err(|error| AppError::database(&path, "extend_mcp_import_baseline").with_source(error))?;
         if updated != 1 {
             return Err(AppError::stale_preview(&preview.id, &preview.target_path));
         }
@@ -219,7 +223,9 @@ pub(crate) fn adopt_import(
                     projection_json
                 ],
             )
-            .map_err(|_| AppError::database(&path, "adopt_mcp_import_baseline"))?;
+            .map_err(|error| {
+                AppError::database(&path, "adopt_mcp_import_baseline").with_source(error)
+            })?;
     }
     let mut result = McpImportResultDto {
         tool: preview.tool,
@@ -248,25 +254,27 @@ pub(crate) fn adopt_import(
                     "UPDATE mcp_servers SET updated_at = updated_at WHERE id = ?1",
                     [&id],
                 )
-                .map_err(|_| AppError::database(&path, "touch_imported_mcp"))?;
+                .map_err(|error| {
+                    AppError::database(&path, "touch_imported_mcp").with_source(error)
+                })?;
         }
         transaction.execute(
             "INSERT INTO managed_items(id, target_id, resource_kind, resource_id, external_key, last_applied_item_hash)
              VALUES (?1, ?2, 'mcp', ?3, ?4, ?5)",
             params![Uuid::new_v4().to_string(), target_id, id, item.configuration.name, item.item_hash],
-        ).map_err(|_| AppError::conflict("import", "原生 MCP 的管理关系已变化"))?;
+        ).map_err(|error| AppError::conflict("import", "原生 MCP 的管理关系已变化").with_source(error))?;
     }
     // 文件不受 SQLite 锁保护，入库期间源文件变化必须让整批回滚。
     validate_source()?;
     let consumed = transaction.execute(
         "UPDATE mcp_import_previews SET status = 'consumed', consumed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?1 AND status = 'previewed'", [&preview.id],
-    ).map_err(|_| AppError::database(&path, "consume_mcp_import"))?;
+    ).map_err(|error| AppError::database(&path, "consume_mcp_import").with_source(error))?;
     if consumed != 1 {
         return Err(AppError::preview_already_consumed(&preview.id, "consumed"));
     }
     transaction
         .commit()
-        .map_err(|_| AppError::database(&path, "commit_mcp_import"))?;
+        .map_err(|error| AppError::database(&path, "commit_mcp_import").with_source(error))?;
     Ok(result)
 }

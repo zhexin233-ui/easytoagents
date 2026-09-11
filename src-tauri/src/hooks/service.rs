@@ -296,7 +296,9 @@ pub fn list_global_hook_target_statuses(
                     let diagnostic_code = match descriptor.policy {
                         PolicyState::Blocked => "CLAUDE_POLICY_BLOCKED",
                         PolicyState::Unknown => crate::sync::ERROR_CLAUDE_POLICY_UNKNOWN,
-                        PolicyState::Allowed => unreachable!("allowed policy was handled above"),
+                        PolicyState::Allowed => {
+                            return Err(AppError::internal("allowed 策略不应进入阻断分支"))
+                        }
                     };
                     (SyncStatus::PolicyBlocked, Some(diagnostic_code.to_owned()))
                 } else {
@@ -458,94 +460,105 @@ fn readopt_with_scan(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_readopt"))?;
-    let (updated_items, removed_items) =
-        match scan {
-            TargetScan::Observed(observed) => {
-                transaction
+        .map_err(|error| AppError::database(&database_path, "begin_readopt").with_source(error))?;
+    let (updated_items, removed_items) = match scan {
+        TargetScan::Observed(observed) => {
+            transaction
                 .execute(
                     "UPDATE managed_targets SET baseline_full_hash = ?2, baseline_managed_hash = ?3
                      WHERE id = ?1",
-                    params![baseline.target_id, observed.full_hash, observed.managed_hash],
+                    params![
+                        baseline.target_id,
+                        observed.full_hash,
+                        observed.managed_hash
+                    ],
                 )
-                .map_err(|_| AppError::database(&database_path, "readopt_target_baseline"))?;
-                // 数组型原生条目没有稳定名称键：按外部键携带的 (事件, matcher)
-                // 重定位到原生分组，组内未被其他 item 认领的条目即该 item 的
-                // 当前内容；分组消失或无可认领条目视为已被外部移除。
-                let mut groups = native_group_hashes(observed, events_root(tool));
-                let mut updated = 0u32;
-                let mut removed = 0u32;
-                for item in existing_items {
-                    let parts: Vec<&str> = item.external_key.splitn(3, '|').collect();
-                    let relocated = if let [event, _identity, matcher] = parts.as_slice() {
-                        groups
-                            .get_mut(&((*event).to_owned(), (*matcher).to_owned()))
-                            .and_then(|entries| {
-                                entries.iter_mut().find(|(_, claimed)| !*claimed).map(
-                                    |(hash, claimed)| {
-                                        *claimed = true;
-                                        hash.clone()
-                                    },
-                                )
-                            })
-                    } else {
-                        None
-                    };
-                    match relocated {
-                        Some(hash) => {
-                            transaction
-                                .execute(
-                                    "UPDATE managed_items SET last_applied_item_hash = ?2
+                .map_err(|error| {
+                    AppError::database(&database_path, "readopt_target_baseline").with_source(error)
+                })?;
+            // 数组型原生条目没有稳定名称键：按外部键携带的 (事件, matcher)
+            // 重定位到原生分组，组内未被其他 item 认领的条目即该 item 的
+            // 当前内容；分组消失或无可认领条目视为已被外部移除。
+            let mut groups = native_group_hashes(observed, events_root(tool));
+            let mut updated = 0u32;
+            let mut removed = 0u32;
+            for item in existing_items {
+                let parts: Vec<&str> = item.external_key.splitn(3, '|').collect();
+                let relocated = if let [event, _identity, matcher] = parts.as_slice() {
+                    groups
+                        .get_mut(&((*event).to_owned(), (*matcher).to_owned()))
+                        .and_then(|entries| {
+                            entries.iter_mut().find(|(_, claimed)| !*claimed).map(
+                                |(hash, claimed)| {
+                                    *claimed = true;
+                                    hash.clone()
+                                },
+                            )
+                        })
+                } else {
+                    None
+                };
+                match relocated {
+                    Some(hash) => {
+                        transaction
+                            .execute(
+                                "UPDATE managed_items SET last_applied_item_hash = ?2
                                      WHERE id = ?1 AND target_id = ?3",
-                                    params![item.id, hash, baseline.target_id],
-                                )
-                                .map_err(|_| {
-                                    AppError::database(&database_path, "readopt_item_baseline")
-                                })?;
-                            updated += 1;
-                        }
-                        None => {
-                            transaction
-                                .execute(
-                                    "DELETE FROM managed_items WHERE id = ?1 AND target_id = ?2",
-                                    params![item.id, baseline.target_id],
-                                )
-                                .map_err(|_| {
-                                    AppError::database(&database_path, "readopt_remove_item")
-                                })?;
-                            removed += 1;
-                        }
+                                params![item.id, hash, baseline.target_id],
+                            )
+                            .map_err(|error| {
+                                AppError::database(&database_path, "readopt_item_baseline")
+                                    .with_source(error)
+                            })?;
+                        updated += 1;
+                    }
+                    None => {
+                        transaction
+                            .execute(
+                                "DELETE FROM managed_items WHERE id = ?1 AND target_id = ?2",
+                                params![item.id, baseline.target_id],
+                            )
+                            .map_err(|error| {
+                                AppError::database(&database_path, "readopt_remove_item")
+                                    .with_source(error)
+                            })?;
+                        removed += 1;
                     }
                 }
-                (updated, removed)
             }
-            TargetScan::Missing => {
-                transaction
-                    .execute(
-                        "DELETE FROM managed_items WHERE target_id = ?1",
-                        params![baseline.target_id],
-                    )
-                    .map_err(|_| AppError::database(&database_path, "readopt_clear_items"))?;
-                transaction
-                    .execute(
-                        "UPDATE managed_targets
+            (updated, removed)
+        }
+        TargetScan::Missing => {
+            transaction
+                .execute(
+                    "DELETE FROM managed_items WHERE target_id = ?1",
+                    params![baseline.target_id],
+                )
+                .map_err(|error| {
+                    AppError::database(&database_path, "readopt_clear_items").with_source(error)
+                })?;
+            transaction
+                .execute(
+                    "UPDATE managed_targets
                      SET baseline_full_hash = NULL, baseline_managed_hash = NULL
                      WHERE id = ?1",
-                        params![baseline.target_id],
-                    )
-                    .map_err(|_| AppError::database(&database_path, "readopt_clear_baseline"))?;
-                (0, existing_items.len().min(u32::MAX as usize) as u32)
-            }
-            _ => {
-                return Err(AppError::conflict(
-                    "readopt",
-                    "目标当前无法安全读取，请先恢复文件内容或权限后再重新接管",
-                ));
-            }
-        };
+                    params![baseline.target_id],
+                )
+                .map_err(|error| {
+                    AppError::database(&database_path, "readopt_clear_baseline").with_source(error)
+                })?;
+            (0, existing_items.len().min(u32::MAX as usize) as u32)
+        }
+        _ => {
+            return Err(AppError::conflict(
+                "readopt",
+                "目标当前无法安全读取，请先恢复文件内容或权限后再重新接管",
+            ));
+        }
+    };
     transaction
         .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_readopt"))?;
+        .map_err(|error| AppError::database(&database_path, "commit_readopt").with_source(error))?;
     Ok(ReadoptHookTargetResultDto {
         target_path: descriptor.path.clone().unwrap_or_default(),
         updated_item_count: updated_items,
@@ -1242,7 +1255,9 @@ fn ensure_hook_target(
                 target_path,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "insert_hook_managed_target"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "insert_hook_managed_target").with_source(error)
+        })?;
     load_managed_target_baseline(database, &id)
 }
 
@@ -1278,7 +1293,9 @@ pub(super) fn find_hook_target_baseline(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_hook_managed_target"))
+        .map_err(|error| {
+            AppError::database(&database_path, "find_hook_managed_target").with_source(error)
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -1358,8 +1375,9 @@ fn canonical_project(path: &str) -> Result<ProjectRoot, AppError> {
 }
 
 fn safe_row_version(value: i64) -> Result<u32, AppError> {
-    u32::try_from(value)
-        .map_err(|_| AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 范围"))
+    u32::try_from(value).map_err(|error| {
+        AppError::invalid_input("rowVersion", "数据库 row_version 超出 RPC 范围").with_source(error)
+    })
 }
 
 pub(super) fn projection_value_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
@@ -1387,7 +1405,7 @@ fn load_target_status(
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "load_hook_target_status"))?;
+        .map_err(|error| AppError::database(&path, "load_hook_target_status").with_source(error))?;
     status.map(parse_sync_status).transpose()
 }
 
@@ -1404,8 +1422,9 @@ pub(crate) const HOOK_INTERPRETERS: &[&str] = &[
 
 /// 计算脚本文件内容 SHA-256（导入去重用）；文件安全性由调用方先校验。
 pub(crate) fn script_content_hash(path: &Path) -> Result<String, AppError> {
-    let bytes =
-        fs::read(path).map_err(|_| AppError::invalid_input("scriptSourcePath", "脚本不可读取"))?;
+    let bytes = fs::read(path).map_err(|error| {
+        AppError::invalid_input("scriptSourcePath", "脚本不可读取").with_source(error)
+    })?;
     Ok(hash_bytes(&bytes))
 }
 
@@ -1526,8 +1545,9 @@ fn expand_script_path(word: &str, home: &Path) -> Option<PathBuf> {
 /// 把脚本本体复制进中央目录（0600），返回接管结果。失败时清理半成品。
 fn adopt_script(paths: &AppPaths, hook_id: &str, source: &str) -> Result<AdoptedScript, AppError> {
     let source_path = PathBuf::from(source);
-    let metadata = fs::symlink_metadata(&source_path)
-        .map_err(|_| AppError::invalid_input("scriptSourcePath", "脚本不存在或不可读取"))?;
+    let metadata = fs::symlink_metadata(&source_path).map_err(|error| {
+        AppError::invalid_input("scriptSourcePath", "脚本不存在或不可读取").with_source(error)
+    })?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(AppError::invalid_input(
             "scriptSourcePath",
@@ -1540,16 +1560,19 @@ fn adopt_script(paths: &AppPaths, hook_id: &str, source: &str) -> Result<Adopted
             "脚本不能超过 512 KiB",
         ));
     }
-    let bytes = fs::read(&source_path)
-        .map_err(|_| AppError::invalid_input("scriptSourcePath", "脚本不可读取"))?;
+    let bytes = fs::read(&source_path).map_err(|error| {
+        AppError::invalid_input("scriptSourcePath", "脚本不可读取").with_source(error)
+    })?;
     let file_name = sanitize_script_file_name(&source_path);
     let directory = paths.central_hooks().join(hook_id);
     ensure_private_directory(&directory)?;
     let central_path = directory.join(&file_name);
-    let mut file = create_private_file(&central_path)
-        .map_err(|_| AppError::invalid_input("scriptSourcePath", "中央脚本目录不可写"))?;
-    std::io::Write::write_all(&mut file, &bytes)
-        .map_err(|_| AppError::invalid_input("scriptSourcePath", "中央脚本写入失败"))?;
+    let mut file = create_private_file(&central_path).map_err(|error| {
+        AppError::invalid_input("scriptSourcePath", "中央脚本目录不可写").with_source(error)
+    })?;
+    std::io::Write::write_all(&mut file, &bytes).map_err(|error| {
+        AppError::invalid_input("scriptSourcePath", "中央脚本写入失败").with_source(error)
+    })?;
     drop(file);
     Ok(AdoptedScript {
         hash: hash_bytes(&bytes),

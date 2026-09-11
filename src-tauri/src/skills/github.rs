@@ -141,12 +141,13 @@ fn shared_client(proxy: Option<&str>) -> Result<Client, AppError> {
         // 避免 macOS headless/沙箱中读取系统动态代理存储；只使用显式注入的代理。
         .no_proxy();
     if let Some(proxy) = proxy.as_deref() {
-        client_builder = client_builder.proxy(
-            Proxy::all(proxy)
-                .map_err(|_| AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 配置无效"))?,
-        );
+        client_builder = client_builder.proxy(Proxy::all(proxy).map_err(|error| {
+            AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 配置无效").with_source(error)
+        })?);
     }
-    let client = client_builder.build().map_err(|_| download_error())?;
+    let client = client_builder
+        .build()
+        .map_err(|error| download_error().with_source(error))?;
     clients.insert(proxy, client.clone());
     Ok(client)
 }
@@ -160,8 +161,8 @@ pub(crate) async fn download_github_skill(
     let link = parse_github_tree_link(input)?;
     let downloader = GithubDownloader {
         client: shared_client(proxy)?,
-        api_base: Url::parse(GITHUB_API).map_err(|_| download_error())?,
-        raw_base: Url::parse(GITHUB_RAW).map_err(|_| download_error())?,
+        api_base: Url::parse(GITHUB_API).map_err(|error| download_error().with_source(error))?,
+        raw_base: Url::parse(GITHUB_RAW).map_err(|error| download_error().with_source(error))?,
         deadline: Instant::now() + OVERALL_TIMEOUT,
         requests: AtomicUsize::new(0),
         metadata_bytes: AtomicUsize::new(0),
@@ -196,7 +197,7 @@ impl GithubDownloader {
         let directory =
             tauri::async_runtime::spawn_blocking(move || write_downloaded_files(contents))
                 .await
-                .map_err(|_| download_error())??;
+                .map_err(|error| download_error().with_source(error))??;
         Ok(DownloadedGithubSkill {
             directory,
             normalized_url: resolved.normalized_url,
@@ -396,7 +397,7 @@ impl GithubDownloader {
         if total > MAX_METADATA_TOTAL_BYTES {
             return Err(AppError::invalid_input("url", "GitHub 元数据大小超出限制"));
         }
-        serde_json::from_slice(&bytes).map_err(|_| download_error())
+        serde_json::from_slice(&bytes).map_err(|error| download_error().with_source(error))
     }
 }
 
@@ -405,9 +406,9 @@ fn write_downloaded_files(contents: Vec<(PathBuf, Vec<u8>)>) -> Result<TempDir, 
     let directory = tempfile::Builder::new()
         .prefix("easytoagents-github-skill-")
         .tempdir()
-        .map_err(|_| download_error())?;
+        .map_err(|error| download_error().with_source(error))?;
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
-        .map_err(|_| download_error())?;
+        .map_err(|error| download_error().with_source(error))?;
     for (relative, bytes) in contents {
         let destination = directory.path().join(&relative);
         if let Some(parent) = destination.parent() {
@@ -418,9 +419,13 @@ fn write_downloaded_files(contents: Vec<(PathBuf, Vec<u8>)>) -> Result<TempDir, 
             .create_new(true)
             .mode(0o600)
             .open(&destination)
-            .map_err(|_| download_error())?;
-        output.write_all(&bytes).map_err(|_| download_error())?;
-        output.sync_all().map_err(|_| download_error())?;
+            .map_err(|error| download_error().with_source(error))?;
+        output
+            .write_all(&bytes)
+            .map_err(|error| download_error().with_source(error))?;
+        output
+            .sync_all()
+            .map_err(|error| download_error().with_source(error))?;
     }
     Ok(directory)
 }
@@ -493,8 +498,9 @@ fn validate_tree_files(tree: TreeResponse) -> Result<Vec<DownloadFile>, AppError
 }
 
 fn parse_github_tree_link(input: &str) -> Result<GithubTreeLink, AppError> {
-    let url = Url::parse(input.trim())
-        .map_err(|_| AppError::invalid_input("url", "请输入有效的 GitHub Skill 目录链接"))?;
+    let url = Url::parse(input.trim()).map_err(|error| {
+        AppError::invalid_input("url", "请输入有效的 GitHub Skill 目录链接").with_source(error)
+    })?;
     if url.scheme() != "https"
         || url.host_str() != Some("github.com")
         || url.port().is_some()
@@ -537,7 +543,9 @@ fn parse_github_tree_link(input: &str) -> Result<GithubTreeLink, AppError> {
 fn decode_url_segment(segment: &str) -> Result<String, AppError> {
     let decoded = percent_decode_str(segment)
         .decode_utf8()
-        .map_err(|_| AppError::invalid_input("url", "GitHub 链接必须使用有效 UTF-8"))?
+        .map_err(|error| {
+            AppError::invalid_input("url", "GitHub 链接必须使用有效 UTF-8").with_source(error)
+        })?
         .into_owned();
     if decoded.is_empty()
         || decoded == "."
@@ -568,9 +576,12 @@ fn normalized_tree_url(
     reference: &[String],
     directory: &[String],
 ) -> Result<String, AppError> {
-    let mut url = Url::parse("https://github.com/").map_err(|_| download_error())?;
+    let mut url =
+        Url::parse("https://github.com/").map_err(|error| download_error().with_source(error))?;
     {
-        let mut segments = url.path_segments_mut().map_err(|_| download_error())?;
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|error| download_error().with_source(format!("{error:?}")))?;
         segments.pop_if_empty();
         segments.push(owner).push(repository).push("tree");
         for segment in reference.iter().chain(directory) {
@@ -612,7 +623,9 @@ fn validate_remote_relative_path(path: &str) -> Result<Vec<String>, AppError> {
 fn api_url(base: &Url, segments: &[&str]) -> Result<Url, AppError> {
     let mut url = base.clone();
     {
-        let mut path = url.path_segments_mut().map_err(|_| download_error())?;
+        let mut path = url
+            .path_segments_mut()
+            .map_err(|error| download_error().with_source(format!("{error:?}")))?;
         path.pop_if_empty();
         for segment in segments {
             path.push(segment);
@@ -629,7 +642,11 @@ async fn read_limited(mut response: Response, limit: usize) -> Result<Vec<u8>, A
         return Err(AppError::invalid_input("url", "GitHub 响应大小超出限制"));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| download_error())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| download_error().with_source(error))?
+    {
         if bytes.len().saturating_add(chunk.len()) > limit {
             return Err(AppError::invalid_input("url", "GitHub 响应大小超出限制"));
         }
@@ -639,9 +656,9 @@ async fn read_limited(mut response: Response, limit: usize) -> Result<Vec<u8>, A
 }
 
 fn create_private_directories(root: &Path, target: &Path) -> Result<(), AppError> {
-    let relative = target
-        .strip_prefix(root)
-        .map_err(|_| AppError::invalid_input("url", "GitHub 下载路径越界"))?;
+    let relative = target.strip_prefix(root).map_err(|error| {
+        AppError::invalid_input("url", "GitHub 下载路径越界").with_source(error)
+    })?;
     let mut current = root.to_path_buf();
     for component in relative.components() {
         let Component::Normal(component) = component else {
@@ -650,7 +667,7 @@ fn create_private_directories(root: &Path, target: &Path) -> Result<(), AppError
         current.push(component);
         match fs::create_dir(&current) {
             Ok(()) => fs::set_permissions(&current, fs::Permissions::from_mode(0o700))
-                .map_err(|_| download_error())?,
+                .map_err(|error| download_error().with_source(error))?,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if !fs::symlink_metadata(&current).is_ok_and(|metadata| metadata.is_dir()) {
                     return Err(download_error());
@@ -1004,13 +1021,14 @@ mod tests {
                     } else {
                         "200 OK"
                     };
-                    write!(
+                    let _ = write!(
                         stream,
                         "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
-                    )
-                    .unwrap();
-                    stream.write_all(&body).unwrap();
+                    );
+                    // 下载器在任一文件失败时会取消其它请求；客户端提前关闭
+                    // 连接是 fixture 的正常收尾，不应让服务线程 panic。
+                    let _ = stream.write_all(&body);
                     in_flight.fetch_sub(1, Ordering::SeqCst);
                 }));
             }

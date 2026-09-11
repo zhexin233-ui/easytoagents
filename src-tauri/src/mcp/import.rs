@@ -49,7 +49,11 @@ pub fn discover_mcp_import(
     tool: Tool,
 ) -> Result<McpImportPreviewDto, AppError> {
     let native = read_native(environment, tool)?;
-    let target_path = native.descriptor.path.clone().expect("扫描已验证目标路径");
+    let target_path = native
+        .descriptor
+        .path
+        .clone()
+        .ok_or_else(|| AppError::internal("扫描后的 MCP 目标缺少路径"))?;
     let fingerprint = repository::state_fingerprint(database.connection(), tool, &target_path)?;
     let records = mcp::list_mcp_servers(database)?;
     let baseline = service::find_mcp_target_baseline(database, &native.descriptor, None)?;
@@ -61,10 +65,8 @@ pub fn discover_mcp_import(
     let mut local_redactor = redactor.clone();
     // 从私有中央记录恢复证据，不能依赖本进程是否已执行过 CRUD 或同步预览。
     for record in &records {
-        service::register_configuration_secrets(
-            &mut local_redactor,
-            &service::configuration_from_record(record)?,
-        );
+        let configuration = service::configuration_from_record(record, &local_redactor)?;
+        service::register_configuration_secrets(&mut local_redactor, &configuration);
     }
     register_native_secrets(&mut local_redactor, &native.items);
     let mut evidence = ImportEvidence {
@@ -84,7 +86,7 @@ pub fn discover_mcp_import(
             reason: None,
             redacted_projection: Value::Null,
         };
-        let configuration = match parse_native_item(tool, name, raw) {
+        let configuration = match parse_native_item(tool, name, raw, &local_redactor) {
             Ok(value) if !local_redactor.contains_secret(name) => value,
             Ok(_) => {
                 candidate.reason = Some("name 含已识别的凭据，不能导入。".to_owned());
@@ -138,7 +140,8 @@ pub fn discover_mcp_import(
             .iter()
             .find(|record| record.name.eq_ignore_ascii_case(name));
         let reuse_id = if let Some(record) = matching {
-            if record.name != *name || service::configuration_from_record(record)? != configuration
+            if record.name != *name
+                || service::configuration_from_record(record, &local_redactor)? != configuration
             {
                 candidate.status = Status::NameConflict;
                 candidate.reason = Some(
@@ -201,9 +204,11 @@ pub fn discover_mcp_import(
                 id,
                 tool,
                 target_path,
-                observed_full_hash: native.full_hash.expect("存在候选时必有原文件"),
-                context_json: serialize_import(&evidence)?,
-                redacted_preview_json: serialize_import(&preview)?,
+                observed_full_hash: native
+                    .full_hash
+                    .ok_or_else(|| AppError::internal("存在导入候选时原文件哈希不能为空"))?,
+                context_json: serialize_import(&evidence, &local_redactor)?,
+                redacted_preview_json: serialize_import(&preview, &local_redactor)?,
                 status: "previewed".to_owned(),
             },
         )?;
@@ -224,8 +229,11 @@ pub fn confirm_mcp_import(
             &preview.status,
         ));
     }
-    let evidence: ImportEvidence = serde_json::from_str(&preview.context_json)
-        .map_err(|_| AppError::invalid_input("importPreview", "导入证据无效，请重新检测"))?;
+    let evidence: ImportEvidence =
+        serde_json::from_str(&preview.context_json).map_err(|error| {
+            AppError::invalid_input("importPreview", "导入证据无效，请重新检测")
+                .with_source_redacted(error, redactor)
+        })?;
     let selected = input.candidate_ids.iter().collect::<BTreeSet<_>>();
     if selected.is_empty()
         || selected.len() != input.candidate_ids.len()
@@ -261,14 +269,17 @@ pub fn confirm_mcp_import(
         if hash_json(raw) != candidate.item_hash || owned.contains_key(&candidate.name) {
             return Err(AppError::stale_preview(&preview.id, &preview.target_path));
         }
-        let configuration = parse_native_item(preview.tool, &candidate.name, raw)
-            .map_err(|_| AppError::stale_preview(&preview.id, &preview.target_path))?;
+        let configuration = parse_native_item(preview.tool, &candidate.name, raw, redactor)
+            .map_err(|error| {
+                AppError::stale_preview(&preview.id, &preview.target_path)
+                    .with_source_redacted(format!("{error:?}"), redactor)
+            })?;
         if let Some(reuse_id) = &candidate.reuse_id {
             let record = records
                 .iter()
                 .find(|record| &record.id == reuse_id)
                 .ok_or_else(|| AppError::stale_preview(&preview.id, &preview.target_path))?;
-            if service::configuration_from_record(record)? != configuration {
+            if service::configuration_from_record(record, redactor)? != configuration {
                 return Err(AppError::stale_preview(&preview.id, &preview.target_path));
             }
         }
@@ -431,6 +442,7 @@ fn parse_native_item(
     tool: Tool,
     name: &str,
     raw: &Value,
+    redactor: &SecretRedactor,
 ) -> Result<ValidatedMcpConfiguration, CandidateError> {
     let mut object = raw.as_object().cloned().ok_or_else(|| {
         (
@@ -438,15 +450,15 @@ fn parse_native_item(
             "MCP 条目必须是字段对象，不能是标量或数组。".to_owned(),
         )
     })?;
-    let enabled: Option<bool> = take_optional(&mut object, "enabled")?;
-    let disabled: Option<bool> = take_optional(&mut object, "disabled")?;
+    let enabled: Option<bool> = take_optional(&mut object, "enabled", redactor)?;
+    let disabled: Option<bool> = take_optional(&mut object, "disabled", redactor)?;
     if enabled == Some(false) || disabled == Some(true) {
         return Err((
             Status::Disabled,
             "原生条目已停用，本次仅展示，不启用或接管。".to_owned(),
         ));
     }
-    let native_type: Option<String> = take_optional(&mut object, "type")?;
+    let native_type: Option<String> = take_optional(&mut object, "type", redactor)?;
     if object.contains_key("env_http_headers") {
         return Err((
             Status::Unsupported,
@@ -454,12 +466,12 @@ fn parse_native_item(
         ));
     }
     let (command, args, url, headers, env, transport) = if tool == Tool::Opencode {
-        let command_parts: Option<Vec<String>> = take_optional(&mut object, "command")?;
-        let url: Option<String> = take_optional(&mut object, "url")?;
+        let command_parts: Option<Vec<String>> = take_optional(&mut object, "command", redactor)?;
+        let url: Option<String> = take_optional(&mut object, "url", redactor)?;
         let environment: BTreeMap<String, String> =
-            take_optional(&mut object, "environment")?.unwrap_or_default();
+            take_optional(&mut object, "environment", redactor)?.unwrap_or_default();
         let headers: BTreeMap<String, String> =
-            take_optional(&mut object, "headers")?.unwrap_or_default();
+            take_optional(&mut object, "headers", redactor)?.unwrap_or_default();
         let parsed = match native_type.as_deref() {
             Some("local") => {
                 let mut parts = command_parts.ok_or_else(|| {
@@ -507,10 +519,10 @@ fn parse_native_item(
                     McpTransport::StreamableHttp,
                 )
             }
-            Some(kind) => {
+            Some(_kind) => {
                 return Err((
                     Status::Unsupported,
-                    format!("OpenCode MCP type={kind} 暂不支持；仅支持 local 和 remote。"),
+                    "OpenCode MCP type 暂不支持；仅支持 local 和 remote。".to_owned(),
                 ))
             }
             None => {
@@ -523,8 +535,8 @@ fn parse_native_item(
         validate_opencode_extra(&object)?;
         parsed
     } else {
-        let command: Option<String> = take_optional(&mut object, "command")?;
-        let url: Option<String> = take_optional(&mut object, "url")?;
+        let command: Option<String> = take_optional(&mut object, "command", redactor)?;
+        let url: Option<String> = take_optional(&mut object, "url", redactor)?;
         let transport = match (
             native_type.as_deref(),
             command.is_some(),
@@ -543,7 +555,7 @@ fn parse_native_item(
             _ => return Err((Status::Invalid,
                 "type 与 command/url 不匹配：stdio 仅允许 command，HTTP 仅允许 url，不能同时填写或同时缺失。".to_owned())),
         };
-        let args = take_optional(&mut object, "args")?.unwrap_or_default();
+        let args = take_optional(&mut object, "args", redactor)?.unwrap_or_default();
         let headers = take_optional(
             &mut object,
             if matches!(tool, Tool::Claude | Tool::Cursor) {
@@ -551,9 +563,10 @@ fn parse_native_item(
             } else {
                 "http_headers"
             },
+            redactor,
         )?
         .unwrap_or_default();
-        let env = take_optional(&mut object, "env")?.unwrap_or_default();
+        let env = take_optional(&mut object, "env", redactor)?.unwrap_or_default();
         (command, args, url, headers, env, transport)
     };
     for (field, value) in
@@ -655,17 +668,20 @@ fn validate_opencode_extra(object: &Map<String, Value>) -> Result<(), CandidateE
 fn take_optional<T: DeserializeOwned>(
     object: &mut Map<String, Value>,
     key: &'static str,
+    redactor: &SecretRedactor,
 ) -> Result<Option<T>, CandidateError> {
     object
         .remove(key)
         .map(|value| {
-            serde_json::from_value(value).map_err(|_| {
+            serde_json::from_value(value).map_err(|error| {
                 let expected = match key {
                     "enabled" | "disabled" => "布尔值",
                     "args" => "字符串数组",
                     "env" | "environment" | "headers" | "http_headers" => "字符串映射",
                     _ => "字符串",
                 };
+                let _diagnostic =
+                    AppError::parse(key, "json").with_source_redacted(error, redactor);
                 (
                     Status::Invalid,
                     format!("{key} 必须是{expected}，不能为 null 或其它类型。"),
@@ -709,9 +725,11 @@ fn register_native_secrets(redactor: &mut SecretRedactor, items: &Map<String, Va
     }
 }
 
-fn serialize_import(value: &impl Serialize) -> Result<String, AppError> {
-    serde_json::to_string(value)
-        .map_err(|_| AppError::invalid_input("importPreview", "导入预览无法序列化"))
+fn serialize_import(value: &impl Serialize, redactor: &SecretRedactor) -> Result<String, AppError> {
+    serde_json::to_string(value).map_err(|error| {
+        AppError::invalid_input("importPreview", "导入预览无法序列化")
+            .with_source_redacted(error, redactor)
+    })
 }
 
 #[cfg(test)]
@@ -739,7 +757,8 @@ mod tests {
             },
             "enabled": true
         });
-        let parsed = parse_native_item(Tool::Opencode, "fixture", &raw).unwrap();
+        let redactor = SecretRedactor::default();
+        let parsed = parse_native_item(Tool::Opencode, "fixture", &raw, &redactor).unwrap();
         assert_eq!(parsed.transport, McpTransport::Stdio);
         assert_eq!(parsed.command.as_deref(), Some("bun"));
         assert_eq!(parsed.args, ["run", "server"]);
@@ -761,7 +780,8 @@ mod tests {
                 "enabled": true
             });
             raw.as_object_mut().unwrap().insert(field.to_owned(), value);
-            let error = parse_native_item(Tool::Opencode, "fixture", &raw).unwrap_err();
+            let redactor = SecretRedactor::default();
+            let error = parse_native_item(Tool::Opencode, "fixture", &raw, &redactor).unwrap_err();
             assert_eq!(error.0, Status::Invalid);
         }
 
@@ -771,9 +791,14 @@ mod tests {
             "url": "https://mcp.example.test/rpc"
         });
         assert_eq!(
-            parse_native_item(Tool::Opencode, "fixture", &mixed)
-                .unwrap_err()
-                .0,
+            parse_native_item(
+                Tool::Opencode,
+                "fixture",
+                &mixed,
+                &SecretRedactor::default(),
+            )
+            .unwrap_err()
+            .0,
             Status::Invalid
         );
     }

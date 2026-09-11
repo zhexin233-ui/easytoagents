@@ -15,6 +15,7 @@ pub mod domain;
 pub mod error;
 pub mod git;
 pub mod hooks;
+pub mod logging;
 pub mod mcp;
 pub mod overview;
 pub mod profiles;
@@ -300,6 +301,9 @@ pub fn run() {
         .setup(move |app| {
             command_builder.mount_events(app);
             let paths = app::AppPaths::from_data_root(app.path().app_data_dir()?)?;
+            // 日志目录随其它私有目录一起建立；订阅者先装好，后面的初始化失败才有记录。
+            paths.ensure_directories()?;
+            logging::init(&paths);
             let home = app.path().home_dir()?;
             let mut probe_input = app::tool_probe::ReleaseToolProbeInput::for_macos_release(
                 home,
@@ -362,7 +366,10 @@ fn environment_proxy() -> Result<Option<String>, error::AppError> {
             continue;
         };
         let value = value.into_string().map_err(|_| {
+            // 代理环境变量可能包含凭据；无效 UTF-8 时只保留固定诊断，
+            // 不把原始字节复制到日志 source。
             error::AppError::invalid_input("proxy", "HTTP(S)/ALL_PROXY 必须是 UTF-8")
+                .with_source("proxy environment contains invalid UTF-8")
         })?;
         if !value.trim().is_empty() {
             return Ok(Some(value));

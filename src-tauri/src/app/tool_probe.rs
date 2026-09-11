@@ -813,7 +813,7 @@ fn open_absolute_nofollow(path: &Path, final_directory: bool) -> SecureOpen {
 }
 
 fn open_root_directory() -> Option<File> {
-    let root = CString::new("/").expect("根路径不含 NUL");
+    let root: &std::ffi::CStr = c"/";
     // SAFETY: root 是静态合法 C 路径；返回 fd 立即交给 File。
     let descriptor = unsafe {
         libc::open(

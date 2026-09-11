@@ -66,9 +66,9 @@ impl EntityId {
     }
 
     pub fn parse(value: &str) -> Result<Self, AppError> {
-        Uuid::parse_str(value)
-            .map(Self)
-            .map_err(|_| AppError::invalid_input("id", "实体 ID 必须是 UUID"))
+        Uuid::parse_str(value).map(Self).map_err(|error| {
+            AppError::invalid_input("id", "实体 ID 必须是 UUID").with_source(error)
+        })
     }
 }
 

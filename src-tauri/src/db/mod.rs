@@ -154,8 +154,9 @@ impl Database {
         paths.ensure_directories()?;
         prepare_database_file(paths.database())?;
 
-        let mut connection = Connection::open(paths.database())
-            .map_err(|_| AppError::database(&paths.database().to_string_lossy(), "open"))?;
+        let mut connection = Connection::open(paths.database()).map_err(|error| {
+            AppError::database(&paths.database().to_string_lossy(), "open").with_source(error)
+        })?;
         // PRAGMA 是连接级状态，迁移事务提交不会重置它们；只需在打开时配置一次。
         configure_connection(&connection, paths.database())?;
         let applied_migrations = count_applied_migrations(&connection, paths.database())?;
@@ -210,7 +211,10 @@ impl Database {
                 [],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::database(&self.path.to_string_lossy(), "read_schema_version"))
+            .map_err(|error| {
+                AppError::database(&self.path.to_string_lossy(), "read_schema_version")
+                    .with_source(error)
+            })
     }
 }
 
@@ -229,18 +233,24 @@ fn configure_connection(connection: &Connection, path: &Path) -> Result<(), AppE
              PRAGMA recursive_triggers = OFF;
              PRAGMA busy_timeout = 5000;",
         )
-        .map_err(|_| AppError::database(&path.to_string_lossy(), "configure_pragmas"))?;
+        .map_err(|error| {
+            AppError::database(&path.to_string_lossy(), "configure_pragmas").with_source(error)
+        })?;
     let journal_mode = connection
         .query_row("PRAGMA journal_mode = WAL", [], |row| {
             row.get::<_, String>(0)
         })
-        .map_err(|_| AppError::database(&path.to_string_lossy(), "enable_wal"))?;
+        .map_err(|error| {
+            AppError::database(&path.to_string_lossy(), "enable_wal").with_source(error)
+        })?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
         return Err(AppError::database(&path.to_string_lossy(), "verify_wal"));
     }
     let foreign_keys = connection
         .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
-        .map_err(|_| AppError::database(&path.to_string_lossy(), "verify_foreign_keys"))?;
+        .map_err(|error| {
+            AppError::database(&path.to_string_lossy(), "verify_foreign_keys").with_source(error)
+        })?;
     if foreign_keys != 1 {
         return Err(AppError::database(
             &path.to_string_lossy(),
@@ -258,7 +268,7 @@ fn count_applied_migrations(connection: &Connection, path: &Path) -> Result<usiz
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map_err(|_| AppError::database(&path.to_string_lossy(), "read_schema_migrations"))?;
+        .map_err(|error| AppError::database(&path.to_string_lossy(), "read_schema_migrations").with_source(error))?;
     if table_exists == 0 {
         return Ok(0);
     }
@@ -267,7 +277,9 @@ fn count_applied_migrations(connection: &Connection, path: &Path) -> Result<usiz
             row.get::<_, i64>(0)
         })
         .map(|count| usize::try_from(count).unwrap_or_default())
-        .map_err(|_| AppError::database(&path.to_string_lossy(), "read_schema_migrations"))
+        .map_err(|error| {
+            AppError::database(&path.to_string_lossy(), "read_schema_migrations").with_source(error)
+        })
 }
 
 /// 把 WAL 中的页写回主文件并截断 WAL，使随后复制出的主文件不依赖 WAL 即可打开。
@@ -277,7 +289,9 @@ fn checkpoint_wal(connection: &Connection, path: &Path) -> Result<(), AppError> 
             row.get::<_, i64>(0)
         })
         .map(drop)
-        .map_err(|_| AppError::database(&path.to_string_lossy(), "checkpoint_wal"))
+        .map_err(|error| {
+            AppError::database(&path.to_string_lossy(), "checkpoint_wal").with_source(error)
+        })
 }
 
 const STARTUP_BACKUP_RETENTION: usize = 3;
@@ -318,19 +332,19 @@ fn run_migrations(connection: &mut Connection, path: &Path) -> Result<(), AppErr
                 applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );",
         )
-        .map_err(|_| AppError::migration(&path.to_string_lossy(), 0))?;
+        .map_err(|error| AppError::migration(&path.to_string_lossy(), 0).with_source(error))?;
 
     let applied_migrations = {
         let mut statement = connection
             .prepare_cached("SELECT version, name FROM schema_migrations ORDER BY version")
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), 0))?;
+            .map_err(|error| AppError::migration(&path.to_string_lossy(), 0).with_source(error))?;
         let applied = statement
             .query_map([], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), 0))?
+            .map_err(|error| AppError::migration(&path.to_string_lossy(), 0).with_source(error))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), 0))?;
+            .map_err(|error| AppError::migration(&path.to_string_lossy(), 0).with_source(error))?;
         applied
     };
     for (index, (version, name)) in applied_migrations.iter().enumerate() {
@@ -345,29 +359,37 @@ fn run_migrations(connection: &mut Connection, path: &Path) -> Result<(), AppErr
     for migration in MIGRATIONS.iter().skip(applied_migrations.len()) {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| {
+                AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+            })?;
         validate_migration_preconditions(&transaction, migration, path)?;
-        transaction
-            .execute_batch(migration.sql)
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+        transaction.execute_batch(migration.sql).map_err(|error| {
+            AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+        })?;
         transaction
             .execute(
                 "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
                 params![migration.version, migration.name],
             )
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
-        transaction
-            .commit()
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| {
+                AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+            })?;
+        transaction.commit().map_err(|error| {
+            AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+        })?;
         // 迁移可能原地修订 sqlite_schema 文本（writable_schema）；这类修订不会推进
         // schema cookie，本连接会继续持有陈旧 schema 缓存。每次迁移提交后显式推进
         // cookie，强制该连接与所有缓存语句重新解析最新 schema。
         let schema_version: i64 = connection
             .query_row("PRAGMA schema_version", [], |row| row.get(0))
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| {
+                AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+            })?;
         connection
             .pragma_update(None, "schema_version", schema_version + 1)
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| {
+                AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+            })?;
     }
     Ok(())
 }
@@ -399,7 +421,10 @@ fn validate_migration_preconditions(
                     params![table, SHARED_TOOL_ANCHOR],
                     |row| row.get(0),
                 )
-                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+                .map_err(|error| {
+                    AppError::migration(&path.to_string_lossy(), migration.version)
+                        .with_source(error)
+                })?;
             if matched != 1 {
                 return Err(AppError::migration(
                     &path.to_string_lossy(),
@@ -416,7 +441,9 @@ fn validate_migration_preconditions(
                 [MANAGED_TARGET_ANCHOR],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| {
+                AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+            })?;
         if managed_target_matched != 1 {
             return Err(AppError::migration(
                 &path.to_string_lossy(),
@@ -444,7 +471,10 @@ fn validate_migration_preconditions(
                     params![table, anchor],
                     |row| row.get(0),
                 )
-                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+                .map_err(|error| {
+                    AppError::migration(&path.to_string_lossy(), migration.version)
+                        .with_source(error)
+                })?;
             if matched != 1 {
                 return Err(AppError::migration(
                     &path.to_string_lossy(),
@@ -460,7 +490,9 @@ fn validate_migration_preconditions(
                 [],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| {
+                AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+            })?;
         if assignments_table != 1 {
             return Err(AppError::migration(
                 &path.to_string_lossy(),
@@ -482,7 +514,7 @@ fn validate_migration_preconditions(
                    AND instr(sql, 'tool TEXT NOT NULL CHECK(tool IN (''claude'', ''codex'', ''zcode'', ''cursor'')),') > 0;
                  PRAGMA writable_schema = OFF;",
             )
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| AppError::migration(&path.to_string_lossy(), migration.version).with_source(error))?;
         let anchors = [
             (
                 "mcp_global_assignments",
@@ -530,7 +562,10 @@ fn validate_migration_preconditions(
                     params![table, anchor],
                     |row| row.get(0),
                 )
-                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+                .map_err(|error| {
+                    AppError::migration(&path.to_string_lossy(), migration.version)
+                        .with_source(error)
+                })?;
             if matched != 1 {
                 return Err(AppError::migration(
                     &path.to_string_lossy(),
@@ -562,7 +597,10 @@ fn validate_migration_preconditions(
                     params![table, SHARED_TOOL_ANCHOR],
                     |row| row.get(0),
                 )
-                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+                .map_err(|error| {
+                    AppError::migration(&path.to_string_lossy(), migration.version)
+                        .with_source(error)
+                })?;
             if matched != 1 {
                 return Err(AppError::migration(
                     &path.to_string_lossy(),
@@ -584,7 +622,10 @@ fn validate_migration_preconditions(
                     params![table, anchor],
                     |row| row.get(0),
                 )
-                .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+                .map_err(|error| {
+                    AppError::migration(&path.to_string_lossy(), migration.version)
+                        .with_source(error)
+                })?;
             if matched != 1 {
                 return Err(AppError::migration(
                     &path.to_string_lossy(),
@@ -603,7 +644,9 @@ fn validate_migration_preconditions(
                 [SOURCE_PATH_ANCHOR],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::migration(&path.to_string_lossy(), migration.version))?;
+            .map_err(|error| {
+                AppError::migration(&path.to_string_lossy(), migration.version).with_source(error)
+            })?;
         if matched != 1 {
             return Err(AppError::migration(
                 &path.to_string_lossy(),
@@ -627,7 +670,9 @@ fn process_retired_snapshot_cleanup(
             "SELECT snapshot_id, run_id, snapshot_path, storage_kind
              FROM retired_snapshot_cleanup ORDER BY retired_at, snapshot_id",
         )
-        .map_err(|_| AppError::database(&database_path, "read_retired_snapshot_cleanup"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "read_retired_snapshot_cleanup").with_source(error)
+        })?;
     let entries = statement
         .query_map([], |row| {
             Ok((
@@ -637,9 +682,13 @@ fn process_retired_snapshot_cleanup(
                 row.get::<_, String>(3)?,
             ))
         })
-        .map_err(|_| AppError::database(&database_path, "read_retired_snapshot_cleanup"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "read_retired_snapshot_cleanup").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&database_path, "read_retired_snapshot_cleanup"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "read_retired_snapshot_cleanup").with_source(error)
+        })?;
     drop(statement);
 
     for (snapshot_id, run_id, snapshot_path, storage_kind) in entries {
@@ -661,8 +710,9 @@ fn process_retired_snapshot_cleanup(
                     "DELETE FROM retired_snapshot_cleanup WHERE snapshot_id = ?1",
                     [&snapshot_id],
                 )
-                .map_err(|_| {
+                .map_err(|error| {
                     AppError::database(&database_path, "delete_retired_snapshot_cleanup")
+                        .with_source(error)
                 })?;
         }
     }
@@ -752,22 +802,24 @@ fn path_entry_exists(path: &Path) -> Result<bool, AppError> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(_) => Err(AppError::database(&path.to_string_lossy(), "lstat")),
+        Err(error) => Err(AppError::database(&path.to_string_lossy(), "lstat").with_source(error)),
     }
 }
 
 fn copy_private_file(source: &Path, destination: &Path) -> Result<(), AppError> {
-    let mut input = File::open(source)
-        .map_err(|_| AppError::database(&source.to_string_lossy(), "open_backup_source"))?;
+    let mut input = File::open(source).map_err(|error| {
+        AppError::database(&source.to_string_lossy(), "open_backup_source").with_source(error)
+    })?;
     let mut output = create_private_file(destination)?;
-    io::copy(&mut input, &mut output)
-        .map_err(|_| AppError::database(&destination.to_string_lossy(), "copy_backup"))?;
-    output
-        .flush()
-        .map_err(|_| AppError::database(&destination.to_string_lossy(), "flush_backup"))?;
-    output
-        .sync_all()
-        .map_err(|_| AppError::database(&destination.to_string_lossy(), "sync_backup"))?;
+    io::copy(&mut input, &mut output).map_err(|error| {
+        AppError::database(&destination.to_string_lossy(), "copy_backup").with_source(error)
+    })?;
+    output.flush().map_err(|error| {
+        AppError::database(&destination.to_string_lossy(), "flush_backup").with_source(error)
+    })?;
+    output.sync_all().map_err(|error| {
+        AppError::database(&destination.to_string_lossy(), "sync_backup").with_source(error)
+    })?;
     ensure_private_file(destination)
 }
 

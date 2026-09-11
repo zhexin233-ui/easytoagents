@@ -45,12 +45,12 @@ pub fn list_hooks(database: &Database) -> Result<Vec<HookRecord>, AppError> {
         .prepare_cached(&format!(
             "SELECT {HOOK_COLUMNS} FROM hooks ORDER BY name COLLATE NOCASE, id"
         ))
-        .map_err(|_| AppError::database(&path, "prepare_list_hooks"))?;
+        .map_err(|error| AppError::database(&path, "prepare_list_hooks").with_source(error))?;
     let records = statement
         .query_map([], hook_from_row)
-        .map_err(|_| AppError::database(&path, "query_list_hooks"))?
+        .map_err(|error| AppError::database(&path, "query_list_hooks").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_hooks"))?;
+        .map_err(|error| AppError::database(&path, "decode_list_hooks").with_source(error))?;
     Ok(records)
 }
 
@@ -65,7 +65,7 @@ pub fn get_hook(database: &Database, id: &str) -> Result<HookRecord, AppError> {
             hook_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "get_hook"))?
+        .map_err(|error| AppError::database(&path, "get_hook").with_source(error))?
         .ok_or_else(|| AppError::not_found("hook", id))
 }
 
@@ -198,7 +198,9 @@ pub fn global_assignments_for_all_hooks(
         .prepare_cached(
             "SELECT hook_id, tool, event FROM hook_global_assignments ORDER BY hook_id, tool",
         )
-        .map_err(|_| AppError::database(&path, "prepare_all_hook_global_tools"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_all_hook_global_tools").with_source(error)
+        })?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -207,9 +209,13 @@ pub fn global_assignments_for_all_hooks(
                 event_from_database(row.get(2)?)?,
             ))
         })
-        .map_err(|_| AppError::database(&path, "query_all_hook_global_tools"))?
+        .map_err(|error| {
+            AppError::database(&path, "query_all_hook_global_tools").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_all_hook_global_tools"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_all_hook_global_tools").with_source(error)
+        })?;
     let mut grouped = std::collections::BTreeMap::<String, Vec<(Tool, HookEvent)>>::new();
     for (hook_id, tool, event) in rows {
         grouped.entry(hook_id).or_default().push((tool, event));
@@ -241,7 +247,9 @@ pub fn global_assignments_for_hook(
             "SELECT tool, event FROM hook_global_assignments
              WHERE hook_id = ?1 ORDER BY tool",
         )
-        .map_err(|_| AppError::database(&path, "prepare_hook_global_tools"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_hook_global_tools").with_source(error)
+        })?;
     let assignments = statement
         .query_map([hook_id], |row| {
             Ok((
@@ -249,9 +257,11 @@ pub fn global_assignments_for_hook(
                 event_from_database(row.get(1)?)?,
             ))
         })
-        .map_err(|_| AppError::database(&path, "query_hook_global_tools"))?
+        .map_err(|error| AppError::database(&path, "query_hook_global_tools").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_hook_global_tools"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_hook_global_tools").with_source(error)
+        })?;
     Ok(assignments)
 }
 
@@ -282,7 +292,9 @@ pub fn set_global_assignment(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&path, "begin_set_hook_global_assignment"))?;
+        .map_err(|error| {
+            AppError::database(&path, "begin_set_hook_global_assignment").with_source(error)
+        })?;
     verify_row_version(
         &transaction,
         "hooks",
@@ -299,7 +311,9 @@ pub fn set_global_assignment(
                 params![tool.as_str(), hook_id],
                 |row| row.get::<_, i64>(0),
             )
-            .map_err(|_| AppError::database(&path, "count_hook_project_assignments"))?;
+            .map_err(|error| {
+                AppError::database(&path, "count_hook_project_assignments").with_source(error)
+            })?;
         validate_global_assignment(project_count > 0)?;
         // 已分配时更新事件（同 (tool, hook) 一工具一事件；切换 = UPDATE）。
         transaction
@@ -315,14 +329,16 @@ pub fn set_global_assignment(
                 "DELETE FROM hook_global_assignments WHERE tool = ?1 AND hook_id = ?2",
                 params![tool.as_str(), hook_id],
             )
-            .map_err(|_| AppError::database(&path, "delete_hook_global_assignment"))?
+            .map_err(|error| {
+                AppError::database(&path, "delete_hook_global_assignment").with_source(error)
+            })?
     };
     if changed == 1 {
         touch_versioned_row(&transaction, "hooks", hook_id, expected_row_version, &path)?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&path, "commit_set_hook_global_assignment"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&path, "commit_set_hook_global_assignment").with_source(error)
+    })?;
     get_hook(database, hook_id)
 }
 
@@ -343,7 +359,9 @@ pub fn set_project_assignment(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&path, "begin_set_hook_project_assignment"))?;
+        .map_err(|error| {
+            AppError::database(&path, "begin_set_hook_project_assignment").with_source(error)
+        })?;
     verify_row_version(
         &transaction,
         "hooks",
@@ -369,7 +387,9 @@ pub fn set_project_assignment(
             params![tool.as_str(), hook_id],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(&path, "read_hook_global_assignment"))?;
+        .map_err(|error| {
+            AppError::database(&path, "read_hook_global_assignment").with_source(error)
+        })?;
     // 全局项在项目层是只读继承：不仅禁止重复添加，也禁止通过伪造 RPC 请求
     // 把一个不存在的项目 assignment 当作“禁用全局项”移除。
     validate_project_assignment(globally_assigned)?;
@@ -389,7 +409,9 @@ pub fn set_project_assignment(
                  WHERE project_id = ?1 AND tool = ?2 AND hook_id = ?3",
                 params![project_id, tool.as_str(), hook_id],
             )
-            .map_err(|_| AppError::database(&path, "delete_hook_project_assignment"))?
+            .map_err(|error| {
+                AppError::database(&path, "delete_hook_project_assignment").with_source(error)
+            })?
     };
     if changed == 1 {
         touch_versioned_row(
@@ -407,9 +429,9 @@ pub fn set_project_assignment(
             &path,
         )?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&path, "commit_set_hook_project_assignment"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&path, "commit_set_hook_project_assignment").with_source(error)
+    })?;
     get_hook(database, hook_id)
 }
 
@@ -442,18 +464,19 @@ pub fn list_assigned_hooks(
             None,
         ),
     };
-    let mut statement = database
-        .connection()
-        .prepare_cached(sql)
-        .map_err(|_| AppError::database(&path, "prepare_list_assigned_hooks"))?;
+    let mut statement = database.connection().prepare_cached(sql).map_err(|error| {
+        AppError::database(&path, "prepare_list_assigned_hooks").with_source(error)
+    })?;
     let records = statement
         .query_map(
             params![project_parameter, tool.as_str()],
             assigned_hook_from_row,
         )
-        .map_err(|_| AppError::database(&path, "query_list_assigned_hooks"))?
+        .map_err(|error| AppError::database(&path, "query_list_assigned_hooks").with_source(error))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_assigned_hooks"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_list_assigned_hooks").with_source(error)
+        })?;
     Ok(records)
 }
 
@@ -470,7 +493,9 @@ pub fn project_assignment_events(
             "SELECT hook_id, event FROM hook_project_assignments
              WHERE project_id = ?1 AND tool = ?2",
         )
-        .map_err(|_| AppError::database(&path, "prepare_project_assignment_events"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_project_assignment_events").with_source(error)
+        })?;
     let rows = statement
         .query_map(params![project_id, tool.as_str()], |row| {
             Ok((
@@ -478,9 +503,13 @@ pub fn project_assignment_events(
                 event_from_database(row.get(1)?).map_err(|_| rusqlite::Error::InvalidQuery)?,
             ))
         })
-        .map_err(|_| AppError::database(&path, "query_project_assignment_events"))?
+        .map_err(|error| {
+            AppError::database(&path, "query_project_assignment_events").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_project_assignment_events"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_project_assignment_events").with_source(error)
+        })?;
     Ok(rows)
 }
 
@@ -501,7 +530,9 @@ pub fn project_assignment_exists(
             params![project_id, tool.as_str(), hook_id],
             |row| row.get(0),
         )
-        .map_err(|_| AppError::database(&path, "read_hook_project_assignment"))
+        .map_err(|error| {
+            AppError::database(&path, "read_hook_project_assignment").with_source(error)
+        })
 }
 
 pub fn list_managed_hook_items(
@@ -517,7 +548,9 @@ pub fn list_managed_hook_items(
              WHERE target_id = ?1 AND resource_kind = 'hook'
              ORDER BY external_key, id",
         )
-        .map_err(|_| AppError::database(&path, "prepare_list_managed_hook_items"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_list_managed_hook_items").with_source(error)
+        })?;
     let items = statement
         .query_map([target_id], |row| {
             Ok(ManagedHookItemRecord {
@@ -528,9 +561,13 @@ pub fn list_managed_hook_items(
                 row_version: row.get(4)?,
             })
         })
-        .map_err(|_| AppError::database(&path, "query_list_managed_hook_items"))?
+        .map_err(|error| {
+            AppError::database(&path, "query_list_managed_hook_items").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_managed_hook_items"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_list_managed_hook_items").with_source(error)
+        })?;
     Ok(items)
 }
 
@@ -584,7 +621,7 @@ pub(super) fn map_hook_write_error(
     operation: &'static str,
 ) -> AppError {
     let text = error.to_string();
-    if text.contains("UNIQUE constraint failed: hooks.name") {
+    let app_error = if text.contains("UNIQUE constraint failed: hooks.name") {
         AppError::conflict("name", "Hook 名称已存在（不区分大小写）")
     } else if text.contains("FOREIGN KEY constraint failed") {
         AppError::conflict("assignment", "Hook 仍有全局或项目分配，不能删除")
@@ -594,5 +631,6 @@ pub(super) fn map_hook_write_error(
         AppError::conflict("assignment", "全局继承与项目分配不能重复")
     } else {
         AppError::database(database_path, operation)
-    }
+    };
+    app_error.with_source(error)
 }

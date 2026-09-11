@@ -57,7 +57,9 @@ pub fn snapshot_is_referenced(
             [snapshot_id],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(database_path, "check_native_snapshot_reference"))
+        .map_err(|error| {
+            AppError::database(database_path, "check_native_snapshot_reference").with_source(error)
+        })
 }
 
 pub fn count_blocking_native_resources(
@@ -75,7 +77,9 @@ pub fn count_blocking_native_resources(
             [project_id],
             |row| row.get::<_, u32>(0),
         )
-        .map_err(|_| AppError::database(database_path, "count_blocking_native_resources"))
+        .map_err(|error| {
+            AppError::database(database_path, "count_blocking_native_resources").with_source(error)
+        })
 }
 
 #[allow(dead_code)]
@@ -105,7 +109,9 @@ pub fn count_for_project(
                 })
             },
         )
-        .map_err(|_| AppError::database(&path, "count_project_native_resources"))
+        .map_err(|error| {
+            AppError::database(&path, "count_project_native_resources").with_source(error)
+        })
 }
 
 pub fn list_for_project(
@@ -131,7 +137,7 @@ pub fn list_for_project(
                AND (?3 IS NULL OR target.artifact_kind = ?3)
              ORDER BY target.tool, target.artifact_kind, resource.external_key COLLATE NOCASE, resource.id",
         )
-        .map_err(|_| AppError::database(&path, "prepare_list_native_resources"))?;
+        .map_err(|error| AppError::database(&path, "prepare_list_native_resources").with_source(error))?;
     let records = statement
         .query_map(
             params![
@@ -141,9 +147,13 @@ pub fn list_for_project(
             ],
             native_from_row,
         )
-        .map_err(|_| AppError::database(&path, "query_list_native_resources"))?
+        .map_err(|error| {
+            AppError::database(&path, "query_list_native_resources").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_native_resources"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_list_native_resources").with_source(error)
+        })?;
     Ok(records)
 }
 
@@ -165,7 +175,7 @@ pub fn get_by_id(database: &Database, id: &str) -> Result<NativeResourceRecord, 
             native_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "get_native_resource"))?
+        .map_err(|error| AppError::database(&path, "get_native_resource").with_source(error))?
         .ok_or_else(|| AppError::not_found("projectNativeResource", id))
 }
 
@@ -202,7 +212,7 @@ pub fn get_snapshot(database: &Database, id: &str) -> Result<NativeSnapshotRecor
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&path, "get_native_resource_snapshot"))?
+        .map_err(|error| AppError::database(&path, "get_native_resource_snapshot").with_source(error))?
         .ok_or_else(|| AppError::not_found("snapshot", id))
 }
 
@@ -226,7 +236,9 @@ pub(crate) fn find_by_target_key_in(
             native_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "find_native_resource"))
+        .map_err(|error| {
+            AppError::database(database_path, "find_native_resource").with_source(error)
+        })
 }
 
 #[allow(dead_code)]
@@ -248,12 +260,18 @@ pub fn list_for_target(
              WHERE resource.target_id = ?1
              ORDER BY resource.external_key COLLATE NOCASE, resource.id",
         )
-        .map_err(|_| AppError::database(&path, "prepare_list_target_native_resources"))?;
+        .map_err(|error| {
+            AppError::database(&path, "prepare_list_target_native_resources").with_source(error)
+        })?;
     let records = statement
         .query_map([target_id], native_from_row)
-        .map_err(|_| AppError::database(&path, "query_list_target_native_resources"))?
+        .map_err(|error| {
+            AppError::database(&path, "query_list_target_native_resources").with_source(error)
+        })?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::database(&path, "decode_list_target_native_resources"))?;
+        .map_err(|error| {
+            AppError::database(&path, "decode_list_target_native_resources").with_source(error)
+        })?;
     Ok(records)
 }
 
@@ -304,7 +322,9 @@ pub(crate) fn find_project_target_identity_in(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "find_project_target_identity"))
+        .map_err(|error| {
+            AppError::database(database_path, "find_project_target_identity").with_source(error)
+        })
 }
 
 /// 观测脚手架：只登记项目目标身份，不写基线也不建 managed_items。调用方负责事务边界。
@@ -340,7 +360,9 @@ pub(crate) fn insert_project_target_identity_in(
                 target_path,
             ],
         )
-        .map_err(|_| AppError::database(database_path, "insert_project_target_identity"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "insert_project_target_identity").with_source(error)
+        })?;
     find_project_target_identity_in(
         connection,
         database_path,
@@ -370,7 +392,9 @@ pub(crate) fn upsert_observed_active_in(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "read_native_resource_for_upsert"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "read_native_resource_for_upsert").with_source(error)
+        })?;
     match existing {
         Some((id, state)) if state == "disabled" => {
             connection
@@ -380,7 +404,7 @@ pub(crate) fn upsert_observed_active_in(
                      WHERE id = ?1 AND state = 'disabled'",
                     params![id, entry_type],
                 )
-                .map_err(|_| AppError::database(database_path, "mark_native_resource_conflict"))?;
+                .map_err(|error| AppError::database(database_path, "mark_native_resource_conflict").with_source(error))?;
         }
         Some((id, state)) if state == "conflict" => {
             connection
@@ -390,7 +414,10 @@ pub(crate) fn upsert_observed_active_in(
                      WHERE id = ?1 AND state = 'conflict'",
                     params![id, entry_type],
                 )
-                .map_err(|_| AppError::database(database_path, "touch_native_resource_conflict"))?;
+                .map_err(|error| {
+                    AppError::database(database_path, "touch_native_resource_conflict")
+                        .with_source(error)
+                })?;
         }
         Some((id, _)) => {
             connection
@@ -402,7 +429,10 @@ pub(crate) fn upsert_observed_active_in(
                      WHERE id = ?1 AND state IN ('active', 'missing')",
                     params![id, entry_type, observed_item_hash],
                 )
-                .map_err(|_| AppError::database(database_path, "update_native_resource_active"))?;
+                .map_err(|error| {
+                    AppError::database(database_path, "update_native_resource_active")
+                        .with_source(error)
+                })?;
         }
         None => {
             let id = EntityId::new().to_string();
@@ -414,7 +444,7 @@ pub(crate) fn upsert_observed_active_in(
                      ) VALUES (?1, ?2, ?3, ?4, 'active', ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
                     params![id, target_id, external_key, entry_type, observed_item_hash],
                 )
-                .map_err(|_| AppError::database(database_path, "insert_native_resource"))?;
+                .map_err(|error| AppError::database(database_path, "insert_native_resource").with_source(error))?;
         }
     }
     Ok(())
@@ -446,16 +476,16 @@ pub(crate) fn mark_active_missing_in(
                AND external_key NOT IN ({placeholders})"
         )
     };
-    let mut statement = connection
-        .prepare_cached(&sql)
-        .map_err(|_| AppError::database(database_path, "prepare_mark_native_missing"))?;
+    let mut statement = connection.prepare_cached(&sql).map_err(|error| {
+        AppError::database(database_path, "prepare_mark_native_missing").with_source(error)
+    })?;
     let mut params: Vec<&dyn rusqlite::ToSql> = vec![&target_id];
     for key in remaining_keys {
         params.push(key);
     }
-    statement
-        .execute(params.as_slice())
-        .map_err(|_| AppError::database(database_path, "mark_native_missing"))?;
+    statement.execute(params.as_slice()).map_err(|error| {
+        AppError::database(database_path, "mark_native_missing").with_source(error)
+    })?;
     Ok(())
 }
 
@@ -483,16 +513,16 @@ pub(crate) fn restore_conflict_when_vacant_in(
                AND external_key NOT IN ({placeholders})"
         )
     };
-    let mut statement = connection
-        .prepare_cached(&sql)
-        .map_err(|_| AppError::database(database_path, "prepare_restore_native_conflict"))?;
+    let mut statement = connection.prepare_cached(&sql).map_err(|error| {
+        AppError::database(database_path, "prepare_restore_native_conflict").with_source(error)
+    })?;
     let mut params: Vec<&dyn rusqlite::ToSql> = vec![&target_id];
     for key in occupied_keys {
         params.push(key);
     }
-    statement
-        .execute(params.as_slice())
-        .map_err(|_| AppError::database(database_path, "restore_native_conflict"))?;
+    statement.execute(params.as_slice()).map_err(|error| {
+        AppError::database(database_path, "restore_native_conflict").with_source(error)
+    })?;
     Ok(())
 }
 
@@ -518,7 +548,9 @@ pub fn mark_disabled_in_transaction(
                 expected_row_version
             ],
         )
-        .map_err(|_| AppError::database(database_path, "mark_native_resource_disabled"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "mark_native_resource_disabled").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::stale_preview("persisted", resource_id));
     }
@@ -541,7 +573,9 @@ pub fn mark_restored_in_transaction(
              WHERE id = ?1 AND row_version = ?3 AND state = 'disabled'",
             params![resource_id, observed_item_hash, expected_row_version],
         )
-        .map_err(|_| AppError::database(database_path, "mark_native_resource_restored"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "mark_native_resource_restored").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::stale_preview("persisted", resource_id));
     }

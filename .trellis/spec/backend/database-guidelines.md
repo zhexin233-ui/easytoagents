@@ -58,6 +58,31 @@ without reading or deleting files under a registered project root.
 - Migration tests must use `tempfile` roots and must prove reopening is
   idempotent. Never point a test at a developer database.
 
+### Migration strategy for future schema changes
+
+Published migrations are immutable. Do not edit an existing migration or use
+`PRAGMA writable_schema` in a new migration. For a future change that needs to
+alter a table shape, use a normal transactional table rebuild with this order:
+
+1. Start the migration's `IMMEDIATE` transaction.
+2. Run SQL preconditions in the migration itself and abort on a mismatch.
+3. Create the replacement table with the complete current schema and new
+   constraints.
+4. Copy columns explicitly from the old table.
+5. Validate copied row counts and required data in SQL.
+6. Drop dependent triggers before dropping the old table.
+7. Drop the old table only after the replacement is populated.
+8. Rename the replacement table to the published table name.
+9. Recreate indexes, foreign keys, and cross-table triggers.
+10. Run `PRAGMA foreign_key_check` and abort if it returns any row.
+11. Run `PRAGMA integrity_check` and require the result `ok`.
+12. Record the migration version and commit the transaction.
+
+All preconditions belong in the `.sql` migration, not in a Rust branch that
+silently chooses a different path. Existing migrations containing historical
+schema-text edits remain untouched; this rule applies to migrations added from
+now on.
+
 ### Scenario: In-place schema-text revision for CHECK-only changes (historical)
 
 历史背景：`managed_targets` 被三张子表外键引用（`managed_items` CASCADE、
@@ -258,8 +283,8 @@ remove_regular_payload_if_present(&path)?;
 
 ### 3. Contracts
 
-- Private directories are `0700`; the database, WAL/SHM, backup, journal, and
-  snapshot files are `0600`.
+- Private directories are `0700`; the database, WAL/SHM, backup, journal,
+  snapshot, and log files are `0600`.
 - The schema contains provider/prompt/MCP/skill/project entities, global profile
   state, MCP/Skill/Hook global and project assignments, managed targets/items,
   `project_native_resources` for MCP/Skill observations, sync runs/items,

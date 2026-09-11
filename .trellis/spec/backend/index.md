@@ -7,8 +7,8 @@
 ## Overview
 
 This directory records the conventions used by the Rust/Tauri backend under
-`src-tauri/`. The guides describe the current codebase, including the absence
-of a general-purpose logging pipeline.
+`src-tauri/`. The guides describe the current codebase, including its
+structured tracing pipeline and private rolling log files.
 
 ---
 

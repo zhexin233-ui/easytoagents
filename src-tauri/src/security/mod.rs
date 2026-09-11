@@ -375,10 +375,12 @@ pub fn ensure_private_directory(path: &Path) -> Result<(), AppError> {
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                fs::create_dir(&current)
-                    .map_err(|_| permission_error(&current, "create_directory"))?;
-                let metadata = fs::symlink_metadata(&current)
-                    .map_err(|_| permission_error(&current, "lstat_created_directory"))?;
+                fs::create_dir(&current).map_err(|error| {
+                    permission_error(&current, "create_directory").with_source(error)
+                })?;
+                let metadata = fs::symlink_metadata(&current).map_err(|error| {
+                    permission_error(&current, "lstat_created_directory").with_source(error)
+                })?;
                 if metadata.file_type().is_symlink() || !metadata.is_dir() {
                     return Err(permission_error(
                         &current,
@@ -386,12 +388,14 @@ pub fn ensure_private_directory(path: &Path) -> Result<(), AppError> {
                     ));
                 }
             }
-            Err(_) => return Err(permission_error(&current, "lstat_ancestor")),
+            Err(error) => {
+                return Err(permission_error(&current, "lstat_ancestor").with_source(error));
+            }
         }
     }
 
     fs::set_permissions(path, fs::Permissions::from_mode(PRIVATE_DIRECTORY_MODE))
-        .map_err(|_| permission_error(path, "set_directory_permissions"))
+        .map_err(|error| permission_error(path, "set_directory_permissions").with_source(error))
 }
 
 /// 检查已有路径分量，防止尚未创建的私有叶节点经祖先 symlink 逃逸。
@@ -415,7 +419,9 @@ pub fn reject_symlink_components(path: &Path) -> Result<(), AppError> {
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => break,
-            Err(_) => return Err(permission_error(&current, "lstat_ancestor")),
+            Err(error) => {
+                return Err(permission_error(&current, "lstat_ancestor").with_source(error));
+            }
         }
     }
     Ok(())
@@ -432,20 +438,21 @@ pub fn create_private_file(path: &Path) -> Result<File, AppError> {
         .create_new(true)
         .mode(PRIVATE_FILE_MODE)
         .open(path)
-        .map_err(|_| permission_error(path, "create_file"))?;
+        .map_err(|error| permission_error(path, "create_file").with_source(error))?;
     file.set_permissions(fs::Permissions::from_mode(PRIVATE_FILE_MODE))
-        .map_err(|_| permission_error(path, "set_file_permissions"))?;
+        .map_err(|error| permission_error(path, "set_file_permissions").with_source(error))?;
     Ok(file)
 }
 
 pub fn ensure_private_file(path: &Path) -> Result<(), AppError> {
     reject_symlink_components(path)?;
-    let metadata = fs::symlink_metadata(path).map_err(|_| permission_error(path, "lstat"))?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| permission_error(path, "lstat").with_source(error))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(permission_error(path, "validate_file_type"));
     }
     fs::set_permissions(path, fs::Permissions::from_mode(PRIVATE_FILE_MODE))
-        .map_err(|_| permission_error(path, "set_file_permissions"))
+        .map_err(|error| permission_error(path, "set_file_permissions").with_source(error))
 }
 
 #[cfg(test)]
@@ -470,16 +477,18 @@ fn audit_private_tree_inner(
     visited: &mut HashSet<PathBuf>,
     entries: &mut Vec<PermissionEntry>,
 ) -> Result<(), AppError> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| permission_error(path, "lstat"))?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| permission_error(path, "lstat").with_source(error))?;
     if metadata.file_type().is_symlink() {
         return Err(permission_error(path, "reject_symlink"));
     }
 
     if metadata.is_dir() {
-        fs::set_permissions(path, fs::Permissions::from_mode(PRIVATE_DIRECTORY_MODE))
-            .map_err(|_| permission_error(path, "set_directory_permissions"))?;
-        let canonical =
-            fs::canonicalize(path).map_err(|_| permission_error(path, "canonicalize"))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(PRIVATE_DIRECTORY_MODE)).map_err(
+            |error| permission_error(path, "set_directory_permissions").with_source(error),
+        )?;
+        let canonical = fs::canonicalize(path)
+            .map_err(|error| permission_error(path, "canonicalize").with_source(error))?;
         if !visited.insert(canonical) {
             return Err(permission_error(path, "reject_directory_cycle"));
         }
@@ -488,9 +497,12 @@ fn audit_private_tree_inner(
             mode: PRIVATE_DIRECTORY_MODE,
             is_directory: true,
         });
-        let children = fs::read_dir(path).map_err(|_| permission_error(path, "read_directory"))?;
+        let children = fs::read_dir(path)
+            .map_err(|error| permission_error(path, "read_directory").with_source(error))?;
         for child in children {
-            let child = child.map_err(|_| permission_error(path, "read_directory_entry"))?;
+            let child = child.map_err(|error| {
+                permission_error(path, "read_directory_entry").with_source(error)
+            })?;
             audit_private_tree_inner(&child.path(), visited, entries)?;
         }
         return Ok(());
@@ -498,7 +510,7 @@ fn audit_private_tree_inner(
 
     if metadata.is_file() {
         fs::set_permissions(path, fs::Permissions::from_mode(PRIVATE_FILE_MODE))
-            .map_err(|_| permission_error(path, "set_file_permissions"))?;
+            .map_err(|error| permission_error(path, "set_file_permissions").with_source(error))?;
         entries.push(PermissionEntry {
             path: path.to_owned(),
             mode: PRIVATE_FILE_MODE,

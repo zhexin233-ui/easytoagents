@@ -360,7 +360,10 @@ fn validate_configuration(
                     "streamable_http 必须填写 url，且不能填写 command、args 或 env",
                 ));
             }
-            validate_http_url(url.as_deref().expect("已验证 HTTP URL 存在"))?;
+            validate_http_url(
+                url.as_deref()
+                    .ok_or_else(|| AppError::internal("streamable_http 校验后仍缺少 url"))?,
+            )?;
         }
     }
 
@@ -465,8 +468,9 @@ fn validate_env(env: &BTreeMap<String, String>) -> Result<(), AppError> {
 }
 
 fn validate_http_url(value: &str) -> Result<(), AppError> {
-    let parsed = url::Url::parse(value)
-        .map_err(|_| AppError::invalid_input("url", "MCP URL 必须是无凭据的绝对 HTTP(S) URL"))?;
+    let parsed = url::Url::parse(value).map_err(|error| {
+        AppError::invalid_input("url", "MCP URL 必须是无凭据的绝对 HTTP(S) URL").with_source(error)
+    })?;
     if !matches!(parsed.scheme(), "http" | "https")
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()

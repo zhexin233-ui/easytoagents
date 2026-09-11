@@ -105,7 +105,9 @@ pub fn persist_import_preview(
                 preview.redacted_preview_json,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "persist_profile_import_preview"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "persist_profile_import_preview").with_source(error)
+        })?;
     Ok(())
 }
 
@@ -135,7 +137,9 @@ pub fn get_import_preview(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "get_profile_import_preview"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "get_profile_import_preview").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found("profileImportPreview", preview_id))
 }
 
@@ -149,7 +153,9 @@ pub fn adopt_imported_provider(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_adopt_provider_import"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_adopt_provider_import").with_source(error)
+        })?;
     validate_import_preview(
         &transaction,
         preview,
@@ -195,9 +201,9 @@ pub fn adopt_imported_provider(
         &database_path,
     )?;
     consume_import_preview(&transaction, &preview.id, &database_path)?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_adopt_provider_import"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_adopt_provider_import").with_source(error)
+    })?;
     get_provider_profile(database, &profile.id)
 }
 
@@ -211,7 +217,9 @@ pub fn adopt_imported_prompt(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_adopt_prompt_import"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_adopt_prompt_import").with_source(error)
+        })?;
     validate_import_preview(&transaction, preview, ArtifactKind::Prompt, &database_path)?;
     reject_prompt_import_blocked(
         &transaction,
@@ -249,9 +257,9 @@ pub fn adopt_imported_prompt(
         &database_path,
     )?;
     consume_import_preview(&transaction, &preview.id, &database_path)?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_adopt_prompt_import"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_adopt_prompt_import").with_source(error)
+    })?;
     get_prompt_profile(database, &profile.id)
 }
 
@@ -268,12 +276,20 @@ pub fn list_provider_profiles(
              FROM provider_profiles WHERE tool = ?1
              ORDER BY name COLLATE NOCASE, id",
         )
-        .map_err(|_| AppError::database(&database_path, "prepare_list_provider_profiles"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "prepare_list_provider_profiles").with_source(error)
+        })?;
     let rows = statement
         .query_map([tool.as_str()], provider_from_row)
-        .map_err(|_| AppError::database(&database_path, "query_list_provider_profiles"))?;
-    rows.map(|row| row.map_err(|_| AppError::database(&database_path, "read_provider_profile")))
-        .collect()
+        .map_err(|error| {
+            AppError::database(&database_path, "query_list_provider_profiles").with_source(error)
+        })?;
+    rows.map(|row| {
+        row.map_err(|error| {
+            AppError::database(&database_path, "read_provider_profile").with_source(error)
+        })
+    })
+    .collect()
 }
 
 pub fn get_provider_profile(
@@ -298,7 +314,9 @@ pub fn find_active_provider_profile(
             provider_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_active_provider_profile"))
+        .map_err(|error| {
+            AppError::database(&database_path, "find_active_provider_profile").with_source(error)
+        })
 }
 
 pub fn insert_provider_profile(
@@ -309,7 +327,9 @@ pub fn insert_provider_profile(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_insert_provider_profile"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_insert_provider_profile").with_source(error)
+        })?;
     reject_provider_name_conflict(
         &transaction,
         record.tool,
@@ -339,9 +359,9 @@ pub fn insert_provider_profile(
         .map_err(|error| {
             map_profile_write_error(error, &database_path, "insert_provider_profile")
         })?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_insert_provider_profile"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_insert_provider_profile").with_source(error)
+    })?;
     get_provider_profile(database, &record.id)
 }
 
@@ -361,7 +381,9 @@ pub fn update_provider_profile(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_update_provider_profile"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_update_provider_profile").with_source(error)
+        })?;
     reject_provider_name_conflict(&transaction, current.tool, name, Some(id), &database_path)?;
     let updated = transaction
         .execute(
@@ -388,9 +410,9 @@ pub fn update_provider_profile(
             "Provider 档案已被其他操作更新",
         ));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_update_provider_profile"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_update_provider_profile").with_source(error)
+    })?;
     get_provider_profile(database, id)
 }
 
@@ -420,7 +442,9 @@ pub fn set_active_provider_profile(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_activate_provider_profile"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_activate_provider_profile").with_source(error)
+        })?;
     deactivate_provider_profiles(&transaction, tool, Some(id), &database_path)?;
     let updated = transaction
         .execute(
@@ -428,16 +452,18 @@ pub fn set_active_provider_profile(
              WHERE id = ?1 AND tool = ?2 AND row_version = ?3",
             params![id, tool.as_str(), expected_row_version],
         )
-        .map_err(|_| AppError::database(&database_path, "activate_provider_profile"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "activate_provider_profile").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::conflict(
             "rowVersion",
             "Provider 档案已被其他操作更新",
         ));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_activate_provider_profile"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_activate_provider_profile").with_source(error)
+    })?;
     get_provider_profile(database, id)
 }
 
@@ -465,12 +491,18 @@ pub fn list_prompt_profiles(database: &Database) -> Result<Vec<PromptProfileReco
              FROM prompt_profiles
              ORDER BY name COLLATE NOCASE, id",
         )
-        .map_err(|_| AppError::database(&database_path, "prepare_list_prompt_profiles"))?;
-    let rows = statement
-        .query_map([], prompt_from_row)
-        .map_err(|_| AppError::database(&database_path, "query_list_prompt_profiles"))?;
-    rows.map(|row| row.map_err(|_| AppError::database(&database_path, "read_prompt_profile")))
-        .collect()
+        .map_err(|error| {
+            AppError::database(&database_path, "prepare_list_prompt_profiles").with_source(error)
+        })?;
+    let rows = statement.query_map([], prompt_from_row).map_err(|error| {
+        AppError::database(&database_path, "query_list_prompt_profiles").with_source(error)
+    })?;
+    rows.map(|row| {
+        row.map_err(|error| {
+            AppError::database(&database_path, "read_prompt_profile").with_source(error)
+        })
+    })
+    .collect()
 }
 
 pub fn get_prompt_profile(database: &Database, id: &str) -> Result<PromptProfileRecord, AppError> {
@@ -498,7 +530,9 @@ pub fn find_active_prompt_profile(
             prompt_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_active_prompt_profile"))
+        .map_err(|error| {
+            AppError::database(&database_path, "find_active_prompt_profile").with_source(error)
+        })
 }
 
 pub fn insert_prompt_profile(
@@ -509,7 +543,9 @@ pub fn insert_prompt_profile(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_insert_prompt_profile"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_insert_prompt_profile").with_source(error)
+        })?;
     reject_prompt_name_conflict(&transaction, &record.name, None, &database_path)?;
     // 遗留列 tool 统一写 'central'：档案不再绑定工具（CHECK 已由迁移 0009 放宽）。
     transaction
@@ -531,9 +567,9 @@ pub fn insert_prompt_profile(
             ],
         )
         .map_err(|error| map_profile_write_error(error, &database_path, "insert_prompt_profile"))?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_insert_prompt_profile"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_insert_prompt_profile").with_source(error)
+    })?;
     get_prompt_profile(database, &record.id)
 }
 
@@ -549,7 +585,9 @@ pub fn update_prompt_profile(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_update_prompt_profile"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_update_prompt_profile").with_source(error)
+        })?;
     reject_prompt_name_conflict(&transaction, name, Some(id), &database_path)?;
     let updated = transaction
         .execute(
@@ -564,9 +602,9 @@ pub fn update_prompt_profile(
             "提示词档案已被其他操作更新",
         ));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_update_prompt_profile"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_update_prompt_profile").with_source(error)
+    })?;
     get_prompt_profile(database, id)
 }
 
@@ -600,7 +638,10 @@ pub fn set_global_prompt_assignment(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_set_global_prompt_assignment"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_set_global_prompt_assignment")
+                .with_source(error)
+        })?;
     if assigned {
         // 同一工具至多一份生效：先清旧启用，再置目标标志。
         deactivate_prompt_profiles(&transaction, tool, Some(id), &database_path)?;
@@ -688,9 +729,9 @@ pub fn set_global_prompt_assignment(
             "提示词档案已被其他操作更新",
         ));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_set_global_prompt_assignment"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_set_global_prompt_assignment").with_source(error)
+    })?;
     get_prompt_profile(database, id)
 }
 
@@ -723,7 +764,9 @@ fn find_provider_profile(
             provider_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_provider_profile"))
+        .map_err(|error| {
+            AppError::database(&database_path, "find_provider_profile").with_source(error)
+        })
 }
 
 fn find_prompt_profile(
@@ -741,7 +784,9 @@ fn find_prompt_profile(
             prompt_from_row,
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_prompt_profile"))
+        .map_err(|error| {
+            AppError::database(&database_path, "find_prompt_profile").with_source(error)
+        })
 }
 
 fn provider_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderProfileRecord> {
@@ -815,7 +860,9 @@ fn validate_import_preview(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "validate_profile_import_preview"))?
+        .map_err(|error| {
+            AppError::database(database_path, "validate_profile_import_preview").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found("profileImportPreview", &expected.id))?;
     if actual.0 != expected.tool.as_str()
         || actual.1 != artifact_kind.as_str()
@@ -837,7 +884,9 @@ fn reject_existing_profiles(
     let query = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE tool = ?1)");
     let exists = transaction
         .query_row(&query, [tool.as_str()], |row| row.get::<_, bool>(0))
-        .map_err(|_| AppError::database(database_path, "check_existing_import_profiles"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "check_existing_import_profiles").with_source(error)
+        })?;
     if exists {
         Err(AppError::conflict(
             "import",
@@ -871,7 +920,9 @@ fn adopt_baseline(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "find_import_managed_target"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "find_import_managed_target").with_source(error)
+        })?;
     let target_id = match existing {
         Some((id, None, None)) => id,
         Some((_id, _, _)) => {
@@ -890,7 +941,10 @@ fn adopt_baseline(
                         baseline.target_path,
                     ],
                 )
-                .map_err(|_| AppError::database(database_path, "insert_import_managed_target"))?;
+                .map_err(|error| {
+                    AppError::database(database_path, "insert_import_managed_target")
+                        .with_source(error)
+                })?;
             baseline.target_id.clone()
         }
     };
@@ -907,7 +961,9 @@ fn adopt_baseline(
                 baseline.projection_json,
             ],
         )
-        .map_err(|_| AppError::database(database_path, "adopt_import_managed_baseline"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "adopt_import_managed_baseline").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::conflict("import", "原生目标受管基线已经变化"));
     }
@@ -926,7 +982,9 @@ fn consume_import_preview(
              WHERE id = ?1 AND status = 'previewed'",
             [preview_id],
         )
-        .map_err(|_| AppError::database(database_path, "consume_profile_import_preview"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "consume_profile_import_preview").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::preview_already_consumed(
             preview_id,
@@ -950,7 +1008,9 @@ fn reject_provider_name_conflict(
             params![tool.as_str(), name, except_id],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(database_path, "check_provider_name_conflict"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "check_provider_name_conflict").with_source(error)
+        })?;
     if exists {
         Err(AppError::conflict("name", "同一工具内的档案名称必须唯一"))
     } else {
@@ -972,7 +1032,9 @@ fn reject_prompt_name_conflict(
             params![name, except_id],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(database_path, "check_prompt_name_conflict"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "check_prompt_name_conflict").with_source(error)
+        })?;
     if exists {
         Err(AppError::conflict("name", "提示词档案名称必须唯一"))
     } else {
@@ -1000,7 +1062,9 @@ pub fn prompt_import_blocked(
             params![tool.as_str(), target_path],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(&database_path, "check_prompt_import_blocked"))
+        .map_err(|error| {
+            AppError::database(&database_path, "check_prompt_import_blocked").with_source(error)
+        })
 }
 
 /// 提示词导入前置：该工具已有生效档案、或已有同源导入档案时不可再导入。
@@ -1022,7 +1086,9 @@ fn reject_prompt_import_blocked(
             params![tool.as_str(), target_path],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(database_path, "check_prompt_import_blocked"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "check_prompt_import_blocked").with_source(error)
+        })?;
     if exists {
         Err(AppError::conflict(
             "import",
@@ -1045,7 +1111,9 @@ fn deactivate_provider_profiles(
              WHERE tool = ?1 AND is_active = 1 AND (?2 IS NULL OR id != ?2)",
             params![tool.as_str(), except_id],
         )
-        .map_err(|_| AppError::database(database_path, "deactivate_provider_profiles"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "deactivate_provider_profiles").with_source(error)
+        })?;
     Ok(())
 }
 
@@ -1068,7 +1136,9 @@ fn deactivate_prompt_profiles(
     );
     transaction
         .execute(&query, params![except_id])
-        .map_err(|_| AppError::database(database_path, "deactivate_prompt_profiles"))?;
+        .map_err(|error| {
+            AppError::database(database_path, "deactivate_prompt_profiles").with_source(error)
+        })?;
     Ok(())
 }
 
@@ -1084,7 +1154,7 @@ fn delete_profile_row(
     let deleted = database
         .connection_mut()
         .execute(&query, params![id, expected_row_version])
-        .map_err(|_| AppError::database(&database_path, "delete_profile"))?;
+        .map_err(|error| AppError::database(&database_path, "delete_profile").with_source(error))?;
     if deleted == 1 {
         Ok(())
     } else {
@@ -1092,7 +1162,9 @@ fn delete_profile_row(
         let exists = database
             .connection()
             .query_row(&exists_query, [id], |row| row.get::<_, bool>(0))
-            .map_err(|_| AppError::database(&database_path, "check_deleted_profile"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "check_deleted_profile").with_source(error)
+            })?;
         if exists {
             Err(AppError::conflict("rowVersion", "档案已被其他操作更新"))
         } else {
@@ -1106,14 +1178,15 @@ fn map_profile_write_error(
     database_path: &str,
     operation: &'static str,
 ) -> AppError {
-    if error
+    let app_error = if error
         .sqlite_error_code()
         .is_some_and(|code| code == rusqlite::ErrorCode::ConstraintViolation)
     {
         AppError::conflict("profile", "档案违反名称唯一或单一生效约束")
     } else {
         AppError::database(database_path, operation)
-    }
+    };
+    app_error.with_source(error)
 }
 
 #[cfg(test)]

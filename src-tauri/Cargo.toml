@@ -34,6 +34,8 @@ toml_edit = { version = "0.22", features = ["serde"] }
 url = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 tempfile = "3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

@@ -572,31 +572,39 @@ pub fn canonicalize_project_root(path: &Path) -> Result<ProjectRoot, AppError> {
     match fs::symlink_metadata(path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(AppError::not_found("project", &path.to_string_lossy()));
+            return Err(AppError::not_found("project", &path.to_string_lossy()).with_source(error));
         }
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            return Err(AppError::permission(
-                &path.to_string_lossy(),
-                "lstat_project_root",
-            ));
+            return Err(
+                AppError::permission(&path.to_string_lossy(), "lstat_project_root")
+                    .with_source(error),
+            );
         }
-        Err(_) => {
-            return Err(AppError::invalid_input("rootPath", "项目根无法安全读取"));
+        Err(error) => {
+            return Err(
+                AppError::invalid_input("rootPath", "项目根无法安全读取").with_source(error)
+            );
         }
     }
-    let canonical = fs::canonicalize(path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => AppError::not_found("project", &path.to_string_lossy()),
-        std::io::ErrorKind::PermissionDenied => {
-            AppError::permission(&path.to_string_lossy(), "canonicalize_project_root")
-        }
-        _ => AppError::invalid_input("rootPath", "项目根无法安全规范化"),
+    let canonical = fs::canonicalize(path).map_err(|error| {
+        let app_error = match error.kind() {
+            std::io::ErrorKind::NotFound => AppError::not_found("project", &path.to_string_lossy()),
+            std::io::ErrorKind::PermissionDenied => {
+                AppError::permission(&path.to_string_lossy(), "canonicalize_project_root")
+            }
+            _ => AppError::invalid_input("rootPath", "项目根无法安全规范化"),
+        };
+        app_error.with_source(error)
     })?;
-    let metadata = fs::symlink_metadata(&canonical).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => AppError::not_found("project", &path.to_string_lossy()),
-        std::io::ErrorKind::PermissionDenied => {
-            AppError::permission(&path.to_string_lossy(), "lstat_canonical_project_root")
-        }
-        _ => AppError::invalid_input("rootPath", "规范化项目根无法安全读取"),
+    let metadata = fs::symlink_metadata(&canonical).map_err(|error| {
+        let app_error = match error.kind() {
+            std::io::ErrorKind::NotFound => AppError::not_found("project", &path.to_string_lossy()),
+            std::io::ErrorKind::PermissionDenied => {
+                AppError::permission(&path.to_string_lossy(), "lstat_canonical_project_root")
+            }
+            _ => AppError::invalid_input("rootPath", "规范化项目根无法安全读取"),
+        };
+        app_error.with_source(error)
     })?;
     if !metadata.is_dir() {
         return Err(AppError::invalid_input("rootPath", "项目根必须是目录"));
@@ -606,18 +614,26 @@ pub fn canonicalize_project_root(path: &Path) -> Result<ProjectRoot, AppError> {
 
 fn canonicalize_existing_directory(path: &Path, field: &'static str) -> Result<PathBuf, AppError> {
     validate_absolute_normal_path(path, field)?;
-    let canonical = fs::canonicalize(path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => AppError::not_found("directory", &path.to_string_lossy()),
-        std::io::ErrorKind::PermissionDenied => {
-            AppError::permission(&path.to_string_lossy(), "canonicalize_directory")
-        }
-        _ => AppError::invalid_input(field, "目录无法安全规范化"),
+    let canonical = fs::canonicalize(path).map_err(|error| {
+        let app_error = match error.kind() {
+            std::io::ErrorKind::NotFound => {
+                AppError::not_found("directory", &path.to_string_lossy())
+            }
+            std::io::ErrorKind::PermissionDenied => {
+                AppError::permission(&path.to_string_lossy(), "canonicalize_directory")
+            }
+            _ => AppError::invalid_input(field, "目录无法安全规范化"),
+        };
+        app_error.with_source(error)
     })?;
-    let metadata = fs::symlink_metadata(&canonical).map_err(|error| match error.kind() {
-        std::io::ErrorKind::PermissionDenied => {
-            AppError::permission(&canonical.to_string_lossy(), "lstat_canonical_directory")
-        }
-        _ => AppError::not_found("directory", &canonical.to_string_lossy()),
+    let metadata = fs::symlink_metadata(&canonical).map_err(|error| {
+        let app_error = match error.kind() {
+            std::io::ErrorKind::PermissionDenied => {
+                AppError::permission(&canonical.to_string_lossy(), "lstat_canonical_directory")
+            }
+            _ => AppError::not_found("directory", &canonical.to_string_lossy()),
+        };
+        app_error.with_source(error)
     })?;
     if !metadata.is_dir() {
         return Err(AppError::invalid_input(field, "路径必须是已存在目录"));
@@ -632,10 +648,9 @@ fn normalize_config_root(path: &Path, field: &'static str) -> Result<PathBuf, Ap
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             canonicalize_from_existing_ancestor(path, field)
         }
-        Err(_) => Err(AppError::permission(
-            &path.to_string_lossy(),
-            "lstat_config_root",
-        )),
+        Err(error) => Err(
+            AppError::permission(&path.to_string_lossy(), "lstat_config_root").with_source(error),
+        ),
     }
 }
 
@@ -657,11 +672,12 @@ fn canonicalize_from_existing_ancestor(
                     .parent()
                     .ok_or_else(|| AppError::invalid_input(field, "路径缺少可规范化的祖先目录"))?;
             }
-            Err(_) => {
+            Err(error) => {
                 return Err(AppError::permission(
                     &ancestor.to_string_lossy(),
                     "lstat_config_ancestor",
-                ));
+                )
+                .with_source(error));
             }
         }
     }
@@ -1073,8 +1089,9 @@ fn parse_document(
                     target.format.as_str(),
                 ));
             }
-            let value = serde_json::from_slice::<Value>(&bytes)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let value = serde_json::from_slice::<Value>(&bytes).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             if !value.is_object() {
                 return Err(AppError::parse(
                     target.path_for_error(),
@@ -1090,10 +1107,12 @@ fn parse_document(
                     target.format.as_str(),
                 ));
             }
-            let source = String::from_utf8(bytes)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
-            let value = parse_jsonc(&source)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let source = String::from_utf8(bytes).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
+            let value = parse_jsonc(&source).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             if !value.is_object() {
                 return Err(AppError::parse(
                     target.path_for_error(),
@@ -1103,29 +1122,33 @@ fn parse_document(
             Ok(ObservedDocument::Jsonc { value, source })
         }
         (TargetFormat::Toml, ObservedRaw::File(bytes)) => {
-            let text = std::str::from_utf8(&bytes)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let text = std::str::from_utf8(&bytes).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             if text.trim().is_empty() {
                 return Err(AppError::parse(
                     target.path_for_error(),
                     target.format.as_str(),
                 ));
             }
-            let document = text
-                .parse::<DocumentMut>()
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
-            let semantic = toml_edit::de::from_str::<Value>(text)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let document = text.parse::<DocumentMut>().map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
+            let semantic = toml_edit::de::from_str::<Value>(text).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             Ok(ObservedDocument::Toml { document, semantic })
         }
         (TargetFormat::Markdown, ObservedRaw::File(bytes)) => {
-            let text = String::from_utf8(bytes)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let text = String::from_utf8(bytes).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             Ok(ObservedDocument::Markdown(text))
         }
         (TargetFormat::CursorMdc, ObservedRaw::File(bytes)) => {
-            let text = String::from_utf8(bytes)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let text = String::from_utf8(bytes).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             Ok(ObservedDocument::Markdown(strip_mdc_frontmatter(&text)))
         }
         (TargetFormat::SymlinkDirectory, ObservedRaw::Directory(entries)) => {
@@ -1268,10 +1291,12 @@ fn strip_jsonc_comments(source: &str) -> String {
     let mut in_string = false;
     let mut escaped = false;
     while index < bytes.len() {
-        let character = source[index..]
-            .chars()
-            .next()
-            .expect("JSONC source index must be a UTF-8 boundary");
+        // `index` 总是落在字符边界上（按 `len_utf8` 推进）；万一不是，跳到下一字节
+        // 而不是 panic：JSONC 剥离只是解析前的宽松预处理，解析器会报告真正的错误。
+        let Some(character) = source.get(index..).and_then(|rest| rest.chars().next()) else {
+            index += 1;
+            continue;
+        };
         let width = character.len_utf8();
         if in_string {
             output.push(character);
@@ -1325,10 +1350,12 @@ fn strip_jsonc_trailing_commas(source: &str) -> String {
     let mut in_string = false;
     let mut escaped = false;
     while index < bytes.len() {
-        let character = source[index..]
-            .chars()
-            .next()
-            .expect("JSONC source index must be a UTF-8 boundary");
+        // `index` 总是落在字符边界上（按 `len_utf8` 推进）；万一不是，跳到下一字节
+        // 而不是 panic：JSONC 剥离只是解析前的宽松预处理，解析器会报告真正的错误。
+        let Some(character) = source.get(index..).and_then(|rest| rest.chars().next()) else {
+            index += 1;
+            continue;
+        };
         let width = character.len_utf8();
         if in_string {
             output.push(character);
@@ -1679,8 +1706,9 @@ fn render_document(
                     "JSON 配置根必须是对象",
                 ));
             }
-            let mut bytes = serde_json::to_vec_pretty(desired_projection)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let mut bytes = serde_json::to_vec_pretty(desired_projection).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             bytes.push(b'\n');
             Ok(RenderedTarget::File(bytes))
         }
@@ -1701,8 +1729,9 @@ fn render_document(
                     None => remove_json_path(&mut merged, selector),
                 }
             }
-            let mut bytes = serde_json::to_vec_pretty(&merged)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let mut bytes = serde_json::to_vec_pretty(&merged).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             bytes.push(b'\n');
             Ok(RenderedTarget::File(bytes))
         }
@@ -1719,8 +1748,9 @@ fn render_document(
                 )),
                 _ => {
                     let mut bytes =
-                        serde_json::to_vec_pretty(desired_projection).map_err(|_| {
+                        serde_json::to_vec_pretty(desired_projection).map_err(|error| {
                             AppError::parse(target.path_for_error(), target.format.as_str())
+                                .with_source(error)
                         })?;
                     bytes.push(b'\n');
                     Ok(RenderedTarget::File(bytes))
@@ -1751,8 +1781,9 @@ fn render_document(
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
-            let rendered = serde_json::to_string_pretty(&merged)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let rendered = serde_json::to_string_pretty(&merged).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             match current {
                 Some(ObservedDocument::Jsonc { source, .. }) => Ok(RenderedTarget::File(
                     replace_jsonc_roots_with_rendered(source, &merged, &roots).into_bytes(),
@@ -1761,8 +1792,9 @@ fn render_document(
             }
         }
         (TargetFormat::Toml, _, ManagedOwnership::WholeDocument) => {
-            let document = toml_edit::ser::to_document(desired_projection)
-                .map_err(|_| AppError::parse(target.path_for_error(), target.format.as_str()))?;
+            let document = toml_edit::ser::to_document(desired_projection).map_err(|error| {
+                AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
+            })?;
             Ok(RenderedTarget::File(document.to_string().into_bytes()))
         }
         (TargetFormat::Toml, current, ManagedOwnership::Selectors(selectors)) => {
@@ -1882,7 +1914,7 @@ fn set_json_path(root: &mut Value, path: &[String], value: Value) -> Result<(), 
         }
         current = current
             .as_object_mut()
-            .expect("已验证为 JSON 对象")
+            .ok_or_else(|| AppError::internal("受管投影中间节点必须是对象"))?
             .entry(segment.clone())
             .or_insert_with(|| Value::Object(Map::new()));
     }
@@ -1894,7 +1926,7 @@ fn set_json_path(root: &mut Value, path: &[String], value: Value) -> Result<(), 
     }
     current
         .as_object_mut()
-        .expect("已验证为 JSON 对象")
+        .ok_or_else(|| AppError::internal("受管投影叶节点必须是对象"))?
         .insert(path[path.len() - 1].clone(), value);
     Ok(())
 }
@@ -1985,23 +2017,28 @@ fn json_to_toml_item(value: &Value) -> Result<Item, AppError> {
     match value {
         Value::String(value) => Ok(toml_edit::value(value.clone())),
         Value::Bool(value) => Ok(toml_edit::value(*value)),
-        Value::Number(value) if value.is_i64() => {
-            Ok(toml_edit::value(value.as_i64().expect("已验证为 i64")))
+        Value::Number(value) => {
+            if let Some(number) = value.as_i64() {
+                Ok(toml_edit::value(number))
+            } else if let Some(number) = value.as_u64() {
+                let number = i64::try_from(number).map_err(|error| {
+                    AppError::invalid_input("desiredProjection", "TOML 整数超出范围")
+                        .with_source(error)
+                })?;
+                Ok(toml_edit::value(number))
+            } else {
+                Ok(toml_edit::value(value.as_f64().ok_or_else(|| {
+                    AppError::internal("JSON 数字既不是整数也不能转为 f64")
+                })?))
+            }
         }
-        Value::Number(value) if value.is_u64() => {
-            let number = i64::try_from(value.as_u64().expect("已验证为 u64"))
-                .map_err(|_| AppError::invalid_input("desiredProjection", "TOML 整数超出范围"))?;
-            Ok(toml_edit::value(number))
-        }
-        Value::Number(value) => Ok(toml_edit::value(
-            value.as_f64().expect("JSON 数字必须可转为 f64"),
-        )),
         Value::Array(values) => {
             let mut array = Array::new();
             for value in values {
                 let item = json_to_toml_item(value)?;
-                let scalar = item.into_value().map_err(|_| {
+                let scalar = item.into_value().map_err(|error| {
                     AppError::invalid_input("desiredProjection", "TOML 数组只支持标量值")
+                        .with_source(error)
                 })?;
                 array.push_formatted(scalar);
             }

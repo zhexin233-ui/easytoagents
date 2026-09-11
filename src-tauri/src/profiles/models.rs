@@ -488,8 +488,8 @@ pub(crate) fn validate_prompt_fields(name: &str, body: &str) -> Result<(), AppEr
 }
 
 fn validate_api_base_url(value: &str, reason: &'static str) -> Result<(), AppError> {
-    let parsed =
-        url::Url::parse(value).map_err(|_| AppError::invalid_input("apiBaseUrl", reason))?;
+    let parsed = url::Url::parse(value)
+        .map_err(|error| AppError::invalid_input("apiBaseUrl", reason).with_source(error))?;
     if !matches!(parsed.scheme(), "http" | "https")
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()

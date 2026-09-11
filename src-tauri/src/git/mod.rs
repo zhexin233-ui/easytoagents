@@ -76,19 +76,22 @@ pub fn inspect_path(
         ));
     }
     let project_path = Path::new(project_root.as_str());
-    target_path
-        .strip_prefix(project_path)
-        .map_err(|_| AppError::invalid_input("targetPath", "Git 目标不在登记项目内"))?;
+    target_path.strip_prefix(project_path).map_err(|error| {
+        AppError::invalid_input("targetPath", "Git 目标不在登记项目内").with_source(error)
+    })?;
     let repository_output = run_git(project_path, &["rev-parse", "--show-toplevel"])?;
     if !repository_output.status.success() {
         return Ok(GitPathStatus::not_repository());
     }
     let repository_text = command_path_text(&repository_output.stdout)?;
-    let repository_root = std::fs::canonicalize(repository_text)
-        .map_err(|_| AppError::not_found("gitRepository", repository_text))?;
+    let repository_root = std::fs::canonicalize(repository_text).map_err(|error| {
+        AppError::not_found("gitRepository", repository_text).with_source(error)
+    })?;
     let relative = target_path
         .strip_prefix(&repository_root)
-        .map_err(|_| AppError::invalid_input("targetPath", "Git 目标不在登记项目仓库内"))?;
+        .map_err(|error| {
+            AppError::invalid_input("targetPath", "Git 目标不在登记项目仓库内").with_source(error)
+        })?;
     let relative_text = relative
         .to_str()
         .ok_or_else(|| AppError::invalid_input("targetPath", "Git 目标路径不是 UTF-8"))?;
@@ -169,8 +172,9 @@ pub(crate) fn resolve_local_exclude(project_root: &ProjectRoot) -> Result<PathBu
     let parent = path
         .parent()
         .ok_or_else(|| AppError::invalid_input("gitExclude", "Git exclude 缺少父目录"))?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|_| AppError::not_found("gitExcludeDirectory", &parent.to_string_lossy()))?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+        AppError::not_found("gitExcludeDirectory", &parent.to_string_lossy()).with_source(error)
+    })?;
     if canonical_parent != parent {
         return Err(AppError::conflict(
             "gitExclude",
@@ -184,16 +188,16 @@ pub(crate) fn resolve_local_exclude(project_root: &ProjectRoot) -> Result<PathBu
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            return Err(AppError::permission(
-                &path.to_string_lossy(),
-                "lstat_git_exclude",
-            ));
+            return Err(
+                AppError::permission(&path.to_string_lossy(), "lstat_git_exclude")
+                    .with_source(error),
+            );
         }
-        Err(_) => {
-            return Err(AppError::invalid_input(
-                "gitExclude",
-                "Git exclude 无法安全读取",
-            ));
+        Err(error) => {
+            return Err(
+                AppError::invalid_input("gitExclude", "Git exclude 无法安全读取")
+                    .with_source(error),
+            );
         }
     }
     Ok(path)
@@ -205,7 +209,7 @@ pub(crate) fn render_local_exclude(
     patterns: impl IntoIterator<Item = String>,
 ) -> Result<Vec<u8>, AppError> {
     let existing = std::str::from_utf8(existing)
-        .map_err(|_| AppError::parse(".git/info/exclude", "git_exclude"))?;
+        .map_err(|error| AppError::parse(".git/info/exclude", "git_exclude").with_source(error))?;
     let starts = existing
         .match_indices(EXCLUDE_BLOCK_START)
         .collect::<Vec<_>>();
@@ -301,9 +305,9 @@ fn run_git(current_dir: &Path, arguments: &[&str]) -> Result<GitOutput, AppError
     for variable in GIT_REDIRECT_ENVIRONMENT {
         Command::env_remove(&mut command, variable);
     }
-    let mut child = command
-        .spawn()
-        .map_err(|_| AppError::not_found("git", &current_dir.to_string_lossy()))?;
+    let mut child = command.spawn().map_err(|error| {
+        AppError::not_found("git", &current_dir.to_string_lossy()).with_source(error)
+    })?;
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -316,10 +320,12 @@ fn run_git(current_dir: &Path, arguments: &[&str]) -> Result<GitOutput, AppError
                 let _ = child.wait();
                 return Err(AppError::invalid_input("gitStatus", "Git 只读检测超时"));
             }
-            Err(_) => {
+            Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(AppError::invalid_input("gitStatus", "Git 只读检测失败"));
+                return Err(
+                    AppError::invalid_input("gitStatus", "Git 只读检测失败").with_source(error)
+                );
             }
         }
     };
@@ -329,15 +335,18 @@ fn run_git(current_dir: &Path, arguments: &[&str]) -> Result<GitOutput, AppError
         .take()
         .ok_or_else(|| AppError::invalid_input("gitStatus", "Git 输出管道不可用"))?
         .read_to_end(&mut stdout)
-        .map_err(|_| AppError::invalid_input("gitStatus", "Git 输出读取失败"))?;
+        .map_err(|error| {
+            AppError::invalid_input("gitStatus", "Git 输出读取失败").with_source(error)
+        })?;
     Ok(GitOutput { status, stdout })
 }
 
 fn command_path_text(output: &[u8]) -> Result<&str, AppError> {
     let output = output.strip_suffix(b"\n").unwrap_or(output);
     let output = output.strip_suffix(b"\r").unwrap_or(output);
-    let text = std::str::from_utf8(output)
-        .map_err(|_| AppError::invalid_input("gitRoot", "Git 根路径不是 UTF-8"))?;
+    let text = std::str::from_utf8(output).map_err(|error| {
+        AppError::invalid_input("gitRoot", "Git 根路径不是 UTF-8").with_source(error)
+    })?;
     if text.is_empty() {
         return Err(AppError::invalid_input("gitRoot", "Git 根路径为空"));
     }

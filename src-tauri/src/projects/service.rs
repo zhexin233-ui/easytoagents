@@ -539,7 +539,9 @@ fn persisted_project_target(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "read_project_target_baseline"))
+        .map_err(|error| {
+            AppError::database(&database_path, "read_project_target_baseline").with_source(error)
+        })
 }
 
 fn assess_managed_target(

@@ -1143,8 +1143,8 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 - `delete_snapshots(write_operations: &Mutex<()>, database: &mut Database,
   paths: &AppPaths, input: &DeleteSnapshotsInput) -> Result<DeleteSnapshotsResultDto, AppError>`
   lives in `sync/apply.rs` next to `list_snapshots`; re-exported via
-  `sync/mod.rs`; command wrapper in `commands/overview.rs` locks
-  `state.database()` and passes `state.write_operations()` exactly like
+  `sync/mod.rs`; command wrapper in `commands/overview.rs` delegates through
+  `commands::with_db` and passes `state.write_operations()` exactly like
   `restore_snapshot`.
 - `validate_snapshot_storage_path(paths, run_id, snapshot_id, snapshot_path)`
   is shared with `load_snapshot_record`; never re-implement an ad-hoc path
@@ -1176,8 +1176,9 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
   that may later vanish, and no orphan file that nothing owns: the queue row is
   the owner until cleanup succeeds. Never invert the order (file-first) again:
   a commit failure after removal would leave rows whose payload is gone.
-- Infrastructure failures (lock unavailable, permission audit, DB commit) fail
-  the whole command with `Err(AppError)`; per-item problems never do.
+- Infrastructure failures (permission audit, DB commit) fail the whole command
+  with `Err(AppError)`; process-local mutex poison is recovered rather than
+  surfaced as `WRITE_IN_PROGRESS`, and per-item problems never do.
 - Pending restore previews (kind='restore', status='previewed') are NOT
   blockers; executing one against a deleted snapshot fails closed with
   NOT_FOUND inside `load_snapshot_record`. Do not add JSON-envelope scans.
@@ -1194,8 +1195,9 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
   the file must NOT be removed (anti-impersonation guard).
 - `fs::remove_file` failure -> the row is already retired; the item is reported
   as deleted and its `retired_snapshot_cleanup` row remains for startup retry.
-- Lock/audit/DB commit failure -> command-level `WRITE_IN_PROGRESS` /
-  `PERMISSION_DENIED` / `DATABASE_ERROR`.
+- Audit/DB commit failure -> command-level `PERMISSION_DENIED` /
+  `DATABASE_ERROR`; process-local lock contention waits for the shared guard,
+  while active-run conflicts remain per-item `CONFLICT`.
 
 ### 5. Good/Base/Bad Cases
 

@@ -4,22 +4,25 @@ use tauri::State;
 
 use crate::{
     app::AppState,
-    error::{AppError, ErrorCode},
+    commands::{with_db, with_db_and_redactor},
+    error::AppError,
     projects::{self, *},
 };
 
 #[tauri::command(async)]
 #[specta::specta]
 pub fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectDto>, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::list_projects(&mut database, &*state.environment()?)
+    with_db(&state, |database| {
+        projects::list_projects(database, &*state.environment()?)
+    })
 }
 
 #[tauri::command(async)]
 #[specta::specta]
 pub fn get_project(state: State<'_, AppState>, id: String) -> Result<ProjectDto, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::get_project(&mut database, &*state.environment()?, &id)
+    with_db(&state, |database| {
+        projects::get_project(database, &*state.environment()?, &id)
+    })
 }
 
 #[tauri::command(async)]
@@ -28,8 +31,9 @@ pub fn register_project(
     state: State<'_, AppState>,
     input: RegisterProjectInput,
 ) -> Result<ProjectDto, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::register_project(&mut database, &*state.environment()?, &input)
+    with_db(&state, |database| {
+        projects::register_project(database, &*state.environment()?, &input)
+    })
 }
 
 #[tauri::command(async)]
@@ -38,8 +42,9 @@ pub fn rename_project(
     state: State<'_, AppState>,
     input: RenameProjectInput,
 ) -> Result<ProjectDto, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::rename_project(&mut database, &*state.environment()?, &input)
+    with_db(&state, |database| {
+        projects::rename_project(database, &*state.environment()?, &input)
+    })
 }
 
 #[tauri::command(async)]
@@ -48,8 +53,9 @@ pub fn rescan_project(
     state: State<'_, AppState>,
     input: VersionedProjectInput,
 ) -> Result<ProjectDto, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::rescan_project(&mut database, &*state.environment()?, &input)
+    with_db(&state, |database| {
+        projects::rescan_project(database, &*state.environment()?, &input)
+    })
 }
 
 #[tauri::command(async)]
@@ -58,8 +64,9 @@ pub fn remove_project(
     state: State<'_, AppState>,
     input: VersionedProjectInput,
 ) -> Result<RemoveProjectResultDto, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::remove_project(&mut database, &input)
+    with_db(&state, |database| {
+        projects::remove_project(database, &input)
+    })
 }
 
 #[tauri::command(async)]
@@ -68,8 +75,9 @@ pub fn list_project_native_resources(
     state: State<'_, AppState>,
     input: ProjectNativeResourceQueryInput,
 ) -> Result<Vec<ProjectNativeResourceDto>, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::list_project_native_resources(&mut database, &*state.environment()?, &input)
+    with_db(&state, |database| {
+        projects::list_project_native_resources(database, &*state.environment()?, &input)
+    })
 }
 
 #[tauri::command(async)]
@@ -78,14 +86,14 @@ pub fn preview_project_native_resource_action(
     state: State<'_, AppState>,
     input: PreviewProjectNativeResourceActionInput,
 ) -> Result<crate::sync::PreviewPlan, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    let mut redactor = state.redactor().write().map_err(|_| state_lock_error())?;
-    projects::preview_project_native_resource_action(
-        &mut database,
-        &*state.environment()?,
-        &mut redactor,
-        &input,
-    )
+    with_db_and_redactor(&state, |database, redactor| {
+        projects::preview_project_native_resource_action(
+            database,
+            &*state.environment()?,
+            redactor,
+            &input,
+        )
+    })
 }
 
 #[tauri::command(async)]
@@ -94,16 +102,13 @@ pub fn apply_project_native_resource_preview(
     state: State<'_, AppState>,
     input: ApplyProjectNativeResourcePreviewInput,
 ) -> Result<crate::sync::ApplyResult, AppError> {
-    let mut database = state.database().lock().map_err(|_| state_lock_error())?;
-    projects::apply_project_native_resource_preview(
-        state.write_operations(),
-        &mut database,
-        state.paths(),
-        &*state.environment()?,
-        &input,
-    )
-}
-
-fn state_lock_error() -> AppError {
-    AppError::new(ErrorCode::WriteInProgress, "应用状态锁不可用", false)
+    with_db(&state, |database| {
+        projects::apply_project_native_resource_preview(
+            state.write_operations(),
+            database,
+            state.paths(),
+            &*state.environment()?,
+            &input,
+        )
+    })
 }

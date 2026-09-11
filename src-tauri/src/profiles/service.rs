@@ -87,8 +87,10 @@ pub fn create_provider_profile(
     let provider_id = generated_codex_provider_id(&id);
     let config =
         StoredProviderConfig::from_input(input.tool, &provider_id, input.options, BTreeMap::new())?;
-    let config_json = serde_json::to_string(&config)
-        .map_err(|_| AppError::invalid_input("providerOptions", "Provider 选项无法序列化"))?;
+    let config_json = serde_json::to_string(&config).map_err(|error| {
+        AppError::invalid_input("providerOptions", "Provider 选项无法序列化")
+            .with_source_redacted(error, redactor)
+    })?;
     redactor.register_secret(input.api_key.clone());
     let record = repository::insert_provider_profile(
         database,
@@ -164,8 +166,10 @@ pub fn update_provider_profile(
         Some(&input.api_base_url),
         api_key.as_deref(),
         Some(&input.default_model),
-        &serde_json::to_string(&config)
-            .map_err(|_| AppError::invalid_input("providerOptions", "Provider 选项无法序列化"))?,
+        &serde_json::to_string(&config).map_err(|error| {
+            AppError::invalid_input("providerOptions", "Provider 选项无法序列化")
+                .with_source_redacted(error, redactor)
+        })?,
         row_version,
     )?;
     provider_dto(&record)
@@ -230,8 +234,9 @@ pub fn copy_provider_profile(
             api_base_url: Some(api_base_url),
             api_key: Some(api_key),
             default_model: Some(default_model),
-            config_json: serde_json::to_string(&config).map_err(|_| {
+            config_json: serde_json::to_string(&config).map_err(|error| {
                 AppError::invalid_input("providerOptions", "目标 Provider 选项无法序列化")
+                    .with_source_redacted(error, redactor)
             })?,
             is_active: input.activate,
         },
@@ -406,7 +411,10 @@ pub fn discover_provider_import(
                 "projection": redacted_projection,
                 "apiKeyConfigured": discovered.api_key.is_some(),
             }))
-            .map_err(|_| AppError::invalid_input("importPreview", "导入预览无法序列化"))?,
+            .map_err(|error| {
+                AppError::invalid_input("importPreview", "导入预览无法序列化")
+                    .with_source_redacted(error, redactor)
+            })?,
             status: "previewed".to_owned(),
         },
     )?;
@@ -502,8 +510,10 @@ pub fn confirm_provider_import(
     if let Some(api_key) = &discovered.api_key {
         redactor.register_secret(api_key.clone());
     }
-    let projection_json = serde_json::to_string(&discovered.projection)
-        .map_err(|_| AppError::invalid_input("importPreview", "Provider 基线无法序列化"))?;
+    let projection_json = serde_json::to_string(&discovered.projection).map_err(|error| {
+        AppError::invalid_input("importPreview", "Provider 基线无法序列化")
+            .with_source_redacted(error, redactor)
+    })?;
     let record = repository::adopt_imported_provider(
         database,
         &preview,
@@ -514,8 +524,9 @@ pub fn confirm_provider_import(
             api_base_url: Some(discovered.api_base_url),
             api_key: discovered.api_key,
             default_model: Some(discovered.default_model),
-            config_json: serde_json::to_string(&config).map_err(|_| {
+            config_json: serde_json::to_string(&config).map_err(|error| {
                 AppError::invalid_input("providerOptions", "导入 Provider 选项无法序列化")
+                    .with_source_redacted(error, redactor)
             })?,
             is_active: true,
         },
@@ -642,8 +653,9 @@ pub fn confirm_prompt_import(
             target_path: preview.target_path.clone(),
             full_hash: observed.full_hash,
             managed_hash: observed.managed_hash,
-            projection_json: serde_json::to_string(&Value::String(body))
-                .map_err(|_| AppError::invalid_input("body", "提示词基线无法序列化"))?,
+            projection_json: serde_json::to_string(&Value::String(body)).map_err(|error| {
+                AppError::invalid_input("body", "提示词基线无法序列化").with_source(error)
+            })?,
         },
     )?;
     prompt_dto(&record)
@@ -703,7 +715,9 @@ pub fn apply_profile_preview(
         ArtifactKind::Provider => prepare_provider_sync(database, environment, redactor, tool)?,
         ArtifactKind::Prompt => prepare_prompt_sync(database, environment, tool)?,
         ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
-            unreachable!("已在入口拒绝")
+            return Err(AppError::internal(
+                "非 Provider/Prompt 种类不应进入档���同步",
+            ));
         }
     };
     let input = ApplyTargetInput {
@@ -894,7 +908,9 @@ fn ensure_profile_target(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "find_profile_managed_target"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "find_profile_managed_target").with_source(error)
+        })?;
     let row = if let Some(row) = existing {
         row
     } else {
@@ -913,14 +929,19 @@ fn ensure_profile_target(
                     target_path,
                 ],
             )
-            .map_err(|_| AppError::database(&database_path, "insert_profile_managed_target"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "insert_profile_managed_target")
+                    .with_source(error)
+            })?;
         (id, 1, None, None, None)
     };
     let projection = row
         .4
         .map(|value| {
-            serde_json::from_str(&value)
-                .map_err(|_| AppError::database(&database_path, "parse_profile_managed_baseline"))
+            serde_json::from_str(&value).map_err(|error| {
+                AppError::database(&database_path, "parse_profile_managed_baseline")
+                    .with_source(error)
+            })
         })
         .transpose()?;
     Ok(ManagedProfileTarget {
@@ -1011,7 +1032,9 @@ fn discover_native_provider(
             match descriptor.policy {
                 crate::adapters::PolicyState::Blocked => "provider_managed_by_host",
                 crate::adapters::PolicyState::Unknown => "provider_policy_unknown",
-                crate::adapters::PolicyState::Allowed => unreachable!("已在条件中排除"),
+                crate::adapters::PolicyState::Allowed => {
+                    return Err(AppError::internal("allowed 策略不应进入阻断分支"))
+                }
             },
         ));
     }
@@ -1955,8 +1978,9 @@ fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError
 fn parse_stored_provider_config(
     record: &ProviderProfileRecord,
 ) -> Result<StoredProviderConfig, AppError> {
-    serde_json::from_str(&record.config_json)
-        .map_err(|_| AppError::invalid_input("providerOptions", "Provider 中央配置已损坏"))
+    serde_json::from_str(&record.config_json).map_err(|error| {
+        AppError::invalid_input("providerOptions", "Provider 中央配置已损坏").with_source(error)
+    })
 }
 
 fn provider_row_version(profile: &ProviderProfileRecord) -> Result<DatabaseRowVersion, AppError> {
@@ -1976,8 +2000,9 @@ fn prompt_row_version(profile: &PromptProfileRecord) -> Result<DatabaseRowVersio
 }
 
 fn safe_row_version(value: i64) -> Result<u32, AppError> {
-    u32::try_from(value)
-        .map_err(|_| AppError::invalid_input("rowVersion", "档案 row_version 超出安全范围"))
+    u32::try_from(value).map_err(|error| {
+        AppError::invalid_input("rowVersion", "档案 row_version 超出安全范围").with_source(error)
+    })
 }
 
 fn generated_codex_provider_id(id: &str) -> String {

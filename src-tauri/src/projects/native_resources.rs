@@ -74,13 +74,16 @@ pub fn reconcile_project_native_resources(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_reconcile_native_resources"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_reconcile_native_resources")
+                .with_source(error)
+        })?;
     for observation in &observations {
         reconcile_observation(&transaction, &database_path, &record.id, observation)?;
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_reconcile_native_resources"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_reconcile_native_resources").with_source(error)
+    })?;
     summarize_project(database, &record.id)
 }
 
@@ -175,7 +178,7 @@ pub(crate) fn apply_project_native_resource_preview_with_fault(
             [&input.preview_id],
             |row| row.get(0),
         )
-        .map_err(|_| AppError::not_found("preview", &input.preview_id))?;
+        .map_err(|error| AppError::not_found("preview", &input.preview_id).with_source(error))?;
     if run_status != "previewed" {
         return Err(AppError::preview_already_consumed(
             &input.preview_id,
@@ -611,8 +614,9 @@ fn build_action_projection(
                 desired,
                 ProjectNativeResourceEvidence {
                     resource_id: record.id.clone(),
-                    resource_row_version: u32::try_from(record.row_version).map_err(|_| {
+                    resource_row_version: u32::try_from(record.row_version).map_err(|error| {
                         AppError::invalid_input("rowVersion", "原生资源版本超出范围")
+                            .with_source(error)
                     })?,
                     action: NativeResourceActionKind::Disable,
                     entry_type: evidence_entry_type(entry_type),
@@ -640,8 +644,9 @@ fn build_action_projection(
                 desired,
                 ProjectNativeResourceEvidence {
                     resource_id: record.id.clone(),
-                    resource_row_version: u32::try_from(record.row_version).map_err(|_| {
+                    resource_row_version: u32::try_from(record.row_version).map_err(|error| {
                         AppError::invalid_input("rowVersion", "原生资源版本超出范围")
+                            .with_source(error)
                     })?,
                     action: NativeResourceActionKind::Restore,
                     entry_type: evidence_entry_type(entry_type),
@@ -675,8 +680,9 @@ fn disable_evidence_details(
         }
         ProjectNativeEntryType::Symlink => {
             let child = path.join(&record.external_key);
-            let link_target = fs::read_link(&child)
-                .map_err(|_| AppError::stale_preview("persisted", &record.id))?;
+            let link_target = fs::read_link(&child).map_err(|error| {
+                AppError::stale_preview("persisted", &record.id).with_source(error)
+            })?;
             Ok((None, Some(link_target.to_string_lossy().into_owned()), None))
         }
         ProjectNativeEntryType::McpEntry => {
@@ -694,8 +700,9 @@ fn restore_desired_projection(
 ) -> Result<Value, AppError> {
     match entry_type {
         ProjectNativeEntryType::McpEntry => {
-            let bytes = fs::read(&snapshot.snapshot_path)
-                .map_err(|_| AppError::not_found("snapshot", &snapshot.snapshot_path))?;
+            let bytes = fs::read(&snapshot.snapshot_path).map_err(|error| {
+                AppError::not_found("snapshot", &snapshot.snapshot_path).with_source(error)
+            })?;
             let document = parse_config_value(descriptor.format, &bytes)?;
             let container = native_mcp_container(descriptor.tool);
             let item = json_value_at(&document, container)
@@ -722,14 +729,15 @@ fn restore_desired_projection(
                     })?),
                 },
                 ProjectNativeEntryType::McpEntry => {
-                    unreachable!()
+                    return Err(AppError::internal("MCP 条目不应走 Skill 目录恢复投影"));
                 }
             };
             let mut root = Map::new();
             root.insert(
                 record.external_key.clone(),
-                serde_json::to_value(entry).map_err(|_| {
+                serde_json::to_value(entry).map_err(|error| {
                     AppError::invalid_input("desiredProjection", "Skill 入口投影无法序列化")
+                        .with_source(error)
                 })?,
             );
             Ok(Value::Object(root))
@@ -845,10 +853,11 @@ fn validate_live_occupancy(
                         "targetPath",
                         "恢复目标已被占用，拒绝覆盖",
                     )),
-                    Err(_) => Err(AppError::permission(
+                    Err(error) => Err(AppError::permission(
                         &child.to_string_lossy(),
                         "lstat_native_skill",
-                    )),
+                    )
+                    .with_source(error)),
                 }
             }
         },
@@ -1007,8 +1016,9 @@ fn to_dto(record: &repository::NativeResourceRecord) -> Result<ProjectNativeReso
         target_path: record.target_path.clone(),
         entry_type,
         state,
-        row_version: u32::try_from(record.row_version)
-            .map_err(|_| AppError::invalid_input("rowVersion", "原生资源版本超出范围"))?,
+        row_version: u32::try_from(record.row_version).map_err(|error| {
+            AppError::invalid_input("rowVersion", "原生资源版本超出范围").with_source(error)
+        })?,
         can_disable: state == ProjectNativeResourceState::Active,
         can_restore: state == ProjectNativeResourceState::Disabled,
         diagnostic_codes,
@@ -1076,19 +1086,19 @@ fn entry_type_record(entry_type: NativeResourceEntryType) -> &'static str {
 
 fn parse_config_value(format: TargetFormat, bytes: &[u8]) -> Result<Value, AppError> {
     match format {
-        TargetFormat::Json => {
-            serde_json::from_slice(bytes).map_err(|_| AppError::parse("snapshot", format.as_str()))
-        }
+        TargetFormat::Json => serde_json::from_slice(bytes)
+            .map_err(|error| AppError::parse("snapshot", format.as_str()).with_source(error)),
         TargetFormat::Jsonc => {
             let text = std::str::from_utf8(bytes)
-                .map_err(|_| AppError::parse("snapshot", format.as_str()))?;
+                .map_err(|error| AppError::parse("snapshot", format.as_str()).with_source(error))?;
             crate::adapters::parse_jsonc(text)
-                .map_err(|_| AppError::parse("snapshot", format.as_str()))
+                .map_err(|error| AppError::parse("snapshot", format.as_str()).with_source(error))
         }
         TargetFormat::Toml => {
             let text = std::str::from_utf8(bytes)
-                .map_err(|_| AppError::parse("snapshot", format.as_str()))?;
-            toml_edit::de::from_str(text).map_err(|_| AppError::parse("snapshot", format.as_str()))
+                .map_err(|error| AppError::parse("snapshot", format.as_str()).with_source(error))?;
+            toml_edit::de::from_str(text)
+                .map_err(|error| AppError::parse("snapshot", format.as_str()).with_source(error))
         }
         TargetFormat::Markdown | TargetFormat::CursorMdc | TargetFormat::SymlinkDirectory => Err(
             AppError::invalid_input("snapshot", "该快照格式不是 MCP 配置"),

@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{CString, OsStr},
+    fmt,
     fs::{self, File, OpenOptions},
     io::{self, Write},
     os::{
@@ -197,14 +198,257 @@ pub struct RestorePreview {
     pub storage_kind: SnapshotStorageKind,
 }
 
+/// journal 中记录的阶段。序列化字符串与历史 journal 逐一相同；旧文件里未知的
+/// 字符串落到 `Unknown`，并按"可能已改变目标"的保守口径处理。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetPhase {
+    Applying,
+    Claimed,
+    CrashedAfterDatabaseFinalize,
+    CrashedAfterRename,
+    CrashedAfterRestoreTree,
+    CrashedAfterTakeover,
+    CrashedAfterTarget,
+    CrashedBeforeDatabaseFinalize,
+    CrashedBeforeNativeLink,
+    CrashedBeforeNativeRemove,
+    CrashedBeforeRename,
+    CrashedBeforeRestoreTree,
+    CrashedBeforeTakeover,
+    CrashedBeforeTarget,
+    CrashedDuringDatabaseFinalize,
+    DirectoryCreateFailed,
+    DirectoryCreatePending,
+    DirectoryCreated,
+    DirectoryRestorePending,
+    DirectoryRestored,
+    ExternalChangeAfterWrite,
+    NativeLinkPending,
+    ReadyToFinalizeDatabase,
+    Removed,
+    RenameFailed,
+    RenamePending,
+    Renamed,
+    RollbackFailed,
+    RolledBack,
+    RollingBack,
+    Snapshotted,
+    Snapshotting,
+    Succeeded,
+    TakeoverLinkFailed,
+    TakeoverLinked,
+    TakeoverQuarantined,
+    TakeoverRenameFailed,
+    TakeoverRenamePending,
+    Verified,
+    Writing,
+    Written,
+    #[serde(other)]
+    Unknown,
+}
+
+/// 兼容早期内部名称；新代码应使用更准确的 `TargetPhase`。
+#[allow(dead_code)]
+pub type JournalPhase = TargetPhase;
+
+impl TargetPhase {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applying => "applying",
+            Self::Claimed => "claimed",
+            Self::CrashedAfterDatabaseFinalize => "crashed_after_database_finalize",
+            Self::CrashedAfterRename => "crashed_after_rename",
+            Self::CrashedAfterRestoreTree => "crashed_after_restore_tree",
+            Self::CrashedAfterTakeover => "crashed_after_takeover",
+            Self::CrashedAfterTarget => "crashed_after_target",
+            Self::CrashedBeforeDatabaseFinalize => "crashed_before_database_finalize",
+            Self::CrashedBeforeNativeLink => "crashed_before_native_link",
+            Self::CrashedBeforeNativeRemove => "crashed_before_native_remove",
+            Self::CrashedBeforeRename => "crashed_before_rename",
+            Self::CrashedBeforeRestoreTree => "crashed_before_restore_tree",
+            Self::CrashedBeforeTakeover => "crashed_before_takeover",
+            Self::CrashedBeforeTarget => "crashed_before_target",
+            Self::CrashedDuringDatabaseFinalize => "crashed_during_database_finalize",
+            Self::DirectoryCreateFailed => "directory_create_failed",
+            Self::DirectoryCreatePending => "directory_create_pending",
+            Self::DirectoryCreated => "directory_created",
+            Self::DirectoryRestorePending => "directory_restore_pending",
+            Self::DirectoryRestored => "directory_restored",
+            Self::ExternalChangeAfterWrite => "external_change_after_write",
+            Self::NativeLinkPending => "native_link_pending",
+            Self::ReadyToFinalizeDatabase => "ready_to_finalize_database",
+            Self::Removed => "removed",
+            Self::RenameFailed => "rename_failed",
+            Self::RenamePending => "rename_pending",
+            Self::Renamed => "renamed",
+            Self::RollbackFailed => "rollback_failed",
+            Self::RolledBack => "rolled_back",
+            Self::RollingBack => "rolling_back",
+            Self::Snapshotted => "snapshotted",
+            Self::Snapshotting => "snapshotting",
+            Self::Succeeded => "succeeded",
+            Self::TakeoverLinkFailed => "takeover_link_failed",
+            Self::TakeoverLinked => "takeover_linked",
+            Self::TakeoverQuarantined => "takeover_quarantined",
+            Self::TakeoverRenameFailed => "takeover_rename_failed",
+            Self::TakeoverRenamePending => "takeover_rename_pending",
+            Self::Verified => "verified",
+            Self::Writing => "writing",
+            Self::Written => "written",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// 该阶段是否意味着目标可能已被本次 run 改动（回滚判定）。无通配分支：
+    /// 新增阶段时编译器强制在这里表态。
+    pub const fn may_have_changed_target(self) -> bool {
+        match self {
+            Self::CrashedAfterRename => true,
+            Self::CrashedAfterRestoreTree => true,
+            Self::CrashedAfterTakeover => true,
+            Self::CrashedAfterTarget => true,
+            Self::DirectoryCreatePending => true,
+            Self::DirectoryCreated => true,
+            Self::DirectoryRestored => true,
+            Self::Removed => true,
+            Self::Renamed => true,
+            Self::TakeoverLinked => true,
+            Self::TakeoverQuarantined => true,
+            Self::Written => true,
+            Self::Applying => false,
+            Self::Claimed => false,
+            Self::CrashedAfterDatabaseFinalize => false,
+            Self::CrashedBeforeDatabaseFinalize => false,
+            Self::CrashedBeforeNativeLink => false,
+            Self::CrashedBeforeNativeRemove => false,
+            Self::CrashedBeforeRename => false,
+            Self::CrashedBeforeRestoreTree => false,
+            Self::CrashedBeforeTakeover => false,
+            Self::CrashedBeforeTarget => false,
+            Self::CrashedDuringDatabaseFinalize => false,
+            Self::DirectoryCreateFailed => false,
+            Self::DirectoryRestorePending => false,
+            Self::ExternalChangeAfterWrite => false,
+            Self::NativeLinkPending => false,
+            Self::ReadyToFinalizeDatabase => false,
+            Self::RenameFailed => false,
+            Self::RenamePending => false,
+            Self::RollbackFailed => false,
+            Self::RolledBack => false,
+            Self::RollingBack => false,
+            Self::Snapshotted => false,
+            Self::Snapshotting => false,
+            Self::Succeeded => false,
+            Self::TakeoverLinkFailed => false,
+            Self::TakeoverRenameFailed => false,
+            Self::TakeoverRenamePending => false,
+            Self::Verified => false,
+            Self::Writing => false,
+            Self::Unknown => true,
+        }
+    }
+
+    pub const fn is_crashed(self) -> bool {
+        match self {
+            Self::CrashedAfterDatabaseFinalize => true,
+            Self::CrashedAfterRename => true,
+            Self::CrashedAfterRestoreTree => true,
+            Self::CrashedAfterTakeover => true,
+            Self::CrashedAfterTarget => true,
+            Self::CrashedBeforeDatabaseFinalize => true,
+            Self::CrashedBeforeNativeLink => true,
+            Self::CrashedBeforeNativeRemove => true,
+            Self::CrashedBeforeRename => true,
+            Self::CrashedBeforeRestoreTree => true,
+            Self::CrashedBeforeTakeover => true,
+            Self::CrashedBeforeTarget => true,
+            Self::CrashedDuringDatabaseFinalize => true,
+            Self::Applying => false,
+            Self::Claimed => false,
+            Self::DirectoryCreateFailed => false,
+            Self::DirectoryCreatePending => false,
+            Self::DirectoryCreated => false,
+            Self::DirectoryRestorePending => false,
+            Self::DirectoryRestored => false,
+            Self::ExternalChangeAfterWrite => false,
+            Self::NativeLinkPending => false,
+            Self::ReadyToFinalizeDatabase => false,
+            Self::Removed => false,
+            Self::RenameFailed => false,
+            Self::RenamePending => false,
+            Self::Renamed => false,
+            Self::RollbackFailed => false,
+            Self::RolledBack => false,
+            Self::RollingBack => false,
+            Self::Snapshotted => false,
+            Self::Snapshotting => false,
+            Self::Succeeded => false,
+            Self::TakeoverLinkFailed => false,
+            Self::TakeoverLinked => false,
+            Self::TakeoverQuarantined => false,
+            Self::TakeoverRenameFailed => false,
+            Self::TakeoverRenamePending => false,
+            Self::Verified => false,
+            Self::Writing => false,
+            Self::Written => false,
+            Self::Unknown => false,
+        }
+    }
+}
+
+impl fmt::Display for TargetPhase {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JournalOperation {
+    Apply,
+    Restore,
+    #[serde(other)]
+    Unknown,
+}
+
+impl JournalOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Apply => "apply",
+            Self::Restore => "restore",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for JournalOperation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// 回滚失败时附带的诊断：原始错误的稳定码与 operation（都已经过 allowlist/脱敏）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct JournalFailure {
+    code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    operation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct RunJournal {
     version: u32,
     run_id: String,
-    operation: String,
-    phase: String,
+    operation: JournalOperation,
+    phase: TargetPhase,
     targets: Vec<JournalTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure: Option<JournalFailure>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,7 +458,7 @@ struct JournalTarget {
     target_path: String,
     snapshot_id: Option<String>,
     snapshot_path: Option<String>,
-    phase: String,
+    phase: TargetPhase,
     before_fingerprint: Option<String>,
     after_fingerprint: Option<String>,
     temporary_path: Option<String>,
@@ -324,8 +568,9 @@ fn read_target_bytes(path: &Path) -> io::Result<Vec<u8>> {
 fn fsync_file(file: &File, path: &Path, operation: &'static str) -> Result<(), AppError> {
     #[cfg(test)]
     FSYNC_CALLS.with(|count| count.set(count.get() + 1));
-    file.sync_all()
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), operation))
+    file.sync_all().map_err(|error| {
+        AppError::atomic_write(&path.to_string_lossy(), operation).with_source(error)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -478,7 +723,7 @@ pub fn apply_persisted_preview(
 ) -> Result<ApplyResult, AppError> {
     let _write_guard = write_operations
         .lock()
-        .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "写入互斥锁不可用", false))?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     paths.audit_run_scope([preview_id])?;
     let journal_path = paths.journals().join(format!("{preview_id}.json"));
     claim_preview(database, preview_id, &journal_path)?;
@@ -505,7 +750,9 @@ fn run_has_snapshots(database: &Database, run_id: &str) -> Result<bool, AppError
             [run_id],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| AppError::database(&database_path, "detect_run_snapshots"))
+        .map_err(|error| {
+            AppError::database(&database_path, "detect_run_snapshots").with_source(error)
+        })
 }
 
 fn journal_reports_crash(paths: &AppPaths, run_id: &str) -> bool {
@@ -514,11 +761,12 @@ fn journal_reports_crash(paths: &AppPaths, run_id: &str) -> bool {
         .ok()
         .and_then(|bytes| parse_journal(&bytes))
         .is_some_and(|journal| {
-            journal.phase.starts_with("crashed")
-                || journal
-                    .targets
-                    .iter()
-                    .any(|target| target.phase.starts_with("crashed"))
+            journal.operation == JournalOperation::Unknown
+                || journal.phase.may_have_changed_target()
+                || journal.phase.is_crashed()
+                || journal.targets.iter().any(|target| {
+                    target.phase.may_have_changed_target() || target.phase.is_crashed()
+                })
         })
 }
 
@@ -535,9 +783,11 @@ fn settle_unhandled_apply_error(
              SET status = 'failed', error_code = ?2,
                  finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1 AND status IN ('applying', 'restoring')",
-            params![run_id, error_code.as_str()],
+            params![run_id, error_code.persisted().as_str()],
         )
-        .map_err(|_| AppError::database(&database_path, "settle_apply_error"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "settle_apply_error").with_source(error)
+        })?;
     Ok(())
 }
 
@@ -553,16 +803,17 @@ fn apply_claimed_preview(
     let mut journal = RunJournal {
         version: 1,
         run_id: preview_id.to_owned(),
-        operation: "apply".to_owned(),
-        phase: "claimed".to_owned(),
+        operation: JournalOperation::Apply,
+        phase: TargetPhase::Claimed,
         targets: Vec::new(),
+        failure: None,
     };
     persist_journal(paths, &journal)?;
 
     let work = build_target_work(&preview, inputs)?;
     let mutations = flatten_mutations(&work)?;
     let mut snapshots = Vec::with_capacity(mutations.len());
-    journal.phase = "snapshotting".to_owned();
+    journal.phase = TargetPhase::Snapshotting;
     persist_journal(paths, &journal)?;
     for mutation in &mutations {
         let snapshot = match create_snapshot(
@@ -597,7 +848,7 @@ fn apply_claimed_preview(
             target_path: mutation.path.to_string_lossy().into_owned(),
             snapshot_id: Some(snapshot.id.clone()),
             snapshot_path: Some(snapshot.snapshot_path.to_string_lossy().into_owned()),
-            phase: "snapshotted".to_owned(),
+            phase: TargetPhase::Snapshotted,
             before_fingerprint: Some(snapshot.state.fingerprint()),
             after_fingerprint: None,
             temporary_path: None,
@@ -627,7 +878,7 @@ fn apply_claimed_preview(
         persist_journal(paths, &journal)?;
     }
 
-    journal.phase = "applying".to_owned();
+    journal.phase = TargetPhase::Applying;
     persist_journal(paths, &journal)?;
     // 数据库预检整轮只做一次；循环内用 `PRAGMA data_version` 侦测是否有其它连接
     // 提交过写入，只有版本变化时才重做完整预检。
@@ -665,7 +916,7 @@ fn apply_claimed_preview(
                 );
             }
             ApplyFaultDecision::Crash => {
-                journal.targets[mutation_index].phase = "crashed_before_target".to_owned();
+                journal.targets[mutation_index].phase = TargetPhase::CrashedBeforeTarget;
                 persist_journal(paths, &journal)?;
                 return Err(AppError::atomic_write(
                     &mutation.path.to_string_lossy(),
@@ -744,9 +995,9 @@ fn apply_claimed_preview(
             );
         }
     };
-    journal.phase = "ready_to_finalize_database".to_owned();
+    journal.phase = TargetPhase::ReadyToFinalizeDatabase;
     for target in &mut journal.targets {
-        target.phase = "verified".to_owned();
+        target.phase = TargetPhase::Verified;
     }
     if let Err(error) = persist_journal(paths, &journal) {
         return finish_failed_apply(
@@ -776,7 +1027,7 @@ fn apply_claimed_preview(
             );
         }
         ApplyFaultDecision::Crash => {
-            journal.phase = "crashed_before_database_finalize".to_owned();
+            journal.phase = TargetPhase::CrashedBeforeDatabaseFinalize;
             persist_journal(paths, &journal)?;
             return Err(AppError::database(
                 &database.path().to_string_lossy(),
@@ -787,12 +1038,12 @@ fn apply_claimed_preview(
     if let Err(error) = finish_successful_apply(database, &preview, inputs, &verifications) {
         // SQLite commit 的 I/O 错误可能发生在提交边界两侧。此时不能猜测 DB
         // 是否已经持久化，更不能据此自动反向覆盖外部目标；保留活动 run 交给恢复流。
-        journal.phase = "crashed_during_database_finalize".to_owned();
+        journal.phase = TargetPhase::CrashedDuringDatabaseFinalize;
         persist_journal(paths, &journal)?;
         return Err(error);
     }
     if fault.decide(&ApplyFaultEvent::AfterDatabaseFinalize) == ApplyFaultDecision::Crash {
-        journal.phase = "crashed_after_database_finalize".to_owned();
+        journal.phase = TargetPhase::CrashedAfterDatabaseFinalize;
         persist_journal(paths, &journal)?;
         return Err(AppError::database(
             &database.path().to_string_lossy(),
@@ -800,37 +1051,24 @@ fn apply_claimed_preview(
         ));
     }
     let _ = cleanup_takeover_quarantines(&mut journal);
-    journal.phase = "succeeded".to_owned();
+    journal.phase = TargetPhase::Succeeded;
     // DB 已经原子 finalize 后，journal 的最终装饰性状态失败不能触发外部回滚，
     // 否则会把已提交基线与文件内容拆成两个真相。ready_to_finalize 仍是 durable 证据。
     let _ = persist_journal(paths, &journal);
     Ok(ApplyResult {
         run_id: preview_id.to_owned(),
         status: "succeeded".to_owned(),
-        applied_targets: u32::try_from(work.len())
-            .map_err(|_| AppError::invalid_input("targetCount", "目标数量超出 RPC 安全范围"))?,
-        snapshot_count: u32::try_from(snapshots.len())
-            .map_err(|_| AppError::invalid_input("snapshotCount", "快照数量超出 RPC 安全范围"))?,
+        applied_targets: u32::try_from(work.len()).map_err(|error| {
+            AppError::invalid_input("targetCount", "目标数量超出 RPC 安全范围").with_source(error)
+        })?,
+        snapshot_count: u32::try_from(snapshots.len()).map_err(|error| {
+            AppError::invalid_input("snapshotCount", "快照数量超出 RPC 安全范围").with_source(error)
+        })?,
     })
 }
 
 fn mutation_may_have_changed_target(target: &JournalTarget) -> bool {
-    target.after_fingerprint.is_some()
-        || matches!(
-            target.phase.as_str(),
-            "directory_create_pending"
-                | "directory_created"
-                | "renamed"
-                | "removed"
-                | "written"
-                | "crashed_after_rename"
-                | "crashed_after_target"
-                | "takeover_quarantined"
-                | "takeover_linked"
-                | "crashed_after_takeover"
-                | "directory_restored"
-                | "crashed_after_restore_tree"
-        )
+    target.after_fingerprint.is_some() || target.phase.may_have_changed_target()
 }
 
 fn claim_preview(
@@ -842,7 +1080,9 @@ fn claim_preview(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_claim_preview"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_claim_preview").with_source(error)
+        })?;
     let run = transaction
         .query_row(
             "SELECT kind, status FROM sync_runs WHERE id = ?1",
@@ -850,7 +1090,9 @@ fn claim_preview(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "read_preview_claim"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "read_preview_claim").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found("preview", preview_id))?;
     if run.0 != "preview" || run.1 != "previewed" {
         return Err(AppError::preview_already_consumed(preview_id, &run.1));
@@ -865,16 +1107,16 @@ fn claim_preview(
              WHERE id = ?1 AND kind = 'preview' AND status = 'previewed'",
             params![preview_id, journal_path.to_string_lossy()],
         )
-        .map_err(|_| AppError::write_in_progress(preview_id, "applying"))?;
+        .map_err(|error| AppError::write_in_progress(preview_id, "applying").with_source(error))?;
     if updated != 1 {
         return Err(AppError::preview_already_consumed(
             preview_id,
             "not_previewed",
         ));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_claim_preview"))
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_claim_preview").with_source(error)
+    })
 }
 
 fn active_writer(
@@ -894,7 +1136,7 @@ fn active_writer(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "read_active_writer"))
+        .map_err(|error| AppError::database(database_path, "read_active_writer").with_source(error))
 }
 
 fn mark_run_stale(database: &mut Database, run_id: &str) -> Result<(), AppError> {
@@ -908,7 +1150,7 @@ fn mark_run_stale(database: &mut Database, run_id: &str) -> Result<(), AppError>
              WHERE id = ?1 AND status = 'applying'",
             [run_id],
         )
-        .map_err(|_| AppError::database(&path, "mark_stale_preview"))?;
+        .map_err(|error| AppError::database(&path, "mark_stale_preview").with_source(error))?;
     Ok(())
 }
 
@@ -1128,7 +1370,9 @@ fn validate_skill_takeover_inputs(
             central_root,
         )?;
         let current = skill_library::inspect_skill_takeover_entry(Path::new(&entry.entry_path))
-            .map_err(|_| AppError::stale_preview("persisted", &item.target_id))?;
+            .map_err(|error| {
+                AppError::stale_preview("persisted", &item.target_id).with_source(error)
+            })?;
         let current_type = match current.entry_type {
             SkillTakeoverEntryKind::ExternalSymlink => SkillTakeoverEntryType::ExternalSymlink,
             SkillTakeoverEntryKind::Directory => SkillTakeoverEntryType::Directory,
@@ -1179,7 +1423,9 @@ fn validate_managed_item_inputs(
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
             )
             .optional()
-            .map_err(|_| AppError::database(database_path, "preflight_managed_item"))?;
+            .map_err(|error| {
+                AppError::database(database_path, "preflight_managed_item").with_source(error)
+            })?;
         match existing {
             Some((target_id, row_version)) => {
                 let expected = expected_versions
@@ -1202,7 +1448,10 @@ fn validate_managed_item_inputs(
                         |row| row.get::<_, String>(0),
                     )
                     .optional()
-                    .map_err(|_| AppError::database(database_path, "preflight_managed_item_key"))?;
+                    .map_err(|error| {
+                        AppError::database(database_path, "preflight_managed_item_key")
+                            .with_source(error)
+                    })?;
                 if conflicting_id.is_some() {
                     return Err(AppError::conflict(
                         "managedItems",
@@ -1230,7 +1479,10 @@ fn validate_managed_item_inputs(
                 |row| row.get::<_, i64>(0),
             )
             .optional()
-            .map_err(|_| AppError::database(database_path, "preflight_remove_managed_item"))?;
+            .map_err(|error| {
+                AppError::database(database_path, "preflight_remove_managed_item")
+                    .with_source(error)
+            })?;
         if actual.and_then(|value| u32::try_from(value).ok()) != Some(expected) {
             return Err(AppError::stale_preview(preview_id, remove_id));
         }
@@ -1274,7 +1526,9 @@ fn validate_descriptor_identity(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "verify_apply_descriptor"))?
+        .map_err(|error| {
+            AppError::database(database_path, "verify_apply_descriptor").with_source(error)
+        })?
         .ok_or_else(|| AppError::stale_preview("persisted", &item.target_id))?;
     let descriptor = &item.envelope.descriptor;
     if u32::try_from(identity.0).ok() != Some(item.envelope.target_row_version)
@@ -1329,7 +1583,9 @@ fn verify_database_versions(
         let actual = connection
             .query_row(&query, [entity_id], |row| row.get::<_, i64>(0))
             .optional()
-            .map_err(|_| AppError::database(database_path, "verify_apply_row_version"))?;
+            .map_err(|error| {
+                AppError::database(database_path, "verify_apply_row_version").with_source(error)
+            })?;
         if actual.and_then(|value| u32::try_from(value).ok()) != Some(*expected) {
             return Err(AppError::stale_preview(preview_id, entity_id));
         }
@@ -1342,7 +1598,10 @@ fn read_data_version(database: &Database) -> Result<i64, AppError> {
     database
         .connection()
         .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
-        .map_err(|_| AppError::database(&database.path().to_string_lossy(), "read_data_version"))
+        .map_err(|error| {
+            AppError::database(&database.path().to_string_lossy(), "read_data_version")
+                .with_source(error)
+        })
 }
 
 fn revalidate_database_preflight(
@@ -1462,7 +1721,10 @@ fn build_target_work<'a>(
             let exclude = resolve_local_exclude(&project_root)?;
             let relative = Path::new(&item.target_path)
                 .strip_prefix(project_root.as_str())
-                .map_err(|_| AppError::invalid_input("targetPath", "项目目标不在登记项目根内"))?;
+                .map_err(|error| {
+                    AppError::invalid_input("targetPath", "项目目标不在登记项目根内")
+                        .with_source(error)
+                })?;
             let pattern = format!(
                 "/{}",
                 relative
@@ -1505,7 +1767,7 @@ fn build_target_work<'a>(
             let owner_index = work
                 .iter_mut()
                 .position(|target| target.item.target_id == target_id)
-                .expect("exclude 的受管目标必须存在");
+                .ok_or_else(|| AppError::internal("exclude 的受管目标必须存在"))?;
             work[owner_index].mutations.push(PendingMutation {
                 target_id,
                 target_index: owner_index,
@@ -1905,7 +2167,9 @@ fn build_symlink_mutations(
                     validate_central_link_target(&child, Path::new(link_target), central_root)?;
                 if let Some(takeover) = takeover_entries.get(name.as_str()) {
                     let current_inspection = skill_library::inspect_skill_takeover_entry(&child)
-                        .map_err(|_| AppError::stale_preview("persisted", &item.target_id))?;
+                        .map_err(|error| {
+                            AppError::stale_preview("persisted", &item.target_id).with_source(error)
+                        })?;
                     let current_type = match current_inspection.entry_type {
                         SkillTakeoverEntryKind::ExternalSymlink => {
                             SkillTakeoverEntryType::ExternalSymlink
@@ -2003,9 +2267,9 @@ fn build_missing_skill_directories(
     target_id: &str,
     target_index: usize,
 ) -> Result<Vec<PendingMutation>, AppError> {
-    let relative = directory
-        .strip_prefix(allowed_root)
-        .map_err(|_| AppError::invalid_input("targetPath", "Skills 目录位于允许根之外"))?;
+    let relative = directory.strip_prefix(allowed_root).map_err(|error| {
+        AppError::invalid_input("targetPath", "Skills 目录位于允许根之外").with_source(error)
+    })?;
     if relative.as_os_str().is_empty() {
         return Ok(Vec::new());
     }
@@ -2069,9 +2333,9 @@ fn create_private_directory_nofollow(
     allowed_root: &Path,
 ) -> Result<CreatedDirectory, AppError> {
     validate_allowed_path(path, allowed_root, false)?;
-    let relative = path
-        .strip_prefix(allowed_root)
-        .map_err(|_| AppError::invalid_input("targetPath", "Skills 目录位于允许根之外"))?;
+    let relative = path.strip_prefix(allowed_root).map_err(|error| {
+        AppError::invalid_input("targetPath", "Skills 目录位于允许根之外").with_source(error)
+    })?;
     let name = relative
         .file_name()
         .ok_or_else(|| AppError::invalid_input("targetPath", "Skills 目录缺少名称"))?;
@@ -2093,7 +2357,7 @@ fn create_private_directory_nofollow(
     let created = unsafe { libc::mkdirat(parent.as_raw_fd(), name_c.as_ptr(), 0o700) };
     if created != 0 {
         let error = io::Error::last_os_error();
-        return Err(match error.kind() {
+        let app_error = match error.kind() {
             io::ErrorKind::PermissionDenied => {
                 AppError::permission(&path.to_string_lossy(), "mkdirat_skill_target")
             }
@@ -2101,7 +2365,8 @@ fn create_private_directory_nofollow(
                 AppError::stale_preview("persisted", &path.to_string_lossy())
             }
             _ => AppError::atomic_write(&path.to_string_lossy(), "create_skill_target_directory"),
-        });
+        };
+        return Err(app_error.with_source(error));
     }
     Ok(CreatedDirectory {
         parent,
@@ -2133,17 +2398,13 @@ fn finalize_created_directory(created: CreatedDirectory, path: &Path) -> Result<
             "chmod_skill_target_directory",
         ));
     }
-    directory
-        .sync_all()
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "sync_skill_directory"))?;
-    created.parent.sync_all().map_err(|_| {
-        AppError::atomic_write(
-            &path
-                .parent()
-                .expect("Skills 目录必须有父目录")
-                .to_string_lossy(),
-            "sync_skill_directory_parent",
-        )
+    directory.sync_all().map_err(|error| {
+        AppError::atomic_write(&path.to_string_lossy(), "sync_skill_directory").with_source(error)
+    })?;
+    let parent = parent_of(path)?;
+    created.parent.sync_all().map_err(|error| {
+        AppError::atomic_write(&parent.to_string_lossy(), "sync_skill_directory_parent")
+            .with_source(error)
     })
 }
 
@@ -2152,12 +2413,13 @@ fn c_path_segment(segment: &OsStr, field: &'static str) -> Result<CString, AppEr
         return Err(AppError::invalid_input(field, "路径段不能包含分隔符"));
     }
     CString::new(segment.as_bytes())
-        .map_err(|_| AppError::invalid_input(field, "路径段不能包含 NUL"))
+        .map_err(|error| AppError::invalid_input(field, "路径段不能包含 NUL").with_source(error))
 }
 
 fn open_directory_nofollow(path: &Path, operation: &'static str) -> Result<File, AppError> {
-    let path_c = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| AppError::invalid_input("allowedRoot", "路径不能包含 NUL"))?;
+    let path_c = CString::new(path.as_os_str().as_bytes()).map_err(|error| {
+        AppError::invalid_input("allowedRoot", "路径不能包含 NUL").with_source(error)
+    })?;
     // SAFETY: path_c 是合法 C 路径；成功返回的 fd 立即交给 File 管理。
     let descriptor = unsafe {
         libc::open(
@@ -2166,12 +2428,14 @@ fn open_directory_nofollow(path: &Path, operation: &'static str) -> Result<File,
         )
     };
     if descriptor < 0 {
-        return Err(match io::Error::last_os_error().kind() {
+        let error = io::Error::last_os_error();
+        let app_error = match error.kind() {
             io::ErrorKind::PermissionDenied => {
                 AppError::permission(&path.to_string_lossy(), operation)
             }
             _ => AppError::conflict("targetPath", "Skills 目录祖先无法安全打开"),
-        });
+        };
+        return Err(app_error.with_source(error));
     }
     // SAFETY: descriptor 是本函数刚取得且尚未被其他所有者接管的有效 fd。
     Ok(unsafe { File::from_raw_fd(descriptor) })
@@ -2192,12 +2456,14 @@ fn open_directory_at_nofollow(
         )
     };
     if descriptor < 0 {
-        return Err(match io::Error::last_os_error().kind() {
+        let error = io::Error::last_os_error();
+        let app_error = match error.kind() {
             io::ErrorKind::PermissionDenied => {
                 AppError::permission(&display_path.to_string_lossy(), "openat_skill_parent")
             }
             _ => AppError::conflict("targetPath", "Skills 目录祖先已变化、缺失或变为链接"),
-        });
+        };
+        return Err(app_error.with_source(error));
     }
     // SAFETY: descriptor 是本函数刚取得且尚未被其他所有者接管的有效 fd。
     Ok(unsafe { File::from_raw_fd(descriptor) })
@@ -2242,6 +2508,12 @@ fn flatten_mutations(work: &[TargetWork<'_>]) -> Result<Vec<PendingMutation>, Ap
     Ok(flattened)
 }
 
+/// 已验证目标的父目录；根路径或空路径在这里意味着不变量被打破，返回内部错误而不是 panic。
+fn parent_of(path: &Path) -> Result<&Path, AppError> {
+    path.parent()
+        .ok_or_else(|| AppError::internal("目标路径缺少父目录"))
+}
+
 fn validate_allowed_path(
     path: &Path,
     allowed_root: &Path,
@@ -2249,14 +2521,17 @@ fn validate_allowed_path(
 ) -> Result<(), AppError> {
     validate_normal_absolute(path, "targetPath")?;
     validate_normal_absolute(allowed_root, "allowedRoot")?;
-    let root_metadata = fs::symlink_metadata(allowed_root).map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => {
-            AppError::not_found("allowedRoot", &allowed_root.to_string_lossy())
-        }
-        io::ErrorKind::PermissionDenied => {
-            AppError::permission(&allowed_root.to_string_lossy(), "lstat_allowed_root")
-        }
-        _ => AppError::invalid_input("allowedRoot", "写入根无法安全读取"),
+    let root_metadata = fs::symlink_metadata(allowed_root).map_err(|error| {
+        let app_error = match error.kind() {
+            io::ErrorKind::NotFound => {
+                AppError::not_found("allowedRoot", &allowed_root.to_string_lossy())
+            }
+            io::ErrorKind::PermissionDenied => {
+                AppError::permission(&allowed_root.to_string_lossy(), "lstat_allowed_root")
+            }
+            _ => AppError::invalid_input("allowedRoot", "写入根无法安全读取"),
+        };
+        app_error.with_source(error)
     })?;
     if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
         return Err(AppError::conflict(
@@ -2264,8 +2539,9 @@ fn validate_allowed_path(
             "写入根必须是无链接的真实目录",
         ));
     }
-    let canonical_root = fs::canonicalize(allowed_root).map_err(|_| {
+    let canonical_root = fs::canonicalize(allowed_root).map_err(|error| {
         AppError::permission(&allowed_root.to_string_lossy(), "canonicalize_allowed_root")
+            .with_source(error)
     })?;
     if canonical_root != allowed_root {
         return Err(AppError::conflict(
@@ -2273,9 +2549,9 @@ fn validate_allowed_path(
             "写入根不是 canonical 路径",
         ));
     }
-    let relative = path
-        .strip_prefix(allowed_root)
-        .map_err(|_| AppError::invalid_input("targetPath", "目标位于允许写入根之外"))?;
+    let relative = path.strip_prefix(allowed_root).map_err(|error| {
+        AppError::invalid_input("targetPath", "目标位于允许写入根之外").with_source(error)
+    })?;
     if relative.as_os_str().is_empty() && !allow_root_target {
         return Err(AppError::invalid_input(
             "targetPath",
@@ -2290,9 +2566,9 @@ fn validate_allowed_path(
     };
     let mut current = allowed_root.to_path_buf();
     if parent != allowed_root {
-        let parent_relative = parent
-            .strip_prefix(allowed_root)
-            .map_err(|_| AppError::invalid_input("targetPath", "目标父目录越界"))?;
+        let parent_relative = parent.strip_prefix(allowed_root).map_err(|error| {
+            AppError::invalid_input("targetPath", "目标父目录越界").with_source(error)
+        })?;
         for component in parent_relative.components() {
             let Component::Normal(segment) = component else {
                 return Err(AppError::invalid_input(
@@ -2310,13 +2586,14 @@ fn validate_allowed_path(
                     return Err(AppError::permission(
                         &current.to_string_lossy(),
                         "lstat_target_parent",
-                    ));
+                    )
+                    .with_source(error));
                 }
-                Err(_) => {
-                    return Err(AppError::invalid_input(
-                        "targetPath",
-                        "目标父目录无法安全读取",
-                    ));
+                Err(error) => {
+                    return Err(
+                        AppError::invalid_input("targetPath", "目标父目录无法安全读取")
+                            .with_source(error),
+                    );
                 }
             };
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -2353,30 +2630,29 @@ fn capture_path_state(path: &Path) -> Result<PathState, AppError> {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(PathState::Missing),
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-            return Err(AppError::permission(
-                &path.to_string_lossy(),
-                "lstat_target",
-            ));
+            return Err(
+                AppError::permission(&path.to_string_lossy(), "lstat_target").with_source(error),
+            );
         }
-        Err(_) => {
-            return Err(AppError::atomic_write(
-                &path.to_string_lossy(),
-                "lstat_target",
-            ));
+        Err(error) => {
+            return Err(
+                AppError::atomic_write(&path.to_string_lossy(), "lstat_target").with_source(error),
+            );
         }
     };
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
-        let link_target = fs::read_link(path)
-            .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "read_link"))?;
+        let link_target = fs::read_link(path).map_err(|error| {
+            AppError::atomic_write(&path.to_string_lossy(), "read_link").with_source(error)
+        })?;
         return Ok(PathState::Symlink { link_target });
     }
     if metadata.is_file() {
         let bytes = read_target_bytes(path).map_err(|error| match error.kind() {
             io::ErrorKind::PermissionDenied => {
-                AppError::permission(&path.to_string_lossy(), "read_target")
+                AppError::permission(&path.to_string_lossy(), "read_target").with_source(error)
             }
-            _ => AppError::atomic_write(&path.to_string_lossy(), "read_target"),
+            _ => AppError::atomic_write(&path.to_string_lossy(), "read_target").with_source(error),
         })?;
         return Ok(PathState::File {
             hash: hash_bytes(&bytes),
@@ -2470,18 +2746,21 @@ fn create_snapshot(
     });
     match storage_kind {
         SnapshotStorageKind::DirectoryTree => {
-            let expected_hash = directory_tree_hash.expect("目录树快照必须绑定 hash");
+            let expected_hash =
+                directory_tree_hash.ok_or_else(|| AppError::internal("目录树快照必须绑定 hash"))?;
             skill_library::copy_skill_tree(target_path, &snapshot_path, expected_hash)?;
         }
         SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
             let mut snapshot_file = create_private_file(&snapshot_path)?;
             if let PathState::File { bytes, .. } = &state {
-                snapshot_file.write_all(bytes).map_err(|_| {
+                snapshot_file.write_all(bytes).map_err(|error| {
                     AppError::atomic_write(&snapshot_path.to_string_lossy(), "write_snapshot")
+                        .with_source(error)
                 })?;
             }
-            snapshot_file.flush().map_err(|_| {
+            snapshot_file.flush().map_err(|error| {
                 AppError::atomic_write(&snapshot_path.to_string_lossy(), "flush_snapshot")
+                    .with_source(error)
             })?;
             fsync_file(&snapshot_file, &snapshot_path, "sync_snapshot")?;
             ensure_private_file(&snapshot_path)?;
@@ -2508,7 +2787,7 @@ fn create_snapshot(
             storage_kind.as_str(),
         ],
     );
-    if insert.is_err() {
+    if let Err(error) = insert {
         match storage_kind {
             SnapshotStorageKind::DirectoryTree => {
                 if let Some(hash) = directory_tree_hash {
@@ -2519,7 +2798,7 @@ fn create_snapshot(
                 let _ = fs::remove_file(&snapshot_path);
             }
         }
-        return Err(AppError::database(&database_path, "insert_snapshot"));
+        return Err(AppError::database(&database_path, "insert_snapshot").with_source(error));
     }
     Ok(SnapshotRecord {
         id: snapshot_id,
@@ -2542,10 +2821,18 @@ fn create_snapshot(
 /// 崩溃截断只会损坏最后一行，前一条完整状态仍可恢复；历史的单对象 pretty JSON
 /// 由 `read_journal` 兼容解析。
 fn persist_journal(paths: &AppPaths, journal: &RunJournal) -> Result<(), AppError> {
+    tracing::info!(
+        run_id = %journal.run_id,
+        operation = %journal.operation,
+        phase = %journal.phase,
+        targets = journal.targets.len(),
+        "journal phase"
+    );
     let journal_path = paths.journals().join(format!("{}.json", journal.run_id));
     validate_allowed_path(&journal_path, paths.journals(), false)?;
-    let mut line = serde_json::to_vec(journal).map_err(|_| {
+    let mut line = serde_json::to_vec(journal).map_err(|error| {
         AppError::atomic_write(&journal_path.to_string_lossy(), "serialize_journal")
+            .with_source(error)
     })?;
     line.push(b'\n');
     let created = match fs::symlink_metadata(&journal_path) {
@@ -2557,26 +2844,33 @@ fn persist_journal(paths: &AppPaths, journal: &RunJournal) -> Result<(), AppErro
             ));
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => true,
-        Err(_) => {
-            return Err(AppError::atomic_write(
-                &journal_path.to_string_lossy(),
-                "lstat_journal",
-            ));
+        Err(error) => {
+            return Err(
+                AppError::atomic_write(&journal_path.to_string_lossy(), "lstat_journal")
+                    .with_source(error),
+            );
         }
     };
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
         .mode(PRIVATE_FILE_MODE)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(&journal_path)
-        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "open_journal"))?;
+        .map_err(|error| {
+            AppError::atomic_write(&journal_path.to_string_lossy(), "open_journal")
+                .with_source(error)
+        })?;
     // 旧格式（整文件单对象、无尾换行）上追加时先补一个换行，避免新行粘在 `}` 后面。
     if !created && !journal_ends_with_newline(&journal_path)? {
         line.insert(0, b'\n');
     }
     file.write_all(&line)
         .and_then(|_| file.flush())
-        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "append_journal"))?;
+        .map_err(|error| {
+            AppError::atomic_write(&journal_path.to_string_lossy(), "append_journal")
+                .with_source(error)
+        })?;
     fsync_file(&file, &journal_path, "sync_journal")?;
     if created {
         ensure_private_file(&journal_path)?;
@@ -2587,20 +2881,31 @@ fn persist_journal(paths: &AppPaths, journal: &RunJournal) -> Result<(), AppErro
 
 fn journal_ends_with_newline(journal_path: &Path) -> Result<bool, AppError> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut file = File::open(journal_path)
-        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "open_journal"))?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(journal_path)
+        .map_err(|error| {
+            AppError::atomic_write(&journal_path.to_string_lossy(), "open_journal")
+                .with_source(error)
+        })?;
     let length = file
         .metadata()
-        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "stat_journal"))?
+        .map_err(|error| {
+            AppError::atomic_write(&journal_path.to_string_lossy(), "stat_journal")
+                .with_source(error)
+        })?
         .len();
     if length == 0 {
         return Ok(true);
     }
-    file.seek(SeekFrom::End(-1))
-        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "seek_journal"))?;
+    file.seek(SeekFrom::End(-1)).map_err(|error| {
+        AppError::atomic_write(&journal_path.to_string_lossy(), "seek_journal").with_source(error)
+    })?;
     let mut last = [0_u8; 1];
-    file.read_exact(&mut last)
-        .map_err(|_| AppError::atomic_write(&journal_path.to_string_lossy(), "read_journal"))?;
+    file.read_exact(&mut last).map_err(|error| {
+        AppError::atomic_write(&journal_path.to_string_lossy(), "read_journal").with_source(error)
+    })?;
     Ok(last[0] == b'\n')
 }
 
@@ -2614,7 +2919,6 @@ fn parse_journal(bytes: &[u8]) -> Option<RunJournal> {
         if let Ok(journal) = serde_json::from_slice::<RunJournal>(line) {
             return Some(journal);
         }
-        break;
     }
     serde_json::from_slice::<RunJournal>(bytes).ok()
 }
@@ -2623,11 +2927,11 @@ fn read_journal(journal_path: &Path) -> Result<Option<RunJournal>, AppError> {
     let bytes = match fs::read(journal_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => {
-            return Err(AppError::permission(
-                &journal_path.to_string_lossy(),
-                "read_journal",
-            ));
+        Err(error) => {
+            return Err(
+                AppError::permission(&journal_path.to_string_lossy(), "read_journal")
+                    .with_source(error),
+            );
         }
     };
     parse_journal(&bytes)
@@ -2653,7 +2957,7 @@ fn apply_mutation(
         fingerprint: &expected_before_fingerprint,
     };
     verify_known_path_state(&mutation.path, Some(before_state), expected)?;
-    journal.targets[journal_index].phase = "writing".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::Writing;
     persist_journal(paths, journal)?;
     match &mutation.mutation {
         Mutation::CreateDirectory => {
@@ -2663,18 +2967,18 @@ fn apply_mutation(
             ) {
                 return Err(AppError::stale_preview(&expected_run_id, &expected_target_id).into());
             }
-            journal.targets[journal_index].phase = "directory_create_pending".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::DirectoryCreatePending;
             persist_journal(paths, journal)?;
             let created =
                 match create_private_directory_nofollow(&mutation.path, &mutation.allowed_root) {
                     Ok(created) => created,
                     Err(error) => {
-                        journal.targets[journal_index].phase = "directory_create_failed".to_owned();
+                        journal.targets[journal_index].phase = TargetPhase::DirectoryCreateFailed;
                         persist_journal(paths, journal)?;
                         return Err(error.into());
                     }
                 };
-            journal.targets[journal_index].phase = "directory_created".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::DirectoryCreated;
             persist_journal(paths, journal)?;
             finalize_created_directory(created, &mutation.path)?;
         }
@@ -2692,36 +2996,39 @@ fn apply_mutation(
             let state = verify_expected_path_state(&mutation.path, expected)?;
             match state {
                 PathState::File { .. } => {
-                    fs::remove_file(&mutation.path).map_err(|_| {
+                    fs::remove_file(&mutation.path).map_err(|error| {
                         AppError::atomic_write(&mutation.path.to_string_lossy(), "remove_target")
+                            .with_source(error)
                     })?;
-                    journal.targets[journal_index].phase = "removed".to_owned();
-                    sync_directory(mutation.path.parent().expect("目标必须有父目录"))?;
+                    journal.targets[journal_index].phase = TargetPhase::Removed;
+                    sync_directory(parent_of(&mutation.path)?)?;
                 }
                 PathState::Symlink { link_target } => {
                     let central_root = mutation.central_root.as_deref().ok_or_else(|| {
                         AppError::conflict("targetPath", "没有中央库所有权证据时拒绝删除链接")
                     })?;
                     validate_central_link_target(&mutation.path, &link_target, central_root)?;
-                    fs::remove_file(&mutation.path).map_err(|_| {
+                    fs::remove_file(&mutation.path).map_err(|error| {
                         AppError::atomic_write(&mutation.path.to_string_lossy(), "remove_symlink")
+                            .with_source(error)
                     })?;
-                    journal.targets[journal_index].phase = "removed".to_owned();
-                    sync_directory(mutation.path.parent().expect("目标必须有父目录"))?;
+                    journal.targets[journal_index].phase = TargetPhase::Removed;
+                    sync_directory(parent_of(&mutation.path)?)?;
                 }
                 PathState::Missing => {}
                 PathState::Directory { .. } => {
                     if mutation.central_root.is_none() {
                         return Err(AppError::conflict("targetPath", "拒绝删除普通目录").into());
                     }
-                    fs::remove_dir(&mutation.path).map_err(|_| {
+                    fs::remove_dir(&mutation.path).map_err(|error| {
                         AppError::conflict(
                             "targetPath",
                             "只允许删除由 Skills Apply 创建且仍为空的目录",
                         )
+                        .with_source(error)
                     })?;
-                    journal.targets[journal_index].phase = "removed".to_owned();
-                    sync_directory(mutation.path.parent().expect("目标必须有父目录"))?;
+                    journal.targets[journal_index].phase = TargetPhase::Removed;
+                    sync_directory(parent_of(&mutation.path)?)?;
                 }
             }
         }
@@ -2808,7 +3115,7 @@ fn apply_mutation(
         Mutation::CreateDirectory | Mutation::RestoreDirectoryTree { .. }
     ) {
         if !matches!(state, PathState::Directory { .. }) {
-            journal.targets[journal_index].phase = "external_change_after_write".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::ExternalChangeAfterWrite;
             persist_journal(paths, journal)?;
             return Err(MutationFailure::Error(AppError::stale_preview(
                 &expected_run_id,
@@ -2823,7 +3130,7 @@ fn apply_mutation(
         mutation.expected_after_fingerprint.clone()
     };
     if state.fingerprint() != expected_after_fingerprint {
-        journal.targets[journal_index].phase = "external_change_after_write".to_owned();
+        journal.targets[journal_index].phase = TargetPhase::ExternalChangeAfterWrite;
         journal.targets[journal_index].temporary_path = None;
         journal.targets[journal_index].temporary_fingerprint = None;
         persist_journal(paths, journal)?;
@@ -2832,7 +3139,7 @@ fn apply_mutation(
             &expected_target_id,
         )));
     }
-    journal.targets[journal_index].phase = "written".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::Written;
     journal.targets[journal_index].after_fingerprint = Some(expected_after_fingerprint);
     journal.targets[journal_index].temporary_path = None;
     journal.targets[journal_index].temporary_fingerprint = None;
@@ -2847,7 +3154,7 @@ fn apply_mutation(
             "fault_after_target",
         ))),
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_after_target".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedAfterTarget;
             persist_journal(paths, journal)?;
             Err(MutationFailure::Crash(AppError::atomic_write(
                 &mutation.path.to_string_lossy(),
@@ -2882,7 +3189,7 @@ fn apply_remove_native_skill(
             .into());
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_before_native_remove".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedBeforeNativeRemove;
             persist_journal(paths, journal)?;
             return Err(MutationFailure::Crash(AppError::atomic_write(
                 &mutation.path.to_string_lossy(),
@@ -2896,19 +3203,16 @@ fn apply_remove_native_skill(
             let PathState::Symlink { .. } = capture_path_state(&mutation.path)? else {
                 return Err(AppError::stale_preview(expected.run_id, expected.target_id).into());
             };
-            fs::remove_file(&mutation.path).map_err(|_| {
+            fs::remove_file(&mutation.path).map_err(|error| {
                 AppError::atomic_write(&mutation.path.to_string_lossy(), "remove_native_symlink")
+                    .with_source(error)
             })?;
         }
         NativeResourceEntryType::Directory => {
             let hash = content_hash.ok_or_else(|| {
                 AppError::invalid_input("projectNativeAction", "目录删除缺少树 hash")
             })?;
-            skill_library::remove_skill_tree(
-                &mutation.path,
-                mutation.path.parent().expect("Skill 入口必须有父目录"),
-                hash,
-            )?;
+            skill_library::remove_skill_tree(&mutation.path, parent_of(&mutation.path)?, hash)?;
         }
         NativeResourceEntryType::McpEntry => {
             return Err(AppError::invalid_input(
@@ -2918,8 +3222,8 @@ fn apply_remove_native_skill(
             .into());
         }
     }
-    sync_directory(mutation.path.parent().expect("Skill 入口必须有父目录"))?;
-    journal.targets[journal_index].phase = "removed".to_owned();
+    sync_directory(parent_of(&mutation.path)?)?;
+    journal.targets[journal_index].phase = TargetPhase::Removed;
     persist_journal(paths, journal)?;
     Ok(())
 }
@@ -2939,12 +3243,13 @@ fn apply_restore_native_symlink(
     ) {
         return Err(AppError::conflict("targetPath", "恢复目标已被占用，拒绝覆盖").into());
     }
-    let parent = mutation.path.parent().expect("链接必须有父目录");
+    let parent = parent_of(&mutation.path)?;
     let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
-    symlink(link_target, &temporary).map_err(|_| {
+    symlink(link_target, &temporary).map_err(|error| {
         AppError::atomic_write(&temporary.to_string_lossy(), "create_native_restore_link")
+            .with_source(error)
     })?;
-    journal.targets[journal_index].phase = "native_link_pending".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::NativeLinkPending;
     journal.targets[journal_index].temporary_path = Some(temporary.to_string_lossy().into_owned());
     journal.targets[journal_index].temporary_fingerprint =
         Some(capture_path_state(&temporary)?.fingerprint());
@@ -2963,7 +3268,7 @@ fn apply_restore_native_symlink(
             .into());
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_before_native_link".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedBeforeNativeLink;
             persist_journal(paths, journal)?;
             return Err(MutationFailure::Crash(AppError::atomic_write(
                 &mutation.path.to_string_lossy(),
@@ -2971,12 +3276,20 @@ fn apply_restore_native_symlink(
             )));
         }
     }
-    if skill_library::rename_import_exclusively(&temporary, &mutation.path).is_err() {
+    if let Err(error) = skill_library::rename_import_exclusively(&temporary, &mutation.path) {
         let _ = fs::remove_file(&temporary);
-        return Err(AppError::conflict("targetPath", "恢复目标已被占用，拒绝覆盖").into());
+        let diagnostic = error
+            .source()
+            .map(str::to_owned)
+            .unwrap_or_else(|| error.to_string());
+        return Err(
+            AppError::conflict("targetPath", "恢复目标已被占用，拒绝覆盖")
+                .with_source(diagnostic)
+                .into(),
+        );
     }
     sync_directory(parent)?;
-    journal.targets[journal_index].phase = "renamed".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::Renamed;
     journal.targets[journal_index].temporary_path = None;
     journal.targets[journal_index].temporary_fingerprint = None;
     persist_journal(paths, journal)?;
@@ -3011,12 +3324,13 @@ fn atomic_replace_file(
             return Err(AppError::conflict("targetPath", "文件原子写拒绝覆盖目录或链接").into());
         }
     }
-    let parent = path.parent().expect("已验证的目标必须有父目录");
+    let parent = parent_of(path)?;
     // Cursor 规则文件位于 `rules/` 子目录，父目录可能尚不存在；逐分量安全
     // 创建（拒绝 symlink 祖先），已存在的父目录维持既有行为不动。
     if fs::symlink_metadata(parent).is_err() {
-        crate::security::ensure_private_directory(parent)
-            .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_parent"))?;
+        crate::security::ensure_private_directory(parent).map_err(|error| {
+            AppError::atomic_write(&path.to_string_lossy(), "create_parent").with_source(error)
+        })?;
     }
     let temporary = parent.join(format!(".easytoagents-{}.tmp", Uuid::new_v4()));
     let mut file = OpenOptions::new()
@@ -3024,7 +3338,9 @@ fn atomic_replace_file(
         .create_new(true)
         .mode(PRIVATE_FILE_MODE)
         .open(&temporary)
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_temporary"))?;
+        .map_err(|error| {
+            AppError::atomic_write(&path.to_string_lossy(), "create_temporary").with_source(error)
+        })?;
     // 先落数据再改权限，最后一次 fsync 同时覆盖内容与元数据；
     // 以前是两次 sync_all（写后一次、chmod 后一次），多出的那次纯属浪费。
     if let Err(error) = file
@@ -3033,8 +3349,11 @@ fn atomic_replace_file(
         .and_then(|_| fs::set_permissions(&temporary, fs::Permissions::from_mode(mode & 0o7777)))
     {
         let _ = fs::remove_file(&temporary);
-        let _ = error;
-        return Err(AppError::atomic_write(&path.to_string_lossy(), "flush_temporary").into());
+        return Err(
+            AppError::atomic_write(&path.to_string_lossy(), "flush_temporary")
+                .with_source(error)
+                .into(),
+        );
     }
     if let Err(error) = fsync_file(&file, path, "flush_temporary") {
         let _ = fs::remove_file(&temporary);
@@ -3042,7 +3361,7 @@ fn atomic_replace_file(
     }
     drop(file);
     if let Some((index, fault, paths, journal, journal_index)) = fault_context {
-        journal.targets[journal_index].phase = "rename_pending".to_owned();
+        journal.targets[journal_index].phase = TargetPhase::RenamePending;
         journal.targets[journal_index].temporary_path =
             Some(temporary.to_string_lossy().into_owned());
         // 临时文件的内容与权限就是刚写入并 fsync 的 bytes/mode，直接由内存计算指纹，
@@ -3071,7 +3390,7 @@ fn atomic_replace_file(
             ApplyFaultDecision::Fail => {
                 let _ = fs::remove_file(&temporary);
                 let _ = sync_directory(parent);
-                journal.targets[journal_index].phase = "rename_failed".to_owned();
+                journal.targets[journal_index].phase = TargetPhase::RenameFailed;
                 journal.targets[journal_index].temporary_path = None;
                 journal.targets[journal_index].temporary_fingerprint = None;
                 return Err(MutationFailure::Error(AppError::atomic_write(
@@ -3080,7 +3399,7 @@ fn atomic_replace_file(
                 )));
             }
             ApplyFaultDecision::Crash => {
-                journal.targets[journal_index].phase = "crashed_before_rename".to_owned();
+                journal.targets[journal_index].phase = TargetPhase::CrashedBeforeRename;
                 persist_journal(paths, journal)?;
                 return Err(MutationFailure::Crash(AppError::atomic_write(
                     &path.to_string_lossy(),
@@ -3093,22 +3412,26 @@ fn atomic_replace_file(
             if let Err(error) = verify_known_path_state(path, known_state, expected) {
                 let _ = fs::remove_file(&temporary);
                 let _ = sync_directory(parent);
-                journal.targets[journal_index].phase = "rename_failed".to_owned();
+                journal.targets[journal_index].phase = TargetPhase::RenameFailed;
                 journal.targets[journal_index].temporary_path = None;
                 journal.targets[journal_index].temporary_fingerprint = None;
                 persist_journal(paths, journal)?;
                 return Err(MutationFailure::Error(error));
             }
         }
-        if fs::rename(&temporary, path).is_err() {
+        if let Err(error) = fs::rename(&temporary, path) {
             let _ = fs::remove_file(&temporary);
             let _ = sync_directory(parent);
-            journal.targets[journal_index].phase = "rename_failed".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::RenameFailed;
             journal.targets[journal_index].temporary_path = None;
             journal.targets[journal_index].temporary_fingerprint = None;
-            return Err(AppError::atomic_write(&path.to_string_lossy(), "rename_temporary").into());
+            return Err(
+                AppError::atomic_write(&path.to_string_lossy(), "rename_temporary")
+                    .with_source(error)
+                    .into(),
+            );
         }
-        journal.targets[journal_index].phase = "renamed".to_owned();
+        journal.targets[journal_index].phase = TargetPhase::Renamed;
         journal.targets[journal_index].temporary_path = None;
         journal.targets[journal_index].temporary_fingerprint = None;
         sync_directory(parent)?;
@@ -3125,7 +3448,7 @@ fn atomic_replace_file(
                 )));
             }
             ApplyFaultDecision::Crash => {
-                journal.targets[journal_index].phase = "crashed_after_rename".to_owned();
+                journal.targets[journal_index].phase = TargetPhase::CrashedAfterRename;
                 persist_journal(paths, journal)?;
                 return Err(MutationFailure::Crash(AppError::atomic_write(
                     &path.to_string_lossy(),
@@ -3134,10 +3457,14 @@ fn atomic_replace_file(
             }
         }
     } else {
-        if fs::rename(&temporary, path).is_err() {
+        if let Err(error) = fs::rename(&temporary, path) {
             let _ = fs::remove_file(&temporary);
             let _ = sync_directory(parent);
-            return Err(AppError::atomic_write(&path.to_string_lossy(), "rename_temporary").into());
+            return Err(
+                AppError::atomic_write(&path.to_string_lossy(), "rename_temporary")
+                    .with_source(error)
+                    .into(),
+            );
         }
         sync_directory(parent)?;
     }
@@ -3177,11 +3504,13 @@ fn atomic_replace_symlink(
             );
         }
     }
-    let parent = path.parent().expect("已验证的链接必须有父目录");
+    let parent = parent_of(path)?;
     let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
-    symlink(&canonical_target, &temporary)
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_temporary_symlink"))?;
-    journal.targets[journal_index].phase = "rename_pending".to_owned();
+    symlink(&canonical_target, &temporary).map_err(|error| {
+        AppError::atomic_write(&path.to_string_lossy(), "create_temporary_symlink")
+            .with_source(error)
+    })?;
+    journal.targets[journal_index].phase = TargetPhase::RenamePending;
     journal.targets[journal_index].temporary_path = Some(temporary.to_string_lossy().into_owned());
     journal.targets[journal_index].temporary_fingerprint =
         Some(capture_path_state(&temporary)?.fingerprint());
@@ -3200,7 +3529,7 @@ fn atomic_replace_symlink(
         ApplyFaultDecision::Fail => {
             let _ = fs::remove_file(&temporary);
             let _ = sync_directory(parent);
-            journal.targets[journal_index].phase = "rename_failed".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::RenameFailed;
             journal.targets[journal_index].temporary_path = None;
             journal.targets[journal_index].temporary_fingerprint = None;
             return Err(MutationFailure::Error(AppError::atomic_write(
@@ -3209,7 +3538,7 @@ fn atomic_replace_symlink(
             )));
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_before_rename".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedBeforeRename;
             persist_journal(paths, journal)?;
             return Err(MutationFailure::Crash(AppError::atomic_write(
                 &path.to_string_lossy(),
@@ -3221,21 +3550,25 @@ fn atomic_replace_symlink(
     if let Err(error) = verify_expected_path_state(path, expected_current) {
         let _ = fs::remove_file(&temporary);
         let _ = sync_directory(parent);
-        journal.targets[journal_index].phase = "rename_failed".to_owned();
+        journal.targets[journal_index].phase = TargetPhase::RenameFailed;
         journal.targets[journal_index].temporary_path = None;
         journal.targets[journal_index].temporary_fingerprint = None;
         persist_journal(paths, journal)?;
         return Err(MutationFailure::Error(error));
     }
-    if fs::rename(&temporary, path).is_err() {
+    if let Err(error) = fs::rename(&temporary, path) {
         let _ = fs::remove_file(&temporary);
         let _ = sync_directory(parent);
-        journal.targets[journal_index].phase = "rename_failed".to_owned();
+        journal.targets[journal_index].phase = TargetPhase::RenameFailed;
         journal.targets[journal_index].temporary_path = None;
         journal.targets[journal_index].temporary_fingerprint = None;
-        return Err(AppError::atomic_write(&path.to_string_lossy(), "rename_symlink").into());
+        return Err(
+            AppError::atomic_write(&path.to_string_lossy(), "rename_symlink")
+                .with_source(error)
+                .into(),
+        );
     }
-    journal.targets[journal_index].phase = "renamed".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::Renamed;
     journal.targets[journal_index].temporary_path = None;
     journal.targets[journal_index].temporary_fingerprint = None;
     sync_directory(parent)?;
@@ -3252,7 +3585,7 @@ fn atomic_replace_symlink(
             )));
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_after_rename".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedAfterRename;
             persist_journal(paths, journal)?;
             return Err(MutationFailure::Crash(AppError::atomic_write(
                 &path.to_string_lossy(),
@@ -3297,12 +3630,13 @@ fn atomic_takeover_symlink(
         );
     }
     verify_takeover_inspection(path, entry_type, content_hash, evidence_fingerprint)?;
-    let parent = path.parent().expect("接管入口必须有父目录");
+    let parent = parent_of(path)?;
     let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
     let quarantine = parent.join(format!(".easytoagents-{}.takeover", Uuid::new_v4()));
-    symlink(&canonical_target, &temporary)
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_takeover_link"))?;
-    journal.targets[journal_index].phase = "takeover_rename_pending".to_owned();
+    symlink(&canonical_target, &temporary).map_err(|error| {
+        AppError::atomic_write(&path.to_string_lossy(), "create_takeover_link").with_source(error)
+    })?;
+    journal.targets[journal_index].phase = TargetPhase::TakeoverRenamePending;
     journal.targets[journal_index].temporary_path = Some(temporary.to_string_lossy().into_owned());
     journal.targets[journal_index].temporary_fingerprint =
         Some(capture_path_state(&temporary)?.fingerprint());
@@ -3314,7 +3648,7 @@ fn atomic_takeover_symlink(
         ApplyFaultDecision::Continue => {}
         ApplyFaultDecision::Fail => {
             let _ = fs::remove_file(&temporary);
-            journal.targets[journal_index].phase = "takeover_rename_failed".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::TakeoverRenameFailed;
             journal.targets[journal_index].temporary_path = None;
             journal.targets[journal_index].temporary_fingerprint = None;
             let _ = persist_journal(paths, journal);
@@ -3323,7 +3657,7 @@ fn atomic_takeover_symlink(
             );
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_before_takeover".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedBeforeTakeover;
             persist_journal(paths, journal)?;
             return Err(MutationFailure::Crash(AppError::atomic_write(
                 &path.to_string_lossy(),
@@ -3334,32 +3668,35 @@ fn atomic_takeover_symlink(
     validate_allowed_path(path, allowed_root, false)?;
     verify_expected_path_state(path, expected_current)?;
     verify_takeover_inspection(path, entry_type, content_hash, evidence_fingerprint)?;
-    fs::rename(path, &quarantine).map_err(|_| {
+    fs::rename(path, &quarantine).map_err(|error| {
         AppError::atomic_write(&path.to_string_lossy(), "quarantine_takeover_entry")
+            .with_source(error)
     })?;
     sync_directory(parent)?;
-    journal.targets[journal_index].phase = "takeover_quarantined".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::TakeoverQuarantined;
     journal.targets[journal_index].quarantine_path =
         Some(quarantine.to_string_lossy().into_owned());
     journal.targets[journal_index].quarantine_fingerprint =
         Some(capture_path_state(&quarantine)?.fingerprint());
     persist_journal(paths, journal)?;
-    if fs::rename(&temporary, path).is_err() {
+    if let Err(error) = fs::rename(&temporary, path) {
         let _ = fs::rename(&quarantine, path);
         let _ = fs::remove_file(&temporary);
         let _ = sync_directory(parent);
-        journal.targets[journal_index].phase = "takeover_link_failed".to_owned();
+        journal.targets[journal_index].phase = TargetPhase::TakeoverLinkFailed;
         journal.targets[journal_index].temporary_path = None;
         journal.targets[journal_index].temporary_fingerprint = None;
         journal.targets[journal_index].quarantine_path = None;
         journal.targets[journal_index].quarantine_fingerprint = None;
         let _ = persist_journal(paths, journal);
         return Err(
-            AppError::atomic_write(&path.to_string_lossy(), "install_takeover_link").into(),
+            AppError::atomic_write(&path.to_string_lossy(), "install_takeover_link")
+                .with_source(error)
+                .into(),
         );
     }
     sync_directory(parent)?;
-    journal.targets[journal_index].phase = "takeover_linked".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::TakeoverLinked;
     journal.targets[journal_index].temporary_path = None;
     journal.targets[journal_index].temporary_fingerprint = None;
     persist_journal(paths, journal)?;
@@ -3372,7 +3709,7 @@ fn atomic_takeover_symlink(
             Err(AppError::atomic_write(&path.to_string_lossy(), "fault_after_takeover").into())
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_after_takeover".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedAfterTakeover;
             persist_journal(paths, journal)?;
             Err(MutationFailure::Crash(AppError::atomic_write(
                 &path.to_string_lossy(),
@@ -3435,11 +3772,11 @@ fn atomic_restore_directory_tree(
             );
         }
     }
-    let parent = path.parent().expect("恢复目标必须有父目录");
+    let parent = parent_of(path)?;
     let temporary = parent.join(format!(".easytoagents-{}.restore.d", Uuid::new_v4()));
     let quarantine = parent.join(format!(".easytoagents-{}.takeover", Uuid::new_v4()));
     skill_library::copy_skill_tree(snapshot_path, &temporary, content_hash)?;
-    journal.targets[journal_index].phase = "directory_restore_pending".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::DirectoryRestorePending;
     journal.targets[journal_index].temporary_path = Some(temporary.to_string_lossy().into_owned());
     journal.targets[journal_index].temporary_fingerprint =
         Some(capture_path_state(&temporary)?.fingerprint());
@@ -3458,7 +3795,7 @@ fn atomic_restore_directory_tree(
             .into());
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_before_restore_tree".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedBeforeRestoreTree;
             persist_journal(paths, journal)?;
             return Err(MutationFailure::Crash(AppError::atomic_write(
                 &path.to_string_lossy(),
@@ -3472,8 +3809,9 @@ fn atomic_restore_directory_tree(
         let central_root = central_root
             .ok_or_else(|| AppError::conflict("restoreTarget", "没有中央库证据时拒绝替换链接"))?;
         validate_central_link_target(path, link_target, central_root)?;
-        fs::rename(path, &quarantine).map_err(|_| {
+        fs::rename(path, &quarantine).map_err(|error| {
             AppError::atomic_write(&path.to_string_lossy(), "quarantine_restore_link")
+                .with_source(error)
         })?;
         journal.targets[journal_index].quarantine_path =
             Some(quarantine.to_string_lossy().into_owned());
@@ -3482,18 +3820,20 @@ fn atomic_restore_directory_tree(
         sync_directory(parent)?;
         persist_journal(paths, journal)?;
     }
-    if fs::rename(&temporary, path).is_err() {
+    if let Err(error) = fs::rename(&temporary, path) {
         if !matches!(current, PathState::Missing) {
             let _ = fs::rename(&quarantine, path);
         }
         let _ = skill_library::remove_skill_tree(&temporary, parent, content_hash);
         let _ = sync_directory(parent);
         return Err(
-            AppError::atomic_write(&path.to_string_lossy(), "install_restored_tree").into(),
+            AppError::atomic_write(&path.to_string_lossy(), "install_restored_tree")
+                .with_source(error)
+                .into(),
         );
     }
     sync_directory(parent)?;
-    journal.targets[journal_index].phase = "directory_restored".to_owned();
+    journal.targets[journal_index].phase = TargetPhase::DirectoryRestored;
     journal.targets[journal_index].temporary_path = None;
     journal.targets[journal_index].temporary_fingerprint = None;
     persist_journal(paths, journal)?;
@@ -3506,7 +3846,7 @@ fn atomic_restore_directory_tree(
             Err(AppError::atomic_write(&path.to_string_lossy(), "fault_after_restore_tree").into())
         }
         ApplyFaultDecision::Crash => {
-            journal.targets[journal_index].phase = "crashed_after_restore_tree".to_owned();
+            journal.targets[journal_index].phase = TargetPhase::CrashedAfterRestoreTree;
             persist_journal(paths, journal)?;
             Err(MutationFailure::Crash(AppError::atomic_write(
                 &path.to_string_lossy(),
@@ -3521,8 +3861,9 @@ fn validate_central_link_target(
     link_target: &Path,
     central_root: &Path,
 ) -> Result<PathBuf, AppError> {
-    let canonical_root = fs::canonicalize(central_root)
-        .map_err(|_| AppError::not_found("centralSkillsRoot", &central_root.to_string_lossy()))?;
+    let canonical_root = fs::canonicalize(central_root).map_err(|error| {
+        AppError::not_found("centralSkillsRoot", &central_root.to_string_lossy()).with_source(error)
+    })?;
     if canonical_root != central_root {
         return Err(AppError::conflict(
             "centralSkillsRoot",
@@ -3532,15 +3873,14 @@ fn validate_central_link_target(
     let resolved = if link_target.is_absolute() {
         link_target.to_path_buf()
     } else {
-        link_path
-            .parent()
-            .expect("链接必须有父目录")
-            .join(link_target)
+        parent_of(link_path)?.join(link_target)
     };
-    let canonical = fs::canonicalize(&resolved)
-        .map_err(|_| AppError::conflict("skillTarget", "断裂链接不能被证明为应用拥有"))?;
-    let metadata = fs::symlink_metadata(&canonical)
-        .map_err(|_| AppError::not_found("centralSkill", &canonical.to_string_lossy()))?;
+    let canonical = fs::canonicalize(&resolved).map_err(|error| {
+        AppError::conflict("skillTarget", "断裂链接不能被证明为应用拥有").with_source(error)
+    })?;
+    let metadata = fs::symlink_metadata(&canonical).map_err(|error| {
+        AppError::not_found("centralSkill", &canonical.to_string_lossy()).with_source(error)
+    })?;
     if !metadata.is_dir() || !canonical.starts_with(&canonical_root) || canonical == canonical_root
     {
         return Err(AppError::conflict(
@@ -3556,7 +3896,9 @@ fn sync_directory(path: &Path) -> Result<(), AppError> {
     FSYNC_CALLS.with(|count| count.set(count.get() + 1));
     File::open(path)
         .and_then(|directory| directory.sync_all())
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "sync_directory"))
+        .map_err(|error| {
+            AppError::atomic_write(&path.to_string_lossy(), "sync_directory").with_source(error)
+        })
 }
 
 #[derive(Debug)]
@@ -3625,7 +3967,9 @@ fn finish_successful_apply(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_finish_apply"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_finish_apply").with_source(error)
+        })?;
     let mut versions = BTreeMap::new();
     for item in &preview.items {
         record_expected_versions(item, &mut versions)?;
@@ -3651,8 +3995,9 @@ fn finish_successful_apply(
                 &database_path,
             )?;
         } else {
-            let projection = serde_json::to_string(&verification.projection)
-                .map_err(|_| AppError::database(&database_path, "serialize_managed_baseline"))?;
+            let projection = serde_json::to_string(&verification.projection).map_err(|error| {
+                AppError::database(&database_path, "serialize_managed_baseline").with_source(error)
+            })?;
             let expected_version = preview_item.envelope.target_row_version;
             let updated = transaction
                 .execute(
@@ -3668,7 +4013,9 @@ fn finish_successful_apply(
                         expected_version,
                     ],
                 )
-                .map_err(|_| AppError::database(&database_path, "update_managed_baseline"))?;
+                .map_err(|error| {
+                    AppError::database(&database_path, "update_managed_baseline").with_source(error)
+                })?;
             if updated != 1 {
                 return Err(AppError::stale_preview(
                     &preview.preview_id,
@@ -3689,7 +4036,9 @@ fn finish_successful_apply(
                  WHERE run_id = ?1 AND target_id = ?2",
                 params![preview.preview_id, verification.target_id],
             )
-            .map_err(|_| AppError::database(&database_path, "finish_sync_item"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "finish_sync_item").with_source(error)
+            })?;
         if item_updates != 1 {
             return Err(AppError::stale_preview(
                 &preview.preview_id,
@@ -3705,16 +4054,18 @@ fn finish_successful_apply(
              WHERE id = ?1 AND status = 'applying'",
             [&preview.preview_id],
         )
-        .map_err(|_| AppError::database(&database_path, "finish_apply_run"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "finish_apply_run").with_source(error)
+        })?;
     if run_updates != 1 {
         return Err(AppError::write_in_progress(
             &preview.preview_id,
             "not_applying",
         ));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_finish_apply"))
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_finish_apply").with_source(error)
+    })
 }
 
 fn apply_native_resource_changes(
@@ -3737,7 +4088,10 @@ fn apply_native_resource_changes(
                     params![preview.preview_id, preview_item.target_id, snapshot_path],
                     |row| row.get(0),
                 )
-                .map_err(|_| AppError::database(database_path, "load_native_disable_snapshot"))?;
+                .map_err(|error| {
+                    AppError::database(database_path, "load_native_disable_snapshot")
+                        .with_source(error)
+                })?;
             crate::db::native_resources::mark_disabled_in_transaction(
                 transaction,
                 &evidence.resource_id,
@@ -3806,7 +4160,9 @@ fn apply_managed_item_changes(
                 |row| row.get::<_, i64>(0),
             )
             .optional()
-            .map_err(|_| AppError::database(database_path, "read_managed_item_baseline"))?;
+            .map_err(|error| {
+                AppError::database(database_path, "read_managed_item_baseline").with_source(error)
+            })?;
         if let Some(existing) = existing {
             let expected = expected_versions
                 .get(managed_item.id.as_str())
@@ -3831,7 +4187,9 @@ fn apply_managed_item_changes(
                         expected,
                     ],
                 )
-                .map_err(|_| AppError::database(database_path, "update_managed_item"))?;
+                .map_err(|error| {
+                    AppError::database(database_path, "update_managed_item").with_source(error)
+                })?;
             if updated != 1 {
                 return Err(AppError::stale_preview(preview_id, &managed_item.id));
             }
@@ -3851,7 +4209,9 @@ fn apply_managed_item_changes(
                         managed_item.last_applied_item_hash,
                     ],
                 )
-                .map_err(|_| AppError::database(database_path, "insert_managed_item"))?;
+                .map_err(|error| {
+                    AppError::database(database_path, "insert_managed_item").with_source(error)
+                })?;
         }
     }
     for remove_id in &input.remove_managed_item_ids {
@@ -3871,12 +4231,32 @@ fn apply_managed_item_changes(
                  WHERE id = ?1 AND target_id = ?2 AND row_version = ?3",
                 params![remove_id, preview_item.target_id, expected],
             )
-            .map_err(|_| AppError::database(database_path, "delete_managed_item"))?;
+            .map_err(|error| {
+                AppError::database(database_path, "delete_managed_item").with_source(error)
+            })?;
         if deleted != 1 {
             return Err(AppError::stale_preview(preview_id, remove_id));
         }
     }
     Ok(())
+}
+
+/// 回滚失败的 journal 只保留稳定错误码、allowlist 后的 operation 与脱敏 source，
+/// 从不写入原始错误文本。
+fn journal_failure(error: &AppError) -> JournalFailure {
+    JournalFailure {
+        code: error.code().as_str().to_owned(),
+        operation: error
+            .details()
+            .and_then(|details| details.get("operation"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            // Conflict/not-found errors can be raised during rollback without
+            // an operation detail; retain a stable diagnostic operation rather
+            // than leaving rollback_failed without the required context.
+            .or_else(|| Some("rollback".to_owned())),
+        source: error.source().map(str::to_owned),
+    }
 }
 
 fn finish_failed_apply(
@@ -3888,21 +4268,22 @@ fn finish_failed_apply(
     applied: &[usize],
     original_error: AppError,
 ) -> Result<ApplyResult, AppError> {
-    journal.phase = "rolling_back".to_owned();
+    journal.phase = TargetPhase::RollingBack;
     persist_journal(paths, journal)?;
     for snapshot_index in applied.iter().rev() {
         let snapshot = &snapshots[*snapshot_index];
         let expected_after = journal.targets[*snapshot_index]
             .after_fingerprint
             .as_deref();
-        if let Err(_rollback_error) = restore_snapshot_record(
+        if let Err(rollback_error) = restore_snapshot_record(
             snapshot,
             expected_after,
             snapshot.central_root.as_deref(),
             &snapshot.allowed_root,
         ) {
-            journal.phase = "rollback_failed".to_owned();
-            journal.targets[*snapshot_index].phase = "rollback_failed".to_owned();
+            journal.phase = TargetPhase::RollbackFailed;
+            journal.targets[*snapshot_index].phase = TargetPhase::RollbackFailed;
+            journal.failure = Some(journal_failure(&rollback_error));
             persist_journal(paths, journal)?;
             update_failed_run(
                 database,
@@ -3910,17 +4291,23 @@ fn finish_failed_apply(
                 "rollback_failed",
                 ErrorCode::RollbackFailed,
             )?;
+            let diagnostic = rollback_error
+                .source()
+                .map(str::to_owned)
+                .unwrap_or_else(|| rollback_error.to_string());
             return Err(AppError::rollback_failed(
                 run_id,
                 &snapshot.target_path.to_string_lossy(),
                 &snapshot.id,
-            ));
+            )
+            .with_source(diagnostic));
         }
-        journal.targets[*snapshot_index].phase = "rolled_back".to_owned();
+        journal.targets[*snapshot_index].phase = TargetPhase::RolledBack;
         persist_journal(paths, journal)?;
     }
-    if cleanup_takeover_quarantines(journal).is_err() {
-        journal.phase = "rollback_failed".to_owned();
+    if let Err(rollback_error) = cleanup_takeover_quarantines(journal) {
+        journal.phase = TargetPhase::RollbackFailed;
+        journal.failure = Some(journal_failure(&rollback_error));
         persist_journal(paths, journal)?;
         update_failed_run(
             database,
@@ -3928,13 +4315,16 @@ fn finish_failed_apply(
             "rollback_failed",
             ErrorCode::RollbackFailed,
         )?;
-        return Err(AppError::rollback_failed(
-            run_id,
-            "takeoverQuarantine",
-            "cleanup",
-        ));
+        let diagnostic = rollback_error
+            .source()
+            .map(str::to_owned)
+            .unwrap_or_else(|| rollback_error.to_string());
+        return Err(
+            AppError::rollback_failed(run_id, "takeoverQuarantine", "cleanup")
+                .with_source(diagnostic),
+        );
     }
-    journal.phase = "rolled_back".to_owned();
+    journal.phase = TargetPhase::RolledBack;
     persist_journal(paths, journal)?;
     let status = if original_error.code() == ErrorCode::StalePreview {
         "stale"
@@ -3990,8 +4380,9 @@ fn cleanup_takeover_quarantine(target: &mut JournalTarget) -> Result<(), AppErro
     }
     match state {
         PathState::Symlink { .. } | PathState::File { .. } => {
-            fs::remove_file(&quarantine).map_err(|_| {
+            fs::remove_file(&quarantine).map_err(|error| {
                 AppError::atomic_write(&quarantine.to_string_lossy(), "cleanup_takeover")
+                    .with_source(error)
             })?;
         }
         PathState::Directory { .. } => {
@@ -3999,15 +4390,11 @@ fn cleanup_takeover_quarantine(target: &mut JournalTarget) -> Result<(), AppErro
                 .directory_tree_hash
                 .as_deref()
                 .ok_or_else(|| AppError::conflict("takeoverQuarantine", "目录隔离项缺少树 hash"))?;
-            skill_library::remove_skill_tree(
-                &quarantine,
-                quarantine.parent().expect("隔离项必须有父目录"),
-                hash,
-            )?;
+            skill_library::remove_skill_tree(&quarantine, parent_of(&quarantine)?, hash)?;
         }
         PathState::Missing => {}
     }
-    sync_directory(quarantine.parent().expect("隔离项必须有父目录"))?;
+    sync_directory(parent_of(&quarantine)?)?;
     target.quarantine_path = None;
     target.quarantine_fingerprint = None;
     Ok(())
@@ -4027,9 +4414,11 @@ fn update_failed_run(
              SET status = ?2, error_code = ?3,
                  finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1 AND status IN ('applying', 'restoring')",
-            params![run_id, status, error_code.as_str()],
+            params![run_id, status, error_code.persisted().as_str()],
         )
-        .map_err(|_| AppError::database(&database_path, "update_failed_run"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "update_failed_run").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::database(&database_path, "missing_active_run"));
     }
@@ -4061,13 +4450,14 @@ fn restore_snapshot_record(
                         fingerprint: &current_fingerprint,
                     },
                 )?;
-                fs::remove_file(&snapshot.target_path).map_err(|_| {
+                fs::remove_file(&snapshot.target_path).map_err(|error| {
                     AppError::atomic_write(
                         &snapshot.target_path.to_string_lossy(),
                         "rollback_remove_file",
                     )
+                    .with_source(error)
                 })?;
-                sync_directory(snapshot.target_path.parent().expect("目标必须有父目录"))
+                sync_directory(parent_of(&snapshot.target_path)?)
             }
             PathState::Symlink { link_target } => {
                 if let Some(central_root) = central_root {
@@ -4086,13 +4476,14 @@ fn restore_snapshot_record(
                         fingerprint: &current_fingerprint,
                     },
                 )?;
-                fs::remove_file(&snapshot.target_path).map_err(|_| {
+                fs::remove_file(&snapshot.target_path).map_err(|error| {
                     AppError::atomic_write(
                         &snapshot.target_path.to_string_lossy(),
                         "rollback_remove_symlink",
                     )
+                    .with_source(error)
                 })?;
-                sync_directory(snapshot.target_path.parent().expect("目标必须有父目录"))
+                sync_directory(parent_of(&snapshot.target_path)?)
             }
             PathState::Directory { .. } => {
                 verify_expected_path_state(
@@ -4103,10 +4494,11 @@ fn restore_snapshot_record(
                         fingerprint: &current_fingerprint,
                     },
                 )?;
-                fs::remove_dir(&snapshot.target_path).map_err(|_| {
+                fs::remove_dir(&snapshot.target_path).map_err(|error| {
                     AppError::conflict("rollbackTarget", "Skills 回滚只删除本次创建且仍为空的目录")
+                        .with_source(error)
                 })?;
-                sync_directory(snapshot.target_path.parent().expect("目标必须有父目录"))
+                sync_directory(parent_of(&snapshot.target_path)?)
             }
         },
         PathState::File { bytes, mode, .. } => {
@@ -4199,27 +4591,30 @@ fn replace_directory_tree_without_journal(
             "目录树恢复拒绝覆盖外部文件或目录",
         ));
     }
-    let parent = path.parent().expect("目录恢复目标必须有父目录");
+    let parent = parent_of(path)?;
     let temporary = parent.join(format!(".easytoagents-{}.restore.d", Uuid::new_v4()));
     let quarantine = parent.join(format!(".easytoagents-{}.rollback", Uuid::new_v4()));
     skill_library::copy_skill_tree(snapshot_path, &temporary, content_hash)?;
     if !current_missing {
-        fs::rename(path, &quarantine)
-            .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "quarantine_rollback"))?;
+        fs::rename(path, &quarantine).map_err(|error| {
+            AppError::atomic_write(&path.to_string_lossy(), "quarantine_rollback")
+                .with_source(error)
+        })?;
     }
-    if fs::rename(&temporary, path).is_err() {
+    if let Err(error) = fs::rename(&temporary, path) {
         if !current_missing {
             let _ = fs::rename(&quarantine, path);
         }
         let _ = skill_library::remove_skill_tree(&temporary, parent, content_hash);
-        return Err(AppError::atomic_write(
-            &path.to_string_lossy(),
-            "restore_directory_tree",
-        ));
+        return Err(
+            AppError::atomic_write(&path.to_string_lossy(), "restore_directory_tree")
+                .with_source(error),
+        );
     }
     if !current_missing {
-        fs::remove_file(&quarantine).map_err(|_| {
+        fs::remove_file(&quarantine).map_err(|error| {
             AppError::atomic_write(&quarantine.to_string_lossy(), "cleanup_rollback_link")
+                .with_source(error)
         })?;
     }
     sync_directory(parent)
@@ -4241,17 +4636,21 @@ fn restore_external_symlink_without_central(
             "恢复目标已被占用，拒绝覆盖",
         ));
     }
-    let parent = path.parent().expect("链接必须有父目录");
+    let parent = parent_of(path)?;
     let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
-    symlink(link_target, &temporary).map_err(|_| {
+    symlink(link_target, &temporary).map_err(|error| {
         AppError::atomic_write(&temporary.to_string_lossy(), "create_native_rollback_link")
+            .with_source(error)
     })?;
-    if skill_library::rename_import_exclusively(&temporary, path).is_err() {
+    if let Err(error) = skill_library::rename_import_exclusively(&temporary, path) {
         let _ = fs::remove_file(&temporary);
-        return Err(AppError::conflict(
-            "targetPath",
-            "恢复目标已被占用，拒绝覆盖",
-        ));
+        let diagnostic = error
+            .source()
+            .map(str::to_owned)
+            .unwrap_or_else(|| error.to_string());
+        return Err(
+            AppError::conflict("targetPath", "恢复目标已被占用，拒绝覆盖").with_source(diagnostic),
+        );
     }
     sync_directory(parent)
 }
@@ -4276,23 +4675,24 @@ fn replace_symlink_without_journal(
             ));
         }
     }
-    let parent = path.parent().expect("链接目标必须有父目录");
+    let parent = parent_of(path)?;
     let temporary = parent.join(format!(".easytoagents-{}.link", Uuid::new_v4()));
-    symlink(link_target, &temporary)
-        .map_err(|_| AppError::atomic_write(&path.to_string_lossy(), "create_restore_symlink"))?;
+    symlink(link_target, &temporary).map_err(|error| {
+        AppError::atomic_write(&path.to_string_lossy(), "create_restore_symlink").with_source(error)
+    })?;
     validate_allowed_path(path, allowed_root, false)?;
     if let Err(error) = verify_expected_path_state(path, expected_current) {
         let _ = fs::remove_file(&temporary);
         let _ = sync_directory(parent);
         return Err(error);
     }
-    if fs::rename(&temporary, path).is_err() {
+    if let Err(error) = fs::rename(&temporary, path) {
         let _ = fs::remove_file(&temporary);
         let _ = sync_directory(parent);
-        return Err(AppError::atomic_write(
-            &path.to_string_lossy(),
-            "rename_restore_symlink",
-        ));
+        return Err(
+            AppError::atomic_write(&path.to_string_lossy(), "rename_restore_symlink")
+                .with_source(error),
+        );
     }
     sync_directory(parent)
 }
@@ -4305,7 +4705,9 @@ pub fn list_snapshots(database: &Database) -> Result<Vec<SnapshotSummary>, AppEr
             "SELECT id, run_id, target_id, target_path, target_type, storage_kind, created_at
              FROM snapshots ORDER BY created_at DESC, id DESC",
         )
-        .map_err(|_| AppError::database(&database_path, "prepare_list_snapshots"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "prepare_list_snapshots").with_source(error)
+        })?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -4318,11 +4720,15 @@ pub fn list_snapshots(database: &Database) -> Result<Vec<SnapshotSummary>, AppEr
                 row.get::<_, String>(6)?,
             ))
         })
-        .map_err(|_| AppError::database(&database_path, "query_list_snapshots"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "query_list_snapshots").with_source(error)
+        })?;
     let mut snapshots = Vec::new();
     for row in rows {
         let (snapshot_id, run_id, target_id, target_path, target_type, storage_kind, created_at) =
-            row.map_err(|_| AppError::database(&database_path, "read_snapshot_summary"))?;
+            row.map_err(|error| {
+                AppError::database(&database_path, "read_snapshot_summary").with_source(error)
+            })?;
         let target_type = parse_target_type(&target_type)?;
         let storage_kind = parse_snapshot_storage_kind(&storage_kind)?;
         snapshots.push(SnapshotSummary {
@@ -4358,7 +4764,7 @@ pub fn delete_snapshots(
 ) -> Result<DeleteSnapshotsResultDto, AppError> {
     let _write_guard = write_operations
         .lock()
-        .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "写入互斥锁不可用", false))?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     paths.audit_run_scope([])?;
     let database_path = database.path().to_string_lossy().into_owned();
 
@@ -4390,7 +4796,9 @@ pub fn delete_snapshots(
                 },
             )
             .optional()
-            .map_err(|_| AppError::database(&database_path, "load_snapshot_for_delete"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "load_snapshot_for_delete").with_source(error)
+            })?;
         let Some((run_id, snapshot_path, storage_kind, content_hash)) = row else {
             failures.push(snapshot_delete_failure(
                 snapshot_id,
@@ -4407,7 +4815,9 @@ pub fn delete_snapshots(
                 |row| row.get::<_, i64>(0),
             )
             .optional()
-            .map_err(|_| AppError::database(&database_path, "check_snapshot_run_active"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "check_snapshot_run_active").with_source(error)
+            })?;
         if active.is_some() {
             failures.push(snapshot_delete_failure(
                 snapshot_id,
@@ -4472,7 +4882,9 @@ pub fn delete_snapshots(
         let transaction = database
             .connection_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| AppError::database(&database_path, "begin_delete_snapshots"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "begin_delete_snapshots").with_source(error)
+            })?;
         for (snapshot_id, run_id, snapshot_path, storage_kind, content_hash) in &removable {
             transaction
                 .execute(
@@ -4487,14 +4899,18 @@ pub fn delete_snapshots(
                         content_hash,
                     ],
                 )
-                .map_err(|_| AppError::database(&database_path, "queue_snapshot_cleanup"))?;
+                .map_err(|error| {
+                    AppError::database(&database_path, "queue_snapshot_cleanup").with_source(error)
+                })?;
             transaction
                 .execute("DELETE FROM snapshots WHERE id = ?1", [snapshot_id])
-                .map_err(|_| AppError::database(&database_path, "delete_snapshot_row"))?;
+                .map_err(|error| {
+                    AppError::database(&database_path, "delete_snapshot_row").with_source(error)
+                })?;
         }
-        transaction
-            .commit()
-            .map_err(|_| AppError::database(&database_path, "commit_delete_snapshots"))?;
+        transaction.commit().map_err(|error| {
+            AppError::database(&database_path, "commit_delete_snapshots").with_source(error)
+        })?;
     }
 
     for (snapshot_id, _run_id, snapshot_path, storage_kind, content_hash) in &removable {
@@ -4515,8 +4931,9 @@ pub fn delete_snapshots(
                         skill_library::remove_skill_tree(snapshot_path, owner, hash)
                     }),
                 SnapshotStorageKind::PayloadFile | SnapshotStorageKind::MetadataOnly => {
-                    fs::remove_file(snapshot_path).map_err(|_| {
+                    fs::remove_file(snapshot_path).map_err(|error| {
                         AppError::atomic_write(&snapshot_path.to_string_lossy(), "remove_snapshot")
+                            .with_source(error)
                     })
                 }
             }
@@ -4533,7 +4950,9 @@ pub fn delete_snapshots(
                 "DELETE FROM retired_snapshot_cleanup WHERE snapshot_id = ?1",
                 [snapshot_id],
             )
-            .map_err(|_| AppError::database(&database_path, "dequeue_snapshot_cleanup"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "dequeue_snapshot_cleanup").with_source(error)
+            })?;
     }
 
     Ok(DeleteSnapshotsResultDto {
@@ -4565,7 +4984,9 @@ pub fn detect_interrupted_run(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "detect_interrupted_run"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "detect_interrupted_run").with_source(error)
+        })?;
     let Some((run_id, status, journal_path)) = active else {
         return Ok(None);
     };
@@ -4625,7 +5046,9 @@ pub fn detect_interrupted_run(
                 [&target.target_id],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::database(&database_path, "check_interrupted_target"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "check_interrupted_target").with_source(error)
+            })?;
         if !target_exists {
             continue;
         }
@@ -4638,7 +5061,8 @@ pub fn detect_interrupted_run(
             target_id: target.target_id,
             target_path: target.target_path,
             snapshot_id: target.snapshot_id,
-            phase: target.phase,
+            // 前端 DTO 保持字符串：旧 journal 的未知阶段以 "unknown" 透出，不改 RPC 合同。
+            phase: target.phase.as_str().to_owned(),
             current_type,
             current_fingerprint,
             error_code,
@@ -4698,10 +5122,14 @@ pub fn preview_restore(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "load_restore_target_identity"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "load_restore_target_identity").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found("managedTarget", target_id))?;
-    let mut envelope: PersistedPreviewEnvelope = serde_json::from_str(&target_identity.7)
-        .map_err(|_| AppError::database(&database_path, "parse_restore_descriptor"))?;
+    let mut envelope: PersistedPreviewEnvelope =
+        serde_json::from_str(&target_identity.7).map_err(|error| {
+            AppError::database(&database_path, "parse_restore_descriptor").with_source(error)
+        })?;
     if target_identity.1 != envelope.descriptor.tool.as_str()
         || target_identity.2 != envelope.descriptor.artifact_kind.as_str()
         || target_identity.3 != envelope.descriptor.scope.as_str()
@@ -4719,8 +5147,9 @@ pub fn preview_restore(
         Path::new(&target_identity.5),
         &envelope,
     )?;
-    let target_row_version = u32::try_from(target_identity.0)
-        .map_err(|_| AppError::invalid_input("snapshot", "目标 row_version 超出安全范围"))?;
+    let target_row_version = u32::try_from(target_identity.0).map_err(|error| {
+        AppError::invalid_input("snapshot", "目标 row_version 超出安全范围").with_source(error)
+    })?;
     let restore_id = Uuid::new_v4().to_string();
     envelope.current_full_hash = current.content_hash().map(str::to_owned);
     envelope.current_managed_hash = None;
@@ -4740,12 +5169,15 @@ pub fn preview_restore(
     envelope.restore_current_fingerprint = Some(current.fingerprint());
     envelope.restore_target_path = Some(snapshot.target_path.to_string_lossy().into_owned());
     envelope.allowed_root = Some(allowed_root.to_string_lossy().into_owned());
-    let envelope_json = serde_json::to_string(&envelope)
-        .map_err(|_| AppError::database(&database_path, "serialize_restore_preview"))?;
+    let envelope_json = serde_json::to_string(&envelope).map_err(|error| {
+        AppError::database(&database_path, "serialize_restore_preview").with_source(error)
+    })?;
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_restore_preview"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_restore_preview").with_source(error)
+        })?;
     transaction
         .execute(
             "INSERT INTO sync_runs(id, kind, status, scope, project_id, db_version)
@@ -4757,7 +5189,9 @@ pub fn preview_restore(
                 envelope.target_row_version
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "insert_restore_preview"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "insert_restore_preview").with_source(error)
+        })?;
     transaction
         .execute(
             "INSERT INTO sync_items(
@@ -4772,10 +5206,12 @@ pub fn preview_restore(
                 envelope_json,
             ],
         )
-        .map_err(|_| AppError::database(&database_path, "insert_restore_preview_item"))?;
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_restore_preview"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "insert_restore_preview_item").with_source(error)
+        })?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_restore_preview").with_source(error)
+    })?;
     Ok(RestorePreview {
         preview_id: restore_id,
         snapshot_id: snapshot_id.to_owned(),
@@ -4843,7 +5279,7 @@ pub fn restore_snapshot(
 ) -> Result<ApplyResult, AppError> {
     let _write_guard = write_operations
         .lock()
-        .map_err(|_| AppError::new(ErrorCode::WriteInProgress, "写入互斥锁不可用", false))?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     paths.audit_run_scope([restore_preview_id])?;
     let preview = load_persisted_preview(database, restore_preview_id)?;
     if preview.items.len() != 1 {
@@ -4956,9 +5392,10 @@ fn restore_claimed_snapshot(
     let mut journal = RunJournal {
         version: 1,
         run_id: restore_preview_id.to_owned(),
-        operation: "restore".to_owned(),
-        phase: "snapshotting".to_owned(),
+        operation: JournalOperation::Restore,
+        phase: TargetPhase::Snapshotting,
         targets: Vec::new(),
+        failure: None,
     };
     persist_journal(paths, &journal)?;
     let second_snapshot = create_snapshot(
@@ -4980,7 +5417,7 @@ fn restore_claimed_snapshot(
         target_path: snapshot.target_path.to_string_lossy().into_owned(),
         snapshot_id: Some(second_snapshot.id.clone()),
         snapshot_path: Some(second_snapshot.snapshot_path.to_string_lossy().into_owned()),
-        phase: "snapshotted".to_owned(),
+        phase: TargetPhase::Snapshotted,
         before_fingerprint: Some(second_snapshot.state.fingerprint()),
         after_fingerprint: None,
         temporary_path: None,
@@ -5116,8 +5553,8 @@ fn restore_claimed_snapshot(
             ),
         );
     }
-    journal.phase = "ready_to_finalize_database".to_owned();
-    journal.targets[0].phase = "verified".to_owned();
+    journal.phase = TargetPhase::ReadyToFinalizeDatabase;
+    journal.targets[0].phase = TargetPhase::Verified;
     if let Err(error) = persist_journal(paths, &journal) {
         return finish_failed_apply(
             database,
@@ -5155,11 +5592,11 @@ fn restore_claimed_snapshot(
         source_run_requires_resolution.then_some(snapshot.run_id.as_str()),
         source_run_resolved,
     ) {
-        journal.phase = "crashed_during_database_finalize".to_owned();
+        journal.phase = TargetPhase::CrashedDuringDatabaseFinalize;
         persist_journal(paths, &journal)?;
         return Err(error);
     }
-    journal.phase = "succeeded".to_owned();
+    journal.phase = TargetPhase::Succeeded;
     let _ = persist_journal(paths, &journal);
     Ok(ApplyResult {
         run_id: restore_preview_id.to_owned(),
@@ -5223,10 +5660,11 @@ fn cleanup_interrupted_temporaries(
                             "临时路径内容已变化，拒绝删除未知内容",
                         ));
                     }
-                    fs::remove_file(&temporary).map_err(|_| {
+                    fs::remove_file(&temporary).map_err(|error| {
                         AppError::atomic_write(&temporary.to_string_lossy(), "cleanup_temporary")
+                            .with_source(error)
                     })?;
-                    sync_directory(temporary.parent().expect("临时路径必须有父目录"))?;
+                    sync_directory(parent_of(&temporary)?)?;
                 }
                 PathState::Directory { .. } => {
                     return Err(AppError::conflict(
@@ -5263,7 +5701,9 @@ fn claim_restore(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_claim_restore"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_claim_restore").with_source(error)
+        })?;
     validate_restore_identity(
         &transaction,
         item,
@@ -5278,7 +5718,9 @@ fn claim_restore(
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "read_restore_claim"))?
+        .map_err(|error| {
+            AppError::database(&database_path, "read_restore_claim").with_source(error)
+        })?
         .ok_or_else(|| AppError::not_found("restorePreview", restore_preview_id))?;
     if status != "previewed" {
         return Err(AppError::preview_already_consumed(
@@ -5301,7 +5743,9 @@ fn claim_restore(
                  WHERE id = ?1 AND status IN ('applying', 'restoring', 'rollback_failed')",
                 [&active_id],
             )
-            .map_err(|_| AppError::database(&database_path, "retire_interrupted_run"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "retire_interrupted_run").with_source(error)
+            })?;
         if retired != 1 {
             return Err(AppError::write_in_progress(&active_id, &active_status));
         }
@@ -5313,16 +5757,18 @@ fn claim_restore(
              WHERE id = ?1 AND kind = 'restore' AND status = 'previewed'",
             params![restore_preview_id, journal_path.to_string_lossy()],
         )
-        .map_err(|_| AppError::write_in_progress(restore_preview_id, "restoring"))?;
+        .map_err(|error| {
+            AppError::write_in_progress(restore_preview_id, "restoring").with_source(error)
+        })?;
     if updated != 1 {
         return Err(AppError::preview_already_consumed(
             restore_preview_id,
             "not_previewed",
         ));
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_claim_restore"))?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_claim_restore").with_source(error)
+    })?;
     Ok(source_run_requires_resolution)
 }
 
@@ -5381,7 +5827,9 @@ fn validate_restore_identity(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(database_path, "verify_restore_identity"))?
+        .map_err(|error| {
+            AppError::database(database_path, "verify_restore_identity").with_source(error)
+        })?
         .ok_or_else(|| AppError::stale_preview(preview_id, &item.target_id))?;
     let descriptor = &item.envelope.descriptor;
     if u32::try_from(identity.0).ok() != Some(item.envelope.target_row_version)
@@ -5471,7 +5919,9 @@ fn finish_restore_success(
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|_| AppError::database(&database_path, "begin_finish_restore"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_finish_restore").with_source(error)
+        })?;
     if let Some(target_id) = target_id {
         let target_updates = transaction
             .execute(
@@ -5479,7 +5929,9 @@ fn finish_restore_success(
                  WHERE id = ?1 AND row_version = ?2",
                 params![target_id, expected_target_row_version],
             )
-            .map_err(|_| AppError::database(&database_path, "mark_restored_target"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "mark_restored_target").with_source(error)
+            })?;
         if target_updates != 1 {
             return Err(AppError::stale_preview(run_id, target_id));
         }
@@ -5492,7 +5944,9 @@ fn finish_restore_success(
              WHERE id = ?1 AND status = 'restoring'",
             [run_id],
         )
-        .map_err(|_| AppError::database(&database_path, "finish_restore_run"))?;
+        .map_err(|error| {
+            AppError::database(&database_path, "finish_restore_run").with_source(error)
+        })?;
     if run_updates != 1 {
         return Err(AppError::write_in_progress(run_id, "not_restoring"));
     }
@@ -5509,7 +5963,9 @@ fn finish_restore_success(
                  WHERE id = ?1 AND status = 'rollback_failed'",
                 params![source_run_id, source_run_resolved],
             )
-            .map_err(|_| AppError::database(&database_path, "finish_source_recovery"))?;
+            .map_err(|error| {
+                AppError::database(&database_path, "finish_source_recovery").with_source(error)
+            })?;
         if source_updates != 1 {
             return Err(AppError::write_in_progress(
                 source_run_id,
@@ -5517,9 +5973,9 @@ fn finish_restore_success(
             ));
         }
     }
-    transaction
-        .commit()
-        .map_err(|_| AppError::database(&database_path, "commit_finish_restore"))
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_finish_restore").with_source(error)
+    })
 }
 
 /// 快照必须位于 `snapshots_root/<run_id>/<snapshot_id>.snapshot[.d]`，
@@ -5547,8 +6003,9 @@ fn validate_snapshot_storage_path(
     let snapshot_parent = snapshot_path
         .parent()
         .ok_or_else(|| AppError::invalid_input("snapshotPath", "快照缺少父目录"))?;
-    let canonical_parent = fs::canonicalize(snapshot_parent).map_err(|_| {
+    let canonical_parent = fs::canonicalize(snapshot_parent).map_err(|error| {
         AppError::not_found("snapshotDirectory", &snapshot_parent.to_string_lossy())
+            .with_source(error)
     })?;
     if canonical_parent != snapshot_parent || !canonical_parent.starts_with(paths.snapshots()) {
         return Err(AppError::conflict("snapshotPath", "快照父目录包含未知链接"));
@@ -5587,7 +6044,7 @@ fn load_snapshot_record(
             },
         )
         .optional()
-        .map_err(|_| AppError::database(&database_path, "load_snapshot"))?
+        .map_err(|error| AppError::database(&database_path, "load_snapshot").with_source(error))?
         .ok_or_else(|| AppError::not_found("snapshot", snapshot_id))?;
     let target_path = PathBuf::from(&row.2);
     validate_allowed_path(&target_path, allowed_root, false)?;
@@ -5596,8 +6053,9 @@ fn load_snapshot_record(
     validate_snapshot_storage_path(paths, &row.0, snapshot_id, &snapshot_path, storage_kind)?;
     match storage_kind {
         SnapshotStorageKind::DirectoryTree => {
-            let metadata = fs::symlink_metadata(&snapshot_path).map_err(|_| {
+            let metadata = fs::symlink_metadata(&snapshot_path).map_err(|error| {
                 AppError::not_found("snapshotTree", &snapshot_path.to_string_lossy())
+                    .with_source(error)
             })?;
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(AppError::conflict("snapshot", "目录树快照类型无效"));
@@ -5611,8 +6069,9 @@ fn load_snapshot_record(
         match row.6.as_str() {
             "missing" => PathState::Missing,
             "file" => {
-                let bytes = fs::read(&snapshot_path).map_err(|_| {
+                let bytes = fs::read(&snapshot_path).map_err(|error| {
                     AppError::permission(&snapshot_path.to_string_lossy(), "read_snapshot")
+                        .with_source(error)
                 })?;
                 let hash = hash_bytes(&bytes);
                 if row.4.as_deref() != Some(&hash) {
@@ -5658,8 +6117,9 @@ fn load_snapshot_record(
         snapshot_path,
         allowed_root: allowed_root.to_path_buf(),
         central_root: central_root.map(Path::to_path_buf),
-        row_version: u32::try_from(row.8)
-            .map_err(|_| AppError::invalid_input("snapshot", "快照 row_version 超出安全范围"))?,
+        row_version: u32::try_from(row.8).map_err(|error| {
+            AppError::invalid_input("snapshot", "快照 row_version 超出安全范围").with_source(error)
+        })?,
         state,
         storage_kind,
         directory_tree_hash: if storage_kind == SnapshotStorageKind::DirectoryTree {
@@ -5716,9 +6176,9 @@ mod tests {
 
     use super::{
         apply_persisted_preview, claim_preview, delete_snapshots, detect_interrupted_run,
-        list_snapshots, preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent,
-        ApplyFaultInjector, ApplyTargetInput, DeleteSnapshotsInput, ManagedItemApply, NoApplyFault,
-        SnapshotStorageKind,
+        journal_failure, list_snapshots, preview_restore, restore_snapshot, ApplyFaultDecision,
+        ApplyFaultEvent, ApplyFaultInjector, ApplyTargetInput, DeleteSnapshotsInput,
+        JournalOperation, ManagedItemApply, NoApplyFault, SnapshotStorageKind, TargetPhase,
     };
     use crate::{
         adapters::{
@@ -5728,7 +6188,7 @@ mod tests {
         app::AppPaths,
         db::Database,
         domain::{ArtifactKind, ProjectRoot, Scope, Tool},
-        error::ErrorCode,
+        error::{AppError, ErrorCode},
         git::inspect_path,
         security::{mode, SecretRedactor, PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE},
         skills::library as skill_library,
@@ -5765,6 +6225,146 @@ mod tests {
                 write_lock: Mutex::new(()),
             }
         }
+    }
+
+    #[test]
+    fn journal_enums_preserve_wire_names_and_unknown_values() {
+        let phases = [
+            (TargetPhase::Applying, "applying"),
+            (TargetPhase::Claimed, "claimed"),
+            (
+                TargetPhase::CrashedAfterDatabaseFinalize,
+                "crashed_after_database_finalize",
+            ),
+            (TargetPhase::CrashedAfterRename, "crashed_after_rename"),
+            (
+                TargetPhase::CrashedAfterRestoreTree,
+                "crashed_after_restore_tree",
+            ),
+            (TargetPhase::CrashedAfterTakeover, "crashed_after_takeover"),
+            (TargetPhase::CrashedAfterTarget, "crashed_after_target"),
+            (
+                TargetPhase::CrashedBeforeDatabaseFinalize,
+                "crashed_before_database_finalize",
+            ),
+            (
+                TargetPhase::CrashedBeforeNativeLink,
+                "crashed_before_native_link",
+            ),
+            (
+                TargetPhase::CrashedBeforeNativeRemove,
+                "crashed_before_native_remove",
+            ),
+            (TargetPhase::CrashedBeforeRename, "crashed_before_rename"),
+            (
+                TargetPhase::CrashedBeforeRestoreTree,
+                "crashed_before_restore_tree",
+            ),
+            (
+                TargetPhase::CrashedBeforeTakeover,
+                "crashed_before_takeover",
+            ),
+            (TargetPhase::CrashedBeforeTarget, "crashed_before_target"),
+            (
+                TargetPhase::CrashedDuringDatabaseFinalize,
+                "crashed_during_database_finalize",
+            ),
+            (
+                TargetPhase::DirectoryCreateFailed,
+                "directory_create_failed",
+            ),
+            (
+                TargetPhase::DirectoryCreatePending,
+                "directory_create_pending",
+            ),
+            (TargetPhase::DirectoryCreated, "directory_created"),
+            (
+                TargetPhase::DirectoryRestorePending,
+                "directory_restore_pending",
+            ),
+            (TargetPhase::DirectoryRestored, "directory_restored"),
+            (
+                TargetPhase::ExternalChangeAfterWrite,
+                "external_change_after_write",
+            ),
+            (TargetPhase::NativeLinkPending, "native_link_pending"),
+            (
+                TargetPhase::ReadyToFinalizeDatabase,
+                "ready_to_finalize_database",
+            ),
+            (TargetPhase::Removed, "removed"),
+            (TargetPhase::RenameFailed, "rename_failed"),
+            (TargetPhase::RenamePending, "rename_pending"),
+            (TargetPhase::Renamed, "renamed"),
+            (TargetPhase::RollbackFailed, "rollback_failed"),
+            (TargetPhase::RolledBack, "rolled_back"),
+            (TargetPhase::RollingBack, "rolling_back"),
+            (TargetPhase::Snapshotted, "snapshotted"),
+            (TargetPhase::Snapshotting, "snapshotting"),
+            (TargetPhase::Succeeded, "succeeded"),
+            (TargetPhase::TakeoverLinkFailed, "takeover_link_failed"),
+            (TargetPhase::TakeoverLinked, "takeover_linked"),
+            (TargetPhase::TakeoverQuarantined, "takeover_quarantined"),
+            (TargetPhase::TakeoverRenameFailed, "takeover_rename_failed"),
+            (
+                TargetPhase::TakeoverRenamePending,
+                "takeover_rename_pending",
+            ),
+            (TargetPhase::Verified, "verified"),
+            (TargetPhase::Writing, "writing"),
+            (TargetPhase::Written, "written"),
+            (TargetPhase::Unknown, "unknown"),
+        ];
+        for (phase, expected) in phases {
+            assert_eq!(phase.as_str(), expected);
+            assert_eq!(serde_json::to_value(phase).unwrap(), json!(expected));
+        }
+
+        for (operation, expected) in [
+            (JournalOperation::Apply, "apply"),
+            (JournalOperation::Restore, "restore"),
+            (JournalOperation::Unknown, "unknown"),
+        ] {
+            assert_eq!(operation.as_str(), expected);
+            assert_eq!(serde_json::to_value(operation).unwrap(), json!(expected));
+        }
+
+        let legacy = json!({
+            "version": 1,
+            "run_id": "legacy-run",
+            "operation": "operation_added_by_newer_version",
+            "phase": "phase_added_by_newer_version",
+            "targets": [{
+                "target_id": "target-1",
+                "target_path": "/tmp/target-1",
+                "snapshot_id": null,
+                "snapshot_path": null,
+                "phase": "target_phase_added_by_newer_version",
+                "before_fingerprint": null,
+                "after_fingerprint": null,
+                "temporary_path": null
+            }]
+        });
+        let parsed: super::RunJournal = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.operation, JournalOperation::Unknown);
+        assert_eq!(parsed.phase, TargetPhase::Unknown);
+        assert_eq!(parsed.targets[0].phase, TargetPhase::Unknown);
+        assert!(parsed.targets[0].phase.may_have_changed_target());
+        assert!(!parsed.phase.is_crashed());
+
+        let fixture = Fixture::new();
+        let mut unknown_journal = parsed;
+        unknown_journal.run_id = "unknown-run".to_owned();
+        super::persist_journal(&fixture.paths, &unknown_journal).unwrap();
+        assert!(super::journal_reports_crash(&fixture.paths, "unknown-run"));
+    }
+
+    #[test]
+    fn rollback_journal_failure_always_has_a_stable_operation() {
+        let failure = journal_failure(&AppError::conflict("targetPath", "回滚目标已被外部修改"));
+        assert_eq!(failure.code, "CONFLICT");
+        assert_eq!(failure.operation.as_deref(), Some("rollback"));
+        assert!(failure.source.is_none());
     }
 
     fn file_descriptor(path: &Path, scope: Scope, project_root: Option<&Path>) -> TargetDescriptor {
@@ -6061,7 +6661,7 @@ mod tests {
         let appended = fs::read_to_string(&journal_path).unwrap();
         assert!(appended.lines().count() > 1, "新格式应是多行追加记录");
         let latest = super::read_journal(&journal_path).unwrap().unwrap();
-        assert_eq!(latest.targets[0].phase, "crashed_after_rename");
+        assert_eq!(latest.targets[0].phase, TargetPhase::CrashedAfterRename);
 
         // 改写成旧格式：整文件一个 pretty-printed 对象。
         fs::write(&journal_path, serde_json::to_vec_pretty(&latest).unwrap()).unwrap();
@@ -6075,10 +6675,28 @@ mod tests {
 
         // 在旧格式文件上追加新阶段：读取方取最新一行而不是旧对象。
         let mut updated = latest.clone();
-        updated.phase = "rolled_back".to_owned();
+        updated.phase = TargetPhase::RolledBack;
         super::persist_journal(&fixture.paths, &updated).unwrap();
         let reread = super::read_journal(&journal_path).unwrap().unwrap();
-        assert_eq!(reread.phase, "rolled_back");
+        assert_eq!(reread.phase, TargetPhase::RolledBack);
+    }
+
+    #[test]
+    fn truncated_latest_journal_line_falls_back_to_previous_complete_line() {
+        let journal = super::RunJournal {
+            version: 1,
+            run_id: "complete-run".to_owned(),
+            operation: JournalOperation::Apply,
+            phase: TargetPhase::Claimed,
+            targets: Vec::new(),
+            failure: None,
+        };
+        let mut bytes = serde_json::to_vec(&journal).unwrap();
+        bytes.extend_from_slice(b"\n{\"version\":1,\"run_id\":\"truncated");
+
+        let parsed = super::parse_journal(&bytes).expect("应回退到上一条完整 journal");
+        assert_eq!(parsed.run_id, "complete-run");
+        assert_eq!(parsed.phase, TargetPhase::Claimed);
     }
 
     #[test]
@@ -6853,11 +7471,11 @@ mod tests {
         assert!(recovery
             .targets
             .iter()
-            .any(|target| target.phase == "written"));
+            .any(|target| target.phase == TargetPhase::Written.as_str()));
         assert!(recovery
             .targets
             .iter()
-            .any(|target| target.phase == "crashed_before_target"));
+            .any(|target| target.phase == TargetPhase::CrashedBeforeTarget.as_str()));
     }
 
     #[test]

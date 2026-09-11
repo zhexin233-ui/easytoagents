@@ -71,6 +71,15 @@ impl ErrorCode {
         }
     }
 
+    /// sync_runs / sync_items 的 `error_code` CHECK 只接受首批稳定码；后加的
+    /// 命令边界码不能写库，落盘时折叠为语义最近的持久化码。
+    pub const fn persisted(self) -> Self {
+        match self {
+            Self::EnvironmentProbing => Self::AtomicWriteFailed,
+            other => other,
+        }
+    }
+
     pub fn from_stable_str(value: &str) -> Option<Self> {
         match value {
             "NOT_FOUND" => Some(Self::NotFound),
@@ -133,7 +142,7 @@ pub enum RecoveryAction {
 }
 
 /// 只有构造函数能写入 details，确保 allowlist 与统一脱敏无法被绕过。
-#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppError {
     code: ErrorCode,
@@ -143,6 +152,21 @@ pub struct AppError {
     recoverable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     action: Option<RecoveryAction>,
+    /// 底层错误的脱敏文本，只进日志与 journal 诊断字段；永不出 RPC 边界，
+    /// 也不参与相等比较（同一稳定错误无论底层原因都视为同一错误）。
+    #[serde(skip)]
+    #[specta(skip)]
+    source: Option<String>,
+}
+
+impl PartialEq for AppError {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.message == other.message
+            && self.details == other.details
+            && self.recoverable == other.recoverable
+            && self.action == other.action
+    }
 }
 
 impl AppError {
@@ -154,7 +178,70 @@ impl AppError {
             details: None,
             recoverable,
             action: None,
+            source: None,
         }
+    }
+
+    /// 代码不变量被打破时的稳定错误：替代生产路径上的 panic 断言。
+    pub fn internal(reason: &'static str) -> Self {
+        Self::new(ErrorCode::AtomicWriteFailed, "应用内部状态异常", false)
+            .with_safe_details([("operation", Value::String("internal".to_owned()))])
+            .with_source(reason)
+    }
+
+    /// 附带底层错误原因：先做脱敏再记录，并以 warn 级别写日志。
+    /// 文案仍是编译期固定的 `message`，`source` 只服务于诊断。
+    pub fn with_source(self, error: impl fmt::Display) -> Self {
+        self.with_source_redacted(error, &SecretRedactor::default())
+    }
+
+    /// 使用调用方已经登记了原生配置凭据的脱敏器附加底层原因。
+    /// 这条路径供持有 `AppState` 脱敏器的服务使用；`with_source` 保留给启动期和
+    /// 没有共享脱敏器的基础设施错误。
+    pub fn with_source_redacted(
+        mut self,
+        error: impl fmt::Display,
+        redactor: &SecretRedactor,
+    ) -> Self {
+        // 构造器通常在拿到共享 redactor 之前用默认 redactor 填充 details；
+        // 调用方随后提供更完整的凭据集合时，必须连同既有 details 一并收紧，
+        // 否则 source/log 虽安全，RPC 的 path/operation 仍可能泄漏注册值。
+        if let Some(details) = self.details.as_mut() {
+            for value in details.values_mut() {
+                *value = redactor.redact_structure(value).into_value();
+            }
+        }
+        let redacted = redactor.redact_text(&error.to_string());
+        let operation = self
+            .detail_text("operation")
+            .map(|value| redactor.redact_text(value))
+            .unwrap_or_default();
+        let path = self
+            .detail_text("path")
+            .map(|value| redactor.redact_text(value))
+            .unwrap_or_default();
+        tracing::warn!(
+            code = %self.code,
+            operation = %operation,
+            path = %path,
+            source = %redacted,
+            "{}",
+            self.message
+        );
+        self.source = Some(redacted);
+        self
+    }
+
+    /// 脱敏后的底层原因；仅供日志与 journal 诊断使用。
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+
+    fn detail_text(&self, key: &str) -> Option<&str> {
+        self.details
+            .as_ref()
+            .and_then(|details| details.get(key))
+            .and_then(Value::as_str)
     }
 
     pub fn invalid_input(field: &'static str, reason: &'static str) -> Self {
@@ -270,6 +357,21 @@ impl AppError {
             ("path", Value::String(path.to_owned())),
             ("operation", Value::String(operation.to_owned())),
         ])
+    }
+
+    /// 把 SQLite 原因留在仅供诊断的 `source` 字段；RPC details 仍只有稳定路径和操作。
+    pub fn database_from(path: &str, operation: &str, error: &rusqlite::Error) -> Self {
+        Self::database(path, operation).with_source(error)
+    }
+
+    /// 把文件系统原因留在仅供诊断的 `source` 字段；不把 OS 文案复制进 RPC。
+    pub fn io_from(path: &str, operation: &str, error: &std::io::Error) -> Self {
+        Self::atomic_write(path, operation).with_source(error)
+    }
+
+    /// 序列化/反序列化失败没有独立的稳定 RPC 错误码，沿用解析错误合同并保留 source。
+    pub fn serialization_from(path: &str, format: &'static str, error: impl fmt::Display) -> Self {
+        Self::parse(path, format).with_source(error)
     }
 
     pub fn migration(path: &str, version: i64) -> Self {
@@ -415,5 +517,18 @@ mod tests {
             .unwrap(),
             json!(["rescan", "review_conflict", "restore", "fix_permissions"])
         );
+    }
+
+    #[test]
+    fn source_is_diagnostic_only_and_uses_the_callers_redactor() {
+        let mut redactor = SecretRedactor::default();
+        redactor.register_secret("fixture-api-key");
+        let error = AppError::database("fixture-api-key.sqlite3", "read_fixture-api-key")
+            .with_source_redacted("database rejected fixture-api-key", &redactor);
+
+        assert_eq!(error.source(), Some("database rejected [REDACTED]"));
+        let serialized = serde_json::to_value(&error).unwrap();
+        assert!(serialized.get("source").is_none());
+        assert!(!serialized.to_string().contains("fixture-api-key"));
     }
 }
