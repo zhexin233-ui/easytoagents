@@ -1415,3 +1415,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 55: 前端测试基建
+
+**Date**: 2026-09-11
+**Task**: 前端测试基建
+**Branch**: `main`
+
+### Summary
+
+新增统一渲染、命令 mock 与 DTO/预览夹具，迁移并拆分前端页面测试；pnpm check 全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7b792ff` | (see git log) |
+
+### Status
+
+[OK] **Completed**
