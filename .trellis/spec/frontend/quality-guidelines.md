@@ -595,9 +595,11 @@ projectAssignmentMutation.mutate(input);
   singleton; pages derive `directApply = settingsQuery.data?.applyMode === "direct"`.
 - `canAutoApplyPreview(plan)` mirrors the `ChangePreviewDialog` Apply-enabled
   condition: at least one target, no `conflict` changeKind, no `errorCode`.
-- `useNotify()` returns page-local `notification` state plus a `notify({ kind,
-  message })` callback. `Notify` renders that state; `kind` is exactly
-  `"success" | "error"`, and the shared lifetime is 3,000 ms.
+- `NotifyProvider` owns a `Notification[]` queue and `NotifyViewport` renders
+  it once from `AppShell`. `useNotify()` returns `{ notification, notify,
+  clear }`; `notification` is the newest item for compatibility, while
+  `notify({ kind, message })` appends a queue item. `kind` is exactly
+  `"success" | "error"`, and each item lives for 3,000 ms.
 - Central-page previews use page-only `autoApply: boolean` to decide whether a
   safe plan continues into Apply. Apply needs no notification flag; neither
   concept enters generated RPC inputs.
@@ -614,6 +616,12 @@ projectAssignmentMutation.mutate(input);
 - Project-native disable/restore is the same class of exception: preview from
   `previewProjectNativeResourceAction` always opens `ChangePreviewDialog`. Direct mode
   must not auto-call `applyProjectNativeResourcePreview`.
+- Project-native rows use a dedicated `nativePreview` mutation because their
+  request carries `resourceId`, `rowVersion`, and `action` rather than a global
+  `Tool`. This is an explicit boundary exception to `useSyncPreviewFlow`, not
+  a second write path: it must still open the shared dialog, consume the exact
+  persisted `previewId`, invalidate the project scope after Apply, and never
+  auto-apply in direct mode.
 - Warnings never block auto-apply (same as the dialog). An empty target list
   keeps the existing no-op message and must not apply.
 - Settings are backend-owned server state: derive `directApply` from the query,
@@ -641,8 +649,9 @@ projectAssignmentMutation.mutate(input);
   reflects committed intent; the backend preview reads committed DB state.
 - Central MCP/Skills/Prompts mutation successes, terminal no-ops, and page-level
   failures use shared notification, never persistent `message`, `notice`,
-  `applyMessage`, or aggregate error regions. Latest replaces current and restarts
-  3,000 ms. Success/no-op uses `status`, failure uses `alert`; render once.
+  `applyMessage`, or aggregate error regions. The provider appends each item,
+  expires it independently after 3,000 ms, and stacks the viewport. Success/no-op
+  uses `status`, failure uses `alert`; render the viewport once.
 - Query, form, and import-dialog errors plus persistent diagnostics stay inline
   because their correction context must remain visible.
 - Manual/direct preview failures notify. Non-empty manual and conflict/blocked
@@ -676,8 +685,8 @@ projectAssignmentMutation.mutate(input);
   without rendering the toggle.
 - Apply-success tests on each central page assert the list query was refetched
   (compare the list command's call count before and after Apply).
-- Shared-notification fake-timer tests cover 3,000 ms expiry, replacement, and
-  unmount cleanup. Central-page tests cover representative CRUD, assignment,
+- Shared-notification fake-timer tests cover independent 3,000 ms expiry,
+  stacking, and unmount cleanup. Central-page tests cover representative CRUD, assignment,
   import/takeover, empty preview, manual/direct Apply, correct role,
   `aria-atomic="true"`, and single rendering.
 - Deferred invalidation tests assert no early success or MCP replacement preview.
@@ -923,3 +932,74 @@ await invalidate(projectKeys.all, mcpKeys.projects(), skillKeys.projects());
 > defining `__TAURI_INTERNALS__` before the module script) lets the dev server
 > render the real UI with deterministic data without touching the local app
 > database; delete the file before committing.
+
+## Scenario: Backend-owned tool capability metadata
+
+### 1. Scope / Trigger
+
+- Trigger: adding a tool, changing a tool's Provider/MCP/Skills/Hook support,
+  changing Hook event support, or changing the generated capability constants.
+
+### 2. Signatures
+
+- Rust exports specta constants `TOOL_CAPABILITIES` and
+  `HOOK_EVENT_SUPPORT` from `src-tauri/src/domain/mod.rs` through the app
+  binding registration in `src-tauri/src/lib.rs`.
+- Frontend imports the generated readonly constants from
+  `src/bindings/commands.ts`; `src/lib/tool-metadata.ts` derives
+  `PROFILE_TOOLS`, `MCP_TOOLS`, `SKILL_TOOLS`, `HOOK_TOOLS`, and event support
+  from those values while keeping labels/icons as presentation metadata.
+
+### 3. Contracts
+
+- Every capability row has a generated `tool` plus boolean `provider`,
+  `promptGlobal`, `mcp`, `skills`, and `hooks` fields. Every Hook support row
+  has a generated `tool` and `event`.
+- A tool is included in a frontend capability set exactly when the backend flag
+  is `true`; unsupported tools must not render controls or issue unsupported
+  queries.
+- The binding file is generated output. Rust is the source of truth; do not
+  hand-edit `src/bindings/commands.ts` to change capability values.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Rust constant and generated binding differ | `pnpm bindings:check` fails; regenerate bindings |
+| Capability flag is false | Hide the corresponding route/control and skip its query |
+| Hook event absent for a tool | `hookEventSupportedByTool` returns false and the event is not selectable |
+| New enum/tool variant lacks metadata | TypeScript `Record`/exhaustiveness check fails before runtime |
+
+### 5. Good/Base/Bad Cases
+
+- Good: add one backend capability row, regenerate bindings, and let all page
+  filters/tests derive the new support from the generated constant.
+- Base: presentation metadata may add a label/icon without changing capability
+  truth.
+- Bad: maintain a second handwritten support matrix in `hook-events.ts`, show a
+  disabled control after issuing its unsupported RPC, or edit generated bindings.
+
+### 6. Tests Required
+
+- Assert `TOOL_CAPABILITIES` covers every `Tool` and that each derived frontend
+  set equals the backend `true` flags.
+- Assert Hook event lookup matches `HOOK_EVENT_SUPPORT` for supported and
+  unsupported pairs.
+- Run `pnpm bindings:generate`, `pnpm bindings:check`, `pnpm check`, and the
+  page capability fallback tests whenever the constants change.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const HOOK_TOOLS = ["claude", "codex", "cursor", "zcode"] as const;
+```
+
+#### Correct
+
+```ts
+const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
+  (item) => item.tool,
+);
+```

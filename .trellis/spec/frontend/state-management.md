@@ -40,6 +40,19 @@ is truly shared:
   component, not in a new global store.
 - Keep forms and dialogs local even when they render generated DTOs. Lift them
   only to the nearest common owner that coordinates the interaction.
+- Transient operation feedback is application infrastructure: `AppShell` owns
+  one `NotifyProvider`, while feature pages call `useNotify()`. Do not create a
+  second notification context or render page-local operation toasts.
+
+### Notification context contract
+
+`NotifyProvider` stores `Notification[]` (`id`, `kind`, `message`) and appends
+new messages to the queue. Each message expires independently after
+`notifyDurationMs` (3 seconds); `NotifyViewport` renders the queue as a fixed,
+stacked list. `useNotify()` returns `{ notification, notify, clear }`, where
+`notification` is the newest queue item for compatibility with page-level
+assertions. Query/form/import diagnostics may stay inline when they need to
+remain visible beside their correction controls.
 
 ---
 
@@ -51,6 +64,10 @@ is truly shared:
 - Mutations invalidate all affected key families after success. For example,
   project assignment changes can invalidate project, MCP, and Skill data because
   the shared project row version changes.
+- Project-scoped mutations use `invalidateProjectScope(queryClient, kinds)` in
+  `src/lib/projects-api.ts` rather than hand-written `Promise.all` lists. The
+  helper maps `project`, `mcp`, `skill`, and `hook` kinds to the complete query
+  families affected by the row-version change and is awaited after Apply.
 - Native configuration writes remain preview-driven. CRUD success updates
   central intent; it does not optimistically claim the native target was applied.
 - Startup probing: the backend answers environment-dependent commands with

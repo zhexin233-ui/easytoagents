@@ -55,6 +55,38 @@ export function useDialogFocus(open: boolean, onClose: () => void) {
 The production hook also wraps Tab focus across every enabled interactive
 element; keep that logic and its boundary checks when changing the hook.
 
+### Persisted preview and synchronous form guards
+
+`useSyncPreviewFlow` is the shared lifecycle for global and project artifact
+preview/apply flows. Its typed boundary is:
+
+```ts
+useSyncPreviewFlow({
+  artifactKind,
+  preview: (tool) => Promise<Result<PreviewPlan, AppError>>,
+  apply: ({ previewId, tool }) => Promise<Result<ApplyResult, AppError>>,
+  invalidate,
+  messages,
+  directApply,
+  readopt?,
+});
+```
+
+The hook always creates a persisted preview first. A non-empty, conflict-free
+plan may auto-apply only when `directApply && autoApply`; empty plans notify and
+never call Apply; conflicts and errors remain in the review dialog. Apply closes
+the dialog, awaits the supplied invalidation, and then notifies. `readopt` is
+optional and must invalidate before regenerating a preview. Project-native
+disable/restore keeps its dedicated resource mutation because its request is
+keyed by `ProjectNativeResourceDto` rather than a `Tool`; it follows the same
+no-implicit-write and post-Apply invalidation contract.
+
+`useImportDialogState()` owns `{ tool, requestId }` and changes the request ID
+on every rescan so discovery results cannot be reused accidentally.
+`useSubmitGuard()` exposes synchronous `begin()`, `end()`, and `isInFlight()`;
+call `begin()` before starting a mutation and always call `end()` on settle.
+This closes the render-timing gap where `isPending` has not updated yet.
+
 ---
 
 ## Data Fetching
@@ -92,3 +124,5 @@ element; keep that logic and its boundary checks when changing the hook.
   global state hook.
 - Suppressing the React Hooks linter instead of making dependencies and values
   stable.
+- Reimplementing preview/apply lifecycle or `saveInFlight` refs in a page when
+  the shared hooks already own the contract.

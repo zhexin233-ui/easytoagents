@@ -94,13 +94,11 @@ the toggle). Do not introduce a theme Context or store.
   cards/panels/dialogs/sidebar/header (never `bg-white`), token utilities
   (`bg-background`, `bg-muted`, `text-muted-foreground`, `border`) otherwise.
   The `field` utility input background is `var(--card)`.
-- Status colors (red/amber/emerald notice surfaces) keep their existing light
-  classes and APPEND `dark:` variants (e.g.
-  `bg-red-50 dark:bg-red-950/40 dark:text-red-300`). Existing tests assert the
-  light class names; renaming them breaks tests and the light-mode regression
-  guarantee. Icon-button chrome on themed cards (e.g.
-  `PlatformAssignmentButton`) must pair every light `border-*`/`bg-*` with a
-  `dark:` variant.
+- Status colors go through `toneClass(tone)` from `src/lib/tone-class.ts`.
+  Keep palette compatibility and semantic tokens in that one helper; feature
+  pages must not grow their own red/amber/emerald class combinations. Icon
+  button chrome on themed cards (e.g. `PlatformAssignmentButton`) must pair
+  every light `border-*`/`bg-*` with a `dark:` variant.
 - `color-scheme` flips with the theme (`.dark { color-scheme: dark }`) so
   native scrollbars, selects, and password inputs follow.
 - No-flash bootstrap lives in `src/main.tsx` (`applyThemeFromStorage()` before
@@ -253,6 +251,23 @@ accessible name, `title`, and `aria-pressed` that identify the tool and assigned
 state. Feature pages still own mutation payloads and domain-specific disabled
 rules.
 
+## Shared dialog, field, and notification primitives
+
+- Use `DialogOverlay`, `DialogContent`, `DialogHeader`, and `DialogFooter`
+  from `src/components/ui/dialog.tsx` for every modal. `DialogContent` owns
+  `role="dialog"`, `aria-modal`, generated title linkage, Escape handling, and
+  `useDialogFocus`; feature dialogs supply only content and callbacks.
+- Use `Field` from `src/components/ui/field.tsx` for a labelled control and
+  `ToolIconToggle` from `src/components/tool-icon-toggle.tsx` for a branded
+  tool switch. Both preserve accessible names and typed `Tool` values.
+- Mount exactly one `NotifyProvider`/`NotifyViewport` in `AppShell`. Pages call
+  `useNotify()` and never render a page-local `<Notify>` for operation
+  feedback. Query/form/import diagnostics may remain inline when their repair
+  context must stay visible.
+- `NotifyProvider` queues independent notifications for 3 seconds; each item
+  has its own timer and the viewport stacks items. `useNotify().notification`
+  exposes the newest item for compatibility with focused page assertions.
+
 ---
 
 ## Common Mistakes
@@ -277,7 +292,9 @@ rules.
 - MCP、Provider、Prompt 的新增/编辑使用 `FormDialog`，页面默认只展示列表和操作入口，不平铺表单。新增按钮从空草稿打开，编辑按钮携带安全字段与当前行版本。
 - `FormDialog` 接收 `open`、`title`、`description`、`submitLabel`、`pending`、`error`、`onClose`、`onSubmit` 和 `children`；只负责弹窗交互，业务状态和 mutation 留在页面。
 - 关闭、取消和 Escape 都清理草稿、编辑模式及旧保存/校验错误；失败保留输入并在弹窗内展示 `role="alert"`，成功等待查询刷新后关闭。CRUD 不触发隐式 Apply。
-- 保存期间禁用关闭/取消/提交；页面另用 `saveInFlight` ref 同步阻止重复提交及关闭，不能只依赖下一次渲染才更新的 `isPending`。
+- 保存期间禁用关闭/取消/提交；使用 `useSubmitGuard()` 的同步
+  `begin/end/isInFlight` 合同阻止重复提交及关闭，不能只依赖下一次渲染才更新的
+  `isPending`。
 - 弹窗限制最大高度，表单内容内部滚动，标题与底部操作保持可见；窄屏不得使表单横向溢出。
 - 提交按钮变为 disabled 时，浏览器可能把焦点移到 `body`。提交前必须聚焦弹窗容器；`useDialogFocus` 在容器持焦时将 Tab 导向首个可用控件、Shift+Tab 导向末个可用控件，避免键盘焦点逃逸。
 
