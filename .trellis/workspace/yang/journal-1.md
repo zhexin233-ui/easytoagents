@@ -1394,3 +1394,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 54: 后端健壮性与可诊断性
+
+**Date**: 2026-09-11
+**Task**: 后端健壮性与可诊断性
+**Branch**: `main`
+
+### Summary
+
+完成 AppState 锁中毒恢复、统一命令锁 helper、AppError 脱敏 source 与 tracing 私有日志、journal 枚举化和生产断言清理；更新 backend 规范。pnpm check、bindings 检查和 git diff --check 全部通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7957fdb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
