@@ -1479,3 +1479,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 58: 父任务集成审查收尾与归档
+
+**Date**: 2026-09-11
+**Task**: 父任务集成审查收尾与归档
+**Branch**: `main`
+
+### Summary
+
+对 48 条审阅条目做最终集成审查（42 已解决 / 5 部分 / 1 规范约束），并行修复剩余后端重复（Tool 分派、allowed_root、descriptor builder、unwrap）与前端残留（useSubmitGuard、MCP 表单拆分、A8 测试、死文件、eslint-disable）；pnpm check 与 bindings:check 全绿；归档父任务。真机走查清单留待人工执行。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9bfa24c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
