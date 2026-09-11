@@ -1436,3 +1436,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 56: 完成 P2 后端去重与大文件拆分
+
+**Date**: 2026-09-11
+**Task**: 完成 P2 后端去重与大文件拆分
+**Branch**: `main`
+
+### Summary
+
+完成 R1-R7 后端去重与拆分：集中 Tool/Adapter/Descriptor/limits，泛型化 MCP/Skill/Hook 同步流程，下沉 ProviderCodec 与同步 SQL，拆分 sync/apply、Profiles 和测试文件；修复 Cursor Hook 重新接管事件键映射并补回归测试。pnpm check、bindings、Clippy 与全量 Rust 测试通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `acfbc28` | (see git log) |
+
+### Status
+
+[OK] **Completed**
