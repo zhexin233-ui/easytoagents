@@ -7,10 +7,13 @@ use serde_json::Value;
 use specta::Type;
 
 use crate::{
-    adapters::{PolicyState, PromptOverrideState, TargetCapability, ToolAvailabilityState},
+    adapters::{
+        PolicyState, PromptOverrideState, TargetCapability, ToolAvailabilityState,
+        CLAUDE_RESERVED_ENV_KEYS,
+    },
     domain::{ArtifactKind, ArtifactName, Tool},
     error::AppError,
-    security::contains_detectable_secret,
+    security::env_entry_is_manageable,
 };
 
 pub const CODEX_BEARER_TOKEN_WARNING: &str =
@@ -42,9 +45,39 @@ impl ClaudeCredentialEnvKey {
     }
 }
 
+/// 渠道的认证方式：`ApiKey` 走第三方/自定义接入地址加密钥；`OfficialLogin`
+/// 不保存任何接入地址或密钥，原生配置回到工具自带的官方账号登录。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAuthKind {
+    #[default]
+    ApiKey,
+    OfficialLogin,
+}
+
+impl ProviderAuthKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ApiKey => "api_key",
+            Self::OfficialLogin => "official_login",
+        }
+    }
+
+    pub fn from_stable_str(value: &str) -> Option<Self> {
+        match value {
+            "api_key" => Some(Self::ApiKey),
+            "official_login" => Some(Self::OfficialLogin),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderOptionsInput {
+    /// 旧前端不传时默认 `api_key`；创建后不可更改。
+    #[serde(default)]
+    pub auth_kind: ProviderAuthKind,
     pub credential_env_key: Option<ClaudeCredentialEnvKey>,
     pub extra_env: BTreeMap<String, String>,
     pub wire_api: Option<String>,
@@ -121,6 +154,7 @@ pub struct ProviderProfileDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderOptionsDto {
+    pub auth_kind: ProviderAuthKind,
     pub credential_env_key: Option<ClaudeCredentialEnvKey>,
     pub extra_env: BTreeMap<String, String>,
     pub provider_id: Option<String>,
@@ -175,10 +209,13 @@ pub struct ProviderImportPreviewDto {
     pub tool: Tool,
     pub target_path: String,
     pub suggested_name: String,
+    pub auth_kind: ProviderAuthKind,
     pub api_base_url: String,
     pub api_key_configured: bool,
     pub default_model: String,
     pub redacted_projection: Value,
+    /// 原生 env 中疑似凭据或格式不受支持、因此未纳入管理的键名（不含值）。
+    pub skipped_env_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -234,6 +271,9 @@ pub struct DeleteProfileResultDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoredProviderConfig {
+    /// 旧记录没有该字段：Codex 的 `openai` provider 视为官方登录，其余视为 API Key。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_kind: Option<ProviderAuthKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_env_key: Option<ClaudeCredentialEnvKey>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -259,6 +299,7 @@ impl StoredProviderConfig {
         options: ProviderOptionsInput,
         extra_provider_fields: BTreeMap<String, Value>,
     ) -> Result<Self, AppError> {
+        let auth_kind = options.auth_kind;
         match tool {
             Tool::Claude => {
                 if options.wire_api.is_some() {
@@ -274,12 +315,18 @@ impl StoredProviderConfig {
                     ));
                 }
                 validate_extra_env(&options.extra_env)?;
-                Ok(Self {
-                    credential_env_key: Some(
+                // 官方登录不写任何凭据键，因此不保留 credential_env_key。
+                let credential_env_key = match auth_kind {
+                    ProviderAuthKind::ApiKey => Some(
                         options
                             .credential_env_key
                             .unwrap_or(ClaudeCredentialEnvKey::ApiKey),
                     ),
+                    ProviderAuthKind::OfficialLogin => None,
+                };
+                Ok(Self {
+                    auth_kind: Some(auth_kind),
+                    credential_env_key,
                     extra_env: options.extra_env,
                     provider_id: None,
                     wire_api: None,
@@ -302,9 +349,24 @@ impl StoredProviderConfig {
                         "Codex Provider 不支持 ZCode API 格式",
                     ));
                 }
+                if auth_kind == ProviderAuthKind::OfficialLogin {
+                    if provider_id != CODEX_OPENAI_PROVIDER_ID {
+                        return Err(AppError::invalid_input(
+                            "providerId",
+                            "Codex 官方账号登录渠道只能使用内置 openai provider",
+                        ));
+                    }
+                    if options.wire_api.is_some() || !extra_provider_fields.is_empty() {
+                        return Err(AppError::invalid_input(
+                            "providerOptions",
+                            "Codex 官方账号登录渠道不需要 wire_api 或扩展字段",
+                        ));
+                    }
+                }
                 validate_wire_api(options.wire_api.as_deref())?;
                 validate_codex_extra_provider_fields(&extra_provider_fields)?;
                 Ok(Self {
+                    auth_kind: Some(auth_kind),
                     credential_env_key: None,
                     extra_env: BTreeMap::new(),
                     provider_id: Some(provider_id.to_owned()),
@@ -316,6 +378,7 @@ impl StoredProviderConfig {
                 })
             }
             Tool::Zcode => {
+                reject_official_login(auth_kind)?;
                 if options.credential_env_key.is_some() || !options.extra_env.is_empty() {
                     return Err(AppError::invalid_input(
                         "providerOptions",
@@ -337,6 +400,7 @@ impl StoredProviderConfig {
                 let kind = options.zcode_kind.unwrap_or_else(|| "anthropic".to_owned());
                 validate_zcode_provider_kind(&kind)?;
                 Ok(Self {
+                    auth_kind: Some(auth_kind),
                     credential_env_key: None,
                     extra_env: BTreeMap::new(),
                     provider_id: Some(provider_id.to_owned()),
@@ -352,6 +416,7 @@ impl StoredProviderConfig {
                 "CURSOR_PROVIDER_UNSUPPORTED",
             )),
             Tool::Opencode => {
+                reject_official_login(auth_kind)?;
                 if options.credential_env_key.is_some()
                     || !options.extra_env.is_empty()
                     || options.wire_api.is_some()
@@ -369,6 +434,7 @@ impl StoredProviderConfig {
                 let api = options.opencode_api.unwrap_or_else(|| "openai".to_owned());
                 validate_opencode_api(&api)?;
                 Ok(Self {
+                    auth_kind: Some(auth_kind),
                     credential_env_key: None,
                     extra_env: BTreeMap::new(),
                     provider_id: Some(provider_id.to_owned()),
@@ -382,8 +448,21 @@ impl StoredProviderConfig {
         }
     }
 
-    pub fn options_dto(&self) -> ProviderOptionsDto {
+    /// 旧记录缺少 `authKind` 时按既有语义推导：Codex 内置 `openai` 就是官方登录。
+    pub fn effective_auth_kind(&self, tool: Tool) -> ProviderAuthKind {
+        self.auth_kind.unwrap_or_else(|| {
+            if tool == Tool::Codex && self.provider_id.as_deref() == Some(CODEX_OPENAI_PROVIDER_ID)
+            {
+                ProviderAuthKind::OfficialLogin
+            } else {
+                ProviderAuthKind::ApiKey
+            }
+        })
+    }
+
+    pub fn options_dto(&self, tool: Tool) -> ProviderOptionsDto {
         ProviderOptionsDto {
+            auth_kind: self.effective_auth_kind(tool),
             credential_env_key: self.credential_env_key,
             extra_env: self.extra_env.clone(),
             provider_id: self.provider_id.clone(),
@@ -393,6 +472,18 @@ impl StoredProviderConfig {
             opencode_api: self.opencode_api.clone(),
         }
     }
+}
+
+pub(crate) const CODEX_OPENAI_PROVIDER_ID: &str = "openai";
+
+fn reject_official_login(auth_kind: ProviderAuthKind) -> Result<(), AppError> {
+    if auth_kind == ProviderAuthKind::OfficialLogin {
+        return Err(AppError::invalid_input(
+            "providerOptions",
+            "该工具不支持官方账号登录渠道",
+        ));
+    }
+    Ok(())
 }
 
 /// ZCode provider entry 的 kind 来自应用自身的 API 格式枚举
@@ -450,38 +541,63 @@ fn validate_codex_extra_provider_fields(fields: &BTreeMap<String, Value>) -> Res
     Ok(())
 }
 
-pub(crate) fn validate_provider_fields(
-    name: &str,
-    api_base_url: &str,
-    api_key: &str,
-    default_model: &str,
-) -> Result<(), AppError> {
-    validate_provider_fields_with_optional_key(
-        name,
-        api_base_url,
-        Some(api_key),
-        default_model,
-        false,
-    )
+/// Provider 公共字段的单一校验入口；按认证方式区分接入地址与密钥是否必填。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProviderFieldsInput<'a> {
+    pub tool: Tool,
+    pub auth_kind: ProviderAuthKind,
+    pub name: &'a str,
+    pub api_base_url: &'a str,
+    /// `None` 与空串等价，表示没有本地密钥。
+    pub api_key: Option<&'a str>,
+    pub default_model: &'a str,
 }
 
-pub(crate) fn validate_provider_fields_with_optional_key(
-    name: &str,
-    api_base_url: &str,
-    api_key: Option<&str>,
-    default_model: &str,
-    allow_missing_api_key: bool,
-) -> Result<(), AppError> {
-    ArtifactName::parse(name.to_owned())?;
-    validate_api_base_url(api_base_url, "API 地址必须是无凭据的绝对 HTTP(S) URL")?;
-    match api_key {
-        Some(value) if !value.is_empty() => {
-            validate_non_empty_text(value, "apiKey", "API Key 不能为空")?
+pub(crate) fn validate_provider_fields(input: &ProviderFieldsInput<'_>) -> Result<(), AppError> {
+    ArtifactName::parse(input.name.to_owned())?;
+    let api_key = input.api_key.filter(|value| !value.is_empty());
+    match input.auth_kind {
+        ProviderAuthKind::ApiKey => {
+            // Claude/Codex 的接入地址可空：留空表示使用工具的官方端点配合自己的 API Key；
+            // ZCode/OpenCode 的 provider 条目没有 baseURL 就不完整，仍然必填。
+            let base_url_required = matches!(input.tool, Tool::Zcode | Tool::Opencode);
+            if base_url_required || !input.api_base_url.trim().is_empty() {
+                validate_api_base_url(
+                    input.api_base_url,
+                    "API 地址必须是无凭据的绝对 HTTP(S) URL",
+                )?;
+            }
+            match api_key {
+                Some(value) => validate_non_empty_text(value, "apiKey", "API Key 不能为空")?,
+                None => return Err(AppError::invalid_input("apiKey", "API Key 不能为空")),
+            }
         }
-        _ if !allow_missing_api_key => validate_non_empty_text("", "apiKey", "API Key 不能为空")?,
-        _ => {}
+        ProviderAuthKind::OfficialLogin => {
+            if !input.api_base_url.trim().is_empty() {
+                return Err(AppError::invalid_input(
+                    "apiBaseUrl",
+                    "官方账号登录渠道不需要 API 地址",
+                ));
+            }
+            if api_key.is_some() {
+                return Err(AppError::invalid_input(
+                    "apiKey",
+                    "官方账号登录渠道使用工具自身的登录凭据，不能保存本地 API Key",
+                ));
+            }
+        }
     }
-    validate_non_empty_text(default_model, "defaultModel", "默认模型不能为空")
+    // OpenCode 的 `model` 必须引用 provider/model，ZCode 条目也以模型为键；
+    // Claude/Codex 缺省时由工具使用自己的默认模型。
+    if !input.default_model.is_empty() || matches!(input.tool, Tool::Zcode | Tool::Opencode) {
+        validate_non_empty_text(input.default_model, "defaultModel", "默认模型不能为空")?;
+    }
+    Ok(())
+}
+
+/// 空串在数据库中存为 NULL，DTO 再还原为空串。
+pub(crate) fn optional_text(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
 }
 
 pub(crate) fn validate_prompt_fields(name: &str, body: &str) -> Result<(), AppError> {
@@ -523,23 +639,11 @@ fn validate_non_empty_text(
 }
 
 fn validate_extra_env(extra_env: &BTreeMap<String, String>) -> Result<(), AppError> {
-    const RESERVED: &[&str] = &[
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_MODEL",
-    ];
     for (key, value) in extra_env {
-        if key.is_empty()
-            || key.len() > 128
-            || !key
-                .bytes()
-                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-            || RESERVED.contains(&key.as_str())
-        {
+        if CLAUDE_RESERVED_ENV_KEYS.contains(&key.as_str()) {
             return Err(AppError::invalid_input(
                 "extraEnv",
-                "额外 Claude env key 必须是非保留的大写字母、数字或下划线",
+                "额外 Claude env 不能包含由专用字段承载的保留键",
             ));
         }
         if value
@@ -551,7 +655,18 @@ fn validate_extra_env(extra_env: &BTreeMap<String, String>) -> Result<(), AppErr
                 "额外 Claude env 值不能包含 NUL 或换行",
             ));
         }
-        if contains_detectable_secret(key, value) {
+        if !env_entry_is_manageable(key, value) {
+            if key.is_empty()
+                || key.len() > 128
+                || !key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                return Err(AppError::invalid_input(
+                    "extraEnv",
+                    "额外 Claude env key 必须是非保留的大写字母、数字或下划线",
+                ));
+            }
             return Err(AppError::invalid_input(
                 "extraEnv",
                 "可识别的认证、token、密码或 cookie 必须使用专用密钥字段，不能作为普通扩展 env 返回",
@@ -561,12 +676,13 @@ fn validate_extra_env(extra_env: &BTreeMap<String, String>) -> Result<(), AppErr
     Ok(())
 }
 
+/// Codex 官方支持的两种传输协议（`config.md` 的 `wire_api`）。
 fn validate_wire_api(wire_api: Option<&str>) -> Result<(), AppError> {
     match wire_api {
-        None | Some("responses") => Ok(()),
+        None | Some("responses") | Some("chat") => Ok(()),
         Some(_) => Err(AppError::invalid_input(
             "wireApi",
-            "Codex wire_api 仅支持 responses",
+            "Codex wire_api 仅支持 responses 或 chat",
         )),
     }
 }

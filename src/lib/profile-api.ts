@@ -13,6 +13,8 @@ export const profileKeys = {
   providers: (tool: Tool) => [...profileKeyBase, tool, "providers"] as const,
   prompts: [...profileKeyBase, "prompts"] as const,
   status: (tool: Tool) => [...profileKeyBase, tool, "status"] as const,
+  officialLogin: (tool: Tool) =>
+    [...profileKeyBase, tool, "official-login"] as const,
 };
 
 export function providerProfilesQueryOptions(tool: Tool) {
@@ -20,6 +22,19 @@ export function providerProfilesQueryOptions(tool: Tool) {
     queryKey: profileKeys.providers(tool),
     queryFn: async () =>
       unwrapResult(await commands.listProviderProfiles(tool)),
+  });
+}
+
+/**
+ * 官方账号登录状态：探测会启动一个几秒内结束的 CLI 子进程，因此只在官方渠道
+ * 表单打开时查询；登录子进程运行中时由调用方按 `phase` 轮询。
+ */
+export function officialLoginStatusQueryOptions(tool: Tool) {
+  return queryOptions({
+    queryKey: profileKeys.officialLogin(tool),
+    queryFn: async () =>
+      unwrapResult(await commands.getOfficialLoginStatus(tool)),
+    staleTime: 10_000,
   });
 }
 

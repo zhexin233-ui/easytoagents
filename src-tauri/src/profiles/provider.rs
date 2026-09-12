@@ -4,6 +4,7 @@ fn provider_projection(profile: &ProviderProfileRecord) -> Result<Value, AppErro
     let config = parse_stored_provider_config(profile)?;
     let input = crate::adapters::ProviderCodecProfileInput {
         name: &profile.name,
+        auth_kind: config.effective_auth_kind(profile.tool).as_str(),
         api_base_url: profile.api_base_url.as_deref(),
         api_key: profile.api_key.as_deref(),
         default_model: profile.default_model.as_deref(),

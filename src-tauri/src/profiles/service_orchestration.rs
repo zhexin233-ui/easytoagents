@@ -43,13 +43,15 @@ pub fn discover_provider_import(
         .filter(|name| ArtifactName::parse((*name).clone()).is_ok())
         .cloned()
         .unwrap_or_else(|| "已导入渠道".to_owned());
-    validate_provider_fields_with_optional_key(
-        &suggested_name,
-        &discovered.api_base_url,
-        discovered.api_key.as_deref(),
-        &discovered.default_model,
-        discovered_provider_allows_missing_api_key(tool, &discovered),
-    )?;
+    let auth_kind = discovered_auth_kind(&discovered)?;
+    validate_provider_fields(&ProviderFieldsInput {
+        tool,
+        auth_kind,
+        name: &suggested_name,
+        api_base_url: &discovered.api_base_url,
+        api_key: discovered.api_key.as_deref(),
+        default_model: &discovered.default_model,
+    })?;
     validate_discovered_provider_config(tool, &discovered)?;
     let preview_id = Uuid::new_v4().to_string();
     let mut target_redactor = redactor.clone();
@@ -71,6 +73,8 @@ pub fn discover_provider_import(
             redacted_preview_json: serde_json::to_string(&json!({
                 "projection": redacted_projection,
                 "apiKeyConfigured": discovered.api_key.is_some(),
+                "authKind": auth_kind,
+                "skippedEnvKeys": discovered.skipped_env_keys,
             }))
             .map_err(|error| {
                 AppError::invalid_input("importPreview", "导入预览无法序列化")
@@ -84,10 +88,12 @@ pub fn discover_provider_import(
         tool,
         target_path: discovered.target_path,
         suggested_name,
+        auth_kind,
         api_base_url: discovered.api_base_url,
         api_key_configured: discovered.api_key.is_some(),
         default_model: discovered.default_model,
         redacted_projection,
+        skipped_env_keys: discovered.skipped_env_keys,
     }))
 }
 
@@ -118,14 +124,17 @@ pub fn confirm_provider_import(
         .clone()
         .unwrap_or_else(|| generated_codex_provider_id(&id));
     validate_codex_provider_id(preview.tool, &provider_id)?;
-    validate_provider_fields_with_optional_key(
-        &input.name,
-        &discovered.api_base_url,
-        discovered.api_key.as_deref(),
-        &discovered.default_model,
-        codex_provider_allows_missing_api_key(preview.tool, Some(&provider_id)),
-    )?;
+    let auth_kind = discovered_auth_kind(&discovered)?;
+    validate_provider_fields(&ProviderFieldsInput {
+        tool: preview.tool,
+        auth_kind,
+        name: &input.name,
+        api_base_url: &discovered.api_base_url,
+        api_key: discovered.api_key.as_deref(),
+        default_model: &discovered.default_model,
+    })?;
     let options_input = ProviderCodecInput {
+        auth_kind: &discovered.auth_kind,
         credential_env_key: Some(discovered.credential_env_key.as_str()),
         extra_env: &discovered.extra_env,
         wire_api: discovered.wire_api.as_deref(),
@@ -154,9 +163,9 @@ pub fn confirm_provider_import(
             id,
             tool: preview.tool,
             name: input.name,
-            api_base_url: Some(discovered.api_base_url),
+            api_base_url: optional_text(&discovered.api_base_url),
             api_key: discovered.api_key,
-            default_model: Some(discovered.default_model),
+            default_model: optional_text(&discovered.default_model),
             config_json: serde_json::to_string(&config).map_err(|error| {
                 AppError::invalid_input("providerOptions", "导入 Provider 选项无法序列化")
                     .with_source_redacted(error, redactor)

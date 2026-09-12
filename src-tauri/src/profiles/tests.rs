@@ -12,8 +12,9 @@ mod tests {
         list_provider_profiles, preview_prompt_sync, preview_provider_sync,
         set_active_provider_profile, set_global_prompt_assignment, update_prompt_profile,
         update_provider_profile, CopyProviderProfileInput, PromptProfileDto, PromptProfileInput,
-        ProviderOptionsInput, ProviderProfileInput, SetGlobalPromptAssignmentInput,
-        UpdatePromptProfileInput, UpdateProviderProfileInput, CLAUDE_MODEL_KEY,
+        ProviderAuthKind, ProviderOptionsInput, ProviderProfileInput,
+        SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
+        CLAUDE_MODEL_KEY,
     };
     use crate::{
         adapters::{
@@ -365,10 +366,7 @@ mod tests {
                     )]
                     .into_iter()
                     .collect(),
-                    wire_api: None,
-                    zcode_kind: None,
-                    opencode_npm: None,
-                    opencode_api: None,
+                    ..ProviderOptionsInput::default()
                 },
                 ..provider(Tool::Claude, "第一档", "fixture-first-secret", true)
             },
@@ -581,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_provider_import_accepts_default_model_family_without_anthropic_model() {
+    fn claude_provider_import_keeps_default_model_family_as_extra_env_without_anthropic_model() {
         let mut fixture = fixture();
         let settings_path = fixture.home.join(".claude/settings.json");
         let secret = "fixture-default-model-secret";
@@ -610,7 +608,10 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(preview.api_key_configured);
-        assert_eq!(preview.default_model, "claude-sonnet-main");
+        assert_eq!(preview.auth_kind, ProviderAuthKind::ApiKey);
+        // 默认模型只来自 ANTHROPIC_MODEL；模型族键作为额外 env 原样保留。
+        assert_eq!(preview.default_model, "");
+        assert!(preview.skipped_env_keys.is_empty());
         assert!(!serde_json::to_string(&preview).unwrap().contains(secret));
         assert!(preview.redacted_projection["env"]
             .get(CLAUDE_MODEL_KEY)
@@ -634,7 +635,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(imported.default_model, "claude-sonnet-main");
+        assert_eq!(imported.default_model, "");
+        assert_eq!(imported.options.auth_kind, ProviderAuthKind::ApiKey);
         assert_eq!(
             imported.options.credential_env_key,
             Some(crate::profiles::ClaudeCredentialEnvKey::AuthToken)
@@ -647,7 +649,642 @@ mod tests {
             imported.options.extra_env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
             "claude-opus-plan"
         );
+        assert_eq!(imported.options.extra_env["UNRELATED_ENV"], "keep");
         assert_eq!(fs::read_to_string(&settings_path).unwrap(), original);
+        // 导入后的首次同步预览必须与磁盘一致，不会"补写"一个从未存在的 ANTHROPIC_MODEL。
+        let sync_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        assert_eq!(
+            sync_preview.targets[0].change_kind,
+            crate::domain::ChangeKind::Unchanged
+        );
+    }
+
+    /// 额外 env 接管 settings.json 里的全部普通键；疑似凭据与非字符串值只报告键名并保持不动。
+    #[test]
+    fn claude_provider_import_captures_all_env_and_official_switch_removes_credentials() {
+        let mut fixture = fixture();
+        let settings_path = fixture.home.join(".claude/settings.json");
+        let secret = "fixture-full-env-secret";
+        let header_secret = "fixture-custom-header-secret";
+        fs::write(
+            &settings_path,
+            format!(
+                r#"{{
+  "env": {{
+    "ANTHROPIC_BASE_URL": "https://relay.example.com",
+    "ANTHROPIC_AUTH_TOKEN": "{secret}",
+    "ANTHROPIC_MODEL": "claude-relay",
+    "ANTHROPIC_CUSTOM_HEADERS": "Authorization: Bearer {header_secret}",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-relay",
+    "API_TIMEOUT_MS": "600000",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000",
+    "CLAUDE_CODE_EFFORT_LEVEL": "max",
+    "SOME_FLAG": true
+  }},
+  "permissions": {{"allow": ["Read"]}}
+}}
+"#,
+            ),
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.default_model, "claude-relay");
+        assert_eq!(
+            preview.skipped_env_keys,
+            vec!["ANTHROPIC_CUSTOM_HEADERS".to_owned(), "SOME_FLAG".to_owned()]
+        );
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains(secret));
+        assert!(!serialized.contains(header_secret));
+        assert!(preview.redacted_projection["env"]
+            .get("ANTHROPIC_CUSTOM_HEADERS")
+            .is_none());
+        let imported = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: preview.preview_id,
+                name: "中转渠道".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            imported
+                .options
+                .extra_env
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "API_TIMEOUT_MS",
+                "CLAUDE_CODE_EFFORT_LEVEL",
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            ]
+        );
+        assert_eq!(
+            imported.options.extra_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"],
+            "32000"
+        );
+        let unchanged = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        assert_eq!(
+            unchanged.targets[0].change_kind,
+            crate::domain::ChangeKind::Unchanged
+        );
+
+        // 切换到官方账号登录渠道：移除接入地址与凭据，保留额外 env 与未接管内容。
+        let official = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            ProviderProfileInput {
+                tool: Tool::Claude,
+                name: "Claude 官方账号".to_owned(),
+                api_base_url: String::new(),
+                api_key: String::new(),
+                default_model: String::new(),
+                options: ProviderOptionsInput {
+                    auth_kind: ProviderAuthKind::OfficialLogin,
+                    extra_env: [("CLAUDE_CODE_MAX_OUTPUT_TOKENS".to_owned(), "64000".to_owned())]
+                        .into_iter()
+                        .collect(),
+                    ..ProviderOptionsInput::default()
+                },
+                activate: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(official.options.auth_kind, ProviderAuthKind::OfficialLogin);
+        assert_eq!(official.options.credential_env_key, None);
+        assert!(!official.api_key_configured);
+        let official_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        assert_eq!(
+            official_preview.targets[0].change_kind,
+            crate::domain::ChangeKind::Update
+        );
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &official_preview.preview_id,
+            Tool::Claude,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let written: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+        let env = written["env"].as_object().unwrap();
+        for removed in [
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "API_TIMEOUT_MS",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+        ] {
+            assert!(env.get(removed).is_none(), "{removed} 应被移除");
+        }
+        assert_eq!(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "64000");
+        assert_eq!(
+            env["ANTHROPIC_CUSTOM_HEADERS"],
+            format!("Authorization: Bearer {header_secret}")
+        );
+        assert_eq!(env["SOME_FLAG"], true);
+        assert_eq!(written["permissions"]["allow"][0], "Read");
+
+        // 切回第三方渠道：接入地址与凭据恢复（停用时 row_version 已递增，需重新读取）。
+        let imported_now = list_provider_profiles(&fixture.database, Tool::Claude)
+            .unwrap()
+            .into_iter()
+            .find(|profile| profile.id == imported.id)
+            .unwrap();
+        set_active_provider_profile(
+            &mut fixture.database,
+            Tool::Claude,
+            &crate::profiles::VersionedProfileInput {
+                id: imported_now.id.clone(),
+                row_version: imported_now.row_version,
+            },
+        )
+        .unwrap();
+        let back_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &back_preview.preview_id,
+            Tool::Claude,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let restored: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
+        assert_eq!(restored["env"]["ANTHROPIC_BASE_URL"], "https://relay.example.com");
+        assert_eq!(restored["env"]["ANTHROPIC_AUTH_TOKEN"], secret);
+        assert_eq!(restored["env"]["ANTHROPIC_MODEL"], "claude-relay");
+        assert_eq!(restored["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "32000");
+        assert_eq!(restored["env"]["SOME_FLAG"], true);
+    }
+
+    #[test]
+    fn claude_provider_import_without_base_url_or_credentials_yields_official_login_profile() {
+        let mut fixture = fixture();
+        let settings_path = fixture.home.join(".claude/settings.json");
+        fs::write(
+            &settings_path,
+            r#"{"env": {"MCP_TIMEOUT": "300000", "DISABLE_TELEMETRY": "1"}, "model": "opus"}
+"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.auth_kind, ProviderAuthKind::OfficialLogin);
+        assert_eq!(preview.api_base_url, "");
+        assert_eq!(preview.default_model, "");
+        assert!(!preview.api_key_configured);
+        let imported = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: preview.preview_id,
+                name: "官方登录".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(imported.options.auth_kind, ProviderAuthKind::OfficialLogin);
+        assert_eq!(imported.options.extra_env["MCP_TIMEOUT"], "300000");
+        let sync_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        assert_eq!(
+            sync_preview.targets[0].change_kind,
+            crate::domain::ChangeKind::Unchanged
+        );
+
+        // 完全空的 env 没有可导入项；只有接入地址没有模型仍可导入。
+        fs::write(&settings_path, r#"{"env": {}}"#).unwrap();
+        assert!(discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .is_none());
+    }
+
+    #[test]
+    fn claude_provider_import_with_base_url_but_no_model_keeps_empty_default_model() {
+        let mut fixture = fixture();
+        fs::write(
+            fixture.home.join(".claude/settings.json"),
+            r#"{"env": {"ANTHROPIC_BASE_URL": "https://relay.example.com", "ANTHROPIC_API_KEY": "fixture-no-model-secret"}}
+"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.auth_kind, ProviderAuthKind::ApiKey);
+        assert_eq!(preview.default_model, "");
+        assert!(preview.api_key_configured);
+        let imported = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: preview.preview_id,
+                name: "无模型渠道".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(imported.default_model, "");
+        assert_eq!(
+            imported.options.credential_env_key,
+            Some(crate::profiles::ClaudeCredentialEnvKey::ApiKey)
+        );
+    }
+
+    #[test]
+    fn provider_auth_kind_rules_are_enforced_on_create_update_and_copy() {
+        let mut fixture = fixture();
+        let mut redactor = SecretRedactor::default();
+        // 官方登录渠道不能带接入地址或密钥。
+        for (url, key) in [("https://relay.example.com", ""), ("", "fixture-key")] {
+            let error = create_provider_profile(
+                &mut fixture.database,
+                &mut redactor,
+                ProviderProfileInput {
+                    tool: Tool::Claude,
+                    name: "错误官方渠道".to_owned(),
+                    api_base_url: url.to_owned(),
+                    api_key: key.to_owned(),
+                    default_model: String::new(),
+                    options: ProviderOptionsInput {
+                        auth_kind: ProviderAuthKind::OfficialLogin,
+                        ..ProviderOptionsInput::default()
+                    },
+                    activate: false,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), crate::error::ErrorCode::InvalidInput);
+        }
+        // ZCode/OpenCode 不支持官方登录。
+        let error = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            ProviderProfileInput {
+                tool: Tool::Zcode,
+                name: "ZCode 官方".to_owned(),
+                api_base_url: String::new(),
+                api_key: String::new(),
+                default_model: "model".to_owned(),
+                options: ProviderOptionsInput {
+                    auth_kind: ProviderAuthKind::OfficialLogin,
+                    ..ProviderOptionsInput::default()
+                },
+                activate: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), crate::error::ErrorCode::InvalidInput);
+
+        // Codex 官方登录渠道固定使用内置 openai provider，模型可空，不能跨工具复制。
+        let codex_official = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            ProviderProfileInput {
+                tool: Tool::Codex,
+                name: "Codex 官方账号".to_owned(),
+                api_base_url: String::new(),
+                api_key: String::new(),
+                default_model: String::new(),
+                options: ProviderOptionsInput {
+                    auth_kind: ProviderAuthKind::OfficialLogin,
+                    ..ProviderOptionsInput::default()
+                },
+                activate: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(codex_official.options.provider_id.as_deref(), Some("openai"));
+        assert_eq!(codex_official.default_model, "");
+        let copy_error = copy_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            CopyProviderProfileInput {
+                source_id: codex_official.id.clone(),
+                target_tool: Tool::Claude,
+                target_name: "复制官方".to_owned(),
+                activate: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(copy_error.code(), crate::error::ErrorCode::InvalidInput);
+        // 认证方式创建后不可更改。
+        let switch_error = update_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            UpdateProviderProfileInput {
+                id: codex_official.id.clone(),
+                name: codex_official.name.clone(),
+                api_base_url: "https://relay.example.com/v1".to_owned(),
+                api_key: SecretUpdate::Replace("fixture-switch-key".to_owned()),
+                default_model: "gpt-fixture".to_owned(),
+                options: ProviderOptionsInput::default(),
+                row_version: codex_official.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(switch_error.code(), crate::error::ErrorCode::InvalidInput);
+        assert!(!serde_json::to_string(
+            &list_provider_profiles(&fixture.database, Tool::Codex).unwrap()
+        )
+        .unwrap()
+        .contains("fixture-switch-key"));
+
+        // API Key 渠道：Claude 接入地址可空（官方端点 + 自己的 API Key），模型可空。
+        let direct = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            ProviderProfileInput {
+                tool: Tool::Claude,
+                name: "官方端点自带 Key".to_owned(),
+                api_base_url: String::new(),
+                api_key: "fixture-direct-key".to_owned(),
+                default_model: String::new(),
+                options: ProviderOptionsInput::default(),
+                activate: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(direct.api_base_url, "");
+        assert_eq!(direct.default_model, "");
+        assert!(direct.api_key_configured);
+        let direct_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &direct_preview.preview_id,
+            Tool::Claude,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let written: Value =
+            serde_json::from_slice(&fs::read(fixture.home.join(".claude/settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(written["env"]["ANTHROPIC_API_KEY"], "fixture-direct-key");
+        assert!(written["env"].get("ANTHROPIC_BASE_URL").is_none());
+        assert!(written["env"].get("ANTHROPIC_MODEL").is_none());
+    }
+
+    #[test]
+    fn claude_extra_env_accepts_numeric_limit_keys_and_rejects_credentials_and_reserved_keys() {
+        let mut fixture = fixture();
+        let mut redactor = SecretRedactor::default();
+        let mut accepted = provider(Tool::Claude, "限额 env", "fixture-limit-secret", false);
+        accepted.options.extra_env = [
+            ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "32000"),
+            ("MAX_THINKING_TOKENS", "16000"),
+            ("CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "3600000"),
+            ("DISABLE_TELEMETRY", "true"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+        let created =
+            create_provider_profile(&mut fixture.database, &mut redactor, accepted).unwrap();
+        assert_eq!(
+            created.options.extra_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"],
+            "32000"
+        );
+
+        for (key, value) in [
+            ("AWS_BEARER_TOKEN_BEDROCK", "opaque-bedrock-secret"),
+            ("ANTHROPIC_MODEL", "claude-reserved"),
+            ("ANTHROPIC_AUTH_TOKEN", "fixture-reserved-secret"),
+        ] {
+            let mut rejected = provider(Tool::Claude, "被拒 env", "fixture-reject-secret", false);
+            rejected
+                .options
+                .extra_env
+                .insert(key.to_owned(), value.to_owned());
+            assert_eq!(
+                create_provider_profile(&mut fixture.database, &mut redactor, rejected)
+                    .unwrap_err()
+                    .code(),
+                crate::error::ErrorCode::InvalidInput,
+                "{key} 应被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_official_login_switch_and_chat_wire_api_are_supported() {
+        let mut fixture = fixture();
+        let config_path = fixture.home.join(".codex/config.toml");
+        fs::write(
+            &config_path,
+            r#"model_reasoning_effort = "high"
+
+[mcp_servers.fixture]
+command = "keep"
+"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let mut chat = provider(Tool::Codex, "Chat 中转", "fixture-chat-secret", true);
+        chat.options.wire_api = Some("chat".to_owned());
+        let chat = create_provider_profile(&mut fixture.database, &mut redactor, chat).unwrap();
+        assert_eq!(chat.options.wire_api.as_deref(), Some("chat"));
+        let chat_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Codex,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &chat_preview.preview_id,
+            Tool::Codex,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let chat_provider_id = chat.options.provider_id.clone().unwrap();
+        let written: Value =
+            toml_edit::de::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(
+            written["model_providers"][&chat_provider_id]["wire_api"],
+            "chat"
+        );
+        assert_eq!(written["model"], "fixture-model");
+
+        let official = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            ProviderProfileInput {
+                tool: Tool::Codex,
+                name: "Codex 官方账号".to_owned(),
+                api_base_url: String::new(),
+                api_key: String::new(),
+                default_model: String::new(),
+                options: ProviderOptionsInput {
+                    auth_kind: ProviderAuthKind::OfficialLogin,
+                    ..ProviderOptionsInput::default()
+                },
+                activate: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(official.options.auth_kind, ProviderAuthKind::OfficialLogin);
+        let official_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Codex,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &official_preview.preview_id,
+            Tool::Codex,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let text = fs::read_to_string(&config_path).unwrap();
+        let written: Value = toml_edit::de::from_str(&text).unwrap();
+        assert_eq!(written["model_provider"], "openai");
+        assert!(written.get("model").is_none());
+        assert!(written["model_providers"].get(&chat_provider_id).is_none());
+        assert_eq!(written["model_reasoning_effort"], "high");
+        assert_eq!(written["mcp_servers"]["fixture"]["command"], "keep");
+        assert!(!text.contains("fixture-chat-secret"));
+    }
+
+    #[test]
+    fn codex_provider_import_without_model_keeps_empty_default_model() {
+        let mut fixture = fixture();
+        let token = "fixture-no-model-codex-token";
+        fs::write(
+            fixture.home.join(".codex/config.toml"),
+            format!(
+                r#"model_provider = "relay"
+
+[model_providers.relay]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+experimental_bearer_token = "{token}"
+wire_api = "chat"
+"#
+            ),
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Codex,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.default_model, "");
+        assert_eq!(preview.auth_kind, ProviderAuthKind::ApiKey);
+        let imported = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: preview.preview_id,
+                name: "Relay".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(imported.default_model, "");
+        assert_eq!(imported.options.wire_api.as_deref(), Some("chat"));
+        let sync_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Codex,
+        )
+        .unwrap();
+        assert_eq!(
+            sync_preview.targets[0].change_kind,
+            crate::domain::ChangeKind::Unchanged
+        );
     }
 
     #[test]
@@ -1184,8 +1821,9 @@ tenant = "fixture"
         )
         .unwrap()
         .unwrap();
-        assert_eq!(preview.suggested_name, "Codex OAuth 登录");
+        assert_eq!(preview.suggested_name, "Codex 官方账号登录");
         assert_eq!(preview.default_model, "gpt-5.5");
+        assert_eq!(preview.auth_kind, ProviderAuthKind::OfficialLogin);
         assert!(!preview.api_key_configured);
         let serialized_preview = serde_json::to_string(&preview).unwrap();
         assert!(!serialized_preview.contains(access_token));
@@ -1205,6 +1843,11 @@ tenant = "fixture"
         .unwrap();
         assert!(!imported.api_key_configured);
         assert_eq!(imported.options.provider_id.as_deref(), Some("openai"));
+        assert_eq!(imported.options.auth_kind, ProviderAuthKind::OfficialLogin);
+        let official_options = ProviderOptionsInput {
+            auth_kind: ProviderAuthKind::OfficialLogin,
+            ..ProviderOptionsInput::default()
+        };
         let edited = update_provider_profile(
             &mut fixture.database,
             &mut redactor,
@@ -1214,7 +1857,7 @@ tenant = "fixture"
                 api_base_url: imported.api_base_url.clone(),
                 api_key: SecretUpdate::Keep,
                 default_model: imported.default_model.clone(),
-                options: ProviderOptionsInput::default(),
+                options: official_options.clone(),
                 row_version: imported.row_version,
             },
         )
@@ -1229,7 +1872,7 @@ tenant = "fixture"
                 api_base_url: edited.api_base_url.clone(),
                 api_key: SecretUpdate::Replace("fixture-should-not-store".to_owned()),
                 default_model: edited.default_model.clone(),
-                options: ProviderOptionsInput::default(),
+                options: official_options,
                 row_version: edited.row_version,
             },
         )
@@ -1458,7 +2101,7 @@ tenant = "fixture"
             "fixture-wire-provider-secret",
             false,
         );
-        unsupported_wire.options.wire_api = Some("chat".to_owned());
+        unsupported_wire.options.wire_api = Some("grpc".to_owned());
         assert_eq!(
             create_provider_profile(&mut fixture.database, &mut redactor, unsupported_wire)
                 .unwrap_err()

@@ -14,7 +14,11 @@ import {
 } from "@/bindings/commands";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 import { renderWithProviders } from "@/test/render";
-import { makeProviderProfile } from "@/test/fixtures/dtos";
+import {
+  makeOfficialLoginStatus,
+  makeProviderImportPreview,
+  makeProviderProfile,
+} from "@/test/fixtures/dtos";
 import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
@@ -31,6 +35,7 @@ const provider: ProviderProfileDto = makeProviderProfile({
   apiKeyConfigured: true,
   defaultModel: "claude-fixture",
   options: {
+    authKind: "api_key",
     credentialEnvKey: "ANTHROPIC_API_KEY",
     extraEnv: {},
     providerId: null,
@@ -47,10 +52,11 @@ const codexOAuthProvider: ProviderProfileDto = makeProviderProfile({
   id: "00000000-0000-4000-8000-000000000501",
   tool: "codex",
   name: "Codex OAuth 登录",
-  apiBaseUrl: "https://api.openai.com/v1",
+  apiBaseUrl: "",
   apiKeyConfigured: false,
   defaultModel: "gpt-5.5",
   options: {
+    authKind: "official_login",
     credentialEnvKey: null,
     extraEnv: {},
     providerId: "openai",
@@ -176,6 +182,15 @@ beforeEach(() => {
     status: "ok",
     data: null,
   });
+  vi.mocked(commands.getOfficialLoginStatus).mockImplementation((tool) =>
+    Promise.resolve({
+      status: "ok",
+      data: makeOfficialLoginStatus({
+        tool,
+        manualCommand: tool === "codex" ? "codex login" : "claude auth login",
+      }),
+    }),
+  );
   vi.mocked(commands.previewProviderSync).mockResolvedValue({
     status: "ok",
     data: preview,
@@ -458,6 +473,7 @@ describe("ToolProfilesPage", () => {
         apiKey: "fixture-ui-secret",
         defaultModel: "claude-new",
         options: {
+          authKind: "api_key",
           credentialEnvKey: "ANTHROPIC_API_KEY",
           extraEnv: {},
           wireApi: null,
@@ -524,6 +540,7 @@ describe("ToolProfilesPage", () => {
         apiKey: { action: "keep" },
         defaultModel: provider.defaultModel,
         options: {
+          authKind: "api_key",
           credentialEnvKey: "ANTHROPIC_API_KEY",
           extraEnv: {
             ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus",
@@ -539,7 +556,7 @@ describe("ToolProfilesPage", () => {
     );
   });
 
-  it("Codex OAuth 渠道显示登录来源并允许无密钥编辑", async () => {
+  it("官方账号登录渠道显示登录来源，编辑时隐藏接入字段并固定认证方式", async () => {
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
       data: [codexOAuthProvider],
@@ -548,40 +565,59 @@ describe("ToolProfilesPage", () => {
       status: "ok",
       data: { ...codexOAuthProvider, name: "Codex 官方登录" },
     });
+    vi.mocked(commands.getOfficialLoginStatus).mockResolvedValue({
+      status: "ok",
+      data: makeOfficialLoginStatus({
+        tool: "codex",
+        loggedIn: true,
+        authMethod: "chatgpt",
+        manualCommand: "codex login",
+      }),
+    });
 
     renderPage("codex");
 
     const section = sectionByHeading("渠道");
     expect(
-      await within(section).findByText("gpt-5.5 · 使用 Codex OAuth 登录"),
+      await within(section).findByText("gpt-5.5 · 官方账号登录"),
     ).toBeVisible();
     expect(
       within(section).getByRole("button", { name: "复制到 Claude" }),
     ).toBeDisabled();
 
     fireEvent.click(within(section).getByRole("button", { name: "编辑" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑 Codex 渠道" });
+    expect(dialog).toBeVisible();
+    // 官方渠道没有接入地址、密钥与 wire_api 字段；认证方式只读。
     expect(
-      screen.getByRole("dialog", { name: "编辑 Codex 渠道" }),
+      within(dialog).queryByLabelText("API Key（默认遮罩）"),
+    ).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("API 地址")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("wire_api")).not.toBeInTheDocument();
+    const officialRadio = within(dialog).getByRole("radio", {
+      name: "官方账号登录（OAuth）",
+    });
+    expect(officialRadio).toBeChecked();
+    expect(officialRadio).toBeDisabled();
+    expect(
+      await within(dialog).findByText("已登录官方账号（chatgpt）"),
     ).toBeVisible();
-    const keyInput = within(section).getByLabelText("API Key（默认遮罩）");
-    expect(keyInput).toBeDisabled();
-    expect(keyInput).toHaveAttribute(
-      "placeholder",
-      "留空以继续使用 Codex OAuth 登录",
-    );
-    fireEvent.change(within(section).getByLabelText("名称"), {
+    expect(commands.getOfficialLoginStatus).toHaveBeenCalledWith("codex");
+
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
       target: { value: "Codex 官方登录" },
     });
-    fireEvent.click(within(section).getByRole("button", { name: "保存编辑" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存编辑" }));
 
     await waitFor(() =>
       expect(commands.updateProviderProfile).toHaveBeenCalledWith({
         id: codexOAuthProvider.id,
         name: "Codex 官方登录",
-        apiBaseUrl: codexOAuthProvider.apiBaseUrl,
+        apiBaseUrl: "",
         apiKey: { action: "keep" },
         defaultModel: codexOAuthProvider.defaultModel,
         options: {
+          authKind: "official_login",
           credentialEnvKey: null,
           extraEnv: {},
           wireApi: null,
@@ -592,6 +628,172 @@ describe("ToolProfilesPage", () => {
         rowVersion: codexOAuthProvider.rowVersion,
       }),
     );
+  });
+
+  it("新增官方账号登录渠道可触发、取消官方 CLI 登录，并以官方类型创建档案", async () => {
+    const running = makeOfficialLoginStatus({
+      tool: "claude",
+      phase: "running",
+      loggedIn: null,
+    });
+    vi.mocked(commands.startOfficialLogin).mockResolvedValue({
+      status: "ok",
+      data: running,
+    });
+    vi.mocked(commands.cancelOfficialLogin).mockResolvedValue({
+      status: "ok",
+      data: makeOfficialLoginStatus({
+        tool: "claude",
+        phase: "cancelled",
+        diagnostic: "Opening browser...",
+      }),
+    });
+    vi.mocked(commands.createProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: makeProviderProfile({
+        name: "Claude 官方账号",
+        apiBaseUrl: "",
+        defaultModel: "",
+        options: {
+          authKind: "official_login",
+          credentialEnvKey: null,
+          extraEnv: {},
+          providerId: null,
+          wireApi: null,
+          zcodeKind: null,
+          opencodeNpm: null,
+          opencodeApi: null,
+        },
+        isActive: true,
+      }),
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    await within(section).findByText(/尚无渠道档案/);
+    fireEvent.click(within(section).getByRole("button", { name: "新增渠道" }));
+    const dialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
+    // 默认 API Key 方式：接入字段可见，未查询登录状态。
+    expect(within(dialog).getByLabelText("API 地址")).toBeVisible();
+    expect(commands.getOfficialLoginStatus).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(dialog).getByRole("radio", { name: "官方账号登录（OAuth）" }),
+    );
+    expect(within(dialog).queryByLabelText("API 地址")).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByLabelText("API Key（默认遮罩）"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByLabelText("认证 env key"),
+    ).not.toBeInTheDocument();
+    // Claude 官方渠道仍可维护额外 env。
+    expect(
+      within(dialog).getByLabelText("额外 env（每行 KEY=VALUE）"),
+    ).toBeVisible();
+    expect(
+      await within(dialog).findByText("当前未登录官方账号。"),
+    ).toBeVisible();
+    expect(within(dialog).getByText("claude auth login")).toBeVisible();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "登录官方账号" }),
+    );
+    await waitFor(() =>
+      expect(commands.startOfficialLogin).toHaveBeenCalledWith("claude"),
+    );
+    expect(
+      await within(dialog).findByText("正在等待浏览器完成官方账号授权…"),
+    ).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消登录" }));
+    await waitFor(() =>
+      expect(commands.cancelOfficialLogin).toHaveBeenCalledWith("claude"),
+    );
+    expect(await within(dialog).findByText("登录已取消。")).toBeVisible();
+    expect(within(dialog).getByText("Opening browser...")).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "登录官方账号" }),
+    ).toBeEnabled();
+
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "Claude 官方账号" },
+    });
+    fireEvent.change(
+      within(dialog).getByLabelText("额外 env（每行 KEY=VALUE）"),
+      { target: { value: "CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000" } },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建渠道" }));
+    await waitFor(() =>
+      expect(commands.createProviderProfile).toHaveBeenCalledWith({
+        tool: "claude",
+        name: "Claude 官方账号",
+        apiBaseUrl: "",
+        apiKey: "",
+        defaultModel: "",
+        options: {
+          authKind: "official_login",
+          credentialEnvKey: null,
+          extraEnv: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32000" },
+          wireApi: null,
+          zcodeKind: null,
+          opencodeNpm: null,
+          opencodeApi: null,
+        },
+        activate: true,
+      }),
+    );
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
+
+  it("官方 CLI 缺少登录子命令时禁用登录按钮并给出手动命令", async () => {
+    vi.mocked(commands.getOfficialLoginStatus).mockResolvedValue({
+      status: "ok",
+      data: makeOfficialLoginStatus({
+        tool: "codex",
+        supported: false,
+        loggedIn: null,
+        manualCommand: "codex login",
+        diagnostic: "当前 Codex CLI 版本没有 login status 子命令，请升级后重试",
+      }),
+    });
+    renderPage("codex");
+    const section = sectionByHeading("渠道");
+    await within(section).findByText(/尚无渠道档案/);
+    fireEvent.click(within(section).getByRole("button", { name: "新增渠道" }));
+    const dialog = screen.getByRole("dialog", { name: "新增 Codex 渠道" });
+    fireEvent.click(
+      within(dialog).getByRole("radio", { name: "官方账号登录（OAuth）" }),
+    );
+    expect(
+      await within(dialog).findByText(/未安装或不提供登录子命令/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "登录官方账号" }),
+    ).toBeDisabled();
+    expect(within(dialog).queryByLabelText("wire_api")).not.toBeInTheDocument();
+    expect(commands.startOfficialLogin).not.toHaveBeenCalled();
+  });
+
+  it("导入预览列出未纳入管理的疑似凭据 env 键", async () => {
+    vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+      status: "ok",
+      data: makeProviderImportPreview({
+        defaultModel: "",
+        skippedEnvKeys: ["ANTHROPIC_CUSTOM_HEADERS", "SOME_FLAG"],
+      }),
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "检测已有配置" }),
+    );
+    expect(
+      await within(section).findByText("工具默认模型 · 密钥已遮罩保存"),
+    ).toBeVisible();
+    expect(
+      within(section).getByText(
+        /不纳入管理并保持原样：ANTHROPIC_CUSTOM_HEADERS、SOME_FLAG/,
+      ),
+    ).toBeVisible();
   });
 
   it("检测没有可导入渠道时显示反馈", async () => {
@@ -633,19 +835,20 @@ describe("ToolProfilesPage", () => {
     expect(commands.discoverProviderImport).toHaveBeenCalledWith("opencode");
   });
 
-  it("Codex OAuth 导入预览显示登录凭据来源", async () => {
+  it("Codex 官方账号导入预览显示登录凭据来源", async () => {
     vi.mocked(commands.discoverProviderImport).mockResolvedValue({
       status: "ok",
-      data: {
+      data: makeProviderImportPreview({
         previewId: "00000000-0000-4000-8000-000000000502",
         tool: "codex",
         targetPath: "/isolated/home/.codex/config.toml",
-        suggestedName: "Codex OAuth 登录",
-        apiBaseUrl: "https://api.openai.com/v1",
+        suggestedName: "Codex 官方账号登录",
+        authKind: "official_login",
+        apiBaseUrl: "",
         apiKeyConfigured: false,
         defaultModel: "gpt-5.5",
         redactedProjection: { model: "gpt-5.5" },
-      },
+      }),
     });
 
     renderPage("codex");
@@ -656,7 +859,7 @@ describe("ToolProfilesPage", () => {
     );
 
     expect(
-      await within(section).findByText("gpt-5.5 · 使用 Codex OAuth 登录"),
+      await within(section).findByText("gpt-5.5 · 官方账号登录（不接管凭据）"),
     ).toBeVisible();
   });
 

@@ -207,6 +207,7 @@ fn is_sensitive_key(key: &str) -> bool {
         "token",
         "secret",
         "password",
+        "passphrase",
         "cookie",
         "credential",
         "bearer",
@@ -238,6 +239,65 @@ pub(crate) fn contains_detectable_secret(key: &str, value: &str) -> bool {
     is_sensitive_key(key)
         || looks_like_secret_value(value.trim())
         || redact_inline_secret_values(value) != value
+}
+
+/// 纯数值或布尔样式的配置值不可能是凭据：`CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000`、
+/// `CLAUDE_CODE_API_KEY_HELPER_TTL_MS=3600000` 这类键名虽含 token/key，值本身只是限额。
+pub(crate) fn is_plain_config_value(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() {
+        return false;
+    }
+    let numeric = value
+        .strip_prefix('-')
+        .unwrap_or(value)
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+        && value.bytes().any(|byte| byte.is_ascii_digit());
+    numeric
+        || matches!(
+            value.to_ascii_lowercase().as_str(),
+            "true" | "false" | "yes" | "no" | "on" | "off"
+        )
+}
+
+/// 判断一条 `KEY=VALUE` 形式的原生 env 配置是否可以作为普通扩展 env 纳入中央管理。
+///
+/// 键名必须是 POSIX 风格的大写标识符；值不能含 NUL/换行；可识别的凭据必须走专用密钥
+/// 字段。只有 `token`/`apikey` 这类既可指凭据也可指限额的键名，才在值为纯数值/布尔时
+/// 放行（`CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000`）；`password`/`passphrase`/`secret` 等
+/// 键名即使值是数字 PIN 也一律拒绝。
+pub(crate) fn env_entry_is_manageable(key: &str, value: &str) -> bool {
+    let key_is_identifier = !key.is_empty()
+        && key.len() <= 128
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_');
+    if !key_is_identifier
+        || value
+            .chars()
+            .any(|character| matches!(character, '\0' | '\r' | '\n'))
+        || is_strictly_sensitive_key(key)
+    {
+        return false;
+    }
+    is_plain_config_value(value) || !contains_detectable_secret(key, value)
+}
+
+/// 键名本身就宣告了值是密码类凭据，与值的形态无关。
+fn is_strictly_sensitive_key(key: &str) -> bool {
+    let key = normalize_key(key);
+    [
+        "authorization",
+        "secret",
+        "password",
+        "passphrase",
+        "cookie",
+        "credential",
+        "bearer",
+    ]
+    .iter()
+    .any(|marker| key.contains(marker))
 }
 
 fn redact_inline_secret_values(value: &str) -> String {
@@ -641,6 +701,52 @@ mod tests {
             assert!(redactor.contains_secret("worker-42"));
             assert!(redactor.clone().contains_secret("42"));
         }
+    }
+
+    #[test]
+    fn env_entries_with_numeric_values_are_manageable_while_credentials_are_not() {
+        for (key, value) in [
+            ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "32000"),
+            ("MAX_THINKING_TOKENS", "  16000 "),
+            ("CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "3600000"),
+            ("API_TIMEOUT_MS", "600000"),
+            ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
+            ("DISABLE_TELEMETRY", "true"),
+            ("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus"),
+            ("CLAUDE_CODE_EFFORT_LEVEL", "max"),
+            ("HTTPS_PROXY", "http://127.0.0.1:10808"),
+        ] {
+            assert!(
+                super::env_entry_is_manageable(key, value),
+                "应允许普通配置：{key}={value}"
+            );
+        }
+        for (key, value) in [
+            ("AWS_BEARER_TOKEN_BEDROCK", "opaque-bearer-value"),
+            ("CLAUDE_CODE_CLIENT_KEY_PASSPHRASE", "hunter2"),
+            // 密码类键名即使是数字 PIN 也不放行。
+            ("CLAUDE_CODE_CLIENT_KEY_PASSPHRASE", "123456"),
+            ("SESSION_SECRET", "1"),
+            ("DB_PASSWORD", "true"),
+            (
+                "ANTHROPIC_CUSTOM_HEADERS",
+                "Authorization: Bearer fixture-secret",
+            ),
+            ("SOME_SETTING", "sk-1234567890abcdef"),
+            ("lowercase_key", "value"),
+            ("MULTI_LINE", "first\nsecond"),
+            ("", "value"),
+            ("EMPTY_NUMERIC_TOKEN", ""),
+        ] {
+            assert!(
+                !super::env_entry_is_manageable(key, value),
+                "应拒绝：{key}={value:?}"
+            );
+        }
+        assert!(!super::is_plain_config_value("1-2"));
+        assert!(!super::is_plain_config_value("."));
+        assert!(super::is_plain_config_value("-1"));
+        assert!(super::is_plain_config_value("0.5"));
     }
 
     #[test]

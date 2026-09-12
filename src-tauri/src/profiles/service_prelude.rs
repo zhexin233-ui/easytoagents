@@ -10,18 +10,19 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use super::models::{
-    validate_prompt_fields, validate_provider_fields, validate_provider_fields_with_optional_key,
-    ClaudeCredentialEnvKey, ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto,
-    PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, ProviderImportPreviewDto,
-    ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput, SecretUpdate,
-    SetGlobalPromptAssignmentInput, StoredProviderConfig, ToolProfileStatusDto,
-    UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
-    CODEX_BEARER_TOKEN_WARNING, NEW_SESSION_NOTICE,
+    optional_text, validate_prompt_fields, validate_provider_fields, ClaudeCredentialEnvKey,
+    ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto,
+    PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, ProviderAuthKind,
+    ProviderFieldsInput, ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto,
+    ProviderProfileInput, SecretUpdate, SetGlobalPromptAssignmentInput, StoredProviderConfig,
+    ToolProfileStatusDto, UpdatePromptProfileInput, UpdateProviderProfileInput,
+    VersionedProfileInput, CODEX_BEARER_TOKEN_WARNING, CODEX_OPENAI_PROVIDER_ID,
+    NEW_SESSION_NOTICE,
 };
 use crate::{
     adapters::{
         find_descriptor, DiscoveryContext, ExplicitEnvironment, ManagedOwnership, PolicyState,
-        ProviderCodecInput, TargetDescriptor,
+        ProviderCodecInput, TargetDescriptor, PROVIDER_AUTH_KIND_API_KEY,
     },
     app::AppPaths,
     db::{
@@ -47,7 +48,6 @@ use crate::{
 #[cfg(test)]
 const CLAUDE_MODEL_KEY: &str = "ANTHROPIC_MODEL";
 const CLAUDE_PROVIDER_MANAGED_BY_HOST_KEY: &str = "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST";
-const CODEX_OPENAI_PROVIDER_ID: &str = "openai";
 const CODEX_RESERVED_PROVIDER_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
 
 pub fn list_provider_profiles(
@@ -67,30 +67,48 @@ pub fn create_provider_profile(
     input: ProviderProfileInput,
 ) -> Result<ProviderProfileDto, AppError> {
     ensure_profile_capability(input.tool, ArtifactKind::Provider)?;
-    validate_provider_fields(
-        &input.name,
-        &input.api_base_url,
-        &input.api_key,
-        &input.default_model,
-    )?;
+    let auth_kind = input.options.auth_kind;
+    validate_provider_fields(&ProviderFieldsInput {
+        tool: input.tool,
+        auth_kind,
+        name: &input.name,
+        api_base_url: &input.api_base_url,
+        api_key: Some(&input.api_key),
+        default_model: &input.default_model,
+    })?;
     let id = Uuid::new_v4().to_string();
-    let provider_id = generated_codex_provider_id(&id);
+    // Codex 官方登录固定使用内置 openai provider；其余渠道用稳定的生成 id。
+    let provider_id = if input.tool == Tool::Codex && auth_kind == ProviderAuthKind::OfficialLogin
+    {
+        CODEX_OPENAI_PROVIDER_ID.to_owned()
+    } else {
+        generated_codex_provider_id(&id)
+    };
     let config =
         StoredProviderConfig::from_input(input.tool, &provider_id, input.options, BTreeMap::new())?;
     let config_json = serde_json::to_string(&config).map_err(|error| {
         AppError::invalid_input("providerOptions", "Provider 选项无法序列化")
             .with_source_redacted(error, redactor)
     })?;
-    redactor.register_secret(input.api_key.clone());
+    let (api_base_url, api_key) = match auth_kind {
+        ProviderAuthKind::ApiKey => (
+            optional_text(&input.api_base_url),
+            Some(input.api_key.clone()),
+        ),
+        ProviderAuthKind::OfficialLogin => (None, None),
+    };
+    if let Some(api_key) = &api_key {
+        redactor.register_secret(api_key.clone());
+    }
     let record = repository::insert_provider_profile(
         database,
         &NewProviderProfileRecord {
             id,
             tool: input.tool,
             name: input.name,
-            api_base_url: Some(input.api_base_url),
-            api_key: Some(input.api_key),
-            default_model: Some(input.default_model),
+            api_base_url,
+            api_key,
+            default_model: optional_text(&input.default_model),
             config_json,
             is_active: input.activate,
         },
@@ -105,6 +123,13 @@ pub fn update_provider_profile(
 ) -> Result<ProviderProfileDto, AppError> {
     let current = repository::get_provider_profile(database, &input.id)?;
     let current_config = parse_stored_provider_config(&current)?;
+    let auth_kind = current_config.effective_auth_kind(current.tool);
+    if input.options.auth_kind != auth_kind {
+        return Err(AppError::invalid_input(
+            "providerOptions",
+            "渠道的认证方式在创建后不可更改，请新建渠道",
+        ));
+    }
     let provider_id = match current.tool {
         Tool::Claude => generated_codex_provider_id(&current.id),
         Tool::Codex => current_config.provider_id.clone().ok_or_else(|| {
@@ -118,8 +143,6 @@ pub fn update_provider_profile(
             AppError::invalid_input("providerOptions", "OpenCode Provider 缺少稳定 provider id")
         })?,
     };
-    let allow_missing_api_key =
-        codex_provider_allows_missing_api_key(current.tool, current_config.provider_id.as_deref());
     let config = StoredProviderConfig::from_input(
         current.tool,
         &provider_id,
@@ -132,19 +155,14 @@ pub fn update_provider_profile(
         SecretUpdate::Replace(value) if value.is_empty() => None,
         SecretUpdate::Replace(value) => Some(value),
     };
-    if allow_missing_api_key && api_key.is_some() {
-        return Err(AppError::invalid_input(
-            "apiKey",
-            "Codex OAuth Provider 使用官方登录凭据，不能保存本地 API Key",
-        ));
-    }
-    validate_provider_fields_with_optional_key(
-        &input.name,
-        &input.api_base_url,
-        api_key.as_deref(),
-        &input.default_model,
-        allow_missing_api_key,
-    )?;
+    validate_provider_fields(&ProviderFieldsInput {
+        tool: current.tool,
+        auth_kind,
+        name: &input.name,
+        api_base_url: &input.api_base_url,
+        api_key: api_key.as_deref(),
+        default_model: &input.default_model,
+    })?;
     if let Some(api_key) = &api_key {
         redactor.register_secret(api_key.clone());
     }
@@ -153,9 +171,9 @@ pub fn update_provider_profile(
         database,
         &input.id,
         &input.name,
-        Some(&input.api_base_url),
+        optional_text(&input.api_base_url).as_deref(),
         api_key.as_deref(),
-        Some(&input.default_model),
+        optional_text(&input.default_model).as_deref(),
         &serde_json::to_string(&config).map_err(|error| {
             AppError::invalid_input("providerOptions", "Provider 选项无法序列化")
                 .with_source_redacted(error, redactor)
@@ -178,13 +196,28 @@ pub fn copy_provider_profile(
             "跨工具复制的目标必须与来源工具不同",
         ));
     }
+    let source_config = parse_stored_provider_config(&source)?;
+    if source_config.effective_auth_kind(source.tool) == ProviderAuthKind::OfficialLogin {
+        return Err(AppError::invalid_input(
+            "sourceId",
+            "官方账号登录渠道绑定工具自身的登录态，不能跨工具复制",
+        ));
+    }
     let api_base_url = source.api_base_url.clone().unwrap_or_default();
     let api_key = source.api_key.clone().unwrap_or_default();
     let default_model = source.default_model.clone().unwrap_or_default();
-    validate_provider_fields(&input.target_name, &api_base_url, &api_key, &default_model)?;
+    validate_provider_fields(&ProviderFieldsInput {
+        tool: input.target_tool,
+        auth_kind: ProviderAuthKind::ApiKey,
+        name: &input.target_name,
+        api_base_url: &api_base_url,
+        api_key: Some(&api_key),
+        default_model: &default_model,
+    })?;
     let target_id = Uuid::new_v4().to_string();
     let extra_env = BTreeMap::new();
     let codec_input = ProviderCodecInput {
+        auth_kind: PROVIDER_AUTH_KIND_API_KEY,
         credential_env_key: Some(ClaudeCredentialEnvKey::ApiKey.as_str()),
         extra_env: &extra_env,
         wire_api: None,
@@ -206,9 +239,9 @@ pub fn copy_provider_profile(
             id: target_id,
             tool: input.target_tool,
             name: input.target_name,
-            api_base_url: Some(api_base_url),
+            api_base_url: optional_text(&api_base_url),
             api_key: Some(api_key),
-            default_model: Some(default_model),
+            default_model: optional_text(&default_model),
             config_json: serde_json::to_string(&config).map_err(|error| {
                 AppError::invalid_input("providerOptions", "目标 Provider 选项无法序列化")
                     .with_source_redacted(error, redactor)

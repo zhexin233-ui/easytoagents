@@ -8,6 +8,7 @@ use crate::{app::AppState, db::Database, error::AppError, security::SecretRedact
 pub mod environment;
 pub mod hooks;
 pub mod mcp;
+pub mod official_login;
 pub mod overview;
 pub mod profiles;
 pub mod projects;
@@ -70,6 +71,10 @@ mod tests {
         ("commands/environment.rs", include_str!("environment.rs")),
         ("commands/hooks.rs", include_str!("hooks.rs")),
         ("commands/mcp.rs", include_str!("mcp.rs")),
+        (
+            "commands/official_login.rs",
+            include_str!("official_login.rs"),
+        ),
         ("commands/overview.rs", include_str!("overview.rs")),
         ("commands/profiles.rs", include_str!("profiles.rs")),
         ("commands/projects.rs", include_str!("projects.rs")),

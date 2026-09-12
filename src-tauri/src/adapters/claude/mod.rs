@@ -13,10 +13,11 @@ use crate::{
         ClaudeUserMcpProbeResult, DiscoveryContext, ManagedOwnership, ProviderCodec,
         ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
         ProviderCodecProfileInput, SymlinkPolicy, TargetCapability, TargetDescriptor, TargetFormat,
-        ToolAdapter,
+        ToolAdapter, PROVIDER_AUTH_KIND_API_KEY, PROVIDER_AUTH_KIND_OFFICIAL_LOGIN,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
+    security::env_entry_is_manageable,
 };
 
 #[derive(Debug, Default)]
@@ -173,22 +174,21 @@ impl ProviderCodec for ClaudeAdapter {
         Ok(crate::adapters::ManagedOwnership::selectors([["env"]]))
     }
 
+    /// 始终拥有四个保留键：切换渠道后不能残留上一份手工写入的接入地址或凭据，
+    /// 官方登录渠道也正是靠移除这些键回到 Claude Code 自带的账号登录。
     fn ownership(
         &self,
         baseline: Option<&Value>,
         desired: &Value,
     ) -> Result<crate::adapters::ManagedOwnership, AppError> {
-        let mut selectors = BTreeSet::<Vec<String>>::new();
+        let mut selectors = CLAUDE_RESERVED_ENV_KEYS
+            .iter()
+            .map(|key| vec!["env".to_owned(), (*key).to_owned()])
+            .collect::<BTreeSet<Vec<String>>>();
         for projection in [baseline, Some(desired)].into_iter().flatten() {
             if let Some(env) = projection.get("env").and_then(Value::as_object) {
                 selectors.extend(env.keys().map(|key| vec!["env".to_owned(), key.clone()]));
             }
-        }
-        if selectors.is_empty() {
-            return Err(AppError::invalid_input(
-                "managedOwnership",
-                "Provider 同步没有可证明拥有的字段",
-            ));
         }
         Ok(ManagedOwnership::Selectors(selectors.into_iter().collect()))
     }
@@ -205,18 +205,20 @@ impl ProviderCodec for ClaudeAdapter {
     }
 
     fn render(&self, input: &ProviderCodecProfileInput<'_>) -> Result<Value, AppError> {
-        const BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
-        const MODEL_KEY: &str = "ANTHROPIC_MODEL";
-
         let mut env = Map::new();
-        if let Some(value) = input.api_base_url {
-            env.insert(BASE_URL_KEY.to_owned(), Value::String(value.to_owned()));
+        if input.auth_kind != PROVIDER_AUTH_KIND_OFFICIAL_LOGIN {
+            if let Some(value) = input.api_base_url.filter(|value| !value.is_empty()) {
+                env.insert(
+                    CLAUDE_BASE_URL_KEY.to_owned(),
+                    Value::String(value.to_owned()),
+                );
+            }
+            if let (Some(key), Some(value)) = (input.credential_env_key, input.api_key) {
+                env.insert(key.to_owned(), Value::String(value.to_owned()));
+            }
         }
-        if let (Some(key), Some(value)) = (input.credential_env_key, input.api_key) {
-            env.insert(key.to_owned(), Value::String(value.to_owned()));
-        }
-        if let Some(value) = input.default_model {
-            env.insert(MODEL_KEY.to_owned(), Value::String(value.to_owned()));
+        if let Some(value) = input.default_model.filter(|value| !value.is_empty()) {
+            env.insert(CLAUDE_MODEL_KEY.to_owned(), Value::String(value.to_owned()));
         }
         env.extend(
             input
@@ -227,66 +229,66 @@ impl ProviderCodec for ClaudeAdapter {
         Ok(json!({ "env": env }))
     }
 
+    /// 从 `settings.json` 的 `env` 提取渠道事实。
+    ///
+    /// - 存在接入地址或凭据键 → API Key 渠道；凭据优先取 `ANTHROPIC_AUTH_TOKEN`。
+    /// - 三者都不存在 → 官方登录渠道（只接管额外 env 与可选模型）；env 为空则无可导入项。
+    /// - 默认模型只来自 `ANTHROPIC_MODEL`，`ANTHROPIC_DEFAULT_*_MODEL` 作为额外 env 原样保留，
+    ///   使导入后的首次同步与磁盘内容一致。
+    /// - 额外 env 接管所有字符串值的非保留键；疑似凭据或键名不合法的条目只报告键名，
+    ///   既不进入档案也不进入受管基线，保持原样不动。
     fn discover(
         &self,
         descriptor: &TargetDescriptor,
         managed_projection: &Value,
         full_hash: &str,
     ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
-        const BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
-        const MODEL_KEY: &str = "ANTHROPIC_MODEL";
-        const DEFAULT_MODEL_KEYS: &[&str] = &[
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "ANTHROPIC_DEFAULT_FABLE_MODEL",
-        ];
-        const API_KEY: &str = "ANTHROPIC_API_KEY";
-        const AUTH_TOKEN: &str = "ANTHROPIC_AUTH_TOKEN";
-
         let Some(env) = managed_projection.get("env").and_then(Value::as_object) else {
             return Ok(None);
         };
-        let api_base_url = env
-            .get(BASE_URL_KEY)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        let default_model = std::iter::once(MODEL_KEY)
-            .chain(DEFAULT_MODEL_KEYS.iter().copied())
-            .find_map(|key| {
-                env.get(key)
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-                    .map(str::to_owned)
-            });
-        let Some(default_model) = default_model else {
-            return Ok(None);
+        let text = |key: &str| {
+            env.get(key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned)
         };
-        if api_base_url.is_empty() {
-            return Ok(None);
+        let api_base_url = text(CLAUDE_BASE_URL_KEY);
+        let auth_token = text(CLAUDE_AUTH_TOKEN_KEY);
+        let api_key = text(CLAUDE_API_KEY_KEY);
+        let default_model = text(CLAUDE_MODEL_KEY).unwrap_or_default();
+
+        let mut extra_env = BTreeMap::new();
+        let mut skipped_env_keys = Vec::new();
+        for (key, value) in env {
+            if CLAUDE_RESERVED_ENV_KEYS.contains(&key.as_str()) {
+                continue;
+            }
+            match value.as_str() {
+                Some(value) if env_entry_is_manageable(key, value) => {
+                    extra_env.insert(key.clone(), value.to_owned());
+                }
+                _ => skipped_env_keys.push(key.clone()),
+            }
         }
-        let auth_token = env.get(AUTH_TOKEN).and_then(Value::as_str);
-        let api_key = env.get(API_KEY).and_then(Value::as_str);
-        let (credential_env_key, credential) = if let Some(value) = auth_token {
-            (AUTH_TOKEN, Some(value.to_owned()))
-        } else {
-            (API_KEY, api_key.map(str::to_owned))
-        };
-        let extra_env = env
-            .iter()
-            .filter(|(key, value)| {
-                key.starts_with("ANTHROPIC_")
-                    && !matches!(
-                        key.as_str(),
-                        BASE_URL_KEY | MODEL_KEY | API_KEY | AUTH_TOKEN
-                    )
-                    && value.is_string()
-            })
-            .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_owned()))
-            .collect::<std::collections::BTreeMap<_, _>>();
+
+        let (auth_kind, credential_env_key, credential) =
+            match (api_base_url.is_some(), auth_token, api_key) {
+                (_, Some(token), _) => (
+                    PROVIDER_AUTH_KIND_API_KEY,
+                    CLAUDE_AUTH_TOKEN_KEY,
+                    Some(token),
+                ),
+                (_, None, Some(key)) => (PROVIDER_AUTH_KIND_API_KEY, CLAUDE_API_KEY_KEY, Some(key)),
+                (true, None, None) => (PROVIDER_AUTH_KIND_API_KEY, CLAUDE_API_KEY_KEY, None),
+                (false, None, None) => {
+                    if extra_env.is_empty() && default_model.is_empty() {
+                        return Ok(None);
+                    }
+                    (PROVIDER_AUTH_KIND_OFFICIAL_LOGIN, CLAUDE_API_KEY_KEY, None)
+                }
+            };
         let mut projection_env = Map::new();
-        for key in [BASE_URL_KEY, MODEL_KEY, API_KEY, AUTH_TOKEN] {
+        for key in CLAUDE_RESERVED_ENV_KEYS {
             if let Some(value) = env.get(key) {
                 projection_env.insert(key.to_owned(), value.clone());
             }
@@ -298,11 +300,13 @@ impl ProviderCodec for ClaudeAdapter {
             target_path: descriptor_path(descriptor)?,
             full_hash: full_hash.to_owned(),
             projection: json!({ "env": projection_env }),
-            api_base_url,
+            auth_kind: auth_kind.to_owned(),
+            api_base_url: api_base_url.unwrap_or_default(),
             api_key: credential,
             default_model,
             credential_env_key: credential_env_key.to_owned(),
             extra_env,
+            skipped_env_keys,
             provider_id: None,
             wire_api: None,
             zcode_kind: None,
@@ -313,3 +317,16 @@ impl ProviderCodec for ClaudeAdapter {
         }))
     }
 }
+
+pub const CLAUDE_BASE_URL_KEY: &str = "ANTHROPIC_BASE_URL";
+pub const CLAUDE_MODEL_KEY: &str = "ANTHROPIC_MODEL";
+pub const CLAUDE_API_KEY_KEY: &str = "ANTHROPIC_API_KEY";
+pub const CLAUDE_AUTH_TOKEN_KEY: &str = "ANTHROPIC_AUTH_TOKEN";
+
+/// 由专用字段承载、渠道同步始终拥有的 env 键；不能出现在额外 env 中。
+pub const CLAUDE_RESERVED_ENV_KEYS: [&str; 4] = [
+    CLAUDE_BASE_URL_KEY,
+    CLAUDE_API_KEY_KEY,
+    CLAUDE_AUTH_TOKEN_KEY,
+    CLAUDE_MODEL_KEY,
+];

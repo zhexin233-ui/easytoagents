@@ -105,6 +105,9 @@ fn provider_options_from_codec(
         .adapter()
         .provider_codec()
         .ok_or_else(|| cursor_unsupported(ArtifactKind::Provider))?;
+    let auth_kind = ProviderAuthKind::from_stable_str(input.auth_kind).ok_or_else(|| {
+        AppError::invalid_input("providerOptions", "Provider 发现结果的认证方式无效")
+    })?;
     let options = codec.default_options(input)?;
     let credential_env_key =
         match options.credential_env_key.as_deref() {
@@ -114,6 +117,7 @@ fn provider_options_from_codec(
             )?),
         };
     Ok(ProviderOptionsInput {
+        auth_kind,
         credential_env_key,
         extra_env: options.extra_env,
         wire_api: options.wire_api,
@@ -135,7 +139,7 @@ fn provider_dto(record: &ProviderProfileRecord) -> Result<ProviderProfileDto, Ap
             .as_ref()
             .is_some_and(|value| !value.is_empty()),
         default_model: record.default_model.clone().unwrap_or_default(),
-        options: config.options_dto(),
+        options: config.options_dto(record.tool),
         is_active: record.is_active,
         row_version: safe_row_version(record.row_version)?,
     })
@@ -194,14 +198,6 @@ fn prompt_row_version(profile: &PromptProfileRecord) -> Result<DatabaseRowVersio
 
 fn generated_codex_provider_id(id: &str) -> String {
     format!("easytoagents_{}", id.replace('-', ""))
-}
-
-fn discovered_provider_allows_missing_api_key(tool: Tool, discovered: &DiscoveredProvider) -> bool {
-    codex_provider_allows_missing_api_key(tool, discovered.provider_id.as_deref())
-}
-
-fn codex_provider_allows_missing_api_key(tool: Tool, provider_id: Option<&str>) -> bool {
-    tool == Tool::Codex && provider_id == Some(CODEX_OPENAI_PROVIDER_ID)
 }
 
 fn validate_codex_provider_id(tool: Tool, provider_id: &str) -> Result<(), AppError> {

@@ -22,21 +22,25 @@ const importPreview: ProviderImportPreviewDto = {
   tool: "claude",
   targetPath: "/isolated/home/.claude/settings.json",
   suggestedName: "已发现 Claude 渠道",
+  authKind: "api_key",
   apiBaseUrl: "https://fixture.example.com",
   apiKeyConfigured: true,
   defaultModel: "fixture-model",
   redactedProjection: { env: "[REDACTED]" },
+  skippedEnvKeys: [],
 };
 
 const codexOAuthImportPreview: ProviderImportPreviewDto = {
   previewId: "00000000-0000-4000-8000-000000000726",
   tool: "codex",
   targetPath: "/isolated/home/.codex/config.toml",
-  suggestedName: "Codex OAuth 登录",
-  apiBaseUrl: "https://api.openai.com/v1",
+  suggestedName: "Codex 官方账号登录",
+  authKind: "official_login",
+  apiBaseUrl: "",
   apiKeyConfigured: false,
   defaultModel: "gpt-5.5",
   redactedProjection: { model: "gpt-5.5" },
+  skippedEnvKeys: [],
 };
 
 const promptImportPreview: PromptImportPreviewDto = {
@@ -182,6 +186,7 @@ describe("OnboardingWizard", () => {
         apiKeyConfigured: true,
         defaultModel: importPreview.defaultModel,
         options: {
+          authKind: "api_key",
           credentialEnvKey: "ANTHROPIC_API_KEY",
           extraEnv: {},
           providerId: null,
@@ -251,7 +256,7 @@ describe("OnboardingWizard", () => {
     renderWizard();
 
     expect(
-      await screen.findByText("gpt-5.5 · 使用 Codex OAuth 登录"),
+      await screen.findByText("gpt-5.5 · 官方账号登录（不接管凭据）"),
     ).toBeInTheDocument();
     const providerChoices = screen.getAllByLabelText("导入并接管 Provider");
     const codexProviderChoice = providerChoices[1];
@@ -397,6 +402,7 @@ describe("OnboardingWizard", () => {
                   apiKeyConfigured: true,
                   defaultModel: importPreview.defaultModel,
                   options: {
+                    authKind: "api_key",
                     credentialEnvKey: "ANTHROPIC_API_KEY",
                     extraEnv: {},
                     providerId: null,

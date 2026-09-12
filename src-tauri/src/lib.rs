@@ -17,6 +17,7 @@ pub mod git;
 pub mod hooks;
 pub mod logging;
 pub mod mcp;
+pub mod official_login;
 pub mod overview;
 pub mod profiles;
 pub mod projects;
@@ -61,6 +62,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<sync::InterruptedRunPlan>()
         .typ::<sync::RestorePreview>()
         .typ::<profiles::ClaudeCredentialEnvKey>()
+        .typ::<profiles::ProviderAuthKind>()
         .typ::<profiles::ProviderOptionsInput>()
         .typ::<profiles::ProviderProfileInput>()
         .typ::<profiles::SecretUpdate>()
@@ -78,6 +80,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<profiles::ApplyProfilePreviewInput>()
         .typ::<profiles::ToolProfileStatusDto>()
         .typ::<profiles::DeleteProfileResultDto>()
+        .typ::<official_login::OfficialLoginPhase>()
+        .typ::<official_login::OfficialLoginStatusDto>()
         .typ::<mcp::McpServerInput>()
         .typ::<mcp::SensitiveMapUpdate>()
         .typ::<mcp::SensitiveJsonUpdate>()
@@ -212,6 +216,9 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::profiles::preview_provider_sync,
             commands::profiles::preview_prompt_sync,
             commands::profiles::apply_profile_preview,
+            commands::official_login::get_official_login_status,
+            commands::official_login::start_official_login,
+            commands::official_login::cancel_official_login,
             commands::mcp::list_mcp_servers,
             commands::mcp::get_mcp_server,
             commands::mcp::create_mcp_server,
@@ -348,8 +355,15 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("启动桌面应用失败");
+        .build(tauri::generate_context!())
+        .expect("启动桌面应用失败")
+        .run(|app, event| {
+            // 退出时终止仍在等待浏览器回调的官方登录子进程，避免它们在后台
+            // 继续占用回调端口。
+            if let tauri::RunEvent::Exit = event {
+                app.state::<app::AppState>().official_logins().cancel_all();
+            }
+        });
 }
 
 fn environment_path(name: &str) -> Option<PathBuf> {

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   commands,
   type ClaudeCredentialEnvKey,
+  type ProviderAuthKind,
   type ProviderImportPreviewDto,
   type ProviderProfileDto,
   type Tool,
@@ -13,6 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
+import { OfficialLoginSection } from "@/features/tool-profiles/official-login-section";
+import {
+  isOfficialLoginProfile,
+  OFFICIAL_LOGIN_TOOLS,
+  providerCredentialText,
+  providerImportCredentialText,
+  providerModelText,
+} from "@/features/tool-profiles/provider-text";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import {
   profileErrorText,
@@ -30,6 +39,7 @@ interface ProviderPanelProps {
 }
 
 interface ProviderFormState {
+  authKind: ProviderAuthKind;
   name: string;
   apiBaseUrl: string;
   apiKey: string;
@@ -43,6 +53,7 @@ interface ProviderFormState {
 }
 
 const emptyForm: ProviderFormState = {
+  authKind: "api_key",
   name: "",
   apiBaseUrl: "",
   apiKey: "",
@@ -71,6 +82,8 @@ export function ProviderPanel({
   const [importPreview, setImportPreview] =
     useState<ProviderImportPreviewDto | null>(null);
   const { notify } = useNotify();
+  const supportsOfficialLogin = OFFICIAL_LOGIN_TOOLS.has(tool);
+  const official = supportsOfficialLogin && form.authKind === "official_login";
 
   const refresh = async () => {
     await queryClient.invalidateQueries({
@@ -81,23 +94,29 @@ export function ProviderPanel({
   const saveMutation = useMutation({
     mutationFn: async () => {
       const extraEnv = parseExtraEnv(form.extraEnvText);
+      // 官方账号登录渠道不保存接入地址、密钥与传输协议；额外 env 只属于 Claude。
       const options = {
-        credentialEnvKey: tool === "claude" ? form.credentialEnvKey : null,
+        authKind: official ? ("official_login" as const) : ("api_key" as const),
+        credentialEnvKey:
+          tool === "claude" && !official ? form.credentialEnvKey : null,
         extraEnv: tool === "claude" ? extraEnv : {},
-        wireApi: tool === "codex" && form.wireApi ? form.wireApi : null,
+        wireApi:
+          tool === "codex" && !official && form.wireApi ? form.wireApi : null,
         zcodeKind: tool === "zcode" ? form.zcodeKind : null,
         opencodeNpm: tool === "opencode" ? form.opencodeNpm : null,
         opencodeApi: tool === "opencode" ? form.opencodeApi : null,
       };
+      const apiBaseUrl = official ? "" : form.apiBaseUrl;
       if (editing) {
         return unwrapResult(
           await commands.updateProviderProfile({
             id: editing.id,
             name: form.name,
-            apiBaseUrl: form.apiBaseUrl,
-            apiKey: form.apiKey
-              ? { action: "replace", value: form.apiKey }
-              : { action: "keep" },
+            apiBaseUrl,
+            apiKey:
+              !official && form.apiKey
+                ? { action: "replace", value: form.apiKey }
+                : { action: "keep" },
             defaultModel: form.defaultModel,
             options,
             rowVersion: editing.rowVersion,
@@ -108,8 +127,8 @@ export function ProviderPanel({
         await commands.createProviderProfile({
           tool,
           name: form.name,
-          apiBaseUrl: form.apiBaseUrl,
-          apiKey: form.apiKey,
+          apiBaseUrl,
+          apiKey: official ? "" : form.apiKey,
           defaultModel: form.defaultModel,
           options,
           activate: (profilesQuery.data?.length ?? 0) === 0,
@@ -260,6 +279,8 @@ export function ProviderPanel({
     saveMutation.mutate();
   };
 
+  const baseUrlRequired = tool === "zcode" || tool === "opencode";
+
   return (
     <section
       aria-labelledby={`${tool}-providers-title`}
@@ -329,7 +350,8 @@ export function ProviderPanel({
                   ) : null}
                 </div>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  {profile.defaultModel} · {providerCredentialText(profile)}
+                  {providerModelText(profile.defaultModel)} ·{" "}
+                  {providerCredentialText(profile)}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -352,7 +374,7 @@ export function ProviderPanel({
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={isCodexOAuthProfile(profile)}
+                    disabled={isOfficialLoginProfile(profile)}
                     onClick={() => copyMutation.mutate(profile)}
                   >
                     复制到{tool === "claude" ? " Codex" : " Claude"}
@@ -384,9 +406,15 @@ export function ProviderPanel({
           <p className="font-medium">发现已有渠道，仅生成了导入预览</p>
           <p className="mt-1 text-sm break-all">{importPreview.targetPath}</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            {importPreview.defaultModel} ·{" "}
-            {importCredentialText(tool, importPreview)}
+            {providerModelText(importPreview.defaultModel)} ·{" "}
+            {providerImportCredentialText(importPreview)}
           </p>
+          {importPreview.skippedEnvKeys.length > 0 ? (
+            <p className="mt-2 text-xs">
+              以下 env 疑似凭据或格式不受支持，不纳入管理并保持原样：
+              {importPreview.skippedEnvKeys.join("、")}
+            </p>
+          ) : null}
           <pre className="bg-card mt-3 overflow-auto rounded p-3 text-xs dark:bg-slate-900/60">
             {JSON.stringify(importPreview.redactedProjection, null, 2)}
           </pre>
@@ -415,6 +443,36 @@ export function ProviderPanel({
         onClose={closeForm}
         onSubmit={submit}
       >
+        {supportsOfficialLogin ? (
+          <fieldset className="space-y-2 text-sm">
+            <legend className="font-medium">认证方式</legend>
+            <div className="flex flex-wrap gap-4">
+              {AUTH_KIND_OPTIONS.map((option) => (
+                <label
+                  key={option.value}
+                  className="flex items-center gap-2 text-sm"
+                >
+                  <input
+                    type="radio"
+                    name={`${tool}-auth-kind`}
+                    value={option.value}
+                    checked={form.authKind === option.value}
+                    disabled={editing !== null}
+                    onChange={() =>
+                      setForm({ ...form, authKind: option.value })
+                    }
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+            {editing ? (
+              <p className="text-muted-foreground text-xs">
+                认证方式创建后不可更改；如需切换，请新建渠道。
+              </p>
+            ) : null}
+          </fieldset>
+        ) : null}
         <Field label="名称" id={`${tool}-provider-name`}>
           <input
             id={`${tool}-provider-name`}
@@ -426,38 +484,45 @@ export function ProviderPanel({
             }
           />
         </Field>
-        <Field label="API 地址" id={`${tool}-provider-url`}>
-          <input
-            id={`${tool}-provider-url`}
-            required
-            type="url"
-            className="field"
-            value={form.apiBaseUrl}
-            onChange={(event) =>
-              setForm({ ...form, apiBaseUrl: event.currentTarget.value })
-            }
-          />
-        </Field>
-        <Field label="API Key（默认遮罩）" id={`${tool}-provider-key`}>
-          <input
-            id={`${tool}-provider-key`}
-            required={!editing}
-            type="password"
-            autoComplete="off"
-            className="field"
-            disabled={editing ? isCodexOAuthProfile(editing) : false}
-            placeholder={apiKeyPlaceholder(tool, editing)}
-            value={form.apiKey}
-            onChange={(event) =>
-              setForm({ ...form, apiKey: event.currentTarget.value })
-            }
-          />
-        </Field>
+        {official ? (
+          <OfficialLoginSection tool={tool} />
+        ) : (
+          <>
+            <Field label="API 地址" id={`${tool}-provider-url`}>
+              <input
+                id={`${tool}-provider-url`}
+                required={baseUrlRequired}
+                type="url"
+                className="field"
+                placeholder={baseUrlRequired ? "" : "留空则使用官方端点"}
+                value={form.apiBaseUrl}
+                onChange={(event) =>
+                  setForm({ ...form, apiBaseUrl: event.currentTarget.value })
+                }
+              />
+            </Field>
+            <Field label="API Key（默认遮罩）" id={`${tool}-provider-key`}>
+              <input
+                id={`${tool}-provider-key`}
+                required={!editing}
+                type="password"
+                autoComplete="off"
+                className="field"
+                placeholder={apiKeyPlaceholder(editing)}
+                value={form.apiKey}
+                onChange={(event) =>
+                  setForm({ ...form, apiKey: event.currentTarget.value })
+                }
+              />
+            </Field>
+          </>
+        )}
         <Field label="默认模型" id={`${tool}-provider-model`}>
           <input
             id={`${tool}-provider-model`}
-            required
+            required={baseUrlRequired}
             className="field"
+            placeholder={baseUrlRequired ? "" : "留空则使用工具默认模型"}
             value={form.defaultModel}
             onChange={(event) =>
               setForm({ ...form, defaultModel: event.currentTarget.value })
@@ -479,35 +544,38 @@ export function ProviderPanel({
               <option value="gemini">gemini</option>
             </select>
           </Field>
-        ) : tool === "claude" ? (
+        ) : null}
+        {tool === "claude" ? (
           <>
-            <Field label="认证 env key" id={`${tool}-credential-key`}>
-              <select
-                id={`${tool}-credential-key`}
-                className="field"
-                value={form.credentialEnvKey}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    credentialEnvKey:
-                      event.currentTarget.value === "ANTHROPIC_AUTH_TOKEN"
-                        ? "ANTHROPIC_AUTH_TOKEN"
-                        : "ANTHROPIC_API_KEY",
-                  })
-                }
-              >
-                <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
-                <option value="ANTHROPIC_AUTH_TOKEN">
-                  ANTHROPIC_AUTH_TOKEN
-                </option>
-              </select>
-            </Field>
+            {official ? null : (
+              <Field label="认证 env key" id={`${tool}-credential-key`}>
+                <select
+                  id={`${tool}-credential-key`}
+                  className="field"
+                  value={form.credentialEnvKey}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      credentialEnvKey:
+                        event.currentTarget.value === "ANTHROPIC_AUTH_TOKEN"
+                          ? "ANTHROPIC_AUTH_TOKEN"
+                          : "ANTHROPIC_API_KEY",
+                    })
+                  }
+                >
+                  <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
+                  <option value="ANTHROPIC_AUTH_TOKEN">
+                    ANTHROPIC_AUTH_TOKEN
+                  </option>
+                </select>
+              </Field>
+            )}
             <Field label="额外 env（每行 KEY=VALUE）" id={`${tool}-extra-env`}>
               <textarea
                 id={`${tool}-extra-env`}
                 className="field min-h-24 resize-y font-mono text-sm"
                 placeholder={
-                  "ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus\nANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet"
+                  "CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000\nANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet"
                 }
                 value={form.extraEnvText}
                 onChange={(event) =>
@@ -516,7 +584,8 @@ export function ProviderPanel({
               />
             </Field>
           </>
-        ) : tool === "opencode" ? (
+        ) : null}
+        {tool === "opencode" ? (
           <>
             <Field label="npm SDK" id={`${tool}-npm`}>
               <input
@@ -545,7 +614,8 @@ export function ProviderPanel({
               </select>
             </Field>
           </>
-        ) : (
+        ) : null}
+        {tool === "codex" && !official ? (
           <Field label="wire_api" id={`${tool}-wire-api`}>
             <select
               id={`${tool}-wire-api`}
@@ -557,42 +627,24 @@ export function ProviderPanel({
             >
               <option value="">默认</option>
               <option value="responses">responses</option>
+              <option value="chat">chat</option>
             </select>
           </Field>
-        )}
+        ) : null}
       </FormDialog>
     </section>
   );
 }
 
-function isCodexOAuthProfile(profile: ProviderProfileDto): boolean {
-  return profile.tool === "codex" && profile.options.providerId === "openai";
-}
+const AUTH_KIND_OPTIONS: ReadonlyArray<{
+  value: ProviderAuthKind;
+  label: string;
+}> = [
+  { value: "api_key", label: "API Key（第三方 / 自定义接入）" },
+  { value: "official_login", label: "官方账号登录（OAuth）" },
+];
 
-function providerCredentialText(profile: ProviderProfileDto): string {
-  if (isCodexOAuthProfile(profile)) {
-    return "使用 Codex OAuth 登录";
-  }
-  return profile.apiKeyConfigured ? "密钥已遮罩保存" : "密钥未配置";
-}
-
-function importCredentialText(
-  tool: Tool,
-  preview: ProviderImportPreviewDto,
-): string {
-  if (tool === "codex" && !preview.apiKeyConfigured) {
-    return "使用 Codex OAuth 登录";
-  }
-  return preview.apiKeyConfigured ? "密钥已遮罩保存" : "密钥未配置";
-}
-
-function apiKeyPlaceholder(
-  tool: Tool,
-  editing: ProviderProfileDto | null,
-): string {
-  if (editing && isCodexOAuthProfile(editing)) {
-    return "留空以继续使用 Codex OAuth 登录";
-  }
+function apiKeyPlaceholder(editing: ProviderProfileDto | null): string {
   return editing?.apiKeyConfigured ? "留空以保留现有密钥" : "输入密钥";
 }
 
@@ -603,6 +655,7 @@ function editProfile(
 ) {
   setEditing(profile);
   setForm({
+    authKind: profile.options.authKind,
     name: profile.name,
     apiBaseUrl: profile.apiBaseUrl,
     apiKey: "",

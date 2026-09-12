@@ -107,6 +107,11 @@ impl ReleaseToolProbeInput {
         self.opencode_disabled = disabled;
         self
     }
+
+    /// 探针实际搜索的 PATH（含 macOS 发布进程补入的 Volta shim 目录）。
+    pub(crate) fn search_path(&self) -> &OsStr {
+        &self.search_path
+    }
 }
 
 /// PATH 中存在被跳过的不安全条目（相对路径、`.`、不可读目录或同名非文件）；
@@ -444,7 +449,7 @@ const fn skipped_entries_diagnostic(skipped_entries: usize) -> Option<&'static s
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum ExecutableResolution {
+pub(crate) enum ExecutableResolution {
     Found {
         path: PathBuf,
         skipped_entries: usize,
@@ -462,7 +467,7 @@ enum ExecutableResolution {
 /// 出现 `.` 或 `./node_modules/.bin` 很常见，不应因此把所有工具判成
 /// `Unsupported`。只有首个命中的候选文件自身不安全，或者根本没有任何安全条目
 /// 可搜时，才返回 `Unsupported`。
-fn resolve_executable(search_path: &OsStr, name: &str) -> ExecutableResolution {
+pub(crate) fn resolve_executable(search_path: &OsStr, name: &str) -> ExecutableResolution {
     let mut skipped_entries = 0_usize;
     let mut searched_entries = 0_usize;
     for entry in std::env::split_paths(search_path) {
@@ -550,19 +555,51 @@ fn is_safe_absolute_path(path: &Path) -> bool {
         })
 }
 
-struct CommandOutput {
-    status: ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+pub(crate) struct CommandOutput {
+    pub(crate) status: ExitStatus,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommandFailure {
+pub(crate) enum CommandFailure {
     Spawn,
     MissingPipe,
     Wait,
     Timeout,
     Output,
+}
+
+/// 探针与官方登录状态探测共用的子进程环境：清空继承环境，只注入工具定位所需的
+/// 显式路径与"非交互、无自动更新"的开关。
+pub(crate) fn apply_tool_process_environment(
+    command: &mut Command,
+    home: &Path,
+    claude_config_dir: &Path,
+    codex_home: &Path,
+    search_path: &OsStr,
+) {
+    Command::current_dir(command, home);
+    Command::env_clear(command);
+    CommandExt::process_group(command, 0);
+    for (name, value) in [
+        (OsStr::new("HOME"), home.as_os_str()),
+        (
+            OsStr::new("CLAUDE_CONFIG_DIR"),
+            claude_config_dir.as_os_str(),
+        ),
+        (OsStr::new("CODEX_HOME"), codex_home.as_os_str()),
+        (OsStr::new("PATH"), search_path),
+        (OsStr::new("NO_COLOR"), OsStr::new("1")),
+        (OsStr::new("TERM"), OsStr::new("dumb")),
+        (OsStr::new("DISABLE_AUTOUPDATER"), OsStr::new("1")),
+        (
+            OsStr::new("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"),
+            OsStr::new("1"),
+        ),
+    ] {
+        Command::env(command, name, value);
+    }
 }
 
 fn run_version_command(
@@ -572,34 +609,27 @@ fn run_version_command(
 ) -> Result<CommandOutput, CommandFailure> {
     let mut command = Command::new(executable);
     Command::arg(&mut command, "--version");
-    Command::current_dir(&mut command, environment.home());
-    Command::env_clear(&mut command);
-    CommandExt::process_group(&mut command, 0);
-    for (name, value) in [
-        (OsStr::new("HOME"), environment.home().as_os_str()),
-        (
-            OsStr::new("CLAUDE_CONFIG_DIR"),
-            environment.claude_config_dir().as_os_str(),
-        ),
-        (
-            OsStr::new("CODEX_HOME"),
-            environment.codex_home().as_os_str(),
-        ),
-        (OsStr::new("PATH"), input.search_path.as_os_str()),
-        (OsStr::new("CI"), OsStr::new("1")),
-        (OsStr::new("NO_COLOR"), OsStr::new("1")),
-        (OsStr::new("TERM"), OsStr::new("dumb")),
-        (OsStr::new("DISABLE_AUTOUPDATER"), OsStr::new("1")),
-        (
-            OsStr::new("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"),
-            OsStr::new("1"),
-        ),
-    ] {
-        Command::env(&mut command, name, value);
-    }
-    Command::stdin(&mut command, Stdio::null());
-    Command::stdout(&mut command, Stdio::piped());
-    Command::stderr(&mut command, Stdio::piped());
+    apply_tool_process_environment(
+        &mut command,
+        environment.home(),
+        environment.claude_config_dir(),
+        environment.codex_home(),
+        &input.search_path,
+    );
+    Command::env(&mut command, "CI", "1");
+    run_command_bounded(&mut command, input.timeout, MAX_PROCESS_OUTPUT_BYTES)
+}
+
+/// 同步运行一个已配置好的命令：stdin 关闭、stdout/stderr 非阻塞收集、超时后终止
+/// 整个进程组；输出超过上限视为失败而不是截断（探针输出本应极短）。
+pub(crate) fn run_command_bounded(
+    command: &mut Command,
+    timeout: Duration,
+    max_output_bytes: u64,
+) -> Result<CommandOutput, CommandFailure> {
+    Command::stdin(command, Stdio::null());
+    Command::stdout(command, Stdio::piped());
+    Command::stderr(command, Stdio::piped());
     let mut child = command.spawn().map_err(|_| CommandFailure::Spawn)?;
     let mut stdout = child.stdout.take().ok_or(CommandFailure::MissingPipe)?;
     let mut stderr = child.stderr.take().ok_or(CommandFailure::MissingPipe)?;
@@ -613,9 +643,20 @@ fn run_version_command(
     let mut group_terminated = false;
     let started = Instant::now();
     loop {
-        if let Err(error) = drain_nonblocking(&mut stdout, &mut stdout_bytes, &mut stdout_closed)
-            .and_then(|_| drain_nonblocking(&mut stderr, &mut stderr_bytes, &mut stderr_closed))
-        {
+        if let Err(error) = drain_nonblocking(
+            &mut stdout,
+            &mut stdout_bytes,
+            &mut stdout_closed,
+            max_output_bytes,
+        )
+        .and_then(|_| {
+            drain_nonblocking(
+                &mut stderr,
+                &mut stderr_bytes,
+                &mut stderr_closed,
+                max_output_bytes,
+            )
+        }) {
             terminate_process_group(&mut child);
             let _ = child.wait();
             return Err(error);
@@ -635,7 +676,7 @@ fn run_version_command(
                 stderr: stderr_bytes,
             });
         }
-        if started.elapsed() >= input.timeout {
+        if started.elapsed() >= timeout {
             terminate_process_group(&mut child);
             let _ = child.wait();
             return Err(CommandFailure::Timeout);
@@ -644,7 +685,7 @@ fn run_version_command(
     }
 }
 
-fn set_nonblocking(file: &impl AsRawFd) -> Result<(), CommandFailure> {
+pub(crate) fn set_nonblocking(file: &impl AsRawFd) -> Result<(), CommandFailure> {
     // SAFETY: file 在调用期间持有有效 fd；F_GETFL/F_SETFL 不接管描述符。
     let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
     if flags < 0 {
@@ -661,6 +702,7 @@ fn drain_nonblocking(
     reader: &mut impl Read,
     output: &mut Vec<u8>,
     closed: &mut bool,
+    max_output_bytes: u64,
 ) -> Result<(), CommandFailure> {
     if *closed {
         return Ok(());
@@ -674,7 +716,7 @@ fn drain_nonblocking(
             }
             Ok(read) => {
                 output.extend_from_slice(&buffer[..read]);
-                if output.len() as u64 > MAX_PROCESS_OUTPUT_BYTES {
+                if output.len() as u64 > max_output_bytes {
                     return Err(CommandFailure::Output);
                 }
             }
@@ -685,7 +727,7 @@ fn drain_nonblocking(
     }
 }
 
-fn terminate_process_group(child: &mut std::process::Child) {
+pub(crate) fn terminate_process_group(child: &mut std::process::Child) {
     if let Ok(process_group) = i32::try_from(child.id()) {
         // SAFETY: 负 pid 只定位由本进程为该 child 创建的独立进程组。
         unsafe {

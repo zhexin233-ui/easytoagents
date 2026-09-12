@@ -20,6 +20,10 @@ import {
 } from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { useEnabledTools } from "@/components/use-enabled-tools";
+import {
+  providerImportCredentialText,
+  providerModelText,
+} from "@/features/tool-profiles/provider-text";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { profileErrorText, profileKeys, unwrapResult } from "@/lib/profile-api";
 import { toneClass } from "@/lib/tone-class";
@@ -421,9 +425,16 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                         {found.provider.targetPath}
                       </code>
                       <p className="text-muted-foreground mt-1">
-                        {found.provider.defaultModel} ·{" "}
-                        {providerImportCredentialText(tool, found.provider)}
+                        {providerModelText(found.provider.defaultModel)} ·{" "}
+                        {providerImportCredentialText(found.provider)}
                       </p>
+                      {found.provider.skippedEnvKeys.length > 0 ? (
+                        <p className="text-muted-foreground mt-1">
+                          以下 env
+                          疑似凭据或格式不受支持，不纳入管理并保持原样：
+                          {found.provider.skippedEnvKeys.join("、")}
+                        </p>
+                      ) : null}
                       <pre className="mt-2 overflow-auto">
                         {JSON.stringify(
                           found.provider.redactedProjection,
@@ -720,16 +731,6 @@ function settledValue<T>(
 
 function toolLabel(tool: Tool) {
   return toolMetadata(tool).label;
-}
-
-function providerImportCredentialText(
-  tool: Tool,
-  preview: ProviderImportPreviewDto,
-): string {
-  if (tool === "codex" && !preview.apiKeyConfigured) {
-    return "使用 Codex OAuth 登录";
-  }
-  return preview.apiKeyConfigured ? "密钥已遮罩保存" : "密钥未配置";
 }
 
 function artifactLabel(kind: ArtifactKind) {

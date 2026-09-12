@@ -1,7 +1,9 @@
 import type {
   HookDto,
   McpServerDto,
+  OfficialLoginStatusDto,
   ProjectDto,
+  ProviderImportPreviewDto,
   ProviderProfileDto,
   PromptProfileDto,
   SkillDto,
@@ -68,6 +70,7 @@ export const makeProviderProfile = (
   apiKeyConfigured: false,
   defaultModel: "model",
   options: {
+    authKind: "api_key",
     credentialEnvKey: null,
     extraEnv: {},
     providerId: null,
@@ -78,6 +81,35 @@ export const makeProviderProfile = (
   },
   isActive: false,
   rowVersion: 1,
+  ...o,
+});
+export const makeProviderImportPreview = (
+  o: Partial<ProviderImportPreviewDto> = {},
+): ProviderImportPreviewDto => ({
+  previewId: "00000000-0000-4000-8000-000000000701",
+  tool: "claude",
+  targetPath: "/isolated/home/.claude/settings.json",
+  suggestedName: "已发现 Claude 渠道",
+  authKind: "api_key",
+  apiBaseUrl: "https://fixture.example.com",
+  apiKeyConfigured: true,
+  defaultModel: "fixture-model",
+  redactedProjection: { env: "[REDACTED]" },
+  skippedEnvKeys: [],
+  ...o,
+});
+export const makeOfficialLoginStatus = (
+  o: Partial<OfficialLoginStatusDto> = {},
+): OfficialLoginStatusDto => ({
+  tool: "claude",
+  supported: true,
+  phase: "idle",
+  loggedIn: false,
+  authMethod: null,
+  account: null,
+  diagnostic: null,
+  loginUrl: null,
+  manualCommand: "claude auth login",
   ...o,
 });
 export const makeProject = (o: Partial<ProjectDto> = {}): ProjectDto => ({

@@ -26,6 +26,8 @@ pub mod cursor;
 pub mod opencode;
 pub mod zcode;
 
+pub use claude::CLAUDE_RESERVED_ENV_KEYS;
+
 include!("discovery.rs");
 include!("document.rs");
 #[cfg(test)]

@@ -13,7 +13,8 @@ use crate::{
         descriptor_path, path_text, DiscoveryContext, ManagedOwnership, PromptOverrideState,
         ProviderCodec, ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
         ProviderCodecProfileInput, SymlinkPolicy, TargetCapability, TargetDescriptor, TargetFormat,
-        TargetTrustState, ToolAdapter,
+        TargetTrustState, ToolAdapter, PROVIDER_AUTH_KIND_API_KEY,
+        PROVIDER_AUTH_KIND_OFFICIAL_LOGIN,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
@@ -209,9 +210,13 @@ impl ProviderCodec for CodexAdapter {
             AppError::invalid_input("providerOptions", "Codex Provider 缺少稳定 provider id")
         })?;
         validate_provider_id(provider_id)?;
-        if provider_id == OPENAI_PROVIDER_ID {
+        let default_model = input.default_model.filter(|value| !value.is_empty());
+        // 官方账号登录只写模型选择并显式回到内置 openai provider；登录凭据由
+        // Codex 自己的 auth.json 承载，本应用不投影任何 token。
+        if input.auth_kind == PROVIDER_AUTH_KIND_OFFICIAL_LOGIN || provider_id == OPENAI_PROVIDER_ID
+        {
             let mut root = Map::new();
-            if let Some(model) = input.default_model {
+            if let Some(model) = default_model {
                 root.insert("model".to_owned(), Value::String(model.to_owned()));
             }
             root.insert(
@@ -227,7 +232,7 @@ impl ProviderCodec for CodexAdapter {
             .into_iter()
             .collect::<Map<_, _>>();
         provider.insert("name".to_owned(), Value::String(input.name.to_owned()));
-        if let Some(value) = input.api_base_url {
+        if let Some(value) = input.api_base_url.filter(|value| !value.is_empty()) {
             provider.insert("base_url".to_owned(), Value::String(value.to_owned()));
         }
         if let Some(value) = input.api_key {
@@ -240,7 +245,7 @@ impl ProviderCodec for CodexAdapter {
             provider.insert("wire_api".to_owned(), Value::String(value.to_owned()));
         }
         let mut root = Map::new();
-        if let Some(model) = input.default_model {
+        if let Some(model) = default_model {
             root.insert("model".to_owned(), Value::String(model.to_owned()));
         }
         root.insert(
@@ -265,15 +270,13 @@ impl ProviderCodec for CodexAdapter {
     ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
         const OPENAI_PROVIDER_ID: &str = "openai";
         const RESERVED_PROVIDER_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
+        // `model` 可缺省：Codex 会使用内置默认模型，导入后档案的默认模型保持为空。
         let default_model = managed_projection
             .get("model")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_default()
             .to_owned();
-        if default_model.is_empty() {
-            return Ok(None);
-        }
         let provider_id = match managed_projection
             .get("model_provider")
             .and_then(Value::as_str)
@@ -342,20 +345,22 @@ impl ProviderCodec for CodexAdapter {
                 ));
             }
         };
-        let managed_projection = Value::Object(Map::from_iter([
-            ("model".to_owned(), Value::String(default_model.clone())),
-            (
-                "model_provider".to_owned(),
-                Value::String(provider_id.to_owned()),
-            ),
-            (
-                "model_providers".to_owned(),
-                Value::Object(Map::from_iter([(
-                    provider_id.to_owned(),
-                    Value::Object(table.clone()),
-                )])),
-            ),
-        ]));
+        let mut managed_projection = Map::new();
+        if !default_model.is_empty() {
+            managed_projection.insert("model".to_owned(), Value::String(default_model.clone()));
+        }
+        managed_projection.insert(
+            "model_provider".to_owned(),
+            Value::String(provider_id.to_owned()),
+        );
+        managed_projection.insert(
+            "model_providers".to_owned(),
+            Value::Object(Map::from_iter([(
+                provider_id.to_owned(),
+                Value::Object(table.clone()),
+            )])),
+        );
+        let managed_projection = Value::Object(managed_projection);
         let extra_provider_fields = table
             .iter()
             .filter(|(key, _)| {
@@ -370,11 +375,13 @@ impl ProviderCodec for CodexAdapter {
             target_path: descriptor_path(descriptor)?,
             full_hash: full_hash.to_owned(),
             projection: managed_projection,
+            auth_kind: PROVIDER_AUTH_KIND_API_KEY.to_owned(),
             api_base_url,
             api_key,
             default_model,
             credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
             extra_env: BTreeMap::new(),
+            skipped_env_keys: Vec::new(),
             provider_id: Some(provider_id.to_owned()),
             wire_api,
             zcode_kind: None,
@@ -440,7 +447,9 @@ fn discover_openai_provider(
         return Ok(None);
     }
     let mut managed_projection = Map::new();
-    managed_projection.insert("model".to_owned(), Value::String(default_model.clone()));
+    if !default_model.is_empty() {
+        managed_projection.insert("model".to_owned(), Value::String(default_model.clone()));
+    }
     if let Some(value) = projection.get("model_provider") {
         managed_projection.insert("model_provider".to_owned(), value.clone());
     }
@@ -448,18 +457,20 @@ fn discover_openai_provider(
         target_path: descriptor_path(descriptor)?,
         full_hash: full_hash.to_owned(),
         projection: Value::Object(managed_projection),
-        api_base_url: "https://api.openai.com/v1".to_owned(),
+        auth_kind: PROVIDER_AUTH_KIND_OFFICIAL_LOGIN.to_owned(),
+        api_base_url: String::new(),
         api_key: None,
         default_model,
         credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
         extra_env: BTreeMap::new(),
+        skipped_env_keys: Vec::new(),
         provider_id: Some("openai".to_owned()),
         wire_api: None,
         zcode_kind: None,
         opencode_npm: None,
         opencode_api: None,
         extra_provider_fields: BTreeMap::new(),
-        suggested_name: Some("Codex OAuth 登录".to_owned()),
+        suggested_name: Some("Codex 官方账号登录".to_owned()),
     }))
 }
 

@@ -25,6 +25,7 @@ const provider: ProviderProfileDto = makeProviderProfile({
   apiKeyConfigured: true,
   defaultModel: "claude-fixture",
   options: {
+    authKind: "api_key",
     credentialEnvKey: "ANTHROPIC_API_KEY",
     extraEnv: {},
     providerId: null,

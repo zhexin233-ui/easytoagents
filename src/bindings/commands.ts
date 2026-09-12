@@ -324,6 +324,33 @@ async applyProfilePreview(input: ApplyProfilePreviewInput) : Promise<Result<Appl
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * 探测会同步启动一个几秒内结束的 CLI 子进程；`command(async)` 让它离开主线程。
+ */
+async getOfficialLoginStatus(tool: Tool) : Promise<Result<OfficialLoginStatusDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_official_login_status", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startOfficialLogin(tool: Tool) : Promise<Result<OfficialLoginStatusDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_official_login", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelOfficialLogin(tool: Tool) : Promise<Result<OfficialLoginStatusDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_official_login", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listMcpServers() : Promise<Result<McpServerDto[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_mcp_servers") };
@@ -847,6 +874,36 @@ export type McpServerDto = { id: string; name: string; transport: McpTransport; 
 export type McpServerInput = { name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: Partial<{ [key in string]: string }>; env: Partial<{ [key in string]: string }>; extra: JsonValue; enabled: boolean }
 export type McpTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type McpTransport = "stdio" | "streamable_http"
+export type OfficialLoginPhase =
+/**
+ * 没有进行中或刚结束的登录会话。
+ */
+"idle" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out"
+export type OfficialLoginStatusDto = { tool: Tool;
+/**
+ * 官方 CLI 已解析到且提供登录子命令；为 `false` 时只能按 `manual_command` 手动登录。
+ */
+supported: boolean; phase: OfficialLoginPhase;
+/**
+ * `None` 表示状态探测不可用（CLI 未安装、超时或输出无法识别）。
+ */
+loggedIn: boolean | null;
+/**
+ * CLI 报告的登录方式，如 `claude.ai`、`console`、`chatgpt`、`api_key`。
+ */
+authMethod: string | null;
+/**
+ * CLI 报告的账号标识（邮箱或组织名）；只展示，不落库不写日志。
+ */
+account: string | null;
+/**
+ * 最近一次登录子进程或状态探测的脱敏诊断片段。
+ */
+diagnostic: string | null;
+/**
+ * 登录子进程打印的授权地址；浏览器没有自动打开时供用户手动访问。
+ */
+loginUrl: string | null; manualCommand: string }
 export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PrepareSkillTakeoverInput = { previewId: string; candidateIds: string[] }
 export type PreviewHookSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
@@ -869,9 +926,22 @@ export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
 export type PromptProfileDto = { id: string; name: string; body: string; globalTools: Tool[]; importedFromPath: string | null; rowVersion: number }
 export type PromptProfileInput = { name: string; body: string }
-export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue }
-export type ProviderOptionsDto = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null; opencodeNpm: string | null; opencodeApi: string | null }
-export type ProviderOptionsInput = { credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null; zcodeKind: string | null;
+/**
+ * 渠道的认证方式：`ApiKey` 走第三方/自定义接入地址加密钥；`OfficialLogin`
+ * 不保存任何接入地址或密钥，原生配置回到工具自带的官方账号登录。
+ */
+export type ProviderAuthKind = "api_key" | "official_login"
+export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; authKind: ProviderAuthKind; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue;
+/**
+ * 原生 env 中疑似凭据或格式不受支持、因此未纳入管理的键名（不含值）。
+ */
+skippedEnvKeys: string[] }
+export type ProviderOptionsDto = { authKind: ProviderAuthKind; credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null; opencodeNpm: string | null; opencodeApi: string | null }
+export type ProviderOptionsInput = {
+/**
+ * 旧前端不传时默认 `api_key`；创建后不可更改。
+ */
+authKind?: ProviderAuthKind; credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; wireApi: string | null; zcodeKind: string | null;
 /**
  * OpenCode provider SDK package (for example
  * `@ai-sdk/openai-compatible`). Stored as metadata; the app never

@@ -1123,6 +1123,8 @@ pub struct DiscoveryContext<'a> {
 /// 使用稳定字符串避免适配层依赖 Profiles 的 RPC DTO。
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderCodecInput<'a> {
+    /// `api_key` 或 `official_login`（见 `PROVIDER_AUTH_KIND_*`）。
+    pub auth_kind: &'a str,
     pub credential_env_key: Option<&'a str>,
     pub extra_env: &'a BTreeMap<String, String>,
     pub wire_api: Option<&'a str>,
@@ -1130,6 +1132,10 @@ pub struct ProviderCodecInput<'a> {
     pub opencode_npm: Option<&'a str>,
     pub opencode_api: Option<&'a str>,
 }
+
+/// 渠道认证方式在适配层的稳定字符串表示。
+pub const PROVIDER_AUTH_KIND_API_KEY: &str = "api_key";
+pub const PROVIDER_AUTH_KIND_OFFICIAL_LOGIN: &str = "official_login";
 
 #[derive(Debug, Clone, Default)]
 pub struct ProviderCodecOptions {
@@ -1148,6 +1154,8 @@ pub struct ProviderCodecOptions {
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderCodecProfileInput<'a> {
     pub name: &'a str,
+    /// `api_key` 或 `official_login`；官方登录不投影任何接入地址或凭据键。
+    pub auth_kind: &'a str,
     pub api_base_url: Option<&'a str>,
     pub api_key: Option<&'a str>,
     pub default_model: Option<&'a str>,
@@ -1168,11 +1176,15 @@ pub struct ProviderCodecDiscovery {
     pub target_path: String,
     pub full_hash: String,
     pub projection: Value,
+    pub auth_kind: String,
     pub api_base_url: String,
     pub api_key: Option<String>,
+    /// 空串表示原生配置没有指定默认模型。
     pub default_model: String,
     pub credential_env_key: String,
     pub extra_env: BTreeMap<String, String>,
+    /// 原生 env 中存在但不能作为普通扩展 env 接管的键名（值不出适配层）。
+    pub skipped_env_keys: Vec<String>,
     pub provider_id: Option<String>,
     pub wire_api: Option<String>,
     pub zcode_kind: Option<String>,

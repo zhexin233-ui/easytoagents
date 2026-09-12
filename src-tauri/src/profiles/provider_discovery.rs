@@ -1,10 +1,18 @@
 type DiscoveredProvider = crate::adapters::ProviderCodecDiscovery;
 
+/// 适配层用稳定字符串表达认证方式；未知值说明 codec 合同不一致，直接失败。
+fn discovered_auth_kind(discovered: &DiscoveredProvider) -> Result<ProviderAuthKind, AppError> {
+    ProviderAuthKind::from_stable_str(&discovered.auth_kind).ok_or_else(|| {
+        AppError::invalid_input("providerOptions", "Provider 发现结果的认证方式无效")
+    })
+}
+
 fn validate_discovered_provider_config(
     tool: Tool,
     discovered: &DiscoveredProvider,
 ) -> Result<(), AppError> {
     let options_input = ProviderCodecInput {
+        auth_kind: &discovered.auth_kind,
         credential_env_key: Some(discovered.credential_env_key.as_str()),
         extra_env: &discovered.extra_env,
         wire_api: discovered.wire_api.as_deref(),

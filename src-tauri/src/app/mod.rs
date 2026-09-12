@@ -16,6 +16,7 @@ use crate::{
     db::Database,
     domain::Tool,
     error::{AppError, ErrorCode},
+    official_login::{validate_context, OfficialLoginContext, OfficialLoginRegistry},
     security::{
         audit_private_tree, ensure_private_directory, reject_symlink_components, SecretRedactor,
     },
@@ -235,6 +236,8 @@ pub struct AppState {
     probe: Option<EnvironmentProbeConfig>,
     environment_ready: Option<EnvironmentReadyNotifier>,
     github_proxy: Option<String>,
+    /// 官方账号登录子进程会话；进程内存活，重启即丢弃。
+    official_logins: OfficialLoginRegistry,
 }
 
 impl AppState {
@@ -291,6 +294,7 @@ impl AppState {
             probe,
             environment_ready,
             github_proxy,
+            official_logins: OfficialLoginRegistry::default(),
         })
     }
 
@@ -349,6 +353,28 @@ impl AppState {
 
     pub fn github_proxy(&self) -> Option<&str> {
         self.github_proxy.as_deref()
+    }
+
+    pub fn official_logins(&self) -> &OfficialLoginRegistry {
+        &self.official_logins
+    }
+
+    /// 官方登录子进程的显式输入：探针的安全搜索路径、当前环境快照的目录与启动期代理。
+    /// 探针未配置（测试进程）或环境仍在探测时都不能启动登录。
+    pub fn official_login_context(&self) -> Result<OfficialLoginContext, AppError> {
+        let probe = self.probe.as_ref().ok_or_else(|| {
+            AppError::invalid_input("environment", "当前进程没有配置工具探测输入")
+        })?;
+        let environment = self.environment()?;
+        let context = OfficialLoginContext {
+            search_path: probe.input.search_path().to_owned(),
+            home: environment.home().to_path_buf(),
+            claude_config_dir: environment.claude_config_dir().to_path_buf(),
+            codex_home: environment.codex_home().to_path_buf(),
+            proxy: self.github_proxy.clone(),
+        };
+        validate_context(&context)?;
+        Ok(context)
     }
 
     /// 同步执行（或重新执行）工具探测并替换环境快照，然后通知监听方。
