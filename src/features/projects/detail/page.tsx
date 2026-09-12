@@ -151,7 +151,7 @@ export function ProjectDetailPage() {
     return (
       <>
         <PageHeader title="项目详情" />
-        <main className="max-w-6xl px-8 py-6">
+        <main className="px-8 py-6">
           <p role="status">正在读取项目详情…</p>
         </main>
       </>
@@ -161,7 +161,7 @@ export function ProjectDetailPage() {
     return (
       <>
         <PageHeader title="项目详情" />
-        <main className="max-w-6xl px-8 py-6">
+        <main className="px-8 py-6">
           <BlockingState
             title="项目详情不可用"
             description={
@@ -190,7 +190,7 @@ export function ProjectDetailPage() {
           </div>
         }
       />
-      <main className="max-w-6xl space-y-6 px-8 py-6">
+      <main className="space-y-6 px-8 py-6">
         <div className="space-y-3" aria-live="polite">
           {project.pathStatus !== "valid" ? (
             <BlockingState

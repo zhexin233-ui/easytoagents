@@ -48,7 +48,7 @@ export function DashboardPage() {
           ) : undefined
         }
       />
-      <main className="max-w-6xl space-y-6 px-8 py-6">
+      <main className="space-y-6 px-8 py-6">
         {dashboardQuery.isPending ? (
           <p role="status">正在汇总配置状态…</p>
         ) : null}
@@ -84,7 +84,7 @@ export function DashboardPage() {
         {dashboardQuery.data && !dashboardQuery.data.needsOnboarding ? (
           <>
             <section
-              className="grid gap-4 md:grid-cols-2"
+              className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3"
               aria-label="工具配置卡片"
             >
               {dashboardQuery.data.tools

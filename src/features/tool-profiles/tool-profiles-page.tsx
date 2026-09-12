@@ -72,7 +72,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
     return (
       <>
         <PageHeader title={title} />
-        <main className="max-w-6xl px-8 py-6">
+        <main className="px-8 py-6">
           <BlockingState
             title={`${title} 渠道不受支持`}
             description={`${title} 不支持渠道配置。`}
@@ -86,7 +86,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   return (
     <>
       <PageHeader title={title} />
-      <main className="max-w-6xl space-y-6 px-8 py-6">
+      <main className="space-y-6 px-8 py-6">
         <div className="space-y-4" aria-live="polite">
           {statusQuery.data ? (
             <section className="bg-card rounded-lg border p-4 text-sm">

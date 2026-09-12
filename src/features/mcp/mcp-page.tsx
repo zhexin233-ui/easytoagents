@@ -273,7 +273,7 @@ export function McpPage() {
           </>
         }
       />
-      <main className="max-w-6xl space-y-6 px-8 py-6">
+      <main className="space-y-6 px-8 py-6">
         <section
           className="bg-card rounded-lg border p-5"
           aria-labelledby="mcp-list-title"

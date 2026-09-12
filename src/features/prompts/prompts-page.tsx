@@ -310,7 +310,7 @@ export function PromptsPage() {
           </>
         }
       />
-      <main className="max-w-6xl space-y-6 px-8 py-6">
+      <main className="space-y-6 px-8 py-6">
         <section
           className="bg-card rounded-lg border p-5"
           aria-labelledby="prompt-list-title"
