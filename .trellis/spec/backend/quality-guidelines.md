@@ -473,19 +473,51 @@ apply_persisted_preview(
 - Provider and Prompt CRUD change only SQLite central intent. Native discovery is
   read-only, stores a redacted import preview, and rescans the full hash before a
   confirmation atomically adopts the profile and baseline.
-- Claude Provider ownership is the union of previous and desired profile-declared
-  env keys. Unknown or host-managed policy blocks. Unrelated env and settings remain
-  unowned.
-- Claude Provider import derives the central `default_model` from `ANTHROPIC_MODEL`
-  first, then from the official `ANTHROPIC_DEFAULT_*_MODEL` family, while preserving
-  imported default-model family variables as profile-declared env keys.
+- Claude Provider ownership always includes the four reserved env keys
+  (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_MODEL`) plus the union of previous and desired profile-declared env
+  keys, so switching profiles never leaves a stale hand-written credential behind and
+  an official-login profile removes the third-party keys. Unknown or host-managed
+  policy blocks. Unrelated env and settings remain unowned. Upgrade note: a baseline
+  recorded before this rule was hashed over fewer selectors; if the file carries a
+  hand-written reserved key outside that baseline, the first preview reports
+  `external_owned_change` and the user re-adopts once instead of the app silently
+  deleting the key.
+- Every profile carries `ProviderAuthKind` (`api_key` | `official_login`) in
+  `config_json`; records without it resolve Codex `provider_id == "openai"` to
+  `official_login` and everything else to `api_key`. The kind is fixed at creation:
+  updates with a different kind, cross-tool copies of official-login profiles, and
+  official-login profiles for ZCode/OpenCode/Cursor are `INVALID_INPUT`.
+- `api_key` profiles require a local key; the base URL is optional for Claude/Codex
+  (empty means the tool's official endpoint with the user's own key) and required for
+  ZCode/OpenCode. `official_login` profiles reject any base URL or key, store NULL for
+  both, and render only model selection: Claude writes `ANTHROPIC_MODEL` (optional) plus
+  extra env, Codex writes `model` (optional) plus `model_provider = "openai"`.
+- `default_model` is optional for Claude/Codex (NULL in SQLite, empty string in DTOs)
+  and required for ZCode/OpenCode. An empty model never writes or deletes the native
+  model key unless a previous managed baseline owned it.
+- Claude Provider import takes `default_model` only from `ANTHROPIC_MODEL`; every other
+  string-valued, non-reserved env entry that passes `security::env_entry_is_manageable`
+  becomes profile-declared extra env (including `ANTHROPIC_DEFAULT_*_MODEL`,
+  `API_TIMEOUT_MS`, `CLAUDE_CODE_*`), so the first sync preview after import is
+  `unchanged`. Entries that fail the rule (credential-looking values, lowercase keys,
+  non-string values) are listed in `skipped_env_keys` by name only and stay outside the
+  projection and baseline. A settings file with neither base URL nor credential keys
+  imports as an `official_login` profile; an entirely empty env has nothing to import.
+- Extra env validation runs `env_entry_is_manageable`: purely numeric or boolean
+  values (`CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000`, `DISABLE_TELEMETRY=true`) are never
+  treated as secrets when the key only carries a `token`/`apikey` marker; keys naming a
+  `password`, `passphrase`, `secret`, `cookie`, `credential`, `authorization`, or
+  `bearer` are rejected regardless of value, and other values still fail on the shared
+  secret heuristics (`Bearer …`, `sk-…`). Reserved keys are rejected from extra env.
 - Codex Provider ownership is `model`, `model_provider`, and only the previous/current
   managed provider IDs. Built-in IDs (`openai`, `ollama`, `lmstudio`) and unrelated
   tables remain unowned; an imported custom table preserves supported extension fields.
-- Codex OAuth import may adopt the built-in `openai` provider when `auth.json` proves
-  an OAuth token shape exists. It must not persist, diff, or write `auth.json` contents,
-  and the resulting sync projection writes only provider selection/model fields without
-  `experimental_bearer_token`.
+  `wire_api` accepts the two official values `responses` and `chat`.
+- Codex official-login import adopts the built-in `openai` provider when `auth.json`
+  proves an OAuth token shape exists (`model` may be absent). It must not persist, diff,
+  or write `auth.json` contents, and the resulting sync projection writes only provider
+  selection/model fields without `experimental_bearer_token`.
 - API keys never appear in list/status DTOs. Recognizable secret-bearing extension
   env values are rejected from ordinary DTO fields; imported Codex extensions remain
   private and the whole managed provider table is sensitive in previews.
@@ -498,9 +530,12 @@ apply_persisted_preview(
 | --- | --- |
 | Stale update/activate/delete `row_version` | `CONFLICT`; transaction rolls back |
 | Case-only duplicate name in the same tool | `CONFLICT` |
-| Cross-tool copy | New UUID/Provider ID; validate target fields/options again |
+| Cross-tool copy | New UUID/Provider ID; validate target fields/options again; official-login source is `INVALID_INPUT` |
 | URL with credentials, query, fragment, or non-HTTP(S) scheme | `INVALID_INPUT` |
-| Codex reserved Provider ID or non-`responses` wire API | reject/ignore built-in; never overwrite |
+| `api_key` profile without a key; `official_login` profile with a URL or key | `INVALID_INPUT` |
+| Update that changes `auth_kind` | `INVALID_INPUT`; the stored profile is untouched |
+| Codex reserved Provider ID or wire API outside `responses`/`chat` | reject/ignore built-in; never overwrite |
+| Extra env with reserved key, NUL/newline, or credential-looking non-numeric value | `INVALID_INPUT` |
 | Claude host evidence unknown, malformed, or present | policy-blocked preview; zero external writes |
 | Import target hash changes before confirmation | `STALE_PREVIEW`; preserve target |
 | Native target changes after sync preview | `STALE_PREVIEW`/conflict; preserve target |
@@ -520,9 +555,13 @@ apply_persisted_preview(
 
 - Use only temporary explicit homes/config roots and explicit policy/availability.
 - Cover case-insensitive uniqueness, activation/deletion CAS, independent copy,
-  stable Codex IDs, Claude default-model family import, Claude old-key cleanup,
-  Codex OAuth import without token persistence, Codex unknown-table/comment preservation,
-  lossless Prompt import, stale import/apply, and active-profile deletion cleanup.
+  stable Codex IDs, Claude full-env import with skipped credential keys and an
+  `unchanged` first preview, Claude old-key cleanup, official-login switch that removes
+  reserved keys and restores them on switch-back, numeric `*_TOKENS` extra env
+  acceptance, optional model import for both tools, Codex `chat` wire API,
+  Codex official-login import without token persistence, Codex unknown-table/comment
+  preservation, lossless Prompt import, stale import/apply, and active-profile deletion
+  cleanup.
 - Search serialized import previews, sync previews, RPC DTOs, `sync_items`, and journals
   for every fixture key/token/header; expected matches are zero.
 - Regenerate and check Specta bindings whenever a profile command or DTO changes.
@@ -1133,6 +1172,109 @@ let probe = probe_release_environment(&ReleaseToolProbeInput::for_macos_release(
     home, claude_root, codex_root, explicit_path,
 ))?;
 app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
+```
+
+---
+
+## Scenario: Official account login delegated to the vendor CLI
+
+### 1. Scope / Trigger
+
+- Trigger: anything that starts, monitors, cancels, or reports the login state of an
+  official account for Claude (`claude auth login` / `claude auth status`) or Codex
+  (`codex login` / `codex login status`), or that would be tempted to implement an
+  OAuth flow inside the app.
+
+### 2. Signatures
+
+- `official_login::OfficialLoginRegistry::{status, start, cancel}` take an explicit
+  `OfficialLoginContext { search_path, home, claude_config_dir, codex_home, proxy }`
+  built by `AppState::official_login_context()` from the probe search path, the current
+  environment snapshot, and the proxy captured at setup. Missing probe config (test
+  processes) or a still-probing environment fails before any subprocess starts.
+- Commands `get_official_login_status`, `start_official_login`, and
+  `cancel_official_login` are `#[tauri::command(async)]` and return
+  `OfficialLoginStatusDto { supported, phase, loggedIn, authMethod, account,
+  diagnostic, loginUrl, manualCommand }`. `loginUrl` is the first `https://` address
+  the CLI printed (public PKCE parameters only) and is set only while running.
+- `OfficialLoginRegistry::cancel_all()` runs from the Tauri `RunEvent::Exit` handler
+  and from `Drop`, so no login child outlives the app.
+- `app::tool_probe::{resolve_executable, apply_tool_process_environment,
+  run_command_bounded, terminate_process_group}` are the shared subprocess primitives;
+  do not duplicate PATH resolution or process-group handling.
+
+### 3. Contracts
+
+- The app never implements OAuth endpoints, never reads Keychain or `auth.json`
+  tokens, and never persists login output. Credentials are written only by the vendor
+  CLI into its own store.
+- Executables are resolved with the probe's safe PATH rules; the child gets
+  `env_clear` plus HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, PATH, NO_COLOR, TERM=dumb,
+  DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, and the captured
+  proxy as HTTPS_PROXY/HTTP_PROXY/ALL_PROXY. Status probes add `CI=1`; login children
+  do not.
+- Login children run in their own process group, stdin is null, output is drained
+  non-blocking into a 4 KiB tail, and the group is killed on cancel, on a 10-minute
+  timeout, and as soon as the main process exits (no waiting on lingering descendants).
+  One running session per tool; a second `start` is `CONFLICT`.
+- `status` never launches the status probe while a login is running. Otherwise it runs
+  the probe with an 8 s timeout and a 16 KiB output cap: Claude output is JSON
+  (`loggedIn`, `authMethod`, `email`), Codex output is text (`Logged in using ChatGPT`,
+  `Not logged in`). Unknown-command errors mark the tool `supported: false` and keep the
+  manual command in the DTO. Diagnostics are the last ≤300 characters, control
+  characters stripped, passed through `SecretRedactor::redact_text`.
+- Cursor, ZCode, and OpenCode are `INVALID_INPUT` for every login command.
+- Verified 2026-09-11 with a browser-less PATH: both CLIs start without a TTY, print
+  the authorization URL, and wait for the callback. `codex login` deletes the existing
+  `~/.codex/auth.json` the moment it starts, so cancelling a Codex login leaves the
+  user logged out; the UI must say so and confirm before re-login. Never verify with a
+  real login command on a developer machine again — use the fake-CLI fixtures.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| CLI not on the safe PATH | `start` is `NOT_FOUND`; `status` reports `supported: false` |
+| CLI lacks the login subcommand | `supported: false` with manual command; no retry loop |
+| Login already running | `CONFLICT`; existing session untouched |
+| Cancel without a running session | `Ok(false)`; no signal sent |
+| Login child exceeds timeout | process group killed; phase `timed_out` |
+| Login child exits non-zero | phase `failed`; redacted stderr tail in `diagnostic` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: user picks the official-login kind, starts login, the CLI opens the browser,
+  the app polls `status` until the phase settles and then shows the probe's logged-in
+  state; applying the profile only rewrites `settings.json` / `config.toml`.
+- Base: status probe alone, no login session, returns the CLI-reported state.
+- Bad: reimplementing device-code/PKCE flows, storing tokens, inheriting the GUI
+  environment, or blocking a Tauri command on the login child.
+
+### 6. Tests Required
+
+- Use fake `claude` / `codex` shell scripts inside an isolated bin directory with an
+  explicit search path; use absolute `/bin/sleep` because the child PATH only contains
+  that directory.
+- Cover JSON/text status parsing, unknown-command fallback, success/failure with
+  redacted diagnostics, cancel, timeout, duplicate start, missing executable, and
+  unsupported tools. Serialize the process fixtures with a test-local mutex.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Talking to auth.openai.com directly and writing auth.json ourselves.
+let tokens = exchange_device_code(&client_id, &code).await?;
+fs::write(codex_home.join("auth.json"), serde_json::to_vec(&tokens)?)?;
+```
+
+#### Correct
+
+```rust
+let context = state.official_login_context()?;
+state.official_logins().start(&context, Tool::Codex)?; // spawns `codex login`
+let status = state.official_logins().status(&context, &redactor, Tool::Codex)?;
 ```
 
 ---

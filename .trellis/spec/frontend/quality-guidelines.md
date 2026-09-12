@@ -105,9 +105,26 @@ scanning and native-resource views cover supported MCP and Skill resources only.
   Because activation commits before preview generation, its query must also be
   invalidated when preview generation fails; the UI must not retain the old active row.
 - API-key inputs are passwords and list DTOs expose only `apiKeyConfigured`.
-- A Codex profile with `options.providerId === "openai"` and no local API key is an
-  OAuth-login profile. Render it as using Codex OAuth credentials, keep edits on
-  `SecretUpdate::Keep`, and do not present the missing local key as an error state.
+- `options.authKind` (`api_key` | `official_login`) is the only credential-source
+  discriminator. Claude/Codex forms offer both kinds as radios on create and render
+  the radio disabled on edit (the kind is fixed server-side). An `official_login`
+  form hides API URL/key, Claude credential-key, and Codex `wire_api` controls, sends
+  empty URL/key with `SecretUpdate::Keep` on edit, and mounts `OfficialLoginSection`.
+  Lists render official profiles as “官方账号登录”, disable cross-tool copy for them,
+  and never show the missing local key as an error. Default model is optional for
+  Claude/Codex; render an empty model as “工具默认模型”.
+- `OfficialLoginSection` queries `getOfficialLoginStatus` only while mounted, polls
+  every 2 s while `phase === "running"`, and drives `startOfficialLogin` /
+  `cancelOfficialLogin` with `type="button"` controls so they never submit the form.
+  It renders distinct states for unsupported CLI (manual command, disabled login),
+  logged in / not logged in / unknown, and each terminal phase (`succeeded`,
+  `failed`, `cancelled`, `timed_out`) with the redacted diagnostic. While running it
+  shows `loginUrl` for manual access. When the status is already logged in, starting
+  again requires a `confirm`; the Codex copy states that Codex clears its existing
+  credentials as soon as login starts and that cancelling means logging in again.
+- Import previews (provider panel and onboarding wizard) render `authKind` as the
+  credential source and list `skippedEnvKeys` by name when non-empty; values never
+  reach the UI.
 - The shared dialog renders target path, change/status, plan/target warnings,
   conflicts, and only `redactedDiff`; blocked targets disable Apply.
 - Claude host-policy and Codex override/unknown states remain distinct, and all
@@ -133,7 +150,9 @@ scanning and native-resource views cover supported MCP and Skill resources only.
 | Preview lacks active profile and cleanup baseline | Empty-state text; no raw `NOT_FOUND` dead end |
 | Stale row version | Preserve the form/list and show conflict; do not retry blindly |
 | Preview warning/conflict | Show exact codes; disable Apply for blocked target |
-| Import preview | Display credential source plus only redacted projection or intended Prompt body; confirm separately |
+| Import preview | Display credential source plus only redacted projection or intended Prompt body; list skipped env key names; confirm separately |
+| Official-login form | No URL/key/`wire_api` controls; login status block with start/cancel/refresh and the manual CLI command |
+| Official CLI unsupported or missing | Disabled login button, manual command, diagnostic; form can still be saved |
 
 ### 5. Good/Base/Bad Cases
 
@@ -149,8 +168,10 @@ scanning and native-resource views cover supported MCP and Skill resources only.
 - Assert exact create/update/copy/activate/delete/import/preview/apply payloads,
   including `SecretUpdate`, row versions, tool, artifact kind, and preview ID.
 - Cover password masking, multi-env edit preservation, target-tool cache refresh,
-  Codex OAuth credential-source rendering, loading/error/empty/policy/override states,
-  redacted diff, blocked Apply, Escape, close, and focus restoration.
+  official-login credential-source rendering, auth-kind radio switching and the
+  hidden/disabled controls it implies, start/cancel login payloads and phase text,
+  unsupported-CLI fallback, skipped env key listing, loading/error/empty/policy/override
+  states, redacted diff, blocked Apply, Escape, close, and focus restoration.
 
 ### 7. Wrong vs Correct
 
