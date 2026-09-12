@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 
 import {
   commands,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/environment-api";
 import { profileErrorText, unwrapResult } from "@/lib/rpc";
 import { toolMetadata } from "@/lib/tool-metadata";
+import { cn } from "@/lib/utils";
 
 const AVAILABILITY_TEXT: Record<ToolAvailabilityState, string> = {
   installed: "已检测到",
@@ -22,6 +24,8 @@ const AVAILABILITY_TEXT: Record<ToolAvailabilityState, string> = {
 interface RefreshEnvironmentButtonProps {
   /** 是否在按钮下方列出每个工具的检测结果。 */
   showToolList?: boolean;
+  /** icon：页面头部使用的纯图标 ghost 形态，状态文案对屏幕阅读器保留。 */
+  appearance?: "full" | "icon";
 }
 
 /**
@@ -30,6 +34,7 @@ interface RefreshEnvironmentButtonProps {
  */
 export function RefreshEnvironmentButton({
   showToolList = false,
+  appearance = "full",
 }: RefreshEnvironmentButtonProps) {
   const queryClient = useQueryClient();
   const stateQuery = useQuery(environmentStateQueryOptions());
@@ -41,6 +46,43 @@ export function RefreshEnvironmentButton({
   });
   const probing = stateQuery.data?.probing === true;
   const busy = probing || refreshMutation.isPending;
+
+  if (appearance === "icon") {
+    const label = busy ? "正在检测工具…" : "重新检测工具";
+    return (
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          disabled={busy}
+          aria-label={label}
+          title={label}
+          onClick={() => refreshMutation.mutate()}
+        >
+          <RefreshCw
+            aria-hidden="true"
+            className={cn("size-4", busy && "animate-spin")}
+          />
+        </Button>
+        {busy ? (
+          <p role="status" className="sr-only">
+            正在检测本机工具安装状态，完成后相关页面会自动刷新。
+          </p>
+        ) : null}
+        {refreshMutation.isSuccess && !busy ? (
+          <p role="status" className="sr-only">
+            已重新检测工具环境。
+          </p>
+        ) : null}
+        {refreshMutation.isError ? (
+          <p role="alert" className="text-destructive text-xs">
+            {profileErrorText(refreshMutation.error) ?? "重新检测失败。"}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2 text-sm">

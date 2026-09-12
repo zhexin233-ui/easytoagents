@@ -16,6 +16,8 @@ import {
   CentralListCardFooter,
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
+import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
@@ -215,39 +217,32 @@ export function SkillsPage() {
   });
 
   return (
-    <main className="p-6 lg:p-8">
-      <header className="mx-auto max-w-6xl">
-        <p className="text-muted-foreground text-sm">应用私有中央库</p>
-        <h1 className="mt-1 text-2xl font-semibold">Skills</h1>
-        <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          导入只复制本地目录或公开 GitHub
-          Skill，不移动或修改来源。各工具目标始终使用指向中央副本的符号链接，并且只能通过持久化预览
-          Apply。
-        </p>
-      </header>
-
-      <div className="mx-auto mt-6 max-w-6xl">
+    <>
+      <PageHeader
+        title="Skills"
+        actions={
+          <>
+            <CentralListLayoutToggle
+              value={listLayout}
+              onChange={setListLayout}
+            />
+            <Button size="sm" onClick={() => setOpenDirectoryImport(true)}>
+              从本地目录导入
+            </Button>
+            <Button size="sm" onClick={() => setOpenGithubImport(true)}>
+              从 GitHub 导入
+            </Button>
+          </>
+        }
+      />
+      <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
           className="bg-card rounded-xl border p-5"
           aria-labelledby="skill-list-title"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 id="skill-list-title" className="text-lg font-semibold">
-              中央列表
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <CentralListLayoutToggle
-                value={listLayout}
-                onChange={setListLayout}
-              />
-              <Button size="sm" onClick={() => setOpenDirectoryImport(true)}>
-                从本地目录导入
-              </Button>
-              <Button size="sm" onClick={() => setOpenGithubImport(true)}>
-                从 GitHub 导入
-              </Button>
-            </div>
-          </div>
+          <h2 id="skill-list-title" className="text-[15px] font-semibold">
+            中央列表
+          </h2>
           {skillsQuery.isPending ? (
             <p role="status" className="mt-4 text-sm">
               正在读取 Skills…
@@ -259,10 +254,12 @@ export function SkillsPage() {
             </p>
           ) : null}
           {skillsQuery.data?.length === 0 ? (
-            <p className="text-muted-foreground mt-4 text-sm">
-              尚无 Skill。可在下方全局目标卡片选择“检测并导入已有
-              Skills”，或从本地目录、公开 GitHub Skill 目录导入。
-            </p>
+            <div className="mt-4">
+              <EmptyState
+                title="尚无 Skill"
+                description="可从工具、本地目录或 GitHub 导入。"
+              />
+            </div>
           ) : null}
           <CentralList layout={listLayout}>
             {skillsQuery.data?.map((skill) => {
@@ -421,275 +418,277 @@ export function SkillsPage() {
             })}
           </CentralList>
         </section>
-      </div>
 
-      <section
-        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-        aria-labelledby="skill-target-title"
-      >
-        <h2 id="skill-target-title" className="text-lg font-semibold">
-          全局目标状态
-        </h2>
-        {statusesQuery.isPending ? (
-          <p role="status" className="mt-4 text-sm">
-            正在检查全局 Skills 目标…
-          </p>
-        ) : null}
-        {statusesQuery.isError ? (
-          <p role="alert" className="text-destructive mt-4 text-sm">
-            {profileErrorText(statusesQuery.error)}
-          </p>
-        ) : null}
-        {statusesQuery.data != null && visibleStatuses?.length === 0 ? (
-          <p className="text-muted-foreground mt-4 text-sm">
-            当前没有可检查的全局 Skills 目标。
-          </p>
-        ) : null}
-        {visibleStatuses && visibleStatuses.length > 0 ? (
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {visibleStatuses.map((status) => {
-              const presentation = globalTargetStatusPresentation(
-                status.status,
-                status.diagnosticCode,
-                { directApply },
-              );
-              return (
-                <article
-                  key={status.tool}
-                  className="rounded-lg border p-4 text-sm"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <strong>{toolMetadata(status.tool).label}</strong>
-                    <SyncStatusBadge
-                      label={presentation.label}
-                      status={status.status}
-                      tone={presentation.tone}
-                    />
-                  </div>
-                  <code className="mt-2 block text-xs break-all">
-                    {status.targetPath ?? "目标不可用"}
-                  </code>
-                  {presentation.description ? (
-                    <p className="text-muted-foreground mt-2 text-xs">
-                      {presentation.description}
-                    </p>
-                  ) : null}
-                  {status.diagnosticCode ? (
-                    <p className="text-warning mt-2 text-xs">
-                      诊断码：<code>{status.diagnosticCode}</code>
-                    </p>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={presentation.previewBlocked}
-                      aria-label={`检测并导入 ${toolMetadata(status.tool).label} 全局 Skills`}
-                      onClick={() => {
-                        if (importDialog.state) return;
-                        importDialog.open(status.tool);
-                      }}
-                    >
-                      {status.diagnosticCode ===
-                      "SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED"
-                        ? "检测并接管已有 Skills"
-                        : "检测并导入已有 Skills"}
-                    </Button>
-                    {!directApply ? (
+        <section
+          className="bg-card rounded-xl border p-5"
+          aria-labelledby="skill-target-title"
+        >
+          <h2 id="skill-target-title" className="text-[15px] font-semibold">
+            全局目标状态
+          </h2>
+          {statusesQuery.isPending ? (
+            <p role="status" className="mt-4 text-sm">
+              正在检查全局 Skills 目标…
+            </p>
+          ) : null}
+          {statusesQuery.isError ? (
+            <p role="alert" className="text-destructive mt-4 text-sm">
+              {profileErrorText(statusesQuery.error)}
+            </p>
+          ) : null}
+          {statusesQuery.data != null && visibleStatuses?.length === 0 ? (
+            <p className="text-muted-foreground mt-4 text-sm">
+              当前没有可检查的全局 Skills 目标。
+            </p>
+          ) : null}
+          {visibleStatuses && visibleStatuses.length > 0 ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {visibleStatuses.map((status) => {
+                const presentation = globalTargetStatusPresentation(
+                  status.status,
+                  status.diagnosticCode,
+                  { directApply },
+                );
+                return (
+                  <article
+                    key={status.tool}
+                    className="rounded-lg border p-4 text-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <strong>{toolMetadata(status.tool).label}</strong>
+                      <SyncStatusBadge
+                        label={presentation.label}
+                        status={status.status}
+                        tone={presentation.tone}
+                      />
+                    </div>
+                    <code className="mt-2 block text-xs break-all">
+                      {status.targetPath ?? "目标不可用"}
+                    </code>
+                    {presentation.description ? (
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        {presentation.description}
+                      </p>
+                    ) : null}
+                    {status.diagnosticCode ? (
+                      <p className="text-warning mt-2 text-xs">
+                        诊断码：<code>{status.diagnosticCode}</code>
+                      </p>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={
-                          previewMutation.isPending ||
-                          presentation.previewBlocked
-                        }
-                        onClick={() => requestPreview(status.tool, directApply)}
+                        disabled={presentation.previewBlocked}
+                        aria-label={`检测并导入 ${toolMetadata(status.tool).label} 全局 Skills`}
+                        onClick={() => {
+                          if (importDialog.state) return;
+                          importDialog.open(status.tool);
+                        }}
                       >
-                        {previewMutation.isPending
-                          ? "正在生成…"
-                          : "预览全局同步"}
+                        {status.diagnosticCode ===
+                        "SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED"
+                          ? "检测并接管已有 Skills"
+                          : "检测并导入已有 Skills"}
                       </Button>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+                      {!directApply ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={
+                            previewMutation.isPending ||
+                            presentation.previewBlocked
+                          }
+                          onClick={() =>
+                            requestPreview(status.tool, directApply)
+                          }
+                        >
+                          {previewMutation.isPending
+                            ? "正在生成…"
+                            : "预览全局同步"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+
+        {contentPreview ? (
+          <DialogOverlay>
+            <DialogContent
+              dialogRef={contentDialogRef}
+              onClose={closeContentPreview}
+              labelledBy="skill-content-title"
+              size="lg"
+            >
+              <DialogHeader>
+                <div>
+                  <p className="text-muted-foreground">中央副本只读内容</p>
+                  <h2
+                    id="skill-content-title"
+                    className="mt-1 text-[15px] font-semibold"
+                  >
+                    {contentPreview.name}
+                  </h2>
+                </div>
+              </DialogHeader>
+              <DialogBody>
+                <pre className="bg-muted rounded-control overflow-auto p-4 text-xs leading-5">
+                  {contentPreview.skillMd}
+                </pre>
+                <p className="mt-4 font-medium">目录文件</p>
+                <ul className="mt-2 list-disc pl-5 text-xs">
+                  {contentPreview.files.map((file) => (
+                    <li key={file}>{file}</li>
+                  ))}
+                </ul>
+                {contentPreview.files.length === 0 ? (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    目录文件列表为空。
+                  </p>
+                ) : null}
+              </DialogBody>
+            </DialogContent>
+          </DialogOverlay>
         ) : null}
-      </section>
 
-      {contentPreview ? (
-        <DialogOverlay>
-          <DialogContent
-            dialogRef={contentDialogRef}
-            onClose={closeContentPreview}
-            labelledBy="skill-content-title"
-            size="lg"
-          >
-            <DialogHeader>
-              <div>
-                <p className="text-muted-foreground">中央副本只读内容</p>
-                <h2
-                  id="skill-content-title"
-                  className="mt-1 text-[15px] font-semibold"
+        {adoptTarget ? (
+          <DialogOverlay>
+            <DialogContent
+              dialogRef={adoptDialogRef}
+              onClose={closeAdoptDialog}
+              labelledBy={adoptTitleId}
+              describedBy={adoptDescriptionId}
+              size="sm"
+            >
+              <DialogHeader>
+                <div>
+                  <h2 id={adoptTitleId} className="text-[15px] font-semibold">
+                    同步更改
+                  </h2>
+                  <p
+                    id={adoptDescriptionId}
+                    className="text-muted-foreground mt-1"
+                  >
+                    是否将当前中央文件采纳为权威内容？这只会更新应用内记录，不会改写工具目录中的符号链接。
+                  </p>
+                </div>
+              </DialogHeader>
+              <DialogBody>
+                {adoptMutation.isPending ? (
+                  <p role="status" className="text-muted-foreground">
+                    正在采纳当前中央文件…
+                  </p>
+                ) : null}
+              </DialogBody>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={adoptMutation.isPending}
+                  onClick={closeAdoptDialog}
                 >
-                  {contentPreview.name}
-                </h2>
-              </div>
-            </DialogHeader>
-            <DialogBody>
-              <pre className="bg-muted rounded-control overflow-auto p-4 text-xs leading-5">
-                {contentPreview.skillMd}
-              </pre>
-              <p className="mt-4 font-medium">目录文件</p>
-              <ul className="mt-2 list-disc pl-5 text-xs">
-                {contentPreview.files.map((file) => (
-                  <li key={file}>{file}</li>
-                ))}
-              </ul>
-              {contentPreview.files.length === 0 ? (
-                <p className="text-muted-foreground mt-2 text-xs">
-                  目录文件列表为空。
-                </p>
-              ) : null}
-            </DialogBody>
-          </DialogContent>
-        </DialogOverlay>
-      ) : null}
-
-      {adoptTarget ? (
-        <DialogOverlay>
-          <DialogContent
-            dialogRef={adoptDialogRef}
-            onClose={closeAdoptDialog}
-            labelledBy={adoptTitleId}
-            describedBy={adoptDescriptionId}
-            size="sm"
-          >
-            <DialogHeader>
-              <div>
-                <h2 id={adoptTitleId} className="text-[15px] font-semibold">
-                  同步更改
-                </h2>
-                <p
-                  id={adoptDescriptionId}
-                  className="text-muted-foreground mt-1"
+                  取消
+                </Button>
+                <Button
+                  type="button"
+                  disabled={adoptMutation.isPending}
+                  onClick={() => {
+                    if (!adoptTarget) return;
+                    if (!adoptGuard.begin()) return;
+                    adoptDialogRef.current?.focus();
+                    adoptMutation.mutate(adoptTarget);
+                  }}
                 >
-                  是否将当前中央文件采纳为权威内容？这只会更新应用内记录，不会改写工具目录中的符号链接。
-                </p>
-              </div>
-            </DialogHeader>
-            <DialogBody>
-              {adoptMutation.isPending ? (
-                <p role="status" className="text-muted-foreground">
-                  正在采纳当前中央文件…
-                </p>
-              ) : null}
-            </DialogBody>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={adoptMutation.isPending}
-                onClick={closeAdoptDialog}
-              >
-                取消
-              </Button>
-              <Button
-                type="button"
-                disabled={adoptMutation.isPending}
-                onClick={() => {
-                  if (!adoptTarget) return;
-                  if (!adoptGuard.begin()) return;
-                  adoptDialogRef.current?.focus();
-                  adoptMutation.mutate(adoptTarget);
-                }}
-              >
-                {adoptMutation.isPending ? "正在采纳…" : "是"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </DialogOverlay>
-      ) : null}
+                  {adoptMutation.isPending ? "正在采纳…" : "是"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </DialogOverlay>
+        ) : null}
 
-      {openDirectoryImport ? (
-        <SkillDirectoryImportDialog
-          onClose={() => setOpenDirectoryImport(false)}
-          onImported={async () => {
-            await invalidateSkills();
-            notify({
-              kind: "success",
-              message:
-                "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
-            });
-          }}
+        {openDirectoryImport ? (
+          <SkillDirectoryImportDialog
+            onClose={() => setOpenDirectoryImport(false)}
+            onImported={async () => {
+              await invalidateSkills();
+              notify({
+                kind: "success",
+                message:
+                  "Skill 已复制到应用私有中央库；来源目录未修改，原生目标也尚未写入。",
+              });
+            }}
+          />
+        ) : null}
+
+        {openGithubImport ? (
+          <SkillGithubImportDialog
+            onClose={() => setOpenGithubImport(false)}
+            onImported={async () => {
+              await queryClient.invalidateQueries(
+                { queryKey: skillKeys.all },
+                { throwOnError: true },
+              );
+              notify({
+                kind: "success",
+                message:
+                  "GitHub Skill 已复制到应用私有中央库；未执行脚本，也未自动分配或同步。",
+              });
+            }}
+          />
+        ) : null}
+
+        {importDialog.state ? (
+          <SkillImportDialog
+            key={importDialog.state.requestId}
+            tool={importDialog.state.tool}
+            requestId={importDialog.state.requestId}
+            onClose={importDialog.close}
+            onRescan={importDialog.rescan}
+            onImported={async (result) => {
+              await queryClient.invalidateQueries(
+                { queryKey: skillKeys.all },
+                { throwOnError: true },
+              );
+              notify({
+                kind: "success",
+                message: `已复制 ${result.createdCount} 项 Skill 到中央库；原有安装未变，尚未自动分配或同步。中央副本不会随原安装自动更新。`,
+              });
+              importDialog.close();
+            }}
+            onTakeoverPrepared={async (result) => {
+              await queryClient.invalidateQueries(
+                { queryKey: skillKeys.all },
+                { throwOnError: true },
+              );
+              notify({
+                kind: "success",
+                message: `已为 ${result.assignedCount + result.reusedCount} 项 Skill 准备接管；请审阅持久化预览后显式应用。`,
+              });
+              importDialog.close();
+              // 接管无条件进入预览，即使全局偏好是 direct 也不会自动 Apply。
+              openPersistedPreview(result.plan, result.tool);
+            }}
+          />
+        ) : null}
+
+        <ChangePreviewDialog
+          preview={openPreview?.plan ?? null}
+          tool={openPreview?.tool ?? "claude"}
+          artifactKind="skill"
+          applying={applyMutation.isPending}
+          onClose={closePreview}
+          onApply={(previewId, tool) =>
+            applyMutation.mutate({
+              previewId,
+              tool,
+            })
+          }
         />
-      ) : null}
-
-      {openGithubImport ? (
-        <SkillGithubImportDialog
-          onClose={() => setOpenGithubImport(false)}
-          onImported={async () => {
-            await queryClient.invalidateQueries(
-              { queryKey: skillKeys.all },
-              { throwOnError: true },
-            );
-            notify({
-              kind: "success",
-              message:
-                "GitHub Skill 已复制到应用私有中央库；未执行脚本，也未自动分配或同步。",
-            });
-          }}
-        />
-      ) : null}
-
-      {importDialog.state ? (
-        <SkillImportDialog
-          key={importDialog.state.requestId}
-          tool={importDialog.state.tool}
-          requestId={importDialog.state.requestId}
-          onClose={importDialog.close}
-          onRescan={importDialog.rescan}
-          onImported={async (result) => {
-            await queryClient.invalidateQueries(
-              { queryKey: skillKeys.all },
-              { throwOnError: true },
-            );
-            notify({
-              kind: "success",
-              message: `已复制 ${result.createdCount} 项 Skill 到中央库；原有安装未变，尚未自动分配或同步。中央副本不会随原安装自动更新。`,
-            });
-            importDialog.close();
-          }}
-          onTakeoverPrepared={async (result) => {
-            await queryClient.invalidateQueries(
-              { queryKey: skillKeys.all },
-              { throwOnError: true },
-            );
-            notify({
-              kind: "success",
-              message: `已为 ${result.assignedCount + result.reusedCount} 项 Skill 准备接管；请审阅持久化预览后显式应用。`,
-            });
-            importDialog.close();
-            // 接管无条件进入预览，即使全局偏好是 direct 也不会自动 Apply。
-            openPersistedPreview(result.plan, result.tool);
-          }}
-        />
-      ) : null}
-
-      <ChangePreviewDialog
-        preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? "claude"}
-        artifactKind="skill"
-        applying={applyMutation.isPending}
-        onClose={closePreview}
-        onApply={(previewId, tool) =>
-          applyMutation.mutate({
-            previewId,
-            tool,
-          })
-        }
-      />
-    </main>
+      </main>
+    </>
   );
 }

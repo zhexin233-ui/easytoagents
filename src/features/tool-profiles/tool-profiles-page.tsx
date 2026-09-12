@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { commands, type Tool } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
 import { ProviderPanel } from "@/features/tool-profiles/provider-panel";
@@ -69,163 +70,158 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   // 不支持」的工具仍进入正常布局（状态区 + 全局提示词入口），但不渲染 Provider 面板。
   if (!metadata.capabilities.provider && !metadata.capabilities.promptGlobal) {
     return (
-      <main className="p-6 lg:p-8">
-        <div className="mx-auto max-w-6xl">
+      <>
+        <PageHeader title={title} />
+        <main className="max-w-6xl px-8 py-6">
           <BlockingState
             title={`${title} 渠道不受支持`}
             description={`${title} 仅支持 MCP 与 Skills；Provider、API Key 和模型设置不会被读取、创建、预览或应用。`}
             code="CURSOR_PROVIDER_UNSUPPORTED"
           />
-        </div>
-      </main>
+        </main>
+      </>
     );
   }
 
   return (
-    <main className="p-6 lg:p-8">
-      <header className="mx-auto max-w-6xl">
-        <p className="text-muted-foreground text-sm">工具配置</p>
-        <h1 className="mt-1 text-2xl font-semibold">{title}</h1>
-        <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          中央档案的 CRUD
-          不会直接改写原生配置；切换后先生成持久化预览，再由你确认 Apply。
-        </p>
-      </header>
-
-      <div className="mx-auto mt-6 max-w-6xl space-y-4" aria-live="polite">
-        {statusQuery.data ? (
-          <section className="bg-card rounded-lg border p-4 text-sm">
-            {statusQuery.data.availability === "installed" ? (
-              <p className="text-success font-medium">
-                已安全检测到 {title}
-                {statusQuery.data.installationVersion
-                  ? ` ${statusQuery.data.installationVersion}`
-                  : ""}
-              </p>
-            ) : null}
-            {statusQuery.data.availability === "unavailable" ? (
-              <p className="text-destructive font-medium">
-                未在发布进程的安全搜索路径中检测到 {title}
-                ；原生目标保持不可应用。
-              </p>
-            ) : null}
-            {statusQuery.data.availability === "unsupported" ? (
-              <p className="text-warning font-medium">
-                {title}
-                安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
-              </p>
-            ) : null}
-            {statusQuery.data.installationProbeDiagnostic ? (
-              <p className="text-warning mt-2 text-xs">
-                {installationProbeDiagnosticText(
-                  statusQuery.data.installationProbeDiagnostic,
-                )}
-                （诊断码：
-                <code>{statusQuery.data.installationProbeDiagnostic}</code>）
-              </p>
-            ) : null}
-            <p>{statusQuery.data.newSessionNotice}</p>
-            {statusQuery.data.bearerTokenWarning ? (
-              <p className="text-warning mt-2">
-                {statusQuery.data.bearerTokenWarning}
-              </p>
-            ) : null}
-            {statusQuery.data.promptOverride === "present" ? (
-              <p className="text-warning mt-2 font-medium">
-                检测到更高优先级的 Codex 指令来源（如 AGENTS.override.md）；当前
-                AGENTS.md 可能被遮蔽。
-              </p>
-            ) : null}
-            {statusQuery.data.promptOverride === "unknown" ? (
-              <p className="text-warning mt-2 font-medium">
-                无法安全确认 Codex 指令遮蔽状态，请检查 AGENTS.override.md
-                后再应用。
-              </p>
-            ) : null}
-            {statusQuery.data.providerPolicy === "blocked" ? (
-              <p className="text-destructive mt-2 font-medium">
-                Claude Provider 由宿主平台管理，本应用不会覆盖渠道配置。
-              </p>
-            ) : null}
-            {statusQuery.data.providerPolicy === "unknown" ? (
-              <p className="text-warning mt-2 font-medium">
-                无法确认 Claude Provider
-                是否由宿主管理；渠道预览将保持阻止状态。
-              </p>
-            ) : null}
-          </section>
-        ) : null}
-        {statusQuery.isPending ? (
-          <p role="status" className="bg-card rounded-lg border p-4 text-sm">
-            正在检测工具配置状态…
-          </p>
-        ) : null}
-        {statusQuery.isError ? (
-          <p
-            role="alert"
-            className={`rounded-lg border p-4 text-sm ${toneClass("destructive")}`}
-          >
-            {profileErrorText(statusQuery.error)}
-          </p>
-        ) : null}
-        {applyError ? (
-          <p
-            role="alert"
-            className={`rounded-lg border p-4 text-sm ${toneClass("destructive")}`}
-          >
-            {applyError}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="mx-auto mt-6 max-w-6xl">
-        {metadata.capabilities.provider ? (
-          <ProviderPanel
-            tool={tool}
-            directApply={directApply}
-            onPreview={() => requestPreview(tool, directApply)}
-          />
-        ) : null}
-        {!metadata.capabilities.provider &&
-        metadata.capabilities.promptGlobal ? (
-          <section
-            className="bg-card rounded-lg border p-4 text-sm"
-            aria-labelledby="tool-prompt-entry-title"
-          >
-            <h2 id="tool-prompt-entry-title" className="font-semibold">
-              {title} 提示词
-            </h2>
-            <p className="text-muted-foreground mt-2">
-              全局提示词使用官方规则文件合同管理，正文会在应用时写入受管
-              <code className="mx-1">.mdc</code> 文件。
+    <>
+      <PageHeader title={title} />
+      <main className="max-w-6xl space-y-6 px-8 py-6">
+        <div className="space-y-4" aria-live="polite">
+          {statusQuery.data ? (
+            <section className="bg-card rounded-lg border p-4 text-sm">
+              {statusQuery.data.availability === "installed" ? (
+                <p className="text-success font-medium">
+                  已安全检测到 {title}
+                  {statusQuery.data.installationVersion
+                    ? ` ${statusQuery.data.installationVersion}`
+                    : ""}
+                </p>
+              ) : null}
+              {statusQuery.data.availability === "unavailable" ? (
+                <p className="text-destructive font-medium">
+                  未在发布进程的安全搜索路径中检测到 {title}
+                  ；原生目标保持不可应用。
+                </p>
+              ) : null}
+              {statusQuery.data.availability === "unsupported" ? (
+                <p className="text-warning font-medium">
+                  {title}
+                  安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
+                </p>
+              ) : null}
+              {statusQuery.data.installationProbeDiagnostic ? (
+                <p className="text-warning mt-2 text-xs">
+                  {installationProbeDiagnosticText(
+                    statusQuery.data.installationProbeDiagnostic,
+                  )}
+                  （诊断码：
+                  <code>{statusQuery.data.installationProbeDiagnostic}</code>）
+                </p>
+              ) : null}
+              <p>{statusQuery.data.newSessionNotice}</p>
+              {statusQuery.data.bearerTokenWarning ? (
+                <p className="text-warning mt-2">
+                  {statusQuery.data.bearerTokenWarning}
+                </p>
+              ) : null}
+              {statusQuery.data.promptOverride === "present" ? (
+                <p className="text-warning mt-2 font-medium">
+                  检测到更高优先级的 Codex 指令来源（如
+                  AGENTS.override.md）；当前 AGENTS.md 可能被遮蔽。
+                </p>
+              ) : null}
+              {statusQuery.data.promptOverride === "unknown" ? (
+                <p className="text-warning mt-2 font-medium">
+                  无法安全确认 Codex 指令遮蔽状态，请检查 AGENTS.override.md
+                  后再应用。
+                </p>
+              ) : null}
+              {statusQuery.data.providerPolicy === "blocked" ? (
+                <p className="text-destructive mt-2 font-medium">
+                  Claude Provider 由宿主平台管理，本应用不会覆盖渠道配置。
+                </p>
+              ) : null}
+              {statusQuery.data.providerPolicy === "unknown" ? (
+                <p className="text-warning mt-2 font-medium">
+                  无法确认 Claude Provider
+                  是否由宿主管理；渠道预览将保持阻止状态。
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+          {statusQuery.isPending ? (
+            <p role="status" className="bg-card rounded-lg border p-4 text-sm">
+              正在检测工具配置状态…
             </p>
-            {statusQuery.data?.promptTargetPath ? (
-              <code className="mt-2 block text-xs break-all">
-                {statusQuery.data.promptTargetPath}
-              </code>
-            ) : null}
-            <Button asChild className="mt-3" size="sm" variant="outline">
-              <Link to="/prompts">管理提示词</Link>
-            </Button>
-          </section>
-        ) : null}
-      </div>
+          ) : null}
+          {statusQuery.isError ? (
+            <p
+              role="alert"
+              className={`rounded-lg border p-4 text-sm ${toneClass("destructive")}`}
+            >
+              {profileErrorText(statusQuery.error)}
+            </p>
+          ) : null}
+          {applyError ? (
+            <p
+              role="alert"
+              className={`rounded-lg border p-4 text-sm ${toneClass("destructive")}`}
+            >
+              {applyError}
+            </p>
+          ) : null}
+        </div>
 
-      <ChangePreviewDialog
-        preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? tool}
-        artifactKind="provider"
-        applying={applyMutation.isPending}
-        onClose={closePreview}
-        onApply={() => {
-          if (openPreview) {
-            applyMutation.mutate({
-              previewId: openPreview.plan.previewId,
-              tool: openPreview.tool,
-            });
-          }
-        }}
-      />
-    </main>
+        <div>
+          {metadata.capabilities.provider ? (
+            <ProviderPanel
+              tool={tool}
+              directApply={directApply}
+              onPreview={() => requestPreview(tool, directApply)}
+            />
+          ) : null}
+          {!metadata.capabilities.provider &&
+          metadata.capabilities.promptGlobal ? (
+            <section
+              className="bg-card rounded-lg border p-4 text-sm"
+              aria-labelledby="tool-prompt-entry-title"
+            >
+              <h2 id="tool-prompt-entry-title" className="font-semibold">
+                {title} 提示词
+              </h2>
+              <p className="text-muted-foreground mt-2">
+                全局提示词使用官方规则文件合同管理，正文会在应用时写入受管
+                <code className="mx-1">.mdc</code> 文件。
+              </p>
+              {statusQuery.data?.promptTargetPath ? (
+                <code className="mt-2 block text-xs break-all">
+                  {statusQuery.data.promptTargetPath}
+                </code>
+              ) : null}
+              <Button asChild className="mt-3" size="sm" variant="outline">
+                <Link to="/prompts">管理提示词</Link>
+              </Button>
+            </section>
+          ) : null}
+        </div>
+
+        <ChangePreviewDialog
+          preview={openPreview?.plan ?? null}
+          tool={openPreview?.tool ?? tool}
+          artifactKind="provider"
+          applying={applyMutation.isPending}
+          onClose={closePreview}
+          onApply={() => {
+            if (openPreview) {
+              applyMutation.mutate({
+                previewId: openPreview.plan.previewId,
+                tool: openPreview.tool,
+              });
+            }
+          }}
+        />
+      </main>
+    </>
   );
 }

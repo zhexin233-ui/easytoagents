@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   commands,
   type ArtifactKind,
@@ -9,6 +9,7 @@ import {
 } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { PageHeader } from "@/components/page-header";
 import { ToolIconToggle } from "@/components/tool-icon-toggle";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
@@ -148,275 +149,281 @@ export function ProjectDetailPage() {
 
   if (projectQuery.isPending) {
     return (
-      <main className="p-6 lg:p-8">
-        <p role="status">正在读取项目详情…</p>
-      </main>
+      <>
+        <PageHeader title="项目详情" />
+        <main className="max-w-6xl px-8 py-6">
+          <p role="status">正在读取项目详情…</p>
+        </main>
+      </>
     );
   }
   if (projectQuery.isError || !projectQuery.data) {
     return (
-      <main className="p-6 lg:p-8">
-        <BlockingState
-          title="项目详情不可用"
-          description={
-            profileErrorText(projectQuery.error) ?? "项目不存在或已移除。"
-          }
-          actionLabel="返回项目列表"
-          onAction={() => void navigate("/projects")}
-        />
-      </main>
+      <>
+        <PageHeader title="项目详情" />
+        <main className="max-w-6xl px-8 py-6">
+          <BlockingState
+            title="项目详情不可用"
+            description={
+              profileErrorText(projectQuery.error) ?? "项目不存在或已移除。"
+            }
+            actionLabel="返回项目列表"
+            onAction={() => void navigate("/projects")}
+          />
+        </main>
+      </>
     );
   }
   const project = projectQuery.data;
 
   return (
-    <main className="p-6 lg:p-8">
-      <header className="mx-auto max-w-6xl">
-        <Link className="text-sm underline" to="/projects">
-          ← 返回项目列表
-        </Link>
-        <h1 className="mt-4 text-2xl font-semibold">{project.displayName}</h1>
-        <code className="mt-2 block text-xs break-all">{project.rootPath}</code>
-        <p className="text-muted-foreground mt-2 text-sm">
-          Git：{project.gitStatus} · Codex trust：{project.codexTrustStatus} ·
-          Claude policy：{project.claudePolicyStatus}
-        </p>
-      </header>
-
-      <div className="mx-auto mt-5 max-w-6xl space-y-3" aria-live="polite">
-        {project.pathStatus !== "valid" ? (
-          <BlockingState
-            title="项目根不可安全使用"
-            description="重新扫描确认路径恢复前，所有项目预览与应用都会被阻止。"
-            code={project.pathStatus}
-          />
-        ) : null}
-        {applyMutation.isError ? (
-          <BlockingState
-            title="应用项目预览失败"
-            description={profileErrorText(applyMutation.error) ?? "应用失败"}
-          />
-        ) : null}
-      </div>
-
-      {project.targets.some(
-        (target) =>
-          enabledTools.has(target.tool) &&
-          isProjectResourceKind(target.artifactKind),
-      ) ? (
-        <section
-          className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-          aria-labelledby="project-status-title"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <h2 id="project-status-title" className="text-lg font-semibold">
-              工具配置状态
-            </h2>
-            <button
-              type="button"
-              aria-controls="project-status-content"
-              aria-expanded={toolStatusOpen}
-              aria-label={
-                toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"
-              }
-              title={toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"}
-              className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded transition-colors"
-              onClick={() => setToolStatusOpen((open) => !open)}
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={cn(
-                  "size-4 transition-transform",
-                  toolStatusOpen && "rotate-90",
-                )}
-              >
-                <path d="M6 3.5 10.5 8 6 12.5" />
-              </svg>
-            </button>
+    <>
+      <PageHeader
+        title={project.displayName}
+        backTo="/projects"
+        meta={
+          <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <code className="break-all">{project.rootPath}</code>
+            <span>Git：{project.gitStatus}</span>
+            <span>Codex trust：{project.codexTrustStatus}</span>
+            <span>Claude policy：{project.claudePolicyStatus}</span>
           </div>
-          {toolStatusOpen ? (
-            <div
-              id="project-status-content"
-              className="mt-4 grid gap-3 md:grid-cols-2"
-            >
-              {project.targets
-                .filter(
-                  (target) =>
-                    enabledTools.has(target.tool) &&
-                    isProjectResourceKind(target.artifactKind),
-                )
-                .map((target) => {
-                  const initialUnmanaged =
-                    target.diagnosticCode ===
-                    "PROJECT_TARGET_INITIAL_UNMANAGED";
-                  return (
-                    <article
-                      key={`${target.tool}-${target.artifactKind}`}
-                      className="rounded-lg border p-4"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-medium">
-                          {toolLabel(target.tool)} ·{" "}
-                          {artifactLabel(target.artifactKind)}
-                        </p>
-                        {initialUnmanaged ? (
-                          <SyncStatusBadge
-                            status={target.status}
-                            label="○ 未纳管"
-                            tone="muted"
-                          />
-                        ) : (
-                          <SyncStatusBadge status={target.status} />
-                        )}
-                      </div>
-                      <code className="mt-2 block text-xs break-all">
-                        {target.targetPath ?? "目标路径不可用"}
-                      </code>
-                      {initialUnmanaged ? (
-                        <p className="text-muted-foreground mt-2 text-xs">
-                          该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
-                        </p>
-                      ) : target.diagnosticCode ? (
-                        <p className="mt-2 text-xs">
-                          诊断：{target.diagnosticCode}
-                        </p>
-                      ) : null}
-                    </article>
-                  );
-                })}
-            </div>
+        }
+      />
+      <main className="max-w-6xl space-y-6 px-8 py-6">
+        <div className="space-y-3" aria-live="polite">
+          {project.pathStatus !== "valid" ? (
+            <BlockingState
+              title="项目目录不可用"
+              description="请重新扫描确认路径。"
+              code={project.pathStatus}
+            />
           ) : null}
-        </section>
-      ) : null}
+          {applyMutation.isError ? (
+            <BlockingState
+              title="应用项目预览失败"
+              description={profileErrorText(applyMutation.error) ?? "应用失败"}
+            />
+          ) : null}
+        </div>
 
-      <section
-        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-        aria-labelledby="project-resource-management-title"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
+        {project.targets.some(
+          (target) =>
+            enabledTools.has(target.tool) &&
+            isProjectResourceKind(target.artifactKind),
+        ) ? (
+          <section
+            className="bg-card rounded-xl border p-5"
+            aria-labelledby="project-status-title"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h2
+                id="project-status-title"
+                className="text-[15px] font-semibold"
+              >
+                工具配置状态
+              </h2>
+              <button
+                type="button"
+                aria-controls="project-status-content"
+                aria-expanded={toolStatusOpen}
+                aria-label={
+                  toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"
+                }
+                title={toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"}
+                className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded transition-colors"
+                onClick={() => setToolStatusOpen((open) => !open)}
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={cn(
+                    "size-4 transition-transform",
+                    toolStatusOpen && "rotate-90",
+                  )}
+                >
+                  <path d="M6 3.5 10.5 8 6 12.5" />
+                </svg>
+              </button>
+            </div>
+            {toolStatusOpen ? (
+              <div
+                id="project-status-content"
+                className="mt-4 grid gap-3 md:grid-cols-2"
+              >
+                {project.targets
+                  .filter(
+                    (target) =>
+                      enabledTools.has(target.tool) &&
+                      isProjectResourceKind(target.artifactKind),
+                  )
+                  .map((target) => {
+                    const initialUnmanaged =
+                      target.diagnosticCode ===
+                      "PROJECT_TARGET_INITIAL_UNMANAGED";
+                    return (
+                      <article
+                        key={`${target.tool}-${target.artifactKind}`}
+                        className="rounded-lg border p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-medium">
+                            {toolLabel(target.tool)} ·{" "}
+                            {artifactLabel(target.artifactKind)}
+                          </p>
+                          {initialUnmanaged ? (
+                            <SyncStatusBadge
+                              status={target.status}
+                              label="○ 未纳管"
+                              tone="muted"
+                            />
+                          ) : (
+                            <SyncStatusBadge status={target.status} />
+                          )}
+                        </div>
+                        <code className="mt-2 block text-xs break-all">
+                          {target.targetPath ?? "目标路径不可用"}
+                        </code>
+                        {initialUnmanaged ? (
+                          <p className="text-muted-foreground mt-2 text-xs">
+                            该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
+                          </p>
+                        ) : target.diagnosticCode ? (
+                          <p className="mt-2 text-xs">
+                            诊断：{target.diagnosticCode}
+                          </p>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        <section
+          className="bg-card rounded-xl border p-5"
+          aria-labelledby="project-resource-management-title"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <h2
               id="project-resource-management-title"
-              className="text-lg font-semibold"
+              className="text-[15px] font-semibold"
             >
               项目资源管理
             </h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              分别选择资源类型与目标平台，当前只展示一个管理组合。
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div
-              className="flex items-center gap-2"
-              role="group"
-              aria-label="项目资源管理视图"
-            >
-              {visibleResourceViews.map((view) => (
-                <Button
-                  key={view.id}
-                  type="button"
-                  size="sm"
-                  variant={
-                    activeResourceView === view.id ? "default" : "outline"
-                  }
-                  aria-label={view.ariaLabel}
-                  aria-pressed={activeResourceView === view.id}
-                  onClick={() => changeResourceView(view.id)}
-                >
-                  {view.label}
-                </Button>
-              ))}
-            </div>
-            <div
-              className="flex items-center gap-2"
-              role="group"
-              aria-label="项目平台管理视图"
-            >
-              {visibleTools.map((tool) => (
-                <ProjectToolViewButton
-                  key={tool}
-                  tool={tool}
-                  selected={activeTool === tool}
-                  onClick={() => changeToolView(tool)}
-                />
-              ))}
+            <div className="flex flex-wrap items-center gap-3">
+              <div
+                className="flex items-center gap-2"
+                role="group"
+                aria-label="项目资源管理视图"
+              >
+                {visibleResourceViews.map((view) => (
+                  <Button
+                    key={view.id}
+                    type="button"
+                    size="sm"
+                    variant={
+                      activeResourceView === view.id ? "default" : "outline"
+                    }
+                    aria-label={view.ariaLabel}
+                    aria-pressed={activeResourceView === view.id}
+                    onClick={() => changeResourceView(view.id)}
+                  >
+                    {view.label}
+                  </Button>
+                ))}
+              </div>
+              <div
+                className="flex items-center gap-2"
+                role="group"
+                aria-label="项目平台管理视图"
+              >
+                {visibleTools.map((tool) => (
+                  <ProjectToolViewButton
+                    key={tool}
+                    tool={tool}
+                    selected={activeTool === tool}
+                    onClick={() => changeToolView(tool)}
+                  />
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <div className="mx-auto mt-6 max-w-6xl">
-        <section key={viewKey} className="space-y-5">
-          {writerBlocked ? (
-            <BlockingState
-              title="存在未完成的写入或回滚失败"
-              description="当前有 applying、restoring 或 rollback_failed 的同步运行。项目原生资源禁用与恢复已被全局阻断，请先处理恢复计划。"
-              code={interruptedQuery.data?.status ?? "WRITE_IN_PROGRESS"}
-            />
-          ) : null}
-          <ProjectNativeResources
-            project={project}
-            tool={activeTool}
-            artifactKind={activeResourceView}
-            writerBlocked={writerBlocked}
-            applyPending={applyMutation.isPending}
-            onPreview={handleNativePreview}
-          />
-          <h2 className="text-xl font-semibold">
-            {toolLabel(activeTool)}{" "}
-            {activeResourceView === "mcp"
-              ? "MCP"
-              : activeResourceView === "hook"
-                ? "Hook"
-                : "Skill"}{" "}
-            项目追加
-          </h2>
-          {activeResourceView === "mcp" ? (
-            <ProjectMcpAssignments
-              project={project}
-              tool={activeTool}
-              directApply={directApply}
-              onMessage={(message) => notify({ kind: "success", message })}
-            />
-          ) : activeResourceView === "hook" ? (
-            <ProjectHookAssignments
-              project={project}
-              tool={activeTool}
-              directApply={directApply}
-              onMessage={(message) => notify({ kind: "success", message })}
-            />
-          ) : (
-            <ProjectSkillAssignments
-              project={project}
-              tool={activeTool}
-              directApply={directApply}
-              onMessage={(message) => notify({ kind: "success", message })}
-            />
-          )}
         </section>
-      </div>
 
-      <ChangePreviewDialog
-        preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? "claude"}
-        artifactKind={openPreview?.artifactKind ?? "mcp"}
-        applying={applyMutation.isPending}
-        onClose={() => {
-          if (applyMutation.isPending) return;
-          setOpenPreview(null);
-        }}
-        onApply={() => {
-          if (!openPreview) return;
-          applyMutation.mutate(openPreview);
-        }}
-      />
-    </main>
+        <div>
+          <section key={viewKey} className="space-y-5">
+            {writerBlocked ? (
+              <BlockingState
+                title="存在未完成的写入或回滚失败"
+                description="有同步正在进行或回滚失败，请先在恢复点中处理。"
+                code={interruptedQuery.data?.status ?? "WRITE_IN_PROGRESS"}
+              />
+            ) : null}
+            <ProjectNativeResources
+              project={project}
+              tool={activeTool}
+              artifactKind={activeResourceView}
+              writerBlocked={writerBlocked}
+              applyPending={applyMutation.isPending}
+              onPreview={handleNativePreview}
+            />
+            <h2 className="text-[15px] font-semibold">
+              {toolLabel(activeTool)}{" "}
+              {activeResourceView === "mcp"
+                ? "MCP"
+                : activeResourceView === "hook"
+                  ? "Hook"
+                  : "Skill"}{" "}
+              项目追加
+            </h2>
+            {activeResourceView === "mcp" ? (
+              <ProjectMcpAssignments
+                project={project}
+                tool={activeTool}
+                directApply={directApply}
+                onMessage={(message) => notify({ kind: "success", message })}
+              />
+            ) : activeResourceView === "hook" ? (
+              <ProjectHookAssignments
+                project={project}
+                tool={activeTool}
+                directApply={directApply}
+                onMessage={(message) => notify({ kind: "success", message })}
+              />
+            ) : (
+              <ProjectSkillAssignments
+                project={project}
+                tool={activeTool}
+                directApply={directApply}
+                onMessage={(message) => notify({ kind: "success", message })}
+              />
+            )}
+          </section>
+        </div>
+
+        <ChangePreviewDialog
+          preview={openPreview?.plan ?? null}
+          tool={openPreview?.tool ?? "claude"}
+          artifactKind={openPreview?.artifactKind ?? "mcp"}
+          applying={applyMutation.isPending}
+          onClose={() => {
+            if (applyMutation.isPending) return;
+            setOpenPreview(null);
+          }}
+          onApply={() => {
+            if (!openPreview) return;
+            applyMutation.mutate(openPreview);
+          }}
+        />
+      </main>
+    </>
   );
 }
 

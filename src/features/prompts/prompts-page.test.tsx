@@ -195,7 +195,7 @@ describe("PromptsPage", () => {
       "aria-hidden",
       "true",
     );
-    const trigger = within(section).getByRole("button", {
+    const trigger = screen.getByRole("button", {
       name: "新增提示词",
     });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -511,12 +511,12 @@ describe("PromptsPage", () => {
     });
     renderPromptsPage();
     const section = promptSection();
-    await within(section).findByText(/尚无提示词档案/);
+    await within(section).findByText("尚无提示词");
     vi.mocked(commands.listPromptProfiles).mockImplementationOnce(async () => {
       await refresh.promise;
       return { status: "ok", data: [promptProfile] };
     });
-    const trigger = within(section).getByRole("button", {
+    const trigger = screen.getByRole("button", {
       name: "新增提示词",
     });
     trigger.focus();
@@ -593,14 +593,12 @@ describe("PromptsPage", () => {
     });
     renderPromptsPage();
     const section = promptSection();
-    await within(section).findByText(/尚无提示词档案/);
+    await within(section).findByText("尚无提示词");
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",
       data: [makePromptProfile({ ...promptProfile, name: "代码审查" })],
     });
-    fireEvent.click(
-      within(section).getByRole("button", { name: "新增提示词" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "新增提示词" }));
     const createDialog = screen.getByRole("dialog", { name: "新增提示词" });
     fireEvent.change(within(createDialog).getByLabelText("名称"), {
       target: { value: "代码审查" },

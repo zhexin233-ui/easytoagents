@@ -83,26 +83,28 @@
 
 ## 阶段 4：共享组件与页面骨架
 
-- [ ] 4.1 新增 `src/components/page-header.tsx`（design §5.1：title/meta/actions/
+- [x] 4.1 新增 `src/components/page-header.tsx`（design §5.1：title/meta/actions/
       children/backTo，`sticky top-0 backdrop-blur`，**无 description**）与
       `page-header.test.tsx`（渲染 h1、actions、meta、backTo 链接目标、children）。
-- [ ] 4.2 新增 `src/components/empty-state.tsx`（design §5.2）与 `empty-state.test.tsx`
+- [x] 4.2 新增 `src/components/empty-state.tsx`（design §5.2）与 `empty-state.test.tsx`
       （标题、说明、action 渲染）。
-- [ ] 4.3 逐页替换 `<main className="p-6 lg:p-8">` + 眉标 + h1 + 说明段为
+- [x] 4.3 逐页替换 `<main className="p-6 lg:p-8">` + 眉标 + h1 + 说明段为
       `<PageHeader>` + `<main className="max-w-6xl px-8 py-6 space-y-6">`；删除各
       section 上的 `mx-auto max-w-6xl`；操作按钮搬入 `actions`，tab/过滤条搬入 `children`：
-  - [ ] dashboard-page.tsx（`RefreshEnvironmentButton` 改 ghost/icon 形态）
-  - [ ] prompts-page.tsx
-  - [ ] mcp-page.tsx
-  - [ ] hooks-page.tsx
-  - [ ] skills-page.tsx
-  - [ ] projects-page.tsx
-  - [ ] projects/detail/page.tsx（`backTo="/projects"` 替代下划线"← 返回"；meta =
+  - [x] dashboard-page.tsx（`RefreshEnvironmentButton` 改 ghost/icon 形态）
+  - [x] prompts-page.tsx
+  - [x] mcp-page.tsx
+  - [x] hooks-page.tsx
+  - [x] skills-page.tsx
+  - [x] projects-page.tsx
+  - [x] projects/detail/page.tsx（`backTo="/projects"` 替代下划线"← 返回"；meta =
         路径 + Git/Trust chip；loading/error 两个早返回分支也走 PageHeader）
-  - [ ] tool-profiles-page.tsx（两个 return 分支）
-- [ ] 4.4 8 处空状态替换为 `EmptyState`（位置见 layout-audit C7），每处保留一个明确
+  - [x] tool-profiles-page.tsx（两个 return 分支）
+      （注：hooks 页工具页签搬入 PageHeader children；项目详情页"项目资源管理"
+      分组控件按 copy-audit 保留在 section 内，仅删说明段。）
+- [x] 4.4 8 处空状态替换为 `EmptyState`（位置见 layout-audit C7），每处保留一个明确
       下一步操作。
-- [ ] 4.5 标题阶梯统一：section h2 `text-[15px] font-semibold`、卡内 h3
+- [x] 4.5 标题阶梯统一：section h2 `text-[15px] font-semibold`、卡内 h3
       `text-[13px] font-medium`、分组标签 `text-[11px] font-semibold uppercase tracking-wide`。
 
 验证：`pnpm lint && pnpm typecheck && pnpm test --run`；8 个页面在 Tauri 窗口深浅主题

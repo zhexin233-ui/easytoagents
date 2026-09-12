@@ -159,9 +159,7 @@ describe("全局 Skills 检测与复制导入", () => {
         data: { tool, createdCount: 1 },
       });
       const { client } = renderPage();
-      expect(
-        await screen.findByText(/尚无 Skill。可在下方全局目标卡片/),
-      ).toBeVisible();
+      expect(await screen.findByText("尚无 Skill")).toBeVisible();
       expect(commands.discoverSkillImport).not.toHaveBeenCalled();
       const trigger = await screen.findByRole("button", {
         name: `检测并导入 ${toolMetadata(tool).label} 全局 Skills`,

@@ -11,6 +11,8 @@ import {
   CentralListCardFooter,
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
+import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
@@ -258,36 +260,27 @@ export function McpPage() {
   });
 
   return (
-    <main className="p-6 lg:p-8">
-      <header className="mx-auto max-w-6xl">
-        <p className="text-muted-foreground text-sm">中央配置库</p>
-        <h1 className="mt-1 text-2xl font-semibold">MCP</h1>
-        <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          MCP 的 CRUD、启停和分配只更新中央意图。header、env
-          与识别出的敏感扩展不会从后端回填到普通
-          DTO；原生写入必须经过持久化预览。
-        </p>
-      </header>
-
-      <div className="mx-auto mt-6 max-w-6xl">
+    <>
+      <PageHeader
+        title="MCP"
+        actions={
+          <>
+            <CentralListLayoutToggle
+              value={listLayout}
+              onChange={setListLayout}
+            />
+            <Button onClick={() => openForm(emptyMcpForm)}>新增 MCP</Button>
+          </>
+        }
+      />
+      <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
           className="bg-card rounded-xl border p-5"
           aria-labelledby="mcp-list-title"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 id="mcp-list-title" className="text-lg font-semibold">
-              中央列表
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <CentralListLayoutToggle
-                value={listLayout}
-                onChange={setListLayout}
-              />
-              <Button size="sm" onClick={() => openForm(emptyMcpForm)}>
-                新增 MCP
-              </Button>
-            </div>
-          </div>
+          <h2 id="mcp-list-title" className="text-[15px] font-semibold">
+            中央列表
+          </h2>
           {serversQuery.isPending ? (
             <p role="status" className="mt-4 text-sm">
               正在读取 MCP…
@@ -299,10 +292,9 @@ export function McpPage() {
             </p>
           ) : null}
           {serversQuery.data?.length === 0 ? (
-            <p className="text-muted-foreground mt-4 text-sm">
-              中央库尚无 MCP。点击“新增
-              MCP”创建，或通过全局目标中的“检测并导入已有 MCP”纳入已有工具配置。
-            </p>
+            <div className="mt-4">
+              <EmptyState title="尚无 MCP" description="可新增或从工具导入。" />
+            </div>
           ) : null}
           <CentralList layout={listLayout}>
             {serversQuery.data?.map((server) => {
@@ -447,171 +439,175 @@ export function McpPage() {
             })}
           </CentralList>
         </section>
-      </div>
 
-      <section
-        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-        aria-labelledby="mcp-target-title"
-      >
-        <h2 id="mcp-target-title" className="text-lg font-semibold">
-          全局目标状态
-        </h2>
-        {statusesQuery.isPending ? (
-          <p role="status" className="mt-3 text-sm">
-            正在检测全局 MCP 目标…
-          </p>
-        ) : null}
-        {statusesQuery.isError ? (
-          <p role="alert" className="text-destructive mt-3 text-sm">
-            {profileErrorText(statusesQuery.error)}
-          </p>
-        ) : null}
-        {statusesQuery.data != null && visibleStatuses?.length === 0 ? (
-          <p className="text-muted-foreground mt-3 text-sm">
-            当前没有可检查的全局 MCP 目标。
-          </p>
-        ) : null}
-        {visibleStatuses && visibleStatuses.length > 0 ? (
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {visibleStatuses.map((status) => {
-              const presentation = globalTargetStatusPresentation(
-                status.status,
-                status.diagnosticCode,
-                { directApply },
-              );
-              return (
-                <article
-                  key={status.tool}
-                  className="rounded-lg border p-4 text-sm"
-                >
-                  <p className="font-medium">
-                    {toolMetadata(status.tool).label}
-                  </p>
-                  <code className="mt-2 block text-xs break-all">
-                    {status.targetPath ?? "目标位置未经 capability probe 证明"}
-                  </code>
-                  <div className="mt-2">
-                    <SyncStatusBadge
-                      label={presentation.label}
-                      status={status.status}
-                      tone={presentation.tone}
-                    />
-                  </div>
-                  {presentation.description ? (
-                    <p className="text-muted-foreground mt-2 text-xs">
-                      {presentation.description}
-                    </p>
-                  ) : null}
-                  {status.diagnosticCode ? (
-                    <p className="text-warning mt-2 text-xs">
-                      诊断码：<code>{status.diagnosticCode}</code>
-                    </p>
-                  ) : null}
-                  <Button
-                    className="mt-3 mr-2"
-                    size="sm"
-                    variant="outline"
-                    disabled={presentation.previewBlocked}
-                    onClick={() => {
-                      if (importDialog.state) return;
-                      importDialog.open(status.tool);
-                    }}
+        <section
+          className="bg-card rounded-xl border p-5"
+          aria-labelledby="mcp-target-title"
+        >
+          <h2 id="mcp-target-title" className="text-[15px] font-semibold">
+            全局目标状态
+          </h2>
+          {statusesQuery.isPending ? (
+            <p role="status" className="mt-3 text-sm">
+              正在检测全局 MCP 目标…
+            </p>
+          ) : null}
+          {statusesQuery.isError ? (
+            <p role="alert" className="text-destructive mt-3 text-sm">
+              {profileErrorText(statusesQuery.error)}
+            </p>
+          ) : null}
+          {statusesQuery.data != null && visibleStatuses?.length === 0 ? (
+            <p className="text-muted-foreground mt-3 text-sm">
+              当前没有可检查的全局 MCP 目标。
+            </p>
+          ) : null}
+          {visibleStatuses && visibleStatuses.length > 0 ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {visibleStatuses.map((status) => {
+                const presentation = globalTargetStatusPresentation(
+                  status.status,
+                  status.diagnosticCode,
+                  { directApply },
+                );
+                return (
+                  <article
+                    key={status.tool}
+                    className="rounded-lg border p-4 text-sm"
                   >
-                    检测并导入已有 MCP
-                  </Button>
-                  {!directApply ? (
+                    <p className="font-medium">
+                      {toolMetadata(status.tool).label}
+                    </p>
+                    <code className="mt-2 block text-xs break-all">
+                      {status.targetPath ??
+                        "目标位置未经 capability probe 证明"}
+                    </code>
+                    <div className="mt-2">
+                      <SyncStatusBadge
+                        label={presentation.label}
+                        status={status.status}
+                        tone={presentation.tone}
+                      />
+                    </div>
+                    {presentation.description ? (
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        {presentation.description}
+                      </p>
+                    ) : null}
+                    {status.diagnosticCode ? (
+                      <p className="text-warning mt-2 text-xs">
+                        诊断码：<code>{status.diagnosticCode}</code>
+                      </p>
+                    ) : null}
                     <Button
-                      className="mt-3"
+                      className="mt-3 mr-2"
                       size="sm"
-                      disabled={
-                        previewMutation.isPending || presentation.previewBlocked
-                      }
-                      onClick={() => requestPreview(status.tool, directApply)}
+                      variant="outline"
+                      disabled={presentation.previewBlocked}
+                      onClick={() => {
+                        if (importDialog.state) return;
+                        importDialog.open(status.tool);
+                      }}
                     >
-                      {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
+                      检测并导入已有 MCP
                     </Button>
-                  ) : null}
-                </article>
-              );
-            })}
-          </div>
+                    {!directApply ? (
+                      <Button
+                        className="mt-3"
+                        size="sm"
+                        disabled={
+                          previewMutation.isPending ||
+                          presentation.previewBlocked
+                        }
+                        onClick={() => requestPreview(status.tool, directApply)}
+                      >
+                        {previewMutation.isPending
+                          ? "正在生成…"
+                          : "生成全局预览"}
+                      </Button>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+
+        {formOpen ? (
+          <McpFormDialog
+            // 按记录 id 重挂载：切换编辑对象时草稿与本地校验错误必定重置，不依赖弹窗先关闭。
+            key={formInitial.id ?? "new"}
+            initialState={formInitial}
+            directApply={directApply}
+            pending={saveMutation.isPending}
+            saveError={profileErrorText(saveMutation.error)}
+            onClose={closeForm}
+            onSubmit={(state) => {
+              if (submitGuard.isInFlight() || saveMutation.isPending) return;
+              saveMutation.reset();
+              if (!submitGuard.begin()) return;
+              saveMutation.mutate({
+                state,
+                globalTools: state.id
+                  ? (serversQuery.data?.find((item) => item.id === state.id)
+                      ?.globalTools ?? [])
+                  : [],
+              });
+            }}
+          />
         ) : null}
-      </section>
 
-      {formOpen ? (
-        <McpFormDialog
-          // 按记录 id 重挂载：切换编辑对象时草稿与本地校验错误必定重置，不依赖弹窗先关闭。
-          key={formInitial.id ?? "new"}
-          initialState={formInitial}
-          directApply={directApply}
-          pending={saveMutation.isPending}
-          saveError={profileErrorText(saveMutation.error)}
-          onClose={closeForm}
-          onSubmit={(state) => {
-            if (submitGuard.isInFlight() || saveMutation.isPending) return;
-            saveMutation.reset();
-            if (!submitGuard.begin()) return;
-            saveMutation.mutate({
-              state,
-              globalTools: state.id
-                ? (serversQuery.data?.find((item) => item.id === state.id)
-                    ?.globalTools ?? [])
-                : [],
-            });
-          }}
-        />
-      ) : null}
-
-      {importDialog.state ? (
-        <McpImportDialog
-          key={importDialog.state.requestId}
-          tool={importDialog.state.tool}
-          requestId={importDialog.state.requestId}
-          onClose={importDialog.close}
-          onRescan={importDialog.rescan}
-          onImported={async (result) => {
-            importDialog.close();
-            await invalidateMcp();
-            const summary = `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。`;
-            if (!directApply) {
+        {importDialog.state ? (
+          <McpImportDialog
+            key={importDialog.state.requestId}
+            tool={importDialog.state.tool}
+            requestId={importDialog.state.requestId}
+            onClose={importDialog.close}
+            onRescan={importDialog.rescan}
+            onImported={async (result) => {
+              importDialog.close();
+              await invalidateMcp();
+              const summary = `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。`;
+              if (!directApply) {
+                notify({
+                  kind: "success",
+                  message: `${summary}原生配置未改写，请单独生成全局预览。`,
+                });
+                return;
+              }
               notify({
                 kind: "success",
-                message: `${summary}原生配置未改写，请单独生成全局预览。`,
+                message: `${summary}正在自动同步写入。`,
               });
-              return;
+              await previewMutation
+                .mutateAsync({ tool: result.tool, autoApply: true })
+                .catch(() => undefined);
+            }}
+          />
+        ) : null}
+
+        <ChangePreviewDialog
+          preview={openPreview?.plan ?? null}
+          tool={openPreview?.tool ?? "claude"}
+          artifactKind="mcp"
+          applying={applyMutation.isPending}
+          readopting={readoptMutation.isPending}
+          onReadopt={() => {
+            if (openPreview) {
+              readoptMutation.mutate(openPreview.tool);
             }
-            notify({
-              kind: "success",
-              message: `${summary}正在自动同步写入。`,
-            });
-            await previewMutation
-              .mutateAsync({ tool: result.tool, autoApply: true })
-              .catch(() => undefined);
+          }}
+          onClose={closePreview}
+          onApply={() => {
+            if (openPreview) {
+              applyMutation.mutate({
+                previewId: openPreview.plan.previewId,
+                tool: openPreview.tool,
+              });
+            }
           }}
         />
-      ) : null}
-
-      <ChangePreviewDialog
-        preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? "claude"}
-        artifactKind="mcp"
-        applying={applyMutation.isPending}
-        readopting={readoptMutation.isPending}
-        onReadopt={() => {
-          if (openPreview) {
-            readoptMutation.mutate(openPreview.tool);
-          }
-        }}
-        onClose={closePreview}
-        onApply={() => {
-          if (openPreview) {
-            applyMutation.mutate({
-              previewId: openPreview.plan.previewId,
-              tool: openPreview.tool,
-            });
-          }
-        }}
-      />
-    </main>
+      </main>
+    </>
   );
 }

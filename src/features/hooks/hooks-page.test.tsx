@@ -202,7 +202,7 @@ describe("HooksPage 中央列表", () => {
 
   it("空库展示引导文案与四工具全局目标状态", async () => {
     renderPage();
-    expect(await screen.findByText(/中央库尚无 Hook/)).toBeInTheDocument();
+    expect(await screen.findByText("尚无 Hook")).toBeInTheDocument();
     for (const tool of ["claude", "codex", "cursor", "zcode"] as const) {
       const card = await statusCard(tool);
       expect(card).toHaveTextContent(

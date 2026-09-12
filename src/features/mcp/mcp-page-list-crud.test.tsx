@@ -208,10 +208,10 @@ describe("McpPage", () => {
       '[data-slot="central-list-card-actions"]',
     );
     if (!body || !footer) throw new Error("未找到 MCP 卡片主体或操作栏");
-    const listButton = within(section).getByRole("button", {
+    const listButton = screen.getByRole("button", {
       name: "单列显示",
     });
-    const gridButton = within(section).getByRole("button", {
+    const gridButton = screen.getByRole("button", {
       name: "三列网格显示",
     });
 

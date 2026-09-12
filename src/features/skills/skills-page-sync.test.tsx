@@ -73,9 +73,7 @@ describe("SkillsPage", () => {
     await waitFor(() => expect(reopened).not.toBeInTheDocument());
     expect(listTrigger).toHaveFocus();
     expect(commands.adoptSkillContent).not.toHaveBeenCalled();
-    fireEvent.click(
-      within(section).getByRole("button", { name: "三列网格显示" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "三列网格显示" }));
     const gridTrigger = within(section).getByRole("button", {
       name: "同步更改",
     });

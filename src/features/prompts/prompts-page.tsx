@@ -21,7 +21,9 @@ import {
   CentralListCardFooter,
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
+import { EmptyState } from "@/components/empty-state";
 import { FormDialog } from "@/components/form-dialog";
+import { PageHeader } from "@/components/page-header";
 import { PlatformAssignmentButton } from "@/components/platform-assignment-button";
 import { Button } from "@/components/ui/button";
 import { useNotify } from "@/components/use-notify";
@@ -295,39 +297,27 @@ export function PromptsPage() {
   };
 
   return (
-    <main className="p-6 lg:p-8">
-      <header className="mx-auto max-w-6xl">
-        <p className="text-muted-foreground text-sm">提示词</p>
-        <h1 className="mt-1 text-2xl font-semibold">全局提示词档案</h1>
-        <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          集中维护提示词指令文档，并按工具通过图标启用或停用（每个工具同时只有一份生效，启用新档案会自动替换原生效档案）。中央修改不会直接改写原生配置，同步需经持久化预览确认。
-        </p>
-      </header>
-
-      <div className="mx-auto mt-6 max-w-6xl">
+    <>
+      <PageHeader
+        title="全局提示词档案"
+        actions={
+          <>
+            <CentralListLayoutToggle
+              value={listLayout}
+              onChange={setListLayout}
+            />
+            <Button onClick={() => openForm(null)}>新增提示词</Button>
+          </>
+        }
+      />
+      <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
           className="bg-card rounded-xl border p-5"
           aria-labelledby="prompt-list-title"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 id="prompt-list-title" className="text-xl font-semibold">
-                中央列表
-              </h2>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Markdown 正文原样写入工具的全局指令文件。
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <CentralListLayoutToggle
-                value={listLayout}
-                onChange={setListLayout}
-              />
-              <Button size="sm" onClick={() => openForm(null)}>
-                新增提示词
-              </Button>
-            </div>
-          </div>
+          <h2 id="prompt-list-title" className="text-[15px] font-semibold">
+            中央列表
+          </h2>
 
           {profilesQuery.isPending ? (
             <p role="status" className="text-muted-foreground mt-5 text-sm">
@@ -340,9 +330,12 @@ export function PromptsPage() {
             </p>
           ) : null}
           {profilesQuery.data?.length === 0 ? (
-            <p className="text-muted-foreground mt-5 rounded-lg border border-dashed p-4 text-sm">
-              尚无提示词档案。点击“新增提示词”创建第一份档案，或在下方工具卡片检测已有提示词。
-            </p>
+            <div className="mt-5">
+              <EmptyState
+                title="尚无提示词"
+                description="可新增或从工具导入。"
+              />
+            </div>
           ) : null}
 
           <CentralList layout={listLayout}>
@@ -462,7 +455,7 @@ export function PromptsPage() {
               <p className="mt-1 text-sm break-all">
                 {importPreview.targetPath}
               </p>
-              <pre className="bg-card mt-3 max-h-40 overflow-auto rounded p-3 text-xs dark:bg-slate-900/60">
+              <pre className="bg-card rounded-control mt-3 max-h-40 overflow-auto p-3 text-xs">
                 {importPreview.body}
               </pre>
               <div className="mt-3 flex gap-2">
@@ -483,157 +476,160 @@ export function PromptsPage() {
             </div>
           ) : null}
         </section>
-      </div>
 
-      {tools.length > 0 ? (
-        <section
-          className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-          aria-labelledby="prompt-target-status-title"
-        >
-          <h2 id="prompt-target-status-title" className="text-lg font-semibold">
-            全局目标状态
-          </h2>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {tools.map((tool) => {
-              const statusQuery = statusQueryByTool.get(tool);
-              if (!statusQuery) return null;
-              const toolLabel = toolMetadata(tool).label;
-              return (
-                <article key={tool} className="rounded-lg border p-4 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <strong>{toolLabel}</strong>
-                    {statusQuery.data ? (
-                      <span className="text-xs">
-                        {statusQuery.data.availability === "installed"
-                          ? "已检测到"
-                          : statusQuery.data.availability === "unavailable"
-                            ? "未检测到"
-                            : "版本未确认"}
-                      </span>
-                    ) : null}
-                  </div>
-                  {statusQuery.isPending ? (
-                    <p role="status" className="mt-2 text-xs">
-                      正在检测工具配置状态…
-                    </p>
-                  ) : null}
-                  {statusQuery.isError ? (
-                    <p role="alert" className="text-destructive mt-2 text-xs">
-                      {profileErrorText(statusQuery.error)}
-                    </p>
-                  ) : null}
-                  {statusQuery.data ? (
-                    <>
-                      <code className="mt-2 block text-xs break-all">
-                        {statusQuery.data.promptTargetPath}
-                      </code>
-                      <p className="text-muted-foreground mt-2 text-xs">
-                        {statusQuery.data.newSessionNotice}
+        {tools.length > 0 ? (
+          <section
+            className="bg-card rounded-xl border p-5"
+            aria-labelledby="prompt-target-status-title"
+          >
+            <h2
+              id="prompt-target-status-title"
+              className="text-[15px] font-semibold"
+            >
+              全局目标状态
+            </h2>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {tools.map((tool) => {
+                const statusQuery = statusQueryByTool.get(tool);
+                if (!statusQuery) return null;
+                const toolLabel = toolMetadata(tool).label;
+                return (
+                  <article key={tool} className="rounded-lg border p-4 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <strong>{toolLabel}</strong>
+                      {statusQuery.data ? (
+                        <span className="text-xs">
+                          {statusQuery.data.availability === "installed"
+                            ? "已检测到"
+                            : statusQuery.data.availability === "unavailable"
+                              ? "未检测到"
+                              : "版本未确认"}
+                        </span>
+                      ) : null}
+                    </div>
+                    {statusQuery.isPending ? (
+                      <p role="status" className="mt-2 text-xs">
+                        正在检测工具配置状态…
                       </p>
-                      {statusQuery.data.promptOverride === "present" ? (
-                        <p className="text-warning mt-2 text-xs font-medium">
-                          检测到更高优先级的 Codex 指令来源（如
-                          AGENTS.override.md）；当前 AGENTS.md 可能被遮蔽。
+                    ) : null}
+                    {statusQuery.isError ? (
+                      <p role="alert" className="text-destructive mt-2 text-xs">
+                        {profileErrorText(statusQuery.error)}
+                      </p>
+                    ) : null}
+                    {statusQuery.data ? (
+                      <>
+                        <code className="mt-2 block text-xs break-all">
+                          {statusQuery.data.promptTargetPath}
+                        </code>
+                        <p className="text-muted-foreground mt-2 text-xs">
+                          {statusQuery.data.newSessionNotice}
                         </p>
-                      ) : null}
-                      {statusQuery.data.promptOverride === "unknown" ? (
-                        <p className="text-warning mt-2 text-xs font-medium">
-                          无法安全确认 Codex 指令遮蔽状态，请检查
-                          AGENTS.override.md 后再应用。
-                        </p>
-                      ) : null}
-                    </>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={discoverMutation.isPending}
-                      onClick={() => discoverMutation.mutate(tool)}
-                    >
-                      检测并导入已有提示词
-                    </Button>
-                    {!directApply ? (
+                        {statusQuery.data.promptOverride === "present" ? (
+                          <p className="text-warning mt-2 text-xs font-medium">
+                            检测到更高优先级的 Codex 指令来源（如
+                            AGENTS.override.md）；当前 AGENTS.md 可能被遮蔽。
+                          </p>
+                        ) : null}
+                        {statusQuery.data.promptOverride === "unknown" ? (
+                          <p className="text-warning mt-2 text-xs font-medium">
+                            无法安全确认 Codex 指令遮蔽状态，请检查
+                            AGENTS.override.md 后再应用。
+                          </p>
+                        ) : null}
+                      </>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={previewMutation.isPending}
-                        onClick={() => requestPreview(tool, directApply)}
+                        disabled={discoverMutation.isPending}
+                        onClick={() => discoverMutation.mutate(tool)}
                       >
-                        {previewMutation.isPending
-                          ? "正在生成…"
-                          : `预览 ${toolLabel} 全局同步`}
+                        检测并导入已有提示词
                       </Button>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
+                      {!directApply ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={previewMutation.isPending}
+                          onClick={() => requestPreview(tool, directApply)}
+                        >
+                          {previewMutation.isPending
+                            ? "正在生成…"
+                            : `预览 ${toolLabel} 全局同步`}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
 
-      <FormDialog
-        open={formOpen}
-        title={`${editing ? "编辑" : "新增"}提示词`}
-        description={
-          directApply
-            ? "保存只更新中央提示词档案；已分配工具会按直接应用模式自动同步。"
-            : "保存只更新中央提示词档案，不会修改原生文件；原生写入仍需预览后确认 Apply。"
-        }
-        submitLabel={editing ? "保存编辑" : "创建提示词"}
-        pending={saveMutation.isPending}
-        error={profileErrorText(saveMutation.error)}
-        onClose={closeForm}
-        onSubmit={submit}
-      >
-        <div>
-          <label
-            htmlFor="prompt-name"
-            className="mb-1 block text-sm font-medium"
-          >
-            名称
-          </label>
-          <input
-            id="prompt-name"
-            required
-            className="field"
-            value={name}
-            onChange={(event) => setName(event.currentTarget.value)}
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="prompt-body"
-            className="mb-1 block text-sm font-medium"
-          >
-            Markdown 正文
-          </label>
-          <textarea
-            id="prompt-body"
-            required
-            className="field min-h-44 resize-y font-mono text-sm"
-            value={body}
-            onChange={(event) => setBody(event.currentTarget.value)}
-          />
-        </div>
-      </FormDialog>
-
-      <ChangePreviewDialog
-        preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? "claude"}
-        artifactKind="prompt"
-        applying={applyMutation.isPending}
-        onClose={closePreview}
-        onApply={() => {
-          if (openPreview) {
-            applyMutation.mutate({
-              previewId: openPreview.plan.previewId,
-              tool: openPreview.tool,
-            });
+        <FormDialog
+          open={formOpen}
+          title={`${editing ? "编辑" : "新增"}提示词`}
+          description={
+            directApply
+              ? "保存只更新中央提示词档案；已分配工具会按直接应用模式自动同步。"
+              : "保存只更新中央提示词档案，不会修改原生文件；原生写入仍需预览后确认 Apply。"
           }
-        }}
-      />
-    </main>
+          submitLabel={editing ? "保存编辑" : "创建提示词"}
+          pending={saveMutation.isPending}
+          error={profileErrorText(saveMutation.error)}
+          onClose={closeForm}
+          onSubmit={submit}
+        >
+          <div>
+            <label
+              htmlFor="prompt-name"
+              className="mb-1 block text-sm font-medium"
+            >
+              名称
+            </label>
+            <input
+              id="prompt-name"
+              required
+              className="field"
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="prompt-body"
+              className="mb-1 block text-sm font-medium"
+            >
+              Markdown 正文
+            </label>
+            <textarea
+              id="prompt-body"
+              required
+              className="field min-h-44 resize-y font-mono text-sm"
+              value={body}
+              onChange={(event) => setBody(event.currentTarget.value)}
+            />
+          </div>
+        </FormDialog>
+
+        <ChangePreviewDialog
+          preview={openPreview?.plan ?? null}
+          tool={openPreview?.tool ?? "claude"}
+          artifactKind="prompt"
+          applying={applyMutation.isPending}
+          onClose={closePreview}
+          onApply={() => {
+            if (openPreview) {
+              applyMutation.mutate({
+                previewId: openPreview.plan.previewId,
+                tool: openPreview.tool,
+              });
+            }
+          }}
+        />
+      </main>
+    </>
   );
 }

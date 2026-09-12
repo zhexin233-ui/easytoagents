@@ -10,6 +10,7 @@ import {
   type UpdateHookInput,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
+import { EmptyState } from "@/components/empty-state";
 import { Field } from "@/components/ui/field";
 import {
   CentralList,
@@ -19,6 +20,7 @@ import {
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
 import { FormDialog } from "@/components/form-dialog";
+import { PageHeader } from "@/components/page-header";
 import { ToolIconToggle } from "@/components/tool-icon-toggle";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
@@ -273,36 +275,42 @@ export function HooksPage() {
     : undefined;
 
   return (
-    <main className="p-6 lg:p-8">
-      <header className="mx-auto max-w-6xl">
-        <p className="text-muted-foreground text-sm">中央配置库</p>
-        <h1 className="mt-1 text-2xl font-semibold">Hooks</h1>
-        <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          中央 Hook 不绑定单一事件：在下方选择工具，把中央 Hook
-          添加到具体的事件分组（同一 Hook 在不同工具可以使用不同事件）。
-          分配只更新中央意图，原生写入必须经过持久化预览。
-        </p>
-      </header>
-
-      <div className="mx-auto mt-6 max-w-6xl">
+    <>
+      <PageHeader
+        title="Hooks"
+        actions={
+          <>
+            <CentralListLayoutToggle
+              value={listLayout}
+              onChange={setListLayout}
+            />
+            <Button onClick={() => openForm(emptyForm)}>新增 Hook</Button>
+          </>
+        }
+      >
+        <div
+          className="mt-3 flex items-center gap-2"
+          role="group"
+          aria-label="Hooks 工具视图"
+        >
+          {visibleTools.map((tool) => (
+            <HookToolViewButton
+              key={tool}
+              tool={tool}
+              selected={activeTool === tool}
+              onClick={() => setActiveTool(tool)}
+            />
+          ))}
+        </div>
+      </PageHeader>
+      <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
           className="bg-card rounded-xl border p-5"
           aria-labelledby="hooks-list-title"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 id="hooks-list-title" className="text-lg font-semibold">
-              中央列表
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <CentralListLayoutToggle
-                value={listLayout}
-                onChange={setListLayout}
-              />
-              <Button size="sm" onClick={() => openForm(emptyForm)}>
-                新增 Hook
-              </Button>
-            </div>
-          </div>
+          <h2 id="hooks-list-title" className="text-[15px] font-semibold">
+            中央列表
+          </h2>
           {hooksQuery.isPending ? (
             <p role="status" className="mt-4 text-sm">
               正在读取 Hooks…
@@ -314,10 +322,12 @@ export function HooksPage() {
             </p>
           ) : null}
           {hooksQuery.data?.length === 0 ? (
-            <p className="text-muted-foreground mt-4 text-sm">
-              中央库尚无 Hook。点击“新增
-              Hook”创建，或在下方工具事件分组中“检测并导入已有 Hooks”。
-            </p>
+            <div className="mt-4">
+              <EmptyState
+                title="尚无 Hook"
+                description="可新增或从工具导入。"
+              />
+            </div>
           ) : null}
           <CentralList layout={listLayout}>
             {hooksQuery.data?.map((hook) => {
@@ -444,353 +454,340 @@ export function HooksPage() {
             })}
           </CentralList>
         </section>
-      </div>
 
-      <section
-        className="bg-card mx-auto mt-6 max-w-6xl rounded-xl border p-5"
-        aria-labelledby="hooks-target-title"
-      >
-        <h2 id="hooks-target-title" className="text-lg font-semibold">
-          工具事件分组
-        </h2>
-        <div
-          className="mt-3 flex items-center gap-2"
-          role="group"
-          aria-label="Hooks 工具视图"
+        <section
+          className="bg-card rounded-xl border p-5"
+          aria-labelledby="hooks-target-title"
         >
-          {visibleTools.map((tool) => (
-            <HookToolViewButton
-              key={tool}
-              tool={tool}
-              selected={activeTool === tool}
-              onClick={() => setActiveTool(tool)}
+          <h2 id="hooks-target-title" className="text-[15px] font-semibold">
+            工具事件分组
+          </h2>
+          {statusesQuery.isPending ? (
+            <p role="status" className="mt-3 text-sm">
+              正在检测全局 Hooks 目标…
+            </p>
+          ) : null}
+          {statusesQuery.isError ? (
+            <p role="alert" className="text-destructive mt-3 text-sm">
+              {profileErrorText(statusesQuery.error)}
+            </p>
+          ) : null}
+          {toolStatus ? (
+            <article className="mt-4 rounded-lg border p-4 text-sm">
+              <p className="font-medium">{toolMetadata(activeTool).label}</p>
+              <code className="mt-2 block text-xs break-all">
+                {toolStatus.targetPath ?? "目标位置未经 capability probe 证明"}
+              </code>
+              <div className="mt-2">
+                <SyncStatusBadge
+                  label={toolPresentation?.label}
+                  status={toolStatus.status}
+                  tone={toolPresentation?.tone}
+                />
+              </div>
+              {toolPresentation?.description ? (
+                <p className="text-muted-foreground mt-2 text-xs">
+                  {toolPresentation.description}
+                </p>
+              ) : null}
+              {toolStatus.diagnosticCode ? (
+                <p className="text-warning mt-2 text-xs">
+                  诊断码：<code>{toolStatus.diagnosticCode}</code>
+                </p>
+              ) : null}
+              <Button
+                className="mt-3 mr-2"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (importDialog.state) return;
+                  importDialog.open(activeTool);
+                }}
+              >
+                检测并导入已有 Hooks
+              </Button>
+              {!directApply ? (
+                <Button
+                  className="mt-3"
+                  size="sm"
+                  disabled={
+                    previewMutation.isPending ||
+                    toolPresentation?.previewBlocked
+                  }
+                  onClick={() => requestPreview(activeTool, directApply)}
+                >
+                  {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
+                </Button>
+              ) : null}
+            </article>
+          ) : null}
+          <div className="mt-5 space-y-5">
+            {visibleEventGroups.map((group) => {
+              return (
+                <div key={group.label}>
+                  <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+                    {group.label}
+                  </h3>
+                  <div className="mt-2 space-y-3">
+                    {group.events.map(({ event, label }) => {
+                      const assigned = (hooksQuery.data ?? []).filter((hook) =>
+                        hook.globalAssignments.some(
+                          (assignment) =>
+                            assignment.tool === activeTool &&
+                            assignment.event === event,
+                        ),
+                      );
+                      return (
+                        <article
+                          key={event}
+                          className="rounded-lg border p-4 text-sm"
+                          aria-label={`${label}（${event}）分组`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-medium">
+                              {label}
+                              <span className="text-muted-foreground ml-2 text-xs">
+                                {event}
+                              </span>
+                            </p>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              aria-label={`往 ${label} 分组添加 Hook`}
+                              onClick={() =>
+                                setOpenPicker({
+                                  tool: activeTool,
+                                  event,
+                                  eventLabel: label,
+                                })
+                              }
+                            >
+                              从中央列表添加
+                            </Button>
+                          </div>
+                          {assigned.length === 0 ? (
+                            <p className="text-muted-foreground mt-2 text-xs">
+                              该分组暂无 Hook。
+                            </p>
+                          ) : (
+                            <ul className="mt-3 space-y-2">
+                              {assigned.map((hook) => (
+                                <li
+                                  key={hook.id}
+                                  className="flex items-center justify-between gap-3 rounded border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900"
+                                >
+                                  <span
+                                    className="min-w-0 truncate"
+                                    title={hook.command}
+                                  >
+                                    {hook.name}
+                                    {!hook.enabled ? "（已停用）" : ""}
+                                    <span className="text-muted-foreground ml-2 break-all">
+                                      {hook.command}
+                                    </span>
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    aria-label={`从 ${label} 分组移除 ${hook.name}`}
+                                    disabled={assignmentMutation.isPending}
+                                    onClick={() =>
+                                      assignmentMutation.mutate({
+                                        hook,
+                                        tool: activeTool,
+                                        event,
+                                        assigned: false,
+                                      })
+                                    }
+                                  >
+                                    移除
+                                  </Button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <FormDialog
+          open={formOpen}
+          title={form.id ? "编辑 Hook" : "新增 Hook"}
+          description={
+            directApply
+              ? "保存只更新中央 Hook；在事件分组添加后会按直接应用模式自动同步。"
+              : "保存只更新中央 Hook，不会修改原生配置；事件在分配时选择。"
+          }
+          submitLabel="保存中央意图"
+          pending={saveMutation.isPending}
+          error={formError ?? profileErrorText(saveMutation.error)}
+          onClose={closeForm}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (submitGuard.isInFlight() || saveMutation.isPending) return;
+            setFormError(null);
+            saveMutation.reset();
+            try {
+              validateForm(form);
+              if (!submitGuard.begin()) return;
+              saveMutation.mutate(form);
+            } catch (error) {
+              setFormError(
+                error instanceof Error ? error.message : "表单内容无效。",
+              );
+            }
+          }}
+        >
+          <Field label="名称">
+            <input
+              className="field"
+              value={form.name}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+              required
             />
-          ))}
-        </div>
-        {statusesQuery.isPending ? (
-          <p role="status" className="mt-3 text-sm">
-            正在检测全局 Hooks 目标…
-          </p>
-        ) : null}
-        {statusesQuery.isError ? (
-          <p role="alert" className="text-destructive mt-3 text-sm">
-            {profileErrorText(statusesQuery.error)}
-          </p>
-        ) : null}
-        {toolStatus ? (
-          <article className="mt-4 rounded-lg border p-4 text-sm">
-            <p className="font-medium">{toolMetadata(activeTool).label}</p>
-            <code className="mt-2 block text-xs break-all">
-              {toolStatus.targetPath ?? "目标位置未经 capability probe 证明"}
-            </code>
-            <div className="mt-2">
-              <SyncStatusBadge
-                label={toolPresentation?.label}
-                status={toolStatus.status}
-                tone={toolPresentation?.tone}
-              />
-            </div>
-            {toolPresentation?.description ? (
-              <p className="text-muted-foreground mt-2 text-xs">
-                {toolPresentation.description}
-              </p>
-            ) : null}
-            {toolStatus.diagnosticCode ? (
-              <p className="text-warning mt-2 text-xs">
-                诊断码：<code>{toolStatus.diagnosticCode}</code>
-              </p>
-            ) : null}
-            <Button
-              className="mt-3 mr-2"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                if (importDialog.state) return;
-                importDialog.open(activeTool);
+          </Field>
+          <Field label="默认事件（添加到分组时的预选项）">
+            <select
+              className="field"
+              value={form.event}
+              onChange={(event) => {
+                const next = event.target.value;
+                setForm((current) => ({
+                  ...current,
+                  event: isHookEvent(next) ? next : current.event,
+                }));
               }}
             >
-              检测并导入已有 Hooks
-            </Button>
-            {!directApply ? (
-              <Button
-                className="mt-3"
-                size="sm"
-                disabled={
-                  previewMutation.isPending || toolPresentation?.previewBlocked
-                }
-                onClick={() => requestPreview(activeTool, directApply)}
-              >
-                {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
-              </Button>
-            ) : null}
-          </article>
-        ) : null}
-        <div className="mt-5 space-y-5">
-          {visibleEventGroups.map((group) => {
-            return (
-              <div key={group.label}>
-                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-                  {group.label}
-                </h3>
-                <div className="mt-2 space-y-3">
-                  {group.events.map(({ event, label }) => {
-                    const assigned = (hooksQuery.data ?? []).filter((hook) =>
-                      hook.globalAssignments.some(
-                        (assignment) =>
-                          assignment.tool === activeTool &&
-                          assignment.event === event,
-                      ),
-                    );
-                    return (
-                      <article
-                        key={event}
-                        className="rounded-lg border p-4 text-sm"
-                        aria-label={`${label}（${event}）分组`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-medium">
-                            {label}
-                            <span className="text-muted-foreground ml-2 text-xs">
-                              {event}
-                            </span>
-                          </p>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            aria-label={`往 ${label} 分组添加 Hook`}
-                            onClick={() =>
-                              setOpenPicker({
-                                tool: activeTool,
-                                event,
-                                eventLabel: label,
-                              })
-                            }
-                          >
-                            从中央列表添加
-                          </Button>
-                        </div>
-                        {assigned.length === 0 ? (
-                          <p className="text-muted-foreground mt-2 text-xs">
-                            该分组暂无 Hook。
-                          </p>
-                        ) : (
-                          <ul className="mt-3 space-y-2">
-                            {assigned.map((hook) => (
-                              <li
-                                key={hook.id}
-                                className="flex items-center justify-between gap-3 rounded border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900"
-                              >
-                                <span
-                                  className="min-w-0 truncate"
-                                  title={hook.command}
-                                >
-                                  {hook.name}
-                                  {!hook.enabled ? "（已停用）" : ""}
-                                  <span className="text-muted-foreground ml-2 break-all">
-                                    {hook.command}
-                                  </span>
-                                </span>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  aria-label={`从 ${label} 分组移除 ${hook.name}`}
-                                  disabled={assignmentMutation.isPending}
-                                  onClick={() =>
-                                    assignmentMutation.mutate({
-                                      hook,
-                                      tool: activeTool,
-                                      event,
-                                      assigned: false,
-                                    })
-                                  }
-                                >
-                                  移除
-                                </Button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </article>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              {HOOK_EVENT_OPTIONS.map((event) => (
+                <option key={event} value={event}>
+                  {event}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Matcher（可选，正则或文本）">
+            <input
+              className="field font-mono text-xs"
+              value={form.matcher}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  matcher: event.target.value,
+                }))
+              }
+              placeholder="留空匹配全部，例如 Bash|Write"
+            />
+          </Field>
+          <Field label="命令">
+            <input
+              className="field font-mono text-xs"
+              value={form.command}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  command: event.target.value,
+                }))
+              }
+              required
+            />
+          </Field>
+          <Field label="超时秒数（可选，1–3600）">
+            <input
+              className="field"
+              type="number"
+              min={1}
+              max={3600}
+              value={form.timeout}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  timeout: event.target.value,
+                }))
+              }
+            />
+          </Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  enabled: event.target.checked,
+                }))
+              }
+            />
+            启用（停用后下一份预览会安全移除已应用条目）
+          </label>
+        </FormDialog>
 
-      <FormDialog
-        open={formOpen}
-        title={form.id ? "编辑 Hook" : "新增 Hook"}
-        description={
-          directApply
-            ? "保存只更新中央 Hook；在事件分组添加后会按直接应用模式自动同步。"
-            : "保存只更新中央 Hook，不会修改原生配置；事件在分配时选择。"
-        }
-        submitLabel="保存中央意图"
-        pending={saveMutation.isPending}
-        error={formError ?? profileErrorText(saveMutation.error)}
-        onClose={closeForm}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (submitGuard.isInFlight() || saveMutation.isPending) return;
-          setFormError(null);
-          saveMutation.reset();
-          try {
-            validateForm(form);
-            if (!submitGuard.begin()) return;
-            saveMutation.mutate(form);
-          } catch (error) {
-            setFormError(
-              error instanceof Error ? error.message : "表单内容无效。",
-            );
-          }
-        }}
-      >
-        <Field label="名称">
-          <input
-            className="field"
-            value={form.name}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                name: event.target.value,
-              }))
-            }
-            required
-          />
-        </Field>
-        <Field label="默认事件（添加到分组时的预选项）">
-          <select
-            className="field"
-            value={form.event}
-            onChange={(event) => {
-              const next = event.target.value;
-              setForm((current) => ({
-                ...current,
-                event: isHookEvent(next) ? next : current.event,
-              }));
+        {importDialog.state ? (
+          <HookImportDialog
+            key={importDialog.state.requestId}
+            tool={importDialog.state.tool}
+            requestId={importDialog.state.requestId}
+            onClose={importDialog.close}
+            onRescan={importDialog.rescan}
+            onImported={async (result) => {
+              importDialog.close();
+              await invalidateHooks();
+              notify({
+                kind: "success",
+                message: `已导入 ${result.createdCount} 个 Hook 到中央库；在事件分组中添加后生成全局预览。`,
+              });
             }}
-          >
-            {HOOK_EVENT_OPTIONS.map((event) => (
-              <option key={event} value={event}>
-                {event}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Matcher（可选，正则或文本）">
-          <input
-            className="field font-mono text-xs"
-            value={form.matcher}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                matcher: event.target.value,
-              }))
-            }
-            placeholder="留空匹配全部，例如 Bash|Write"
           />
-        </Field>
-        <Field label="命令">
-          <input
-            className="field font-mono text-xs"
-            value={form.command}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                command: event.target.value,
-              }))
-            }
-            required
-          />
-        </Field>
-        <Field label="超时秒数（可选，1–3600）">
-          <input
-            className="field"
-            type="number"
-            min={1}
-            max={3600}
-            value={form.timeout}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                timeout: event.target.value,
-              }))
-            }
-          />
-        </Field>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={form.enabled}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                enabled: event.target.checked,
-              }))
-            }
-          />
-          启用（停用后下一份预览会安全移除已应用条目）
-        </label>
-      </FormDialog>
+        ) : null}
 
-      {importDialog.state ? (
-        <HookImportDialog
-          key={importDialog.state.requestId}
-          tool={importDialog.state.tool}
-          requestId={importDialog.state.requestId}
-          onClose={importDialog.close}
-          onRescan={importDialog.rescan}
-          onImported={async (result) => {
-            importDialog.close();
-            await invalidateHooks();
-            notify({
-              kind: "success",
-              message: `已导入 ${result.createdCount} 个 Hook 到中央库；在事件分组中添加后生成全局预览。`,
+        {openPicker ? (
+          <HookAssignmentPickerDialog
+            tool={openPicker.tool}
+            event={openPicker.event}
+            eventLabel={openPicker.eventLabel}
+            hooks={hooksQuery.data ?? []}
+            onClose={() => setOpenPicker(null)}
+            onAssigned={(message) => {
+              setOpenPicker(null);
+              notify({ kind: "success", message });
+              if (directApply) {
+                requestPreview(activeTool, true);
+              }
+            }}
+          />
+        ) : null}
+
+        <ChangePreviewDialog
+          preview={openPreview?.plan ?? null}
+          tool={openPreview?.tool ?? "claude"}
+          artifactKind="hook"
+          applying={applyMutation.isPending}
+          readopting={readoptMutation.isPending}
+          onReadopt={() => {
+            if (openPreview) {
+              readoptMutation.mutate(openPreview.tool);
+            }
+          }}
+          onClose={closePreview}
+          onApply={(previewId, tool) => {
+            applyMutation.mutate({
+              previewId,
+              tool,
             });
           }}
         />
-      ) : null}
-
-      {openPicker ? (
-        <HookAssignmentPickerDialog
-          tool={openPicker.tool}
-          event={openPicker.event}
-          eventLabel={openPicker.eventLabel}
-          hooks={hooksQuery.data ?? []}
-          onClose={() => setOpenPicker(null)}
-          onAssigned={(message) => {
-            setOpenPicker(null);
-            notify({ kind: "success", message });
-            if (directApply) {
-              requestPreview(activeTool, true);
-            }
-          }}
-        />
-      ) : null}
-
-      <ChangePreviewDialog
-        preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? "claude"}
-        artifactKind="hook"
-        applying={applyMutation.isPending}
-        readopting={readoptMutation.isPending}
-        onReadopt={() => {
-          if (openPreview) {
-            readoptMutation.mutate(openPreview.tool);
-          }
-        }}
-        onClose={closePreview}
-        onApply={(previewId, tool) => {
-          applyMutation.mutate({
-            previewId,
-            tool,
-          });
-        }}
-      />
-    </main>
+      </main>
+    </>
   );
 }
 

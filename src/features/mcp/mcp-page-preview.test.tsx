@@ -387,7 +387,7 @@ describe("McpPage", () => {
       deferred<Awaited<ReturnType<typeof commands.listMcpServers>>>();
     vi.mocked(commands.createMcpServer).mockReturnValueOnce(pending.promise);
     renderPage();
-    await screen.findByText(/中央库尚无 MCP/);
+    await screen.findByText("尚无 MCP");
     vi.mocked(commands.listMcpServers).mockReturnValueOnce(refresh.promise);
     const trigger = screen.getByRole("button", { name: "新增 MCP" });
     trigger.focus();
@@ -479,7 +479,7 @@ describe("McpPage", () => {
       data: server,
     });
     renderPage();
-    await screen.findByText(/中央库尚无 MCP/);
+    await screen.findByText("尚无 MCP");
     vi.mocked(commands.listMcpServers).mockResolvedValue({
       status: "ok",
       data: [server],

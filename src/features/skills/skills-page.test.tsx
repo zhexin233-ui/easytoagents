@@ -40,10 +40,10 @@ describe("SkillsPage", () => {
     if (!body || !footer) throw new Error("未找到 Skills 卡片主体或操作栏");
     const pageGrid = section.parentElement;
     if (!pageGrid) throw new Error("未找到 Skills 页面上方布局容器");
-    const listButton = within(section).getByRole("button", {
+    const listButton = screen.getByRole("button", {
       name: "单列显示",
     });
-    const gridButton = within(section).getByRole("button", {
+    const gridButton = screen.getByRole("button", {
       name: "三列网格显示",
     });
     expect(listButton).toHaveAttribute("aria-pressed", "true");
