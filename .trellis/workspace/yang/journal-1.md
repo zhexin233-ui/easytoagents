@@ -1500,3 +1500,25 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 59: 修复 Claude/Codex 渠道缺陷并新增官方账号登录渠道
+
+**Date**: 2026-09-12
+**Task**: 修复 Claude/Codex 渠道缺陷并新增官方账号登录渠道
+**Branch**: `main`
+
+### Summary
+
+修复 Claude 渠道额外 env 只保留 ANTHROPIC_* 前缀、数值型 TOKENS 键被误判为密钥、默认模型/接入地址必填、Codex wire_api 不支持 chat 等缺陷；Claude 渠道所有权始终含四个保留键。参考 cc-switch 新增 ProviderAuthKind（api_key / official_login）：官方渠道不保存地址与密钥，应用后 Claude 回到 claude.ai 登录、Codex 回到内置 openai provider；登录不在应用内重实现 OAuth，而是新增 official_login 模块委托 claude auth login / codex login 子进程（安全 PATH 解析、env_clear、进程组、超时、退出清理、授权地址透出、脱敏诊断），前端提供认证方式单选、官方登录区块与导入预览跳过键列表。真机核验发现 codex login 启动即删除 auth.json，验证时误清了本机 Codex 登录态（需用户重新 codex login），据此增加已登录再登录确认与规范禁令。独立 trellis-check 审阅 1 严重 + 9 建议均处理（B8 保持既有行为）。pnpm check 全绿：Rust 331、前端 294；更新后端/前端 Provider 规范、新增官方登录场景与 README。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `34c89cc` | (see git log) |
+| `654a23a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
