@@ -62,10 +62,10 @@ export function ChangePreviewDialog(props: ChangePreviewDialogProps) {
 
 - Styling uses Tailwind utility classes. Shared primitives use CVA for variants
   and `cn` for class merging, as in `src/components/ui/button.tsx`.
-- Use shared status and blocking components for established visual language;
-  do not duplicate badge colors or error-state markup in each page.
 - Prettier with `prettier-plugin-tailwindcss` is authoritative for class order,
   double quotes, semicolons, and trailing commas.
+- Use shared status and blocking components for established visual language;
+  do not duplicate badge colors or error-state markup in each page.
 - App shell scroll ownership is a document-level contract: `html, body` must
   keep `height: 100%; overflow: hidden` in `src/styles.css`, and only the
   shell's content column scrolls. macOS WKWebView (Tauri) wrongly counts an
@@ -74,6 +74,19 @@ export function ChangePreviewDialog(props: ChangePreviewDialogProps) {
   rule lets trackpad scrolling move the whole shell out of the viewport and
   expose the body background as a white block below the sidebar — verified
   live in the Tauri window, invisible in Chromium-based tests.
+- Corner radii collapse to three tokens plus pill: `rounded-control` (6px —
+  buttons, inputs, nav items, chips, inline `pre`), `rounded-lg` (10px — cards
+  and list containers), `rounded-dialog` (12px — dialogs and notification
+  toasts), and `rounded-full`. Bare `rounded`, `rounded-md`, and `rounded-[N]`
+  are forbidden. `--radius-sm`/`--radius-md` compatibility mappings were
+  removed; do not reintroduce them.
+- Button scale: default height 32px (`h-8 text-[13px]`), `sm` 28px, `icon`
+  28px square; `ghost` is the variant for inline icon-only row actions.
+- Page headers go through `src/components/page-header.tsx`. It has **no
+  description slot** — mechanism-explanation paragraphs must not reappear
+  under the `h1`; metadata goes in `meta`, tabs/filters in `children`. Empty
+  states go through `src/components/empty-state.tsx` (icon + title + one-line
+  description + one explicit next action; no dashed borders).
 
 ---
 
@@ -91,9 +104,24 @@ the toggle). Do not introduce a theme Context or store.
   `dark:` variant tracks `prefers-color-scheme` and would ignore the manual
   toggle.
 - Surfaces use semantic tokens, not raw palette classes: `bg-card` for
-  cards/panels/dialogs/sidebar/header (never `bg-white`), token utilities
+  cards/panels/dialogs (never `bg-white`), token utilities
   (`bg-background`, `bg-muted`, `text-muted-foreground`, `border`) otherwise.
   The `field` utility input background is `var(--card)`.
+- The Tauri window is transparent and the sidebar exposes the native
+  NSVisualEffect `sidebar` material (`macOSPrivateApi` + `transparent` +
+  `windowEffects`). With a transparent window any unpainted region shows the
+  desktop through ("漏底"): the sidebar uses `bg-transparent`, the right
+  column (header + content) paints `bg-background`, and dialogs/toasts stay
+  opaque `bg-card`. Fallback if the material must be disabled: give `<aside>`
+  the `--sidebar` token (`bg-sidebar`) again and restore body opacity.
+- Window appearance follows the app theme: theme changes call
+  `getCurrentWindow().setTheme(...)` (system preference → `null`) from
+  `use-theme.ts` only when `__TAURI_INTERNALS__` exists; `core:window:allow-set-theme`
+  is the only capability this adds. Never read theme state from React.
+- Accent: `--accent` (≈ macOS system blue, light + dark variants) drives the
+  primary button, sidebar/tool-pill selected states (`bg-accent-soft
+  text-accent`), focus rings (`--ring`), and native control `accent-color`;
+  `--primary` aliases accent for legacy `bg-primary` call sites.
 - Status colors go through `toneClass(tone)` from `src/lib/tone-class.ts`.
   Keep palette compatibility and semantic tokens in that one helper; feature
   pages must not grow their own red/amber/emerald class combinations. Icon
@@ -113,7 +141,7 @@ the toggle). Do not introduce a theme Context or store.
 <section className="rounded-xl border bg-white p-5">
 
 // Correct: token surface; status colors keep light classes + dark variants.
-<section className="rounded-xl border bg-card p-5">
+<section className="rounded-lg border bg-card p-5">
 <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/40">
 ```
 
@@ -253,10 +281,21 @@ rules.
 
 ## Shared dialog, field, and notification primitives
 
-- Use `DialogOverlay`, `DialogContent`, `DialogHeader`, and `DialogFooter`
-  from `src/components/ui/dialog.tsx` for every modal. `DialogContent` owns
-  `role="dialog"`, `aria-modal`, generated title linkage, Escape handling, and
-  `useDialogFocus`; feature dialogs supply only content and callbacks.
+- Use `DialogOverlay`, `DialogContent`, `DialogHeader`, `DialogBody`, and
+  `DialogFooter` from `src/components/ui/dialog.tsx` for every modal.
+  `DialogContent` owns `role="dialog"`, `aria-modal`, generated title linkage,
+  Escape handling, and `useDialogFocus`; feature dialogs supply only content
+  and callbacks. Width is controlled by the `size` prop (`sm` 448 confirmers /
+  `md` 576 default forms & pickers / `lg` 768 previews & imports) — callers
+  must not add their own `max-w-*`/`max-h-*`. The content is a fixed
+  three-part sheet (header / scrollable `DialogBody` / fixed footer).
+- There is no top-right "close" button in `DialogHeader` (macOS sheet
+  convention; Escape and the footer cancel button close). The onboarding
+  wizard's "暂停向导" is a semantic exception that stays in the header.
+  Dialogs without any other visible close affordance provide a footer button
+  (e.g. settings "完成", pickers "取消"). Footer button order is secondary
+  left, primary rightmost; `FormDialog` puts pending/error status text in the
+  footer's left slot (`mr-auto`) keeping `role="status"`/`role="alert"`.
 - Use `Field` from `src/components/ui/field.tsx` for a labelled control and
   `ToolIconToggle` from `src/components/tool-icon-toggle.tsx` for a branded
   tool switch. Both preserve accessible names and typed `Tool` values.

@@ -199,7 +199,7 @@
 
 ## 阶段 9：规范更新与提交
 
-- [ ] 9.1 `trellis-update-spec`：`component-guidelines.md` Theming 段改写 sidebar/header
+- [x] 9.1 `trellis-update-spec`：`component-guidelines.md` Theming 段改写 sidebar/header
       表面 token（侧栏透出原生材质，回退 `bg-sidebar`；header/内容 `bg-background`；
       cards/dialogs `bg-card`），并注明 `transparent` 窗口下"未铺底色即漏底"与
       `setTheme` 同步规则；Styling Patterns 增补三档圆角、accent、`PageHeader` 无描述

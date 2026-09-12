@@ -31,6 +31,11 @@ scanning and native-resource views cover supported MCP and Skill resources only.
   Route changes go through react-router (`useNavigate` / `<Link to>`), so the
   router state stays authoritative and tests can assert the destination with
   `MemoryRouter`.
+- Page-header mechanism-explanation paragraphs: a `PageHeader` has no
+  description slot, and feature pages must not render an explanatory
+  "只更新中央意图 / 需预览后 Apply" style paragraph under the title. Copy that
+  affects user decisions (脱敏、只读、需重启、破坏性确认) lives where it is
+  shown.
 - Deriving a form control `id` from its label text. Use `useId()` (or an explicit
   `id` prop) to link `<label htmlFor>` to the input so copy changes cannot break
   the accessible association.

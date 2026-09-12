@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "阶段 0–8、9.1 已完成（每阶段独立 commit，5a6d8ac 收口、f3c30d0 侧栏材质）。剩余：7.5 手动验收清单与 8.6 Tauri 窗口材质验收需用户在应用 GUI 中执行；若材质验收不通过，按 8.7 回退（aside 改回 bg-sidebar 并恢复 body 背景）。",
   "meta": {}
 }
