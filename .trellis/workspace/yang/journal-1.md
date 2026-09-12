@@ -1545,3 +1545,40 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 61: 收尾归档：项目级 Hooks 只读纳入项目原生资源（09-12-fix-project-native-hooks-empty）
+
+**Date**: 2026-09-12
+**Task**: 收尾归档：项目级 Hooks 只读纳入项目原生资源（09-12-fix-project-native-hooks-empty）
+**Branch**: `main`
+
+### Summary
+
+对已完成的任务做 check 收尾与归档：按 check.jsonl 核对实现与根因结论一致（复用 hooks::native_entries 拍平与哈希键、按内容哈希隐藏中央托管条目、只读不改写原生文件、动作入口 fail closed），复核 0021 迁移符合 12 步表重建规范与既有先例。质量门全绿后用 task.py archive 归档至 archive/2026-09/，task.json 置 completed/completedAt=2026-09-12。
+
+### Main Changes
+
+- 核对后端 native_resources.rs：observe_hook_items 复用 native_entries/events_root/build_hook_ownership，Missing 记空、解析类错误本轮不对账；should_hide_centralized 按哈希判定；canDisable/canRestore 恒 false，hook_entry 证据/恢复/动作分支返回内部错误保持穷尽 fail closed
+- 核对 0021_project_native_hook_entries.sql：SQL 内锚点/行数/外键/完整性校验 fail closed，触发器按 0016 教训先删后建；迁移测试与 6 个项目级 Hook 观测用例齐备
+- 核对前端 native-resources.tsx：hook 条目渲染事件·matcher、命令或脱敏提示、超时，标注 Hooks 暂不支持临时禁用与恢复
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e6a8f15` | (see git log) |
+| `7424291` | (see git log) |
+| `3df5f63` | (see git log) |
+
+### Testing
+
+- [OK] cargo test 全量通过（lib 340 通过 2 忽略，其中 db:: 34、projects:: 28、hooks:: 15；集成测试 bindings/hooks_e2e/phase8_e2e 通过）；cargo clippy --all-targets -D warnings 干净；cargo fmt --check 干净；pnpm lint 干净；pnpm typecheck 干净；pnpm test --run 33 文件 299 用例全部通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- implement.md 4.4 手动验收仍待用户在 GUI 中登记 picslicer 确认 Claude/Codex/Cursor Hooks 视图展示（不阻塞归档）

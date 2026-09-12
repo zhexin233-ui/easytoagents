@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 60
+- **Total Sessions**: 61
 - **Last Active**: 2026-09-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1547 | Active |
+| `journal-1.md` | ~1584 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 61 | 2026-09-12 | 收尾归档：项目级 Hooks 只读纳入项目原生资源（09-12-fix-project-native-hooks-empty） | `e6a8f15`, `7424291`, `3df5f63` | `main` |
 | 60 | 2026-09-12 | 修复渠道导入孤儿基线冲突与工具页签状态残留 | `c2c2a83`, `eb902d6`, `2f10cc4` | `main` |
 | 59 | 2026-09-12 | 修复 Claude/Codex 渠道缺陷并新增官方账号登录渠道 | `34c89cc`, `654a23a` | `main` |
 | 58 | 2026-09-11 | 父任务集成审查收尾与归档 | `9bfa24c` | `main` |
