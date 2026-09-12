@@ -9,7 +9,7 @@
 <p align="center"><em>A local-first macOS app to preview, sync, and restore Claude, Codex, Cursor, ZCode, OpenCode, MCP, global prompts, and registered-project resources.</em></p>
 
 <p align="center">
-  <a href="https://github.com/zhexin233-ui/easytoagents/releases/tag/v0.1.0"><img src="https://img.shields.io/badge/release-v0.1.0-2563EB" alt="最新版本 v0.1.0" /></a>
+  <a href="https://github.com/zhexin233-ui/easytoagents/releases/tag/v0.1.1"><img src="https://img.shields.io/badge/release-v0.1.1-2563EB" alt="最新版本 v0.1.1" /></a>
   <img src="https://img.shields.io/badge/macOS-13%2B-000000?logo=apple&logoColor=white" alt="macOS 13+" />
   <img src="https://img.shields.io/badge/Apple%20Silicon-ARM64-000000?logo=apple&logoColor=white" alt="Apple Silicon ARM64" />
   <img src="https://img.shields.io/badge/Local--first-1E3A5F" alt="Local-first" />
@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zhexin233-ui/easytoagents/releases/download/v0.1.0/EasyToAgents_0.1.0_aarch64.dmg"><strong>下载 EasyToAgents v0.1.0 for Apple Silicon</strong></a>
+  <a href="https://github.com/zhexin233-ui/easytoagents/releases/download/v0.1.1/EasyToAgents_0.1.1_aarch64.dmg"><strong>下载 EasyToAgents v0.1.1 for Apple Silicon</strong></a>
 </p>
 
 EasyToAgents 面向同时使用 Claude、Codex、Cursor、ZCode 与 OpenCode 的开发者。它把全局配置与已登记项目中的受支持资源整理成中央意图，同时保留对原生目标状态的检查；默认先展示变更计划，再由用户确认是否写入磁盘。
@@ -77,9 +77,9 @@ Prompt 仅支持全局档案、全局分配和全局同步。项目扫描与同�
 
 ### 下载安装包
 
-当前稳定版本为 **v0.1.0**，可直接下载 [EasyToAgents_0.1.0_aarch64.dmg](https://github.com/zhexin233-ui/easytoagents/releases/download/v0.1.0/EasyToAgents_0.1.0_aarch64.dmg)。历史版本与发布说明位于 [GitHub Releases](https://github.com/zhexin233-ui/easytoagents/releases)。
+当前稳定版本为 **v0.1.1**，可直接下载 [EasyToAgents_0.1.1_aarch64.dmg](https://github.com/zhexin233-ui/easytoagents/releases/download/v0.1.1/EasyToAgents_0.1.1_aarch64.dmg)。历史版本与发布说明位于 [GitHub Releases](https://github.com/zhexin233-ui/easytoagents/releases)。
 
-安装包 SHA-256：`96342f0f3f6756b7f2cb237f77820559d6494d594602769e24d8921e6ef0b12a`
+安装包 SHA-256：`467e0b137effbca66e4792e0fe13f875cce4a7580048027facf8cff5be5ab320`
 
 打开 DMG 后，将 EasyToAgents 拖入“应用程序”目录。当前安装包未使用 Apple Developer 签名，也未经 Apple 公证，因此首次打开可能被 Gatekeeper 拦截。遇到提示时，在“应用程序”中右键 EasyToAgents 并选择“打开”，然后再次确认；也可以前往“系统设置 → 隐私与安全性”，在安全提示旁选择“仍要打开”。
 
@@ -115,7 +115,7 @@ pnpm tauri build
 发布由 GitHub Actions 手动执行，普通 push 和 Pull Request 不会触发发布：
 
 1. 确认 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 与 `src-tauri/Cargo.lock` 中的应用版本一致。
-2. 在仓库的 **Actions** 页面选择 **发布 macOS ARM64 DMG**，点击 **Run workflow**，选择要发布的提交并输入不带 `v` 前缀的版本号。
+2. 在仓库的 **Actions** 页面选择 **发布 macOS ARM64 DMG**，点击 **Run workflow**，选择要发布的提交，输入不带 `v` 前缀的版本号，并在 `notes` 中填写自上个版本的变更总结（Markdown）：从上个版本标签到本次发布提交之间用 `git log` 整理，保留面向用户的变化，按新功能、界面、修复、性能分组，剔除 chore、journal 与任务归档类提交。留空则 Release 仅包含固定的安装说明。
 3. 等待构建、DMG 挂载检查、应用版本和 ARM64 架构检查全部通过。工作流随后创建 `v<版本>` 标签，上传附件，并公开 Release。
 4. 从 Release 下载 DMG，确认能正常挂载并显示 EasyToAgents 应用。
 
