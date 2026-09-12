@@ -284,11 +284,13 @@ rules.
 - Use `DialogOverlay`, `DialogContent`, `DialogHeader`, `DialogBody`, and
   `DialogFooter` from `src/components/ui/dialog.tsx` for every modal.
   `DialogContent` owns `role="dialog"`, `aria-modal`, generated title linkage,
-  Escape handling, and `useDialogFocus`; feature dialogs supply only content
-  and callbacks. Width is controlled by the `size` prop (`sm` 448 confirmers /
-  `md` 576 default forms & pickers / `lg` 768 previews & imports) — callers
-  must not add their own `max-w-*`/`max-h-*`. The content is a fixed
-  three-part sheet (header / scrollable `DialogBody` / fixed footer).
+  Escape handling, outside-click (backdrop) close through the same guarded
+  `onClose` as Escape, and `useDialogFocus`; feature dialogs supply only
+  content and callbacks. Width is controlled by the `size` prop (`sm` 448
+  confirmers / `md` 576 default forms & pickers / `lg` 768 previews &
+  imports) — callers must not add their own `max-w-*`/`max-h-*`. The content
+  is a fixed three-part sheet (header / scrollable `DialogBody` / fixed
+  footer).
 - There is no top-right "close" button in `DialogHeader` (macOS sheet
   convention; Escape and the footer cancel button close). The onboarding
   wizard's "暂停向导" is a semantic exception that stays in the header.

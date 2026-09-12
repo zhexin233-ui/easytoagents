@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   type HTMLAttributes,
   type KeyboardEvent,
@@ -11,8 +12,6 @@ import { cn } from "@/lib/utils";
 
 interface DialogOverlayProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
-  onClose?: () => void;
-  closeOnOutsideClick?: boolean;
 }
 
 /** Shared modal backdrop. Keeping the backdrop here prevents subtle z-index and
@@ -20,8 +19,6 @@ interface DialogOverlayProps extends HTMLAttributes<HTMLDivElement> {
 export function DialogOverlay({
   children,
   className,
-  onClose,
-  closeOnOutsideClick = false,
   ...props
 }: DialogOverlayProps) {
   return (
@@ -32,12 +29,6 @@ export function DialogOverlay({
         "bg-foreground/30 fixed inset-0 z-50 grid place-items-center p-4 backdrop-blur-[2px] dark:bg-black/50",
         className,
       )}
-      onMouseDown={(event) => {
-        props.onMouseDown?.(event);
-        if (closeOnOutsideClick && event.target === event.currentTarget) {
-          onClose?.();
-        }
-      }}
     >
       {children}
     </div>
@@ -65,7 +56,9 @@ interface DialogContentProps extends Omit<
 
 /** Three-part sheet: fixed header / scrollable body / fixed footer. Callers
  * compose DialogHeader + DialogBody + DialogFooter inside; the content itself
- * never scrolls so titles and actions stay visible. */
+ * never scrolls so titles and actions stay visible. Clicking outside the
+ * dialog closes it through the same guarded `onClose` as Escape, so pending
+ * saves or imports are not interrupted. */
 export function DialogContent({
   children,
   className,
@@ -86,6 +79,26 @@ export function DialogContent({
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     onKeyDown(event);
   };
+
+  // 点击弹窗外部（遮罩区域）时关闭；遮罩盖住整个视口，因此底下的页面元素
+  // 不会先收到这次点击。
+  useEffect(() => {
+    if (!onClose) {
+      return undefined;
+    }
+    const handleMouseDown = (event: MouseEvent) => {
+      const element = dialogRef.current;
+      if (
+        element &&
+        event.target instanceof Node &&
+        !element.contains(event.target)
+      ) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [onClose, dialogRef]);
 
   return (
     <section
