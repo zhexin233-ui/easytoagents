@@ -1,6 +1,17 @@
 import { Suspense, useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Trash2 } from "lucide-react";
+import {
+  ChevronRight,
+  FileText,
+  FolderKanban,
+  LayoutDashboard,
+  Pencil,
+  Plug,
+  Settings,
+  Sparkles,
+  Trash2,
+  Webhook,
+} from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { commands, type ProjectDto } from "@/bindings/commands";
@@ -34,23 +45,24 @@ import {
 import { cn } from "@/lib/utils";
 
 const primaryLinks = [
-  { to: "/", label: "总览", end: true },
-  { to: "/prompts", label: "提示词", end: false },
-  { to: "/mcp", label: "MCP", end: false },
-  { to: "/hooks", label: "Hooks", end: false },
-  { to: "/skills", label: "Skills", end: false },
+  { to: "/", label: "总览", end: true, icon: LayoutDashboard },
+  { to: "/prompts", label: "提示词", end: false, icon: FileText },
+  { to: "/mcp", label: "MCP", end: false, icon: Plug },
+  { to: "/hooks", label: "Hooks", end: false, icon: Webhook },
+  { to: "/skills", label: "Skills", end: false, icon: Sparkles },
 ] as const;
 
-const primaryLinkClass = ({ isActive }: { isActive: boolean }) =>
+// NavLink 的 className 直接传 render-prop（不能包进 cn：clsx 会吞函数参数）。
+const sidebarItemClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    "flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+    "flex h-7 items-center gap-2 rounded-control px-2 text-[13px] transition-colors",
     isActive
-      ? "bg-primary text-primary-foreground"
+      ? "bg-accent-soft font-medium text-accent"
       : "text-muted-foreground hover:bg-muted hover:text-foreground",
   );
 
 const projectRowActionClass =
-  "text-muted-foreground hover:text-foreground pointer-events-none size-8 shrink-0 border-0 bg-transparent p-0 opacity-0 shadow-none transition-[color,opacity] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-transparent focus-visible:pointer-events-auto focus-visible:opacity-100";
+  "pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100";
 
 export function AppShell() {
   const queryClient = useQueryClient();
@@ -72,43 +84,43 @@ export function AppShell() {
 
   return (
     <NotifyProvider>
-      <div className="flex h-screen flex-col overflow-hidden">
-        <TopBar />
-        <div className="flex min-h-0 flex-1">
-          <aside className="bg-card flex w-60 shrink-0 flex-col border-r">
-            <nav
-              aria-label="一级导航"
-              className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4"
-            >
-              {primaryLinks.map((link) => (
-                <div key={link.to} className="flex">
-                  <NavLink
-                    to={link.to}
-                    end={link.end}
-                    className={primaryLinkClass}
-                  >
-                    {link.label}
-                  </NavLink>
-                </div>
-              ))}
-              <ProjectNavSection
-                open={projectSectionOpen}
-                onToggle={() => setProjectsExpanded((expanded) => !expanded)}
-                onNavigate={() => setProjectsExpanded(true)}
-              />
-            </nav>
-            <div className="border-t px-3 py-3">
-              <button
-                type="button"
-                aria-haspopup="dialog"
-                onClick={() => setSettingsOpen(true)}
-                className="text-muted-foreground hover:bg-muted hover:text-foreground flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+      <div className="flex h-screen overflow-hidden">
+        <aside className="bg-sidebar flex w-[220px] shrink-0 flex-col border-r select-none">
+          <nav
+            aria-label="一级导航"
+            className="min-h-0 flex-1 space-y-px overflow-y-auto px-2 pt-3"
+          >
+            {primaryLinks.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                end={link.end}
+                className={sidebarItemClass}
               >
-                <SettingsIcon />
-                设置
-              </button>
-            </div>
-          </aside>
+                <link.icon aria-hidden="true" className="size-4 shrink-0" />
+                {link.label}
+              </NavLink>
+            ))}
+            <ProjectNavSection
+              open={projectSectionOpen}
+              onToggle={() => setProjectsExpanded((expanded) => !expanded)}
+              onNavigate={() => setProjectsExpanded(true)}
+            />
+          </nav>
+          <div className="px-2 pb-3">
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              onClick={() => setSettingsOpen(true)}
+              className={cn(sidebarItemClass({ isActive: false }))}
+            >
+              <Settings aria-hidden="true" className="size-4 shrink-0" />
+              设置
+            </button>
+          </div>
+        </aside>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar />
           <div className="min-w-0 flex-1 overflow-y-auto">
             <Suspense fallback={<PageLoading />}>
               <Outlet />
@@ -128,27 +140,9 @@ export function AppShell() {
 
 function PageLoading() {
   return (
-    <p role="status" className="p-6 text-sm">
+    <p role="status" className="text-muted-foreground px-8 py-6">
       正在加载页面…
     </p>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="size-4 shrink-0"
-    >
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
   );
 }
 
@@ -166,46 +160,32 @@ function TopBar() {
   );
 
   return (
-    <header className="bg-card flex h-14 shrink-0 items-center justify-between gap-4 border-b px-4 lg:px-6">
-      <div className="flex items-center gap-2.5">
-        <span
-          aria-hidden="true"
-          className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-lg text-xs font-bold"
-        >
-          EA
-        </span>
-        <div className="leading-tight">
-          <p className="text-sm font-semibold">EasyToAgents</p>
-          <p className="text-muted-foreground text-[11px]">多工具配置中枢</p>
-        </div>
-      </div>
-      <div className="flex items-center gap-2.5">
-        <nav aria-label="工具入口" className="flex items-center gap-1.5">
-          {toolLinks.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
-                  isActive
-                    ? "border-primary-foreground bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )
-              }
-            >
-              <img
-                src={link.icon}
-                alt=""
-                aria-hidden="true"
-                draggable={false}
-                className="size-4 rounded-[4px] object-contain"
-              />
-              {link.label}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
+    <header className="bg-sidebar/70 flex h-11 shrink-0 items-center justify-end border-b px-4 backdrop-blur">
+      <nav aria-label="工具入口" className="flex items-center gap-1">
+        {toolLinks.map((link) => (
+          <NavLink
+            key={link.to}
+            to={link.to}
+            className={({ isActive }) =>
+              cn(
+                "flex h-7 items-center gap-1.5 rounded-full border border-transparent px-2.5 text-xs font-medium transition-colors",
+                isActive
+                  ? "bg-accent-soft text-accent"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )
+            }
+          >
+            <img
+              src={link.icon}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="rounded-control size-4 object-contain"
+            />
+            {link.label}
+          </NavLink>
+        ))}
+      </nav>
     </header>
   );
 }
@@ -390,9 +370,10 @@ function ProjectNavSection({
           <NavLink
             to="/projects"
             end={false}
-            className={primaryLinkClass}
+            className={sidebarItemClass}
             onClick={onNavigate}
           >
+            <FolderKanban aria-hidden="true" className="size-4 shrink-0" />
             项目
           </NavLink>
           <button
@@ -400,28 +381,20 @@ function ProjectNavSection({
             aria-expanded={open}
             aria-label={open ? "收起项目列表" : "展开项目列表"}
             title={open ? "收起项目列表" : "展开项目列表"}
-            className="text-muted-foreground hover:bg-muted hover:text-foreground mr-1 flex size-6 shrink-0 items-center justify-center rounded transition-colors"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-control flex size-6 shrink-0 items-center justify-center transition-colors"
             onClick={onToggle}
           >
-            <svg
+            <ChevronRight
               aria-hidden="true"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
               className={cn(
                 "size-3.5 transition-transform",
                 open && "rotate-90",
               )}
-            >
-              <path d="M6 3.5 10.5 8 6 12.5" />
-            </svg>
+            />
           </button>
         </div>
         {open ? (
-          <div className="mt-1 ml-3 space-y-0.5 border-l pl-3">
+          <div className="space-y-px">
             {projectsQuery.isPending ? (
               <p
                 role="status"
@@ -449,20 +422,20 @@ function ProjectNavSection({
                     to={`/projects/${project.id}`}
                     className={({ isActive }) =>
                       cn(
-                        "min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm transition-colors",
+                        "rounded-control flex h-7 min-w-0 flex-1 items-center pr-2 pl-6 text-[13px] transition-colors",
                         isActive
-                          ? "bg-muted text-foreground font-medium"
+                          ? "bg-accent-soft text-accent font-medium"
                           : "text-muted-foreground hover:bg-muted hover:text-foreground",
                       )
                     }
                     title={project.displayName}
                   >
-                    {project.displayName}
+                    <span className="truncate">{project.displayName}</span>
                   </NavLink>
                   <Button
                     type="button"
-                    size="sm"
-                    variant="outline"
+                    size="icon"
+                    variant="ghost"
                     className={projectRowActionClass}
                     aria-label={`编辑项目 ${project.displayName}`}
                     title={`编辑项目 ${project.displayName}`}
@@ -478,8 +451,8 @@ function ProjectNavSection({
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
-                    variant="outline"
+                    size="icon"
+                    variant="ghost"
                     className={projectRowActionClass}
                     aria-label={`移除项目 ${project.displayName}`}
                     title={`移除项目 ${project.displayName}`}
@@ -505,7 +478,7 @@ function ProjectNavSection({
                 {hasBlockedNativeResources(project.nativeResources) ? (
                   <p
                     id={`remove-project-blocked-${project.id}`}
-                    className="text-warning px-2 text-[11px] leading-4"
+                    className="text-warning px-2 pl-6 text-[11px] leading-4"
                   >
                     无法移除：请先恢复已禁用或存在冲突的原生资源。
                   </p>

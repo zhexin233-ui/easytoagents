@@ -72,7 +72,7 @@ export function Notify({ notification }: NotifyProps) {
       role={failure ? "alert" : "status"}
       aria-atomic="true"
       className={cn(
-        "w-full rounded-lg border p-4 text-sm shadow-lg",
+        "rounded-dialog w-full border p-4 text-sm shadow-lg",
         toneClass(failure ? "destructive" : "success"),
       )}
     >
@@ -91,7 +91,7 @@ export function NotifyViewport({
   return (
     <div
       aria-label="通知"
-      className="fixed top-4 right-4 z-[60] flex w-[min(calc(100vw-2rem),24rem)] flex-col gap-3"
+      className="fixed top-14 right-4 z-[60] flex w-[min(calc(100vw-2rem),24rem)] flex-col gap-3"
     >
       {visible.map((notification) => (
         <Notify key={notification.id} notification={notification} />

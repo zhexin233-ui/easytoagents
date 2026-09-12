@@ -64,19 +64,19 @@
 
 ## 阶段 3：外壳（`src/app/app-shell.tsx` + `notify.tsx`）
 
-- [ ] 3.1 重构为"左侧栏 + 右列（顶部工具栏 + 滚动内容）"（design §4.2）；外层保持
+- [x] 3.1 重构为"左侧栏 + 右列（顶部工具栏 + 滚动内容）"（design §4.2）；外层保持
       `h-screen overflow-hidden`，仅 `<Outlet>` 容器 `overflow-y-auto`。
-- [ ] 3.2 新增本地 `SidebarItem`（lucide 图标、`h-7 rounded-control`、accent-soft 选中态，
+- [x] 3.2 新增本地 `SidebarItem`（lucide 图标、`h-7 rounded-control`、accent-soft 选中态，
       `NavLink className` 保持 render-prop）；一级导航 5 项 + 设置项接入；删除手写
       `SettingsIcon` SVG；侧栏底部去 `border-t`。
-- [ ] 3.3 `ProjectNavSection` 改为 `SidebarGroup`：组标题行 + lucide `ChevronRight`
+- [x] 3.3 `ProjectNavSection` 改为 `SidebarGroup`：组标题行 + lucide `ChevronRight`
       折叠；子项去竖线改 `pl-6`；编辑/删除按钮换 `Button variant="ghost" size="icon"`，
       删除 `projectRowActionClass`；hover/focus-within 显隐、`aria-*`、"无法移除…"
       警告文案保留。
-- [ ] 3.4 `TopBar` 改为右列 `header`：删除 Logo 块、应用名与副标题；工具入口胶囊
+- [x] 3.4 `TopBar` 改为右列 `header`：删除 Logo 块、应用名与副标题；工具入口胶囊
       改 accent-soft 选中态（品牌 PNG 不动）。
-- [ ] 3.5 `PageLoading` 样式 `px-8 py-6 text-muted-foreground`，文案与 `role` 不变。
-- [ ] 3.6 `notify.tsx` 浮层 `top-14 right-4 rounded-dialog`，`shadow-lg` 保留。
+- [x] 3.5 `PageLoading` 样式 `px-8 py-6 text-muted-foreground`，文案与 `role` 不变。
+- [x] 3.6 `notify.tsx` 浮层 `top-14 right-4 rounded-dialog`，`shadow-lg` 保留。
 
 验证：`pnpm test --run src/app src/components`；Tauri 窗口内触控板滚动长页面，确认
 外壳不整体上移；深浅主题各截图一次侧栏选中态。

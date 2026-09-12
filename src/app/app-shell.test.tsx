@@ -158,18 +158,18 @@ describe("AppShell 侧边栏设置入口", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("当前应用入口保留明显外边框，切换应用时只改变当前入口", () => {
+  it("当前应用入口使用 accent 选中态，切换应用时只改变当前入口", () => {
     renderShell("/claude");
 
     const claudeLink = screen.getByRole("link", { name: /Claude/ });
     const codexLink = screen.getByRole("link", { name: /Codex/ });
-    expect(claudeLink).toHaveClass("border-primary-foreground");
-    expect(claudeLink).not.toHaveClass("border-transparent");
-    expect(codexLink).not.toHaveClass("border-primary-foreground");
+    expect(claudeLink).toHaveClass("bg-accent-soft");
+    expect(claudeLink).not.toHaveClass("bg-muted");
+    expect(codexLink).not.toHaveClass("bg-accent-soft");
 
     fireEvent.click(codexLink);
-    expect(codexLink).toHaveClass("border-primary-foreground");
-    expect(claudeLink).not.toHaveClass("border-primary-foreground");
+    expect(codexLink).toHaveClass("bg-accent-soft");
+    expect(claudeLink).not.toHaveClass("bg-accent-soft");
   });
 
   it("顶栏只渲染启用的工具入口", async () => {
@@ -224,11 +224,11 @@ describe("AppShell 侧边栏设置入口", () => {
       `移除项目 ${project.displayName}`,
     );
     expect(removeButton).toHaveClass(
-      "border-0",
-      "bg-transparent",
       "opacity-0",
       "group-hover:opacity-100",
+      "group-focus-within:opacity-100",
       "focus-visible:opacity-100",
+      "text-muted-foreground",
     );
     fireEvent.click(removeButton);
 
@@ -268,10 +268,10 @@ describe("AppShell 侧边栏设置入口", () => {
       name: `编辑项目 ${project.displayName}`,
     });
     expect(editButton).toHaveClass(
-      "border-0",
-      "bg-transparent",
       "opacity-0",
       "group-hover:opacity-100",
+      "group-focus-within:opacity-100",
+      "text-muted-foreground",
     );
     fireEvent.click(editButton);
 
