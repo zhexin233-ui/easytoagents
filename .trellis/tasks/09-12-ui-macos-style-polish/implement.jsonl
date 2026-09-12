@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-12-ui-macos-style-polish/research/layout-audit.md", "reason": "现状布局、原语取值分布与 macOS HIG 差距清单，是 design.md 各节的事实依据"}
+{"file": ".trellis/tasks/09-12-ui-macos-style-polish/research/copy-audit.md", "reason": "逐条文案的 保留/精简/删除 判定，阶段 5 直接按此执行"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 Pre-Development Checklist 入口"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "语义 token、类驱动 dark 变体、toneClass、滚动所有权等硬约束"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Forbidden/Required Patterns 与测试基础设施（renderWithProviders、mockCommands）"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "PageHeader 放 src/components/、测试同目录等位置约定"}

@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-12-ui-macos-style-polish/research/copy-audit.md", "reason": "核对 删除/精简 清单已全部执行且 保留 清单未被误删"}
+{"file": ".trellis/tasks/09-12-ui-macos-style-polish/research/layout-audit.md", "reason": "核对 HIG 差距清单中的每一项在实现中有对应改动或被明确排除"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查无 bg-white/裸色板、dark 变体成对、滚动所有权未回归"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查 role=status/alert、aria-describedby 关联、测试未 skip、无 invoke 直调"}
