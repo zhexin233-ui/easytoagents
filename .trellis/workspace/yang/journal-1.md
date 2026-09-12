@@ -1522,3 +1522,26 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 60: 修复渠道导入孤儿基线冲突与工具页签状态残留
+
+**Date**: 2026-09-12
+**Task**: 修复渠道导入孤儿基线冲突与工具页签状态残留
+**Branch**: `main`
+
+### Summary
+
+定位并修复两个渠道配置缺陷：1) 删光渠道后重新导入报 CONFLICT「该原生目标已经建立受管基线」——adopt_baseline 对孤儿基线改为刷新（row_version 事务内守卫 + last_status=in_sync），与 MCP 导入 extend 模式对齐；2) 工具页签切换后显示页状态残留——工具路由元素加 key 强制重挂载，抽取 src/app/tool-profile-routes.tsx 供路由与测试共用。新增 2 个后端回归用例（含 row_version 递增后重导入）与 3 个前端切换回归用例（验证过移除修复即失败）。沉淀 spec：孤儿基线刷新合同（backend/database-guidelines）、工具路由 key 约定（frontend/component-guidelines）。质量门：cargo test 333 通过、clippy/fmt/bindings 干净，vitest 297 通过、eslint/tsc/prettier 干净。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2c2a83` | (see git log) |
+| `eb902d6` | (see git log) |
+| `2f10cc4` | (see git log) |
+
+### Status
+
+[OK] **Completed**
