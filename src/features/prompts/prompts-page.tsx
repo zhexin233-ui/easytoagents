@@ -312,7 +312,7 @@ export function PromptsPage() {
       />
       <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="prompt-list-title"
         >
           <h2 id="prompt-list-title" className="text-[15px] font-semibold">
@@ -394,7 +394,7 @@ export function PromptsPage() {
                       ) : null}
                     </div>
                     {listLayout === "list" ? (
-                      <p className="bg-muted mt-3 line-clamp-6 rounded p-2 text-xs leading-5 whitespace-pre-wrap">
+                      <p className="bg-muted rounded-control mt-3 line-clamp-6 p-2 text-xs leading-5 whitespace-pre-wrap">
                         {profile.body}
                       </p>
                     ) : (
@@ -479,7 +479,7 @@ export function PromptsPage() {
 
         {tools.length > 0 ? (
           <section
-            className="bg-card rounded-xl border p-5"
+            className="bg-card rounded-lg border p-5"
             aria-labelledby="prompt-target-status-title"
           >
             <h2
@@ -488,13 +488,16 @@ export function PromptsPage() {
             >
               全局目标状态
             </h2>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="mt-3 divide-y">
               {tools.map((tool) => {
                 const statusQuery = statusQueryByTool.get(tool);
                 if (!statusQuery) return null;
                 const toolLabel = toolMetadata(tool).label;
                 return (
-                  <article key={tool} className="rounded-lg border p-4 text-sm">
+                  <article
+                    key={tool}
+                    className="hover:bg-muted/50 px-1 py-2.5 text-sm"
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <strong>{toolLabel}</strong>
                       {statusQuery.data ? (

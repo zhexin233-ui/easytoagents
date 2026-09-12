@@ -49,7 +49,7 @@ export function ProjectAssignmentsSection<TItem = never>({
     : `预览项目 ${title} 同步`;
 
   return (
-    <article className="bg-card rounded-xl border p-5">
+    <article className="bg-card rounded-lg border p-5">
       <h3 className="font-semibold">{title}</h3>
       <p className="text-muted-foreground mt-1 text-sm leading-6">
         {description}
@@ -74,7 +74,7 @@ export function ProjectAssignmentsSection<TItem = never>({
           中央库暂无可追加项。
         </p>
       ) : null}
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 divide-y">
         {items?.map((item, index) =>
           renderItem ? (
             <span key={index} className="contents">
@@ -90,9 +90,7 @@ export function ProjectAssignmentsSection<TItem = never>({
           checked={excludeFromGit}
           onChange={(event) => onExcludeFromGit(event.target.checked)}
         />
-        <span>
-          若目标是应用新建且未跟踪，在应用时写入本机 .git/info/exclude
-        </span>
+        <span>新建文件写入 .git/info/exclude（不提交到仓库）</span>
       </label>
       <Button
         className="mt-4"

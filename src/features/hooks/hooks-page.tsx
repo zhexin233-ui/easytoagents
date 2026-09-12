@@ -305,7 +305,7 @@ export function HooksPage() {
       </PageHeader>
       <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="hooks-list-title"
         >
           <h2 id="hooks-list-title" className="text-[15px] font-semibold">
@@ -456,7 +456,7 @@ export function HooksPage() {
         </section>
 
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="hooks-target-title"
         >
           <h2 id="hooks-target-title" className="text-[15px] font-semibold">
@@ -525,7 +525,7 @@ export function HooksPage() {
             {visibleEventGroups.map((group) => {
               return (
                 <div key={group.label}>
-                  <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+                  <h3 className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
                     {group.label}
                   </h3>
                   <div className="mt-2 space-y-3">
@@ -574,7 +574,7 @@ export function HooksPage() {
                               {assigned.map((hook) => (
                                 <li
                                   key={hook.id}
-                                  className="flex items-center justify-between gap-3 rounded border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900"
+                                  className="rounded-control bg-muted/40 flex items-center justify-between gap-3 border px-3 py-2 text-xs"
                                 >
                                   <span
                                     className="min-w-0 truncate"

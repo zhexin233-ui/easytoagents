@@ -148,7 +148,7 @@ export function ProjectHookAssignments({
         <div className="space-y-4">
           {visibleEventGroups.map((group) => (
             <div key={group.label}>
-              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <h4 className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
                 {group.label}
               </h4>
               <div className="mt-2 space-y-2">
@@ -191,7 +191,7 @@ export function ProjectHookAssignments({
                           {assigned.map((option) => (
                             <li
                               key={option.hookId}
-                              className="flex items-center justify-between gap-3 rounded border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900"
+                              className="rounded-control bg-muted/40 flex items-center justify-between gap-3 border px-3 py-2 text-xs"
                             >
                               <span className="min-w-0 truncate">
                                 {option.name}

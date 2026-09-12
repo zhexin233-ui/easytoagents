@@ -27,9 +27,7 @@ export function ToolIconToggle({
       variant="outline"
       className={cn(
         "size-8 p-0 shadow-none",
-        active
-          ? "border-slate-300 bg-slate-50 shadow-sm dark:border-slate-600 dark:bg-slate-800"
-          : "border-slate-200 bg-transparent dark:border-slate-700",
+        active ? "border-border bg-muted" : "border-border bg-transparent",
       )}
       aria-label={label}
       aria-pressed={active}

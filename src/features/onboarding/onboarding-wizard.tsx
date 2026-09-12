@@ -424,7 +424,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                               : "未发现可导入配置；可保持非受管。"}
                     </p>
                     {found.provider ? (
-                      <div className="bg-muted mt-3 rounded p-3 text-xs">
+                      <div className="bg-muted rounded-control mt-3 p-3 text-xs">
                         <p className="font-medium">发现 Provider</p>
                         <code className="mt-1 block break-all">
                           {found.provider.targetPath}
@@ -450,7 +450,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                       </div>
                     ) : null}
                     {found.prompt ? (
-                      <div className="bg-muted mt-3 rounded p-3 text-xs">
+                      <div className="bg-muted rounded-control mt-3 p-3 text-xs">
                         <p className="font-medium">发现全局提示词</p>
                         <code className="mt-1 block break-all">
                           {found.prompt.targetPath}
@@ -575,7 +575,10 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                   </h3>
                   <div className="mt-3 space-y-2">
                     {preview.plan.targets.map((target) => (
-                      <div key={target.targetId} className="rounded border p-3">
+                      <div
+                        key={target.targetId}
+                        className="rounded-control border p-3"
+                      >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <code className="text-xs break-all">
                             {target.descriptor.path ?? "目标路径不可用"}
@@ -600,7 +603,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                             ))}
                           </ul>
                         ) : null}
-                        <pre className="bg-muted mt-3 overflow-auto rounded p-3 text-xs">
+                        <pre className="bg-muted rounded-control mt-3 overflow-auto p-3 text-xs">
                           {JSON.stringify(target.redactedDiff, null, 2)}
                         </pre>
                       </div>

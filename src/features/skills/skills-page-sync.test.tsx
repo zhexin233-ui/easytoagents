@@ -243,7 +243,7 @@ describe("SkillsPage", () => {
       ? (await within(section).findByText("Claude")).closest("article")
       : null;
     if (!card) throw new Error("未找到 Claude Skills 状态卡");
-    expect(within(card).getByText("○ 待初始化")).toHaveClass("bg-amber-50");
+    expect(within(card).getByText("待初始化")).toHaveClass("bg-amber-50");
     expect(
       within(card).getByText("尚未写入受管目标；生成预览会在确认后初始化。"),
     ).toBeVisible();

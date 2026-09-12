@@ -290,7 +290,7 @@ describe("ProjectDetailPage", () => {
         screen.queryByRole("heading", { name: "Hooks" }),
       ).not.toBeInTheDocument();
       const excludeCopy = screen.getByText(
-        "若目标是应用新建且未跟踪，在应用时写入本机 .git/info/exclude",
+        "新建文件写入 .git/info/exclude（不提交到仓库）",
       );
       const assignmentCard = excludeCopy.closest("article");
       expect(assignmentCard).not.toBeNull();
@@ -426,14 +426,14 @@ describe("ProjectDetailPage", () => {
     await screen.findByRole("heading", { name: "Claude MCP 项目追加" });
 
     const mcpExclude = screen.getByRole("checkbox", {
-      name: /若目标是应用新建且未跟踪/,
+      name: /新建文件写入 .git\/info\/exclude/,
     });
     fireEvent.click(mcpExclude);
     expect(mcpExclude).toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
     const skillExclude = screen.getByRole("checkbox", {
-      name: /若目标是应用新建且未跟踪/,
+      name: /新建文件写入 .git\/info\/exclude/,
     });
     expect(skillExclude).not.toBeChecked();
     fireEvent.click(skillExclude);
@@ -442,14 +442,14 @@ describe("ProjectDetailPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "管理项目 MCP" }));
     expect(
       screen.getByRole("checkbox", {
-        name: /若目标是应用新建且未跟踪/,
+        name: /新建文件写入 .git\/info\/exclude/,
       }),
     ).not.toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
     expect(
       screen.getByRole("checkbox", {
-        name: /若目标是应用新建且未跟踪/,
+        name: /新建文件写入 .git\/info\/exclude/,
       }),
     ).not.toBeChecked();
 
@@ -461,7 +461,7 @@ describe("ProjectDetailPage", () => {
       .closest("section");
     if (!codexSection) throw new Error("未找到 Codex Skill 项目管理区");
     const codexExclude = within(codexSection).getByRole("checkbox", {
-      name: /若目标是应用新建且未跟踪/,
+      name: /新建文件写入 .git\/info\/exclude/,
     });
     expect(codexExclude).not.toBeChecked();
     fireEvent.click(codexExclude);
@@ -472,7 +472,7 @@ describe("ProjectDetailPage", () => {
     );
     expect(
       screen.getByRole("checkbox", {
-        name: /若目标是应用新建且未跟踪/,
+        name: /新建文件写入 .git\/info\/exclude/,
       }),
     ).not.toBeChecked();
   });

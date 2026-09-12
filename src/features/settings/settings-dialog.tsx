@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ReactElement } from "react";
+import { Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
 
 import {
   commands,
@@ -120,26 +120,29 @@ export function SettingsDialog({
         </DialogHeader>
 
         <DialogBody className="space-y-4">
-          <section
-            aria-labelledby="settings-appearance-title"
-            className="rounded-lg border p-4"
-          >
-            <h3 id="settings-appearance-title" className="font-semibold">
+          <section aria-labelledby="settings-appearance-title">
+            <h3
+              id="settings-appearance-title"
+              className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase"
+            >
               外观模式
             </h3>
-            <div className="mt-3">
-              <ThemeToggleGroup
-                preference={themePreference}
-                onPreferenceChange={onThemePreferenceChange}
-              />
+            <div className="bg-card mt-2 overflow-hidden rounded-lg border">
+              <div className="flex min-h-11 items-center justify-between gap-3 px-4 py-2.5">
+                <span className="text-[13px]">外观</span>
+                <ThemeToggleGroup
+                  preference={themePreference}
+                  onPreferenceChange={onThemePreferenceChange}
+                />
+              </div>
             </div>
           </section>
 
-          <section
-            aria-labelledby="settings-apply-mode-title"
-            className="rounded-lg border p-4"
-          >
-            <h3 id="settings-apply-mode-title" className="font-semibold">
+          <section aria-labelledby="settings-apply-mode-title">
+            <h3
+              id="settings-apply-mode-title"
+              className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase"
+            >
               应用方式
             </h3>
             {settingsQuery.isPending ? (
@@ -158,77 +161,84 @@ export function SettingsDialog({
               </p>
             ) : null}
             {settingsQuery.data ? (
-              <label className="mt-4 flex items-start gap-3 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  aria-label="直接应用（跳过预览确认对话框）"
-                  checked={directApply}
-                  disabled={updateMutation.isPending}
-                  onChange={(event) => toggleApplyMode(event.target.checked)}
-                />
-                <span>
-                  <span className="font-medium">
-                    直接应用（跳过预览确认对话框）
+              <div className="bg-card mt-2 overflow-hidden rounded-lg border">
+                <label className="hover:bg-muted/50 flex min-h-11 items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="min-w-0">
+                    <span className="text-[13px] font-medium">
+                      直接应用（跳过预览确认对话框）
+                    </span>
+                    <span className="text-muted-foreground mt-0.5 block text-xs">
+                      无冲突时跳过确认直接应用，操作后自动同步。每次应用仍会创建快照；有冲突时仍会弹出预览。
+                    </span>
                   </span>
-                  <span className="text-muted-foreground mt-1 block leading-6">
-                    开启后，各受支持工具的 MCP 与 Skills
-                    全局同步和项目追加，以及 Claude/Codex 的 Provider
-                    与提示词同步仍会照常生成持久化预览，但在没有冲突或错误时直接应用，不再弹出确认对话框；中央列表的分配、启停与保存、删除、导入等操作也会自动同步到目标，页面上的手动全局同步按钮随之隐藏。每次应用仍会先创建快照并可回滚。存在冲突、错误或目标受阻时仍会打开预览对话框并阻止应用。
-                  </span>
-                </span>
-              </label>
+                  <input
+                    type="checkbox"
+                    className="shrink-0"
+                    aria-label="直接应用（跳过预览确认对话框）"
+                    checked={directApply}
+                    disabled={updateMutation.isPending}
+                    onChange={(event) => toggleApplyMode(event.target.checked)}
+                  />
+                </label>
+              </div>
             ) : null}
           </section>
 
-          <section
-            aria-labelledby="settings-tool-probe-title"
-            className="rounded-lg border p-4"
-          >
-            <h3 id="settings-tool-probe-title" className="font-semibold">
+          <section aria-labelledby="settings-tool-probe-title">
+            <h3
+              id="settings-tool-probe-title"
+              className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase"
+            >
               工具检测
             </h3>
-            <p className="text-muted-foreground mt-1 mb-3 text-sm">
-              安装或卸载工具后无需重启应用，重新检测即可更新各页面的安装状态与版本。
-            </p>
-            <RefreshEnvironmentButton showToolList />
+            <div className="bg-card mt-2 overflow-hidden rounded-lg border">
+              <div className="hover:bg-muted/50 flex min-h-11 items-center justify-between gap-3 px-4 py-2.5">
+                <p className="text-muted-foreground text-xs">
+                  安装或卸载工具后，重新检测即可更新状态。
+                </p>
+                <RefreshEnvironmentButton showToolList />
+              </div>
+            </div>
           </section>
 
-          <section
-            aria-labelledby="settings-enabled-tools-title"
-            className="rounded-lg border p-4"
-          >
-            <h3 id="settings-enabled-tools-title" className="font-semibold">
+          <section aria-labelledby="settings-enabled-tools-title">
+            <h3
+              id="settings-enabled-tools-title"
+              className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase"
+            >
               启用的工具
             </h3>
-            <p className="text-muted-foreground mt-1 text-sm">
-              关闭的工具将不再显示在顶部工具入口、中央列表与项目详情中；已有配置数据不会被删除，同步行为保持不变。
+            <p className="text-muted-foreground mt-2 text-xs">
+              关闭的工具不再显示；已有配置不会删除。
             </p>
             {enabledTools ? (
-              <div className="mt-3 space-y-2">
+              <div className="bg-card mt-2 overflow-hidden rounded-lg border">
                 {ENABLED_TOOL_ORDER.map((tool) => {
                   const metadata = toolMetadata(tool);
                   return (
                     <label
                       key={tool}
-                      className="flex items-center gap-3 text-sm"
+                      className="hover:bg-muted/50 flex min-h-11 items-center justify-between gap-3 px-4 py-2.5"
                     >
+                      <span className="flex items-center gap-2 text-[13px]">
+                        <img
+                          src={metadata.icon}
+                          alt=""
+                          aria-hidden="true"
+                          draggable={false}
+                          className="rounded-control size-4 object-contain"
+                        />
+                        {metadata.label}
+                      </span>
                       <input
                         type="checkbox"
+                        className="shrink-0"
                         checked={enabledTools.includes(tool)}
                         disabled={updateMutation.isPending}
                         onChange={(event) =>
                           toggleEnabledTool(tool, event.target.checked)
                         }
                       />
-                      <img
-                        src={metadata.icon}
-                        alt=""
-                        aria-hidden="true"
-                        draggable={false}
-                        className="size-4 rounded-[4px] object-contain"
-                      />
-                      <span>{metadata.label}</span>
                     </label>
                   );
                 })}
@@ -247,13 +257,13 @@ export function SettingsDialog({
 }
 
 const themeToggleOptions = [
-  { value: "light", label: "亮色模式", Icon: SunIcon },
-  { value: "dark", label: "暗色模式", Icon: MoonIcon },
-  { value: "system", label: "跟随系统外观", Icon: MonitorIcon },
+  { value: "light", label: "亮色模式", Icon: Sun },
+  { value: "dark", label: "暗色模式", Icon: Moon },
+  { value: "system", label: "跟随系统外观", Icon: Monitor },
 ] as const satisfies readonly {
   value: ThemePreference;
   label: string;
-  Icon: () => ReactElement;
+  Icon: LucideIcon;
 }[];
 
 interface ThemeToggleGroupProps {
@@ -269,7 +279,7 @@ function ThemeToggleGroup({
     <div
       role="group"
       aria-label="外观模式"
-      className="inline-flex items-center gap-0.5 rounded-md border p-0.5"
+      className="rounded-control inline-flex items-center overflow-hidden border p-0.5"
     >
       {themeToggleOptions.map(({ value, label, Icon }) => {
         const selected = preference === value;
@@ -282,69 +292,16 @@ function ThemeToggleGroup({
             title={label}
             onClick={() => onPreferenceChange(value)}
             className={cn(
-              "flex size-6 items-center justify-center rounded transition-colors",
+              "flex h-7 items-center justify-center px-2 transition-colors",
               selected
                 ? "bg-muted text-foreground"
                 : "text-muted-foreground hover:bg-muted",
             )}
           >
-            <Icon />
+            <Icon aria-hidden="true" className="size-3.5" />
           </button>
         );
       })}
     </div>
-  );
-}
-
-function SunIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="size-3.5"
-    >
-      <circle cx="8" cy="8" r="3" />
-      <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M12.8 3.2l-1.1 1.1M4.3 11.7l-1.1 1.1" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="size-3.5"
-    >
-      <path d="M13.4 9.6A6 6 0 1 1 6.4 2.6a4.8 4.8 0 0 0 7 7Z" />
-    </svg>
-  );
-}
-
-function MonitorIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="size-3.5"
-    >
-      <rect x="1.75" y="2.75" width="12.5" height="8.5" rx="1" />
-      <path d="M5.5 13.75h5M8 11.25v2.5" />
-    </svg>
   );
 }

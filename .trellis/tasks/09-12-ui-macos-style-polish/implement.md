@@ -112,24 +112,26 @@
 
 ## 阶段 5：卡片、列表与色板收敛
 
-- [ ] 5.1 `central-list-layout.tsx`：`CentralListCard` 补 `bg-card`、list 模式
+- [x] 5.1 `central-list-layout.tsx`：`CentralListCard` 补 `bg-card`、list 模式
       `px-4 py-3`；`CentralListLayoutToggle` 改仅图标 segmented control（lucide
       `List`/`LayoutGrid`，`aria-label`/`aria-pressed`/`title` 保持）。
-- [ ] 5.2 inset grouped list 改造（design §6）：dashboard、projects、各页"全局目标
+- [x] 5.2 inset grouped list 改造（design §6）：dashboard、projects、各页"全局目标
       状态"网格、`change-preview-dialog.tsx`、`snapshot-restore-dialog.tsx`、
       `native-resources.tsx`、`option-row.tsx` 的条目改 `divide-y` 行，去掉条目自带
       边框与圆角。
-- [ ] 5.3 `sync-status-badge.tsx` 去字符前缀改圆点；`blocking-state.tsx` 去 "⛔" 改
+- [x] 5.3 `sync-status-badge.tsx` 去字符前缀改圆点；`blocking-state.tsx` 去 "⛔" 改
       lucide `OctagonAlert`；`projects/detail/page.tsx` "○ 未纳管" 同法。同步更新
       按可见文案断言的测试（只删符号）。
-- [ ] 5.4 dashboard `MetricCard` / `SummaryItem` 按 design §6 调整。
-- [ ] 5.5 `settings-dialog.tsx` 各 section 改一行一设置列表，`ThemeToggleGroup` 改
-      `h-7` segmented。
-- [ ] 5.6 全项目 `rounded-xl` → `rounded-lg`；`rounded-md` / 裸 `rounded` /
+- [x] 5.4 dashboard `MetricCard` / `SummaryItem` 按 design §6 调整。
+- [x] 5.5 `settings-dialog.tsx` 各 section 改一行一设置列表，`ThemeToggleGroup` 改
+      `h-7` segmented（图标换 lucide Sun/Moon/Monitor）。
+- [x] 5.6 全项目 `rounded-xl` → `rounded-lg`；`rounded-md` / 裸 `rounded` /
       `rounded-[4px]` → `rounded-control`；删除卡片/按钮上的 `shadow-sm/lg`。
-- [ ] 5.7 12 处 `slate-*` 替换为语义 token（design §2.5）；`native-resources.tsx` 删除
+- [x] 5.7 12 处 `slate-*` 替换为语义 token（design §2.5）；`native-resources.tsx` 删除
       本地 `OptionTag` 副本改用 `option-row.tsx` 导出。
-- [ ] 5.8 正文层逐页删除冗余显式 `text-sm`，让 13px 继承生效（`text-xs` 保留）。
+- [x] 5.8 正文层逐页删除冗余显式 `text-sm`，让 13px 继承生效（`text-xs` 保留）。
+      （注：已在本阶段触及的正文/说明/空状态上完成；表单字段标签等处仍有少量
+      `text-sm`，统一化将在阶段 7 全量核对时按页补齐。）
 
 验证：`pnpm lint && pnpm typecheck && pnpm test --run`；`rg -n "slate-" src --glob '!*.test.tsx'`
 为空。

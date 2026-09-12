@@ -75,7 +75,7 @@ export function ProjectsPage() {
       <PageHeader title="项目" />
       <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="register-project-title"
         >
           <h2 id="register-project-title" className="text-[15px] font-semibold">
@@ -143,7 +143,7 @@ export function ProjectsPage() {
         </div>
 
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="project-list-title"
         >
           <h2 id="project-list-title" className="text-[15px] font-semibold">

@@ -193,7 +193,7 @@ describe("ProjectDetailPage", () => {
     if (!claudeSection) throw new Error("未找到 Claude 项目管理列");
     fireEvent.click(
       within(claudeSection).getByRole("checkbox", {
-        name: /若目标是应用新建且未跟踪/,
+        name: /新建文件写入 .git\/info\/exclude/,
       }),
     );
     fireEvent.click(
@@ -337,7 +337,7 @@ describe("ProjectDetailPage", () => {
     expect(
       await screen.findByRole("heading", { name: "项目原生资源" }),
     ).toBeVisible();
-    expect(await screen.findByText("当前组合没有项目原生资源")).toBeVisible();
+    expect(await screen.findByText("没有项目原生资源")).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Claude MCP 项目追加" }),
     ).toBeVisible();

@@ -8,13 +8,17 @@ import {
   type ProjectNativeResourceDto,
   type Tool,
 } from "@/bindings/commands";
+import { FolderX } from "lucide-react";
+
 import { BlockingState } from "@/components/blocking-state";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/empty-state";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { projectNativeResourcesQueryOptions } from "@/lib/projects-api";
 
 import type { ProjectResourceView } from "./resource-types";
+import { OptionTag } from "./option-row";
 
 export function ProjectNativeResources({
   project,
@@ -80,12 +84,12 @@ export function ProjectNativeResources({
       <div>
         <h2
           id="project-native-resources-title"
-          className="text-xl font-semibold"
+          className="text-[15px] font-semibold"
         >
           项目原生资源
         </h2>
-        <p className="text-muted-foreground mt-1 text-sm">
-          只读识别项目自带资源。临时禁用与恢复必须审阅持久化预览，即使已开启直接应用也不会自动写入。
+        <p className="text-muted-foreground mt-1 text-xs">
+          禁用与恢复始终需要确认预览。
         </p>
       </div>
       {nativeQuery.isPending ? (
@@ -108,14 +112,13 @@ export function ProjectNativeResources({
         />
       ) : null}
       {nativeQuery.data?.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-4 text-sm">
-          <p className="font-medium">当前组合没有项目原生资源</p>
-          <p className="text-muted-foreground mt-1">
-            登记与扫描不会改写这些文件。中央追加资源显示在下方。
-          </p>
-        </div>
+        <EmptyState
+          icon={FolderX}
+          title="没有项目原生资源"
+          description="中央追加资源显示在下方。"
+        />
       ) : null}
-      <div className="space-y-3">
+      <div className="divide-y">
         {nativeQuery.data?.map((resource) => (
           <NativeResourceRow
             key={resource.id}
@@ -151,7 +154,7 @@ function NativeResourceRow({
       : "不可操作";
 
   return (
-    <article className="rounded-lg border p-4 text-sm">
+    <article className="hover:bg-muted/50 px-1 py-2.5 text-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -287,27 +290,4 @@ function entryTypeLabel(entryType: ProjectNativeResourceDto["entryType"]) {
     case "hook_entry":
       return "Hook 条目";
   }
-}
-
-function OptionTag({
-  tone,
-  children,
-}: {
-  tone: "muted" | "info" | "success" | "warning";
-  children: React.ReactNode;
-}) {
-  const toneStyles = {
-    muted: "border-slate-200 bg-slate-50 text-slate-700",
-    info: "border-info/30 bg-info/10 text-info",
-    success: "border-success/30 bg-success/10 text-success",
-    warning: "border-warning/30 bg-warning/10 text-warning",
-  } as const;
-
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium ${toneStyles[tone]}`}
-    >
-      {children}
-    </span>
-  );
 }

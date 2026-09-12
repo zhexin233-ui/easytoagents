@@ -64,7 +64,7 @@ describe("ProjectDetailPage", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "展开工具配置状态" }),
     );
-    expect(await screen.findByText("○ 未纳管")).toBeVisible();
+    expect(await screen.findByText("未纳管")).toBeVisible();
     expect(
       screen.getByText(
         "该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。",

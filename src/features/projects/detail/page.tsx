@@ -213,7 +213,7 @@ export function ProjectDetailPage() {
             isProjectResourceKind(target.artifactKind),
         ) ? (
           <section
-            className="bg-card rounded-xl border p-5"
+            className="bg-card rounded-lg border p-5"
             aria-labelledby="project-status-title"
           >
             <div className="flex items-center justify-between gap-3">
@@ -231,7 +231,7 @@ export function ProjectDetailPage() {
                   toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"
                 }
                 title={toolStatusOpen ? "收起工具配置状态" : "展开工具配置状态"}
-                className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded transition-colors"
+                className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-control flex size-7 shrink-0 items-center justify-center transition-colors"
                 onClick={() => setToolStatusOpen((open) => !open)}
               >
                 <svg
@@ -279,7 +279,7 @@ export function ProjectDetailPage() {
                           {initialUnmanaged ? (
                             <SyncStatusBadge
                               status={target.status}
-                              label="○ 未纳管"
+                              label="未纳管"
                               tone="muted"
                             />
                           ) : (
@@ -307,7 +307,7 @@ export function ProjectDetailPage() {
         ) : null}
 
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="project-resource-management-title"
         >
           <div className="flex flex-wrap items-center justify-between gap-4">

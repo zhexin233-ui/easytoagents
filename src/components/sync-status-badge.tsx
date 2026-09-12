@@ -2,16 +2,16 @@ import type { ChangeKind, SyncStatus } from "@/bindings/commands";
 import { toneClass } from "@/lib/tone-class";
 
 const statusLabels: Record<SyncStatus, string> = {
-  in_sync: "✓ 已同步",
-  external_non_owned_change: "△ 非受管变更",
-  external_owned_change: "! 受管内容冲突",
-  missing: "○ 目标缺失",
-  parse_error: "! 格式错误",
-  permission_denied: "! 权限不足",
-  policy_blocked: "⛔ 策略阻止",
-  untrusted: "⛔ 项目未信任",
-  target_type_changed: "! 目标类型变化",
-  failed: "× 检测失败",
+  in_sync: "已同步",
+  external_non_owned_change: "非受管变更",
+  external_owned_change: "受管内容冲突",
+  missing: "目标缺失",
+  parse_error: "格式错误",
+  permission_denied: "权限不足",
+  policy_blocked: "策略阻止",
+  untrusted: "项目未信任",
+  target_type_changed: "目标类型变化",
+  failed: "检测失败",
 };
 
 const changeLabels: Record<ChangeKind, string> = {
@@ -58,7 +58,7 @@ export function SyncStatusBadge({
   const statusLabel = label ?? labels?.[status] ?? statusLabels[status];
   return (
     <span
-      className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${toneClass(
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium before:size-1.5 before:rounded-full before:bg-current ${toneClass(
         resolvedTone === "blocked"
           ? "destructive"
           : resolvedTone === "warning"

@@ -58,11 +58,11 @@ export function ChangePreviewDialog({
           </h2>
         </DialogHeader>
 
-        <DialogBody className="space-y-4">
+        <DialogBody>
           {preview.warningCodes.length > 0 ? (
             <section
               aria-label="预览警告"
-              className={`rounded-lg border p-4 ${toneClass("warning")}`}
+              className={`mb-3 rounded-lg border p-4 ${toneClass("warning")}`}
             >
               <ul className="text-warning list-disc pl-5 text-sm">
                 {preview.warningCodes.map((warning) => (
@@ -71,60 +71,65 @@ export function ChangePreviewDialog({
               </ul>
             </section>
           ) : null}
-          {preview.targets.map((target) => (
-            <article key={target.targetId} className="rounded-lg border p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <code className="text-xs break-all">
-                  {target.descriptor.path ?? "目标路径不可用"}
-                </code>
-                <SyncStatusBadge
-                  changeKind={target.changeKind}
-                  status={target.status}
-                />
-              </div>
-              {target.warningCodes.length > 0 ? (
-                <ul className="text-warning mt-3 list-disc pl-5 text-sm">
-                  {target.warningCodes.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              ) : null}
-              {target.baselineMismatchedItems.length > 0 ? (
-                <p className="text-warning mt-3 text-sm">
-                  内容不一致的受管条目：
-                  {target.baselineMismatchedItems.join("、")}
-                </p>
-              ) : null}
-              {target.errorCode ? (
-                <div className="mt-3">
-                  <BlockingState
-                    title="该目标阻止应用"
-                    description="请先重新扫描或处理冲突，再生成一份新的预览。"
-                    code={target.errorCode}
+          <div className="divide-y">
+            {preview.targets.map((target) => (
+              <article
+                key={target.targetId}
+                className="hover:bg-muted/50 px-1 py-2.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <code className="text-xs break-all">
+                    {target.descriptor.path ?? "目标路径不可用"}
+                  </code>
+                  <SyncStatusBadge
+                    changeKind={target.changeKind}
+                    status={target.status}
                   />
-                  {target.readoptAvailable && onReadopt ? (
-                    <div className="mt-3 space-y-2">
-                      <p className="text-muted-foreground text-xs leading-5">
-                        若接受当前文件内容作为新基线，可重新接管；之后重新同步会把中央意图写回受管条目。只调整基线，不会立即修改文件。
-                      </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={readopting || applying}
-                        aria-label={`以当前内容重新接管 ${target.descriptor.path ?? "目标"}`}
-                        onClick={onReadopt}
-                      >
-                        {readopting ? "正在重新接管…" : "以当前内容重新接管"}
-                      </Button>
-                    </div>
-                  ) : null}
                 </div>
-              ) : null}
-              <pre className="bg-muted rounded-control mt-3 overflow-auto p-3 text-xs leading-5">
-                {JSON.stringify(target.redactedDiff, null, 2)}
-              </pre>
-            </article>
-          ))}
+                {target.warningCodes.length > 0 ? (
+                  <ul className="text-warning mt-3 list-disc pl-5 text-sm">
+                    {target.warningCodes.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {target.baselineMismatchedItems.length > 0 ? (
+                  <p className="text-warning mt-3 text-sm">
+                    内容不一致的受管条目：
+                    {target.baselineMismatchedItems.join("、")}
+                  </p>
+                ) : null}
+                {target.errorCode ? (
+                  <div className="mt-3">
+                    <BlockingState
+                      title="该目标阻止应用"
+                      description="请先重新扫描或处理冲突，再生成一份新的预览。"
+                      code={target.errorCode}
+                    />
+                    {target.readoptAvailable && onReadopt ? (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-muted-foreground text-xs leading-5">
+                          若接受当前文件内容作为新基线，可重新接管；之后重新同步会把中央意图写回受管条目。只调整基线，不会立即修改文件。
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={readopting || applying}
+                          aria-label={`以当前内容重新接管 ${target.descriptor.path ?? "目标"}`}
+                          onClick={onReadopt}
+                        >
+                          {readopting ? "正在重新接管…" : "以当前内容重新接管"}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <pre className="bg-muted rounded-control mt-3 overflow-auto p-3 text-xs leading-5">
+                  {JSON.stringify(target.redactedDiff, null, 2)}
+                </pre>
+              </article>
+            ))}
+          </div>
         </DialogBody>
 
         <DialogFooter>

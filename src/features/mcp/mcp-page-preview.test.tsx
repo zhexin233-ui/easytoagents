@@ -262,10 +262,10 @@ describe("McpPage", () => {
       ],
     });
     renderPage();
-    expect(await screen.findByText("△ 非受管变更")).toBeVisible();
+    expect(await screen.findByText("非受管变更")).toBeVisible();
     expect(screen.getByText("EXTERNAL_NON_OWNED_CHANGE")).toBeVisible();
-    expect(screen.queryByText("○ 未纳入同步管理")).not.toBeInTheDocument();
-    expect(screen.queryByText("○ 空目录，待配置")).not.toBeInTheDocument();
+    expect(screen.queryByText("未纳入同步管理")).not.toBeInTheDocument();
+    expect(screen.queryByText("空目录，待配置")).not.toBeInTheDocument();
     expect(await globalButton("生成全局预览")).toBeEnabled();
     expect(commands.previewMcpSync).not.toHaveBeenCalled();
   });

@@ -237,7 +237,7 @@ export function SkillsPage() {
       />
       <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="skill-list-title"
         >
           <h2 id="skill-list-title" className="text-[15px] font-semibold">
@@ -384,7 +384,7 @@ export function SkillsPage() {
                             <dd className="break-all">{skill.centralPath}</dd>
                           </div>
                         </dl>
-                        <p className="bg-muted mt-3 rounded p-2 text-xs">
+                        <p className="bg-muted rounded-control mt-3 p-2 text-xs">
                           {skill.description}
                         </p>
                       </>
@@ -420,7 +420,7 @@ export function SkillsPage() {
         </section>
 
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="skill-target-title"
         >
           <h2 id="skill-target-title" className="text-[15px] font-semibold">
@@ -442,7 +442,7 @@ export function SkillsPage() {
             </p>
           ) : null}
           {visibleStatuses && visibleStatuses.length > 0 ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="mt-3 divide-y">
               {visibleStatuses.map((status) => {
                 const presentation = globalTargetStatusPresentation(
                   status.status,
@@ -452,7 +452,7 @@ export function SkillsPage() {
                 return (
                   <article
                     key={status.tool}
-                    className="rounded-lg border p-4 text-sm"
+                    className="hover:bg-muted/50 px-1 py-2.5 text-sm"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <strong>{toolMetadata(status.tool).label}</strong>

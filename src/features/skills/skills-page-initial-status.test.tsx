@@ -162,7 +162,7 @@ describe("Skills 首次目标状态展示", () => {
     });
     renderPage();
 
-    expect(await screen.findAllByText("○ 已分配，待同步")).toHaveLength(2);
+    expect(await screen.findAllByText("已分配，待同步")).toHaveLength(2);
     expect(
       screen.getAllByText(
         "分配已写入中央配置，但尚未写入工具目录；点击“预览全局同步”并确认应用。现有非受管内容会保留。",
@@ -213,7 +213,7 @@ describe("Skills 首次目标状态展示", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("○ 已分配，待同步")).toBeVisible();
+    expect(await screen.findByText("已分配，待同步")).toBeVisible();
     expect(
       screen.getAllByText(
         "分配已写入中央配置，但尚未写入工具目录；重新切换该分配可触发自动同步。现有非受管内容会保留。",
@@ -228,15 +228,11 @@ describe("Skills 首次目标状态展示", () => {
   });
 
   it.each([
-    ["external_non_owned_change", "EXTERNAL_NON_OWNED_CHANGE", "△ 非受管变更"],
-    [
-      "external_owned_change",
-      "CENTRAL_SKILL_CONTENT_CHANGED",
-      "! 受管内容冲突",
-    ],
-    ["parse_error", "SKILL_PARSE_ERROR", "! 格式错误"],
-    ["permission_denied", "PERMISSION_DENIED", "! 权限不足"],
-    ["target_type_changed", "TARGET_TYPE_CHANGED", "! 目标类型变化"],
+    ["external_non_owned_change", "EXTERNAL_NON_OWNED_CHANGE", "非受管变更"],
+    ["external_owned_change", "CENTRAL_SKILL_CONTENT_CHANGED", "受管内容冲突"],
+    ["parse_error", "SKILL_PARSE_ERROR", "格式错误"],
+    ["permission_denied", "PERMISSION_DENIED", "权限不足"],
+    ["target_type_changed", "TARGET_TYPE_CHANGED", "目标类型变化"],
   ] as const)(
     "真实 %s 继续展示原有诊断，不覆盖为首次目录",
     async (status, diagnosticCode, label) => {
@@ -255,20 +251,20 @@ describe("Skills 首次目标状态展示", () => {
       renderPage();
       expect(await screen.findByText(label)).toBeVisible();
       expect(screen.getByText(diagnosticCode)).toBeVisible();
-      expect(screen.queryByText("○ 未纳入同步管理")).not.toBeInTheDocument();
-      expect(screen.queryByText("○ 空目录，待配置")).not.toBeInTheDocument();
+      expect(screen.queryByText("未纳入同步管理")).not.toBeInTheDocument();
+      expect(screen.queryByText("空目录，待配置")).not.toBeInTheDocument();
     },
   );
 
   it.each([
     [
       "SKILL_TARGET_INITIAL_EMPTY",
-      "○ 空目录，待配置",
+      "空目录，待配置",
       "目标目录为空，尚未配置同步；可先导入技能到中央库，再分配并预览同步。",
     ],
     [
       "SKILL_TARGET_INITIAL_UNMANAGED",
-      "○ 未纳入同步管理",
+      "未纳入同步管理",
       "已有目录尚未纳入同步管理；可检测其中的用户技能并复制到中央库。导入不会自动接管原有安装。",
     ],
   ] as const)(

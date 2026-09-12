@@ -284,7 +284,7 @@ export function ProviderPanel({
   return (
     <section
       aria-labelledby={`${tool}-providers-title`}
-      className="bg-card rounded-xl border p-5"
+      className="bg-card rounded-lg border p-5"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -415,7 +415,7 @@ export function ProviderPanel({
               {importPreview.skippedEnvKeys.join("、")}
             </p>
           ) : null}
-          <pre className="bg-card mt-3 overflow-auto rounded p-3 text-xs dark:bg-slate-900/60">
+          <pre className="bg-card rounded-control mt-3 overflow-auto p-3 text-xs">
             {JSON.stringify(importPreview.redactedProjection, null, 2)}
           </pre>
           <div className="mt-3 flex gap-2">

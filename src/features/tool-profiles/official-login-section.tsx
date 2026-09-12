@@ -153,7 +153,7 @@ export function OfficialLoginSection({ tool }: OfficialLoginSectionProps) {
             </p>
           ) : null}
           {status.diagnostic ? (
-            <pre className="bg-card overflow-auto rounded p-2 text-xs whitespace-pre-wrap dark:bg-slate-900/60">
+            <pre className="bg-card rounded-control overflow-auto p-2 text-xs whitespace-pre-wrap">
               {status.diagnostic}
             </pre>
           ) : null}

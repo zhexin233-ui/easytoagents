@@ -24,7 +24,7 @@ export function ProjectOptionRow({
   const assigned = state !== "available";
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
+    <div className="hover:bg-muted/50 flex min-h-11 items-center justify-between gap-3 px-1 py-2.5 text-sm">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <span className="shrink-0">{name}</span>
         <StateTags state={state} />

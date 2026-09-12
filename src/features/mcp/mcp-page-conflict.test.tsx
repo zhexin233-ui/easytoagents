@@ -208,9 +208,7 @@ describe("McpPage", () => {
       ? (await within(statusSection).findByText("Claude")).closest("article")
       : null;
     if (!claudeCard) throw new Error("未找到 Claude 状态卡");
-    expect(within(claudeCard).getByText("○ 待初始化")).toHaveClass(
-      "bg-amber-50",
-    );
+    expect(within(claudeCard).getByText("待初始化")).toHaveClass("bg-amber-50");
     expect(
       within(claudeCard).getByText(
         "尚未写入受管目标；生成预览会在确认后初始化。",
@@ -536,13 +534,13 @@ describe("McpPage", () => {
   it.each([
     [
       "CLAUDE_POLICY_UNKNOWN",
-      "△ 策略状态待确认",
+      "策略状态待确认",
       "无法确认 Claude 管理策略是否允许该类自定义目标，当前已安全阻止预览。",
       "bg-amber-50",
     ],
     [
       "CLAUDE_POLICY_BLOCKED",
-      "⛔ 策略阻止",
+      "策略阻止",
       "Claude 管理策略禁止该类自定义目标。",
       "bg-red-50",
     ],

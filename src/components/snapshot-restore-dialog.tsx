@@ -235,10 +235,10 @@ export function SnapshotRestoreDialog({
               </div>
             </section>
           ) : (
-            <div className="space-y-3">
+            <div className="divide-y">
               {deleteSummary ? <p role="status">{deleteSummaryText}</p> : null}
               {snapshots && snapshots.length > 0 ? (
-                <div className="flex justify-end gap-3">
+                <div className="flex justify-end gap-3 py-2.5">
                   <Button
                     variant="outline"
                     size="sm"
@@ -260,7 +260,7 @@ export function SnapshotRestoreDialog({
               {snapshots?.map((snapshot) => (
                 <article
                   key={snapshot.snapshotId}
-                  className="rounded-lg border p-4"
+                  className="hover:bg-muted/50 px-1 py-2.5"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">

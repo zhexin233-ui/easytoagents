@@ -275,7 +275,7 @@ export function McpPage() {
       />
       <main className="max-w-6xl space-y-6 px-8 py-6">
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="mcp-list-title"
         >
           <h2 id="mcp-list-title" className="text-[15px] font-semibold">
@@ -400,7 +400,7 @@ export function McpPage() {
                             </dd>
                           </div>
                         </dl>
-                        <pre className="bg-muted mt-3 overflow-auto rounded p-2 text-xs">
+                        <pre className="bg-muted rounded-control mt-3 overflow-auto p-2 text-xs">
                           {JSON.stringify(server.redactedExtra, null, 2)}
                         </pre>
                       </>
@@ -441,7 +441,7 @@ export function McpPage() {
         </section>
 
         <section
-          className="bg-card rounded-xl border p-5"
+          className="bg-card rounded-lg border p-5"
           aria-labelledby="mcp-target-title"
         >
           <h2 id="mcp-target-title" className="text-[15px] font-semibold">
@@ -463,7 +463,7 @@ export function McpPage() {
             </p>
           ) : null}
           {visibleStatuses && visibleStatuses.length > 0 ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="mt-3 divide-y">
               {visibleStatuses.map((status) => {
                 const presentation = globalTargetStatusPresentation(
                   status.status,
@@ -473,7 +473,7 @@ export function McpPage() {
                 return (
                   <article
                     key={status.tool}
-                    className="rounded-lg border p-4 text-sm"
+                    className="hover:bg-muted/50 px-1 py-2.5 text-sm"
                   >
                     <p className="font-medium">
                       {toolMetadata(status.tool).label}

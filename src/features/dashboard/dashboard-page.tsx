@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import type { DashboardToolSummaryDto } from "@/bindings/commands";
@@ -104,7 +105,7 @@ export function DashboardPage() {
                 value={dashboardQuery.data.conflictCount}
                 link="/projects?status=conflict"
               />
-              <article className="bg-card rounded-xl border p-5">
+              <article className="bg-card rounded-lg border p-5">
                 <p className="text-muted-foreground text-sm">私有快照</p>
                 <p className="mt-2 text-3xl font-semibold">
                   {dashboardQuery.data.snapshotCount}
@@ -121,17 +122,17 @@ export function DashboardPage() {
             </section>
 
             <section
-              className="bg-card rounded-xl border p-5"
+              className="bg-card rounded-lg border p-5"
               aria-labelledby="recent-sync-title"
             >
               <h2 id="recent-sync-title" className="text-[15px] font-semibold">
                 最近同步
               </h2>
-              <div className="mt-4 space-y-3">
+              <div className="mt-3 divide-y">
                 {dashboardQuery.data.recentSyncRuns.map((run) => (
                   <article
                     key={run.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+                    className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-3 px-1 py-2.5 text-sm"
                   >
                     <div>
                       <p className="font-medium">
@@ -148,7 +149,7 @@ export function DashboardPage() {
                   </article>
                 ))}
                 {dashboardQuery.data.recentSyncRuns.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">
+                  <p className="text-muted-foreground py-2.5 text-sm">
                     尚无同步记录。
                   </p>
                 ) : null}
@@ -193,22 +194,24 @@ function ToolSummaryCard({ tool }: { tool: DashboardToolSummaryDto }) {
   const resourceRoute = metadata.profileRoute ?? "/mcp";
 
   return (
-    <article className="bg-card rounded-xl border p-5">
+    <article className="bg-card rounded-lg border p-5">
       <div className="flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold">
           <img
             src={metadata.icon}
             alt=""
             aria-hidden="true"
-            className="size-5 rounded object-contain"
+            className="rounded-control size-5 object-contain"
           />
           {metadata.label}
         </h2>
-        <Link className="text-sm underline" to={resourceRoute}>
-          {metadata.profileRoute ? "管理" : "管理 MCP/Skills"}
-        </Link>
+        <Button asChild variant="ghost" size="sm">
+          <Link to={resourceRoute}>
+            {metadata.profileRoute ? "管理" : "管理 MCP/Skills"}
+          </Link>
+        </Button>
       </div>
-      <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
         <SummaryItem
           label="当前渠道"
           value={
@@ -234,9 +237,9 @@ function ToolSummaryCard({ tool }: { tool: DashboardToolSummaryDto }) {
 
 function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-muted rounded-lg p-3">
+    <div>
       <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd className="mt-1 font-medium break-words">{value}</dd>
+      <dd className="mt-0.5 font-medium break-words">{value}</dd>
     </div>
   );
 }
@@ -251,12 +254,15 @@ function MetricCard({
   link: string;
 }) {
   return (
-    <article className="bg-card rounded-xl border p-5">
+    <article className="bg-card rounded-lg border p-5">
       <p className="text-muted-foreground text-sm">{label}</p>
-      <p className="mt-2 text-3xl font-semibold">{value}</p>
-      <Link className="mt-4 inline-block text-sm underline" to={link}>
-        查看
-      </Link>
+      <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
+      <Button asChild className="mt-3" size="sm" variant="ghost">
+        <Link to={link}>
+          查看
+          <ChevronRight aria-hidden="true" className="size-3.5" />
+        </Link>
+      </Button>
     </article>
   );
 }
