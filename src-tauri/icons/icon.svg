@@ -1,7 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#111827" />
-  <path
-    d="M144 156h224v56H200v44h144v56H200v44h168v56H144z"
-    fill="#f8fafc"
-  />
+  <!-- Apple macOS 图标模板：内容须占画布约 80.5%（1024 画布中 824×824），四周留透明边距，否则 Dock 中会比其他应用大一圈 -->
+  <g transform="translate(50 50) scale(0.8046875)">
+    <rect width="512" height="512" rx="112" fill="#111827" />
+    <path
+      d="M144 156h224v56H200v44h144v56H200v44h168v56H144z"
+      fill="#f8fafc"
+    />
+  </g>
 </svg>
