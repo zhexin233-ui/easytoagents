@@ -1623,3 +1623,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Next Steps
 
 - 推送 main；后续如需回退侧栏材质，revert f3c30d0 并还原 aside 类名
+
+
+## Session 63: Agents 子代理全局与项目级管理
+
+**Date**: 2026-09-12
+**Task**: Agents 子代理全局与项目级管理
+**Branch**: `main`
+
+### Summary
+
+完成 Claude/Codex/Cursor/ZCode/OpenCode Agents 适配、数据库迁移、同步预览与应用、导入与漂移状态、全局和项目级前端管理；新增 E2E、冒烟记录、README/维护者文档和前端 spec。全量 pnpm check、绑定校验与 git diff --check 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4800914` | (see git log) |
+
+### Status
+
+[OK] **Completed**
