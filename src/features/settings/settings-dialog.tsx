@@ -100,7 +100,6 @@ export function SettingsDialog({
         dialogRef={dialogRef}
         onClose={onClose}
         labelledBy="settings-dialog-title"
-        describedBy="settings-dialog-description"
       >
         <DialogHeader>
           <div className="min-w-0">
@@ -110,12 +109,6 @@ export function SettingsDialog({
             >
               设置
             </h2>
-            <p
-              id="settings-dialog-description"
-              className="text-muted-foreground mt-1"
-            >
-              设置立即生效并保存在本机应用数据库中。
-            </p>
           </div>
         </DialogHeader>
 

@@ -28,7 +28,7 @@ export function globalTargetStatusPresentation(
     return {
       label: "已有同名安装，待接管",
       description:
-        "工具目录中已有同名技能，尚未纳入同步管理。点击“检测并接管已有 Skills”，选择与中央副本内容一致的条目，预览并确认接管；内容不同的条目需要先处理差异。",
+        "工具目录中已有同名技能，可检测并接管；内容不同需先处理差异。",
       tone: "warning",
       previewBlocked,
     };
@@ -40,8 +40,8 @@ export function globalTargetStatusPresentation(
     return {
       label: "已分配，待同步",
       description: directApply
-        ? "分配已写入中央配置，但尚未写入工具目录；重新切换该分配可触发自动同步。现有非受管内容会保留。"
-        : "分配已写入中央配置，但尚未写入工具目录；点击“预览全局同步”并确认应用。现有非受管内容会保留。",
+        ? "分配已写入，尚未写入工具目录；重新切换分配可触发自动同步。"
+        : "分配已写入，尚未写入工具目录；点击“预览全局同步”并确认应用。",
       tone: "warning",
       previewBlocked,
     };
@@ -50,8 +50,7 @@ export function globalTargetStatusPresentation(
     if (diagnosticCode === "SKILL_TARGET_INITIAL_EMPTY") {
       return {
         label: "空目录，待配置",
-        description:
-          "目标目录为空，尚未配置同步；可先导入技能到中央库，再分配并预览同步。",
+        description: "目标目录为空；可先导入技能到中央库，再分配并预览同步。",
         tone: "warning",
         previewBlocked,
       };
@@ -60,7 +59,7 @@ export function globalTargetStatusPresentation(
       return {
         label: "未纳入同步管理",
         description:
-          "已有目录尚未纳入同步管理；可检测其中的用户技能并复制到中央库。导入不会自动接管原有安装。",
+          "已有目录尚未纳管；可检测其中的用户技能并复制到中央库，不会自动接管。",
         tone: "warning",
         previewBlocked,
       };
@@ -80,8 +79,7 @@ export function globalTargetStatusPresentation(
     if (diagnosticCode === "CLAUDE_POLICY_UNKNOWN") {
       return {
         label: "策略状态待确认",
-        description:
-          "无法确认 Claude 管理策略是否允许该类自定义目标，当前已安全阻止预览。",
+        description: "无法确认 Claude 管理策略，预览已阻止。",
         tone: "warning",
         previewBlocked,
       };

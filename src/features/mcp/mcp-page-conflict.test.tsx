@@ -535,7 +535,7 @@ describe("McpPage", () => {
     [
       "CLAUDE_POLICY_UNKNOWN",
       "策略状态待确认",
-      "无法确认 Claude 管理策略是否允许该类自定义目标，当前已安全阻止预览。",
+      "无法确认 Claude 管理策略，预览已阻止。",
       "bg-amber-50",
     ],
     [

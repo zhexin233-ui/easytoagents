@@ -119,7 +119,7 @@ export function ProjectMcpAssignments({
     <>
       <ProjectAssignmentsSection
         title="MCP"
-        description="全局项持续继承且只读；项目只能追加其他中央 MCP。"
+        description="全局项只读继承；项目只能追加其他中央 MCP。"
         blocked={blocked}
         directApply={directApply}
         error={profileErrorText(optionsQuery.error ?? assignmentMutation.error)}

@@ -138,19 +138,19 @@
 
 ## 阶段 6：删除冗余提示语
 
-- [ ] 6.1 按 `research/copy-audit.md` "删除"清单逐条删除 JSX 节点（页头说明段、眉标、
+- [x] 6.1 按 `research/copy-audit.md` "删除"清单逐条删除 JSX 节点（页头说明段、眉标、
       顶部栏副标题、对话框眉标已在阶段 2–4 随结构替换消失，这里核对无遗漏并处理
       区块级、卡片尾部条目）。
-- [ ] 6.2 按 "精简"清单改写文案；被 `aria-describedby` 引用的节点只改内容不删 id；
+- [x] 6.2 按 "精简"清单改写文案；被 `aria-describedby` 引用的节点只改内容不删 id；
       `role=status/alert` 保持。
-- [ ] 6.3 每删/改一条，`rg -n "<文案前 8 字>" src --glob '*.test.tsx'` 定位并更新断言
+- [x] 6.3 每删/改一条，`rg -n "<文案前 8 字>" src --glob '*.test.tsx'` 定位并更新断言
       （删断言或改为新文案）；禁止 `it.skip` / `test.todo`。
-- [ ] 6.4 `src/lib/global-target-status-ui.ts` 的 description 文案（渲染到 Skills /
+- [x] 6.4 `src/lib/global-target-status-ui.ts` 的 description 文案（渲染到 Skills /
       MCP / Hooks 页目标卡片）按 copy-audit 精简，与页面级文案一并处理。
-- [ ] 6.5 用户可见文案中的内部术语（capability probe、DTO、CRUD、journal、安装探针、
+- [x] 6.5 用户可见文案中的内部术语（capability probe、DTO、CRUD、journal、安装探针、
       裸状态码）按 copy-audit 术语表替换为用户语言；toast 与 `throw new Error`
       文案不在本轮范围。
-- [ ] 6.6 复查 "保留" 清单未被误删：`rg` 抽查 10 条。
+- [x] 6.6 复查 "保留" 清单未被误删：`rg` 抽查 10 条。
 
 验证：`pnpm test --run`；`rg -n "<每条删除文案前 8 字>" src` 全部无结果。
 

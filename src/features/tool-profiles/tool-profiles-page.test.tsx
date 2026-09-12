@@ -251,9 +251,7 @@ describe("ToolProfilesPage", () => {
     renderPage("cursor");
 
     // 状态区正常渲染（提示词能力已开放，页面不再整页 fail closed）。
-    expect(
-      await screen.findByText("已安全检测到 Cursor 2.1.217"),
-    ).toBeVisible();
+    expect(await screen.findByText("已检测到 Cursor 2.1.217")).toBeVisible();
     // Provider 面板与其表单、导入入口均不存在。
     expect(
       screen.queryByRole("button", { name: "新增渠道" }),
@@ -405,7 +403,7 @@ describe("ToolProfilesPage", () => {
     });
     renderPage();
     const section = sectionByHeading("渠道");
-    await within(section).findByText(/尚无.*档案/);
+    await within(section).findByText(/尚无渠道/);
     vi.mocked(commands.listProviderProfiles).mockImplementationOnce(
       async () => {
         await refresh.promise;
@@ -480,7 +478,7 @@ describe("ToolProfilesPage", () => {
     });
     renderPage();
     const section = sectionByHeading("渠道");
-    await within(section).findByText(/尚无渠道档案/);
+    await within(section).findByText(/尚无渠道/);
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
       data: [
@@ -707,7 +705,7 @@ describe("ToolProfilesPage", () => {
     });
     renderPage();
     const section = sectionByHeading("渠道");
-    await within(section).findByText(/尚无渠道档案/);
+    await within(section).findByText(/尚无渠道/);
     fireEvent.click(within(section).getByRole("button", { name: "新增渠道" }));
     const dialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
     // 默认 API Key 方式：接入字段可见，未查询登录状态。
@@ -795,7 +793,7 @@ describe("ToolProfilesPage", () => {
     });
     renderPage("codex");
     const section = sectionByHeading("渠道");
-    await within(section).findByText(/尚无渠道档案/);
+    await within(section).findByText(/尚无渠道/);
     fireEvent.click(within(section).getByRole("button", { name: "新增渠道" }));
     const dialog = screen.getByRole("dialog", { name: "新增 Codex 渠道" });
     fireEvent.click(
@@ -1132,15 +1130,11 @@ describe("ToolProfilesPage", () => {
         name: "检测已有配置",
       }),
     );
-    expect(
-      await screen.findByText("发现已有渠道，仅生成了导入预览"),
-    ).toBeVisible();
+    expect(await screen.findByText("发现已有渠道")).toBeVisible();
 
     fireEvent.click(screen.getByRole("link", { name: "zcode" }));
     await screen.findByRole("heading", { name: "ZCode", level: 1 });
-    expect(
-      screen.queryByText("发现已有渠道，仅生成了导入预览"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("发现已有渠道")).not.toBeInTheDocument();
     // 切换页签不触发检测；确认导入也只发生在发起检测的工具上。
     expect(commands.discoverProviderImport).toHaveBeenCalledTimes(1);
     expect(commands.confirmProviderImport).not.toHaveBeenCalled();

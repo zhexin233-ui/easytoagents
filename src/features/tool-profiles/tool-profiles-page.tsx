@@ -75,7 +75,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
         <main className="max-w-6xl px-8 py-6">
           <BlockingState
             title={`${title} 渠道不受支持`}
-            description={`${title} 仅支持 MCP 与 Skills；Provider、API Key 和模型设置不会被读取、创建、预览或应用。`}
+            description={`${title} 不支持渠道配置。`}
             code="CURSOR_PROVIDER_UNSUPPORTED"
           />
         </main>
@@ -92,7 +92,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
             <section className="bg-card rounded-lg border p-4 text-sm">
               {statusQuery.data.availability === "installed" ? (
                 <p className="text-success font-medium">
-                  已安全检测到 {title}
+                  已检测到 {title}
                   {statusQuery.data.installationVersion
                     ? ` ${statusQuery.data.installationVersion}`
                     : ""}
@@ -100,14 +100,12 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               ) : null}
               {statusQuery.data.availability === "unavailable" ? (
                 <p className="text-destructive font-medium">
-                  未在发布进程的安全搜索路径中检测到 {title}
-                  ；原生目标保持不可应用。
+                  未检测到 {title}。
                 </p>
               ) : null}
               {statusQuery.data.availability === "unsupported" ? (
                 <p className="text-warning font-medium">
-                  {title}
-                  安装探针未能安全确认版本；可能是输出异常、超时或不可执行，原生目标保持不可应用。
+                  无法确认 {title} 版本。
                 </p>
               ) : null}
               {statusQuery.data.installationProbeDiagnostic ? (
@@ -191,8 +189,7 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
                 {title} 提示词
               </h2>
               <p className="text-muted-foreground mt-2">
-                全局提示词使用官方规则文件合同管理，正文会在应用时写入受管
-                <code className="mx-1">.mdc</code> 文件。
+                正文会写入 <code className="mx-1">.mdc</code> 文件。
               </p>
               {statusQuery.data?.promptTargetPath ? (
                 <code className="mt-2 block text-xs break-all">

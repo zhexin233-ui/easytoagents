@@ -67,7 +67,7 @@ export function RefreshEnvironmentButton({
         </Button>
         {busy ? (
           <p role="status" className="sr-only">
-            正在检测本机工具安装状态，完成后相关页面会自动刷新。
+            完成后页面会自动刷新。
           </p>
         ) : null}
         {refreshMutation.isSuccess && !busy ? (
@@ -97,7 +97,7 @@ export function RefreshEnvironmentButton({
       </Button>
       {busy ? (
         <p role="status" className="text-muted-foreground">
-          正在检测本机工具安装状态，完成后相关页面会自动刷新。
+          完成后页面会自动刷新。
         </p>
       ) : null}
       {refreshMutation.isSuccess && !busy ? (

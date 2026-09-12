@@ -123,7 +123,7 @@ export function ProjectHookAssignments({
     <>
       <ProjectAssignmentsSection
         title="Hooks"
-        description="事件随项目追加指定，分组方式与全局 Hooks 管理一致；全局项持续继承且只读。"
+        description="全局 Hook 只读继承；项目可追加其他 Hook。"
         blocked={blocked}
         directApply={directApply}
         error={profileErrorText(optionsQuery.error ?? assignmentMutation.error)}

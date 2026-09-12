@@ -476,7 +476,7 @@ export function HooksPage() {
             <article className="mt-4 rounded-lg border p-4 text-sm">
               <p className="font-medium">{toolMetadata(activeTool).label}</p>
               <code className="mt-2 block text-xs break-all">
-                {toolStatus.targetPath ?? "目标位置未经 capability probe 证明"}
+                {toolStatus.targetPath ?? "目标位置不可用"}
               </code>
               <div className="mt-2">
                 <SyncStatusBadge
@@ -621,8 +621,8 @@ export function HooksPage() {
           title={form.id ? "编辑 Hook" : "新增 Hook"}
           description={
             directApply
-              ? "保存只更新中央 Hook；在事件分组添加后会按直接应用模式自动同步。"
-              : "保存只更新中央 Hook，不会修改原生配置；事件在分配时选择。"
+              ? "保存只更新中央 Hook；已分配工具会按直接应用模式自动同步。"
+              : "保存只更新中央 Hook，不会修改原生配置。"
           }
           submitLabel="保存中央意图"
           pending={saveMutation.isPending}
@@ -657,7 +657,7 @@ export function HooksPage() {
               required
             />
           </Field>
-          <Field label="默认事件（添加到分组时的预选项）">
+          <Field label="默认事件">
             <select
               className="field"
               value={form.event}
@@ -728,7 +728,7 @@ export function HooksPage() {
                 }))
               }
             />
-            启用（停用后下一份预览会安全移除已应用条目）
+            启用
           </label>
         </FormDialog>
 

@@ -88,7 +88,7 @@ export function ProjectsPage() {
                 className="field mt-2"
                 value={rootPath}
                 onChange={(event) => setRootPath(event.target.value)}
-                placeholder="选择规范化项目根"
+                placeholder="选择项目目录"
               />
             </label>
             <label className="text-sm font-medium">

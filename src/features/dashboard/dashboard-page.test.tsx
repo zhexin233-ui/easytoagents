@@ -90,7 +90,7 @@ describe("DashboardPage", () => {
       data: { probing: true, tools: [] },
     });
     renderDashboard();
-    const waiting = await screen.findByText(/正在检测本机工具安装状态/);
+    const waiting = await screen.findByText(/完成后页面会自动刷新/);
     expect(waiting).toHaveAttribute("role", "status");
     expect(
       screen.getByRole("button", { name: "正在检测工具…" }),

@@ -374,9 +374,7 @@ export function SkillsPage() {
                       <>
                         <dl className="mt-3 grid gap-2 text-xs">
                           <div>
-                            <dt className="text-muted-foreground">
-                              原来源（只读溯源）
-                            </dt>
+                            <dt className="text-muted-foreground">来源</dt>
                             <dd className="break-all">{skill.sourcePath}</dd>
                           </div>
                           <div>
@@ -405,13 +403,6 @@ export function SkillsPage() {
                       {listLayout === "grid" ? skillActions : null}
                       {platformActions}
                     </div>
-                    {listLayout === "list" ? (
-                      <p className="text-muted-foreground mt-2 text-xs leading-5">
-                        {directApply
-                          ? "全局分配只更新中央配置；直接应用模式下会自动同步写入工具目录。"
-                          : "全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。"}
-                      </p>
-                    ) : null}
                   </CentralListCardFooter>
                 </CentralListCard>
               );
@@ -526,7 +517,7 @@ export function SkillsPage() {
             >
               <DialogHeader>
                 <div>
-                  <p className="text-muted-foreground">中央副本只读内容</p>
+                  <p className="text-muted-foreground">内容预览</p>
                   <h2
                     id="skill-content-title"
                     className="mt-1 text-[15px] font-semibold"

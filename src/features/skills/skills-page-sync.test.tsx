@@ -331,11 +331,6 @@ describe("SkillsPage", () => {
       },
     });
     renderPage();
-    expect(
-      await screen.findByText(
-        "全局分配只更新中央配置；直接应用模式下会自动同步写入工具目录。",
-      ),
-    ).toBeVisible();
     fireEvent.click(
       await screen.findByRole("button", { name: "Codex 全局未分配" }),
     );
@@ -462,13 +457,8 @@ describe("SkillsPage", () => {
           ],
         });
       renderPage();
-      expect(
-        await screen.findByText(
-          "全局分配只更新中央配置，不会写入工具目录；请在下方预览全局同步并确认应用。",
-        ),
-      ).toBeVisible();
       fireEvent.click(
-        screen.getByRole("button", {
+        await screen.findByRole("button", {
           name: `${toolLabel} 全局${assigned ? "未分配" : "已分配"}`,
         }),
       );

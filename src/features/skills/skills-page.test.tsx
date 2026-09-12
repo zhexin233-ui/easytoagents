@@ -51,7 +51,7 @@ describe("SkillsPage", () => {
     expect(list).toHaveClass("space-y-3");
     expect(list).not.toHaveClass("grid");
     expect(article).toHaveAttribute("data-layout", "list");
-    expect(within(article).getByText("原来源（只读溯源）")).toBeVisible();
+    expect(within(article).getByText("来源")).toBeVisible();
     expect(within(article).getByText("中央副本")).toBeVisible();
     expect(within(article).getByText(skill.sourcePath)).toBeVisible();
     expect(within(article).getByText(skill.centralPath)).toBeVisible();
@@ -79,9 +79,7 @@ describe("SkillsPage", () => {
     expect(body).toHaveClass("flex", "flex-1", "flex-col", "p-4");
     expect(footer).toHaveClass("mt-auto", "border-t", "px-4", "py-3");
     expect(footer).toHaveAccessibleName(`${skill.name} 操作`);
-    expect(
-      within(article).queryByText("原来源（只读溯源）"),
-    ).not.toBeInTheDocument();
+    expect(within(article).queryByText("来源")).not.toBeInTheDocument();
     expect(within(article).queryByText("中央副本")).not.toBeInTheDocument();
     expect(
       within(article).queryByText(skill.sourcePath),

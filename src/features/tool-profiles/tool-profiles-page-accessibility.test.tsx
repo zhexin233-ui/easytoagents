@@ -170,6 +170,6 @@ describe("ToolProfilesPage", () => {
     expect(
       await screen.findByText(/无法确认 Claude Provider 是否由宿主管理/),
     ).toBeVisible();
-    expect(await screen.findByText(/安装探针未能安全确认版本/)).toBeVisible();
+    expect(await screen.findByText(/无法确认 Claude 版本/)).toBeVisible();
   });
 });

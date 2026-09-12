@@ -105,7 +105,7 @@ export function ProjectSkillAssignments({
     <>
       <ProjectAssignmentsSection
         title="Skills"
-        description="项目项始终是指向中央库的符号链接；全局项不可在项目中禁用。"
+        description="全局 Skills 只读继承；项目只能追加其他中央 Skills。"
         blocked={blocked}
         directApply={directApply}
         error={profileErrorText(optionsQuery.error ?? assignmentMutation.error)}

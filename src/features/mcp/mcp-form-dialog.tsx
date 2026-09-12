@@ -35,7 +35,7 @@ export function McpFormDialog({
       description={
         directApply
           ? "保存只更新中央 MCP；已分配工具会按直接应用模式自动同步。"
-          : "保存只更新中央 MCP，不会修改原生配置；原生写入仍需预览后确认 Apply。"
+          : "保存只更新中央 MCP，不会修改原生配置。"
       }
       submitLabel="保存中央意图"
       pending={pending}
@@ -197,7 +197,7 @@ export function McpFormDialog({
             }))
           }
         />
-        启用（停用后下一份预览会安全移除已应用条目）
+        启用
       </label>
     </FormDialog>
   );

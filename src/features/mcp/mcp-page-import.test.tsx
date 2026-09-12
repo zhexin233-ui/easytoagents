@@ -358,7 +358,7 @@ describe("McpPage", () => {
           "env_http_headers 环境变量引用暂不能保真导入，原配置保持不变。",
         ),
       ).toBeVisible();
-      expect(within(dialog).getByText(/复用相同配置的中央记录/)).toBeVisible();
+      expect(within(dialog).getByText(/复用已有中央记录/)).toBeVisible();
       expect(within(dialog).getByText(/\[REDACTED\]/)).toBeVisible();
       expect(
         within(dialog).getByRole("button", { name: "确认导入所选项（0）" }),

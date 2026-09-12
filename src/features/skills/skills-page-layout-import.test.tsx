@@ -156,7 +156,7 @@ describe("SkillsPage", () => {
       }),
     );
     expect(
-      await within(dialog).findByText("正在从 GitHub 下载并安全导入…"),
+      await within(dialog).findByText("正在从 GitHub 下载并导入…"),
     ).toHaveAttribute("role", "status");
     expect(
       within(dialog).getByRole("button", { name: "正在下载并导入…" }),
@@ -234,7 +234,7 @@ describe("SkillsPage", () => {
       within(dialog).getByRole("button", { name: "复制到中央库" }),
     );
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "Skill 已复制到中央库，但列表刷新失败：DATABASE_ERROR：中央列表暂不可读",
+      "Skill 已导入，列表刷新失败：DATABASE_ERROR：中央列表暂不可读",
     );
     expect(
       within(dialog).getByLabelText("GitHub Skill 目录链接"),

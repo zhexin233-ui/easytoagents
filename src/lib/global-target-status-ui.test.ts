@@ -10,7 +10,7 @@ describe("首次 Skills 接管状态", () => {
       { directApply: true },
     );
     expect(result.label).toBe("已有同名安装，待接管");
-    expect(result.description).toContain("检测并接管已有 Skills");
+    expect(result.description).toContain("检测并接管");
     expect(result.previewBlocked).toBe(false);
   });
 

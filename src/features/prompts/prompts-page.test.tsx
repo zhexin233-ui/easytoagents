@@ -461,9 +461,7 @@ describe("PromptsPage", () => {
         "已有提示词已无损导入并启用到来源工具，原生文件保持不变。",
       ),
     ).toHaveLength(1);
-    expect(
-      screen.queryByText("发现已有提示词，仅生成了无写入导入预览"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("发现已有提示词")).not.toBeInTheDocument();
   });
 
   it("确认导入失败保留预览并只显示一次错误通知", async () => {
@@ -497,9 +495,7 @@ describe("PromptsPage", () => {
     expect(screen.getAllByText("STALE_PREVIEW：导入预览已过期")).toHaveLength(
       1,
     );
-    expect(
-      screen.getByText("发现已有提示词，仅生成了无写入导入预览"),
-    ).toBeVisible();
+    expect(screen.getByText("发现已有提示词")).toBeVisible();
   });
 
   it("提示词 保存和刷新期间阻止重复提交与关闭，完成后不影响新草稿", async () => {

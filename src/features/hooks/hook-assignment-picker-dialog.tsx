@@ -73,7 +73,6 @@ export function HookAssignmentPickerDialog(
         dialogRef={dialogRef}
         onClose={close}
         labelledBy="hook-picker-title"
-        describedBy="hook-picker-description"
       >
         <DialogHeader>
           <h2 id="hook-picker-title" className="text-[15px] font-semibold">
@@ -81,10 +80,6 @@ export function HookAssignmentPickerDialog(
           </h2>
         </DialogHeader>
         <DialogBody className="space-y-4">
-          <p id="hook-picker-description" className="text-muted-foreground">
-            从中央库选择要加入该事件分组的
-            Hook；分配只更新中央意图，原生写入仍需预览后 Apply。
-          </p>
           {error ? (
             <p role="alert" className="text-destructive">
               {error}
@@ -92,9 +87,7 @@ export function HookAssignmentPickerDialog(
           ) : null}
           <div className="space-y-2">
             {props.hooks.length === 0 ? (
-              <p className="text-muted-foreground">
-                中央库尚无 Hook，请先在上方中央列表创建或导入。
-              </p>
+              <p className="text-muted-foreground">中央库尚无 Hook。</p>
             ) : null}
             {props.hooks.map((hook) => {
               const current = hook.globalAssignments.find(

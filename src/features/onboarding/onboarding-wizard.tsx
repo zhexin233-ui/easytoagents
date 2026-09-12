@@ -403,7 +403,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                 const providerDisabledReason = toolMetadata(tool).capabilities
                   .provider
                   ? providerChoiceDisabledReason(found)
-                  : "渠道不受支持；本应用不会读取或写入该工具的 Provider 配置。";
+                  : "该工具不支持渠道配置。";
                 const promptDisabledReason = promptChoiceDisabledReason(found);
                 const providerReasonId = `${tool}-provider-choice-reason`;
                 const promptReasonId = `${tool}-prompt-choice-reason`;
@@ -414,14 +414,14 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     </legend>
                     <p className="text-muted-foreground text-sm">
                       {found.availability === "unavailable"
-                        ? "未检测到工具安装；原生目标不会被读取或应用，请跳过并保持非受管。"
+                        ? "未检测到安装，请跳过。"
                         : found.availability === "unsupported"
-                          ? "安装探针未能安全确认版本；原生目标保持阻止，请跳过并检查工具安装。"
+                          ? "无法确认版本，请检查安装后重试。"
                           : found.provider || found.prompt
-                            ? `已安全检测到${found.installationVersion ? `版本 ${found.installationVersion}，` : ""}可接管的原生配置。`
+                            ? `已检测到${found.installationVersion ? `版本 ${found.installationVersion}，` : ""}可接管的原生配置。`
                             : found.providerManaged || found.promptManaged
-                              ? "已存在中央档案，可继续生成新的持久化同步预览。"
-                              : "未发现可导入配置；可保持非受管。"}
+                              ? "已有中央档案。"
+                              : "未发现可导入配置。"}
                     </p>
                     {found.provider ? (
                       <div className="bg-muted rounded-control mt-3 p-3 text-xs">
@@ -634,9 +634,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
               className={`mt-6 rounded-lg border p-5 ${toneClass("success")}`}
             >
               <p className="font-semibold">向导已完成</p>
-              <p className="mt-2 text-sm">
-                已选择项完成导入与显式应用；跳过或未选择的工具保持非受管。
-              </p>
+              <p className="mt-2 text-sm">跳过的工具未做任何修改。</p>
               <Button className="mt-4" onClick={onClose}>
                 返回总览
               </Button>
@@ -699,7 +697,7 @@ function providerChoiceDisabledReason(found: ToolDiscovery): string | null {
     return availabilityReason;
   }
   if (!found.provider && !found.providerManaged) {
-    return "未发现可导入 Provider，也没有生效的中央 Provider 档案。";
+    return "未发现可导入的 Provider。";
   }
   return null;
 }
@@ -710,7 +708,7 @@ function promptChoiceDisabledReason(found: ToolDiscovery): string | null {
     return availabilityReason;
   }
   if (!found.prompt && !found.promptManaged) {
-    return "未发现可导入全局提示词，也没有生效的中央提示词档案。";
+    return "未发现可导入的全局提示词。";
   }
   return null;
 }
@@ -722,9 +720,9 @@ function availabilityDisabledReason(
     case "installed":
       return null;
     case "unavailable":
-      return "未检测到工具安装，无法读取或应用原生目标。";
+      return "未检测到安装，无法读取或应用原生目标。";
     case "unsupported":
-      return "安装探针未能安全确认版本，无法读取或应用原生目标。";
+      return "无法确认版本，无法读取或应用原生目标。";
   }
 }
 

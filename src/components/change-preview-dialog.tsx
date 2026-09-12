@@ -109,7 +109,7 @@ export function ChangePreviewDialog({
                     {target.readoptAvailable && onReadopt ? (
                       <div className="mt-3 space-y-2">
                         <p className="text-muted-foreground text-xs leading-5">
-                          若接受当前文件内容作为新基线，可重新接管；之后重新同步会把中央意图写回受管条目。只调整基线，不会立即修改文件。
+                          重新接管只更新基线，不会立即修改文件。
                         </p>
                         <Button
                           variant="outline"
@@ -137,7 +137,7 @@ export function ChangePreviewDialog({
             id="change-preview-description"
             className="text-muted-foreground mr-auto"
           >
-            非受管字段与表会被保留。Apply 会再次校验目标 hash 与数据库版本。
+            非受管字段与表会被保留。
           </p>
           <Button variant="outline" onClick={onClose}>
             取消

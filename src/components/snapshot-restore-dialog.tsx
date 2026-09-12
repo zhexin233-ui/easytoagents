@@ -166,7 +166,7 @@ export function SnapshotRestoreDialog({
             id="snapshot-restore-description"
             className="text-muted-foreground leading-6"
           >
-            恢复前会再次创建当前状态快照并生成一次性持久化预览；目录树恢复会覆盖接管后的中央链接，并把目录恢复到接管时的内容，之后可能与中央副本产生漂移。
+            恢复前会自动创建当前状态快照。
           </p>
 
           {snapshotsQuery.isPending ? (
@@ -301,9 +301,7 @@ export function SnapshotRestoreDialog({
                 </article>
               ))}
               {snapshots?.length === 0 ? (
-                <p className="text-muted-foreground">
-                  尚无快照。首次成功应用原生变更后会在这里出现恢复点。
-                </p>
+                <p className="text-muted-foreground">尚无恢复点。</p>
               ) : null}
             </div>
           )}

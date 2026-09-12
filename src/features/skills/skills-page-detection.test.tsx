@@ -69,7 +69,7 @@ describe("SkillsPage", () => {
     [
       "CLAUDE_POLICY_UNKNOWN",
       "策略状态待确认",
-      "无法确认 Claude 管理策略是否允许该类自定义目标，当前已安全阻止预览。",
+      "无法确认 Claude 管理策略，预览已阻止。",
       "bg-amber-50",
     ],
     [
@@ -138,9 +138,7 @@ describe("全局 Skills 检测与复制导入", () => {
     expect(
       await screen.findByRole("checkbox", { name: "导入 new-skill" }),
     ).toBeDisabled();
-    expect(
-      screen.getByText("当前检测结果不能确认导入，请处理来源诊断后重新检测。"),
-    ).toBeVisible();
+    expect(screen.getByText("检测未完成，请处理诊断后重试。")).toBeVisible();
     expect(screen.getByText("来源检测不完整，需要处理后重扫。")).toBeVisible();
     fireEvent.submit(
       screen.getByRole("form", { name: "导入 Claude 全局 Skills" }),
@@ -191,7 +189,7 @@ describe("全局 Skills 检测与复制导入", () => {
       ).toBeDisabled();
       expect(within(dialog).getByText("已在中央库")).toBeVisible();
       expect(
-        within(dialog).getByText("中央已有相同内容，不会新增副本或分配。"),
+        within(dialog).getByText("中央已有相同内容，将复用。"),
       ).toBeVisible();
       expect(
         within(dialog).getByText("同名技能内容不同，不会覆盖或改名。"),
@@ -211,9 +209,7 @@ describe("全局 Skills 检测与复制导入", () => {
         expect(
           within(dialog).getByText("/isolated/custom-codex/skills"),
         ).toBeVisible();
-        expect(
-          within(dialog).getByText(/Codex .system 内置技能不在本次导入范围/),
-        ).toBeVisible();
+        expect(within(dialog).getByText(/不包含 Codex 内置技能/)).toBeVisible();
         expect(
           within(dialog).queryByRole("checkbox", { name: /\.system|imagegen/ }),
         ).not.toBeInTheDocument();

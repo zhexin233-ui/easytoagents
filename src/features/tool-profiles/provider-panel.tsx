@@ -292,7 +292,7 @@ export function ProviderPanel({
             渠道
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            每个工具最多一个中央档案处于生效状态。
+            同时只有一份渠道生效。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -330,7 +330,7 @@ export function ProviderPanel({
       ) : null}
       {profilesQuery.data?.length === 0 ? (
         <p className="text-muted-foreground mt-5 rounded-lg border border-dashed p-4 text-sm">
-          尚无渠道档案。点击“新增渠道”创建第一份档案，或先检测已有配置。
+          尚无渠道。可新增或检测已有配置。
         </p>
       ) : null}
 
@@ -403,7 +403,7 @@ export function ProviderPanel({
 
       {importPreview ? (
         <div className={`mt-5 rounded-lg border p-4 ${toneClass("warning")}`}>
-          <p className="font-medium">发现已有渠道，仅生成了导入预览</p>
+          <p className="font-medium">发现已有渠道</p>
           <p className="mt-1 text-sm break-all">{importPreview.targetPath}</p>
           <p className="text-muted-foreground mt-1 text-xs">
             {providerModelText(importPreview.defaultModel)} ·{" "}
@@ -436,7 +436,7 @@ export function ProviderPanel({
       <FormDialog
         open={formOpen}
         title={`${editing ? "编辑" : "新增"} ${toolMetadata(tool).label} 渠道`}
-        description="保存只更新中央渠道档案，不会修改原生配置；原生写入仍需预览后确认 Apply。"
+        description="保存只更新中央渠道档案，不会修改原生配置。"
         submitLabel={editing ? "保存编辑" : "创建渠道"}
         pending={saveMutation.isPending}
         error={profileErrorText(saveMutation.error)}

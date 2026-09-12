@@ -434,11 +434,6 @@ export function PromptsPage() {
                         ))}
                       </div>
                     </div>
-                    {listLayout === "list" ? (
-                      <p className="text-muted-foreground mt-2 text-xs leading-5">
-                        图标启用或停用只更新中央配置；原生全局文件仍需在该工具卡片预览同步后写入。
-                      </p>
-                    ) : null}
                   </CentralListCardFooter>
                 </CentralListCard>
               );
@@ -449,9 +444,7 @@ export function PromptsPage() {
             <div
               className={`mt-5 rounded-lg border p-4 ${toneClass("warning")}`}
             >
-              <p className="font-medium">
-                发现已有提示词，仅生成了无写入导入预览
-              </p>
+              <p className="font-medium">发现已有提示词</p>
               <p className="mt-1 text-sm break-all">
                 {importPreview.targetPath}
               </p>
@@ -577,7 +570,7 @@ export function PromptsPage() {
           description={
             directApply
               ? "保存只更新中央提示词档案；已分配工具会按直接应用模式自动同步。"
-              : "保存只更新中央提示词档案，不会修改原生文件；原生写入仍需预览后确认 Apply。"
+              : "保存只更新中央提示词档案，不会修改原生文件。"
           }
           submitLabel={editing ? "保存编辑" : "创建提示词"}
           pending={saveMutation.isPending}

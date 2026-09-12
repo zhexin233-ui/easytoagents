@@ -73,7 +73,6 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
         dialogRef={dialogRef}
         onClose={close}
         labelledBy="project-hook-picker-title"
-        describedBy="project-hook-picker-description"
       >
         <DialogHeader>
           <h2
@@ -84,12 +83,6 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
           </h2>
         </DialogHeader>
         <DialogBody className="space-y-4">
-          <p
-            id="project-hook-picker-description"
-            className="text-muted-foreground"
-          >
-            项目追加只更新中央意图；原生写入仍需生成项目预览并 Apply。
-          </p>
           {error ? (
             <p role="alert" className="text-destructive">
               {error}
@@ -97,9 +90,7 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
           ) : null}
           <div className="space-y-2">
             {available.length === 0 ? (
-              <p className="text-muted-foreground">
-                中央库中没有可追加的 Hook（已追加与全局继承项不会重复出现）。
-              </p>
+              <p className="text-muted-foreground">没有可追加的 Hook。</p>
             ) : null}
             {available.map((option) => (
               <div

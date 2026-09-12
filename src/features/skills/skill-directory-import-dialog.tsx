@@ -77,8 +77,7 @@ export function SkillDirectoryImportDialog(
               从本地目录导入
             </h2>
             <p id={descriptionId} className="text-muted-foreground mt-1">
-              目录必须包含合法 SKILL.md
-              frontmatter。循环、断裂、逃逸链接和特殊文件会被拒绝。
+              目录必须包含合法 SKILL.md frontmatter。
             </p>
           </div>
         </DialogHeader>
@@ -128,7 +127,7 @@ export function SkillDirectoryImportDialog(
             ) : null}
             {importMutation.isPending ? (
               <p role="status" className="text-sm">
-                正在安全导入…
+                正在导入…
               </p>
             ) : null}
           </DialogBody>
@@ -145,7 +144,7 @@ export function SkillDirectoryImportDialog(
               type="submit"
               disabled={!sourcePath || importMutation.isPending}
             >
-              {importMutation.isPending ? "正在安全导入…" : "复制到中央库"}
+              {importMutation.isPending ? "正在导入…" : "复制到中央库"}
             </Button>
           </DialogFooter>
         </form>

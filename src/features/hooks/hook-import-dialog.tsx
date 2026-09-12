@@ -70,9 +70,7 @@ export function HookImportDialog(props: HookImportDialogProps) {
         </DialogHeader>
         <DialogBody className="space-y-4">
           <p id="hook-import-description" className="text-muted-foreground">
-            仅将勾选项创建为中央 Hook
-            记录；不修改原生配置，也不接管目标基线。后续写入仍需分配后单独预览并
-            Apply。
+            只导入到中央库，不修改原生配置。
           </p>
           {query.isPending ? (
             <p role="status">正在检测已有全局 Hooks…</p>

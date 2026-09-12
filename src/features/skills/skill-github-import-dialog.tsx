@@ -67,8 +67,8 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
               id={descriptionId}
               className="text-muted-foreground mt-1 leading-6"
             >
-              支持公开仓库的单个 Skill
-              目录链接。下载会固定到一次解析的提交，只复制到应用私有中央库，不执行脚本，也不会自动分配或同步。
+              支持公开仓库的 Skill
+              目录链接，只复制到应用私有中央库，不执行脚本，也不会自动分配或同步。
             </p>
           </div>
         </DialogHeader>
@@ -112,13 +112,13 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
             ) : null}
             {importMutation.isPending ? (
               <p role="status" className="text-sm">
-                正在从 GitHub 下载并安全导入…
+                正在从 GitHub 下载并导入…
               </p>
             ) : null}
             {committed && refreshError ? (
               <p role="alert" className="text-warning text-sm">
-                Skill 已复制到中央库，但列表刷新失败：{refreshError}
-                。请关闭后刷新页面查看；为避免重复导入，本次链接不能再次提交。
+                Skill 已导入，列表刷新失败：{refreshError}
+                。请关闭后重试查看；为避免重复导入，本次链接不能再次提交。
               </p>
             ) : null}
           </DialogBody>

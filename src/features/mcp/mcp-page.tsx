@@ -479,8 +479,7 @@ export function McpPage() {
                       {toolMetadata(status.tool).label}
                     </p>
                     <code className="mt-2 block text-xs break-all">
-                      {status.targetPath ??
-                        "目标位置未经 capability probe 证明"}
+                      {status.targetPath ?? "目标位置不可用"}
                     </code>
                     <div className="mt-2">
                       <SyncStatusBadge

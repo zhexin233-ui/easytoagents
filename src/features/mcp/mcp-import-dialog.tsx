@@ -69,8 +69,7 @@ export function McpImportDialog(props: McpImportDialogProps) {
         </DialogHeader>
         <DialogBody className="space-y-4">
           <p id="mcp-import-description" className="text-muted-foreground">
-            仅将勾选项纳入中央库并分配到来源工具；不修改原生配置。后续写入仍需单独预览并
-            Apply。
+            只导入到中央库并分配到来源工具，不修改原生配置。
           </p>
           {query.isPending ? <p role="status">正在检测已有全局 MCP…</p> : null}
           {error ? (
@@ -85,7 +84,7 @@ export function McpImportDialog(props: McpImportDialogProps) {
               </code>
               {preview.message ? <p role="status">{preview.message}</p> : null}
               {preview.candidates.length > 0 && !preview.previewId ? (
-                <p role="status">没有可导入项，请查看各条目的状态和原因。</p>
+                <p role="status">没有可导入项。</p>
               ) : null}
               <div className="space-y-3">
                 {preview.candidates.map((candidate) => (
@@ -123,8 +122,8 @@ export function McpImportDialog(props: McpImportDialogProps) {
                     {candidate.action ? (
                       <p className="mt-2 text-xs">
                         {candidate.action === "reuse"
-                          ? "复用相同配置的中央记录，并添加来源工具全局分配。"
-                          : "新建中央记录，并添加来源工具全局分配。"}
+                          ? "复用已有中央记录。"
+                          : "新建中央记录。"}
                       </p>
                     ) : null}
                     {candidate.reason ? (

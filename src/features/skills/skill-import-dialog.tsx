@@ -62,7 +62,6 @@ const sourceStatusLabels: Record<SkillImportSourceDto["status"], string> = {
 
 export function SkillImportDialog(props: SkillImportDialogProps) {
   const titleId = useId();
-  const descriptionId = useId();
   const query = useQuery(skillImportQueryOptions(props.tool, props.requestId));
   const [selectedImportIds, setSelectedImportIds] = useState<string[]>([]);
   const [selectedTakeoverIds, setSelectedTakeoverIds] = useState<string[]>([]);
@@ -188,8 +187,8 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
         {candidate.status === "already_imported" ? (
           <p className="mt-2 text-xs">
             {mode === "takeover"
-              ? "中央已有相同内容；接管会复用该副本并建立当前工具的全局分配。"
-              : "中央已有相同内容，不会新增副本或分配。"}
+              ? "中央已有相同内容，将复用并建立全局分配。"
+              : "中央已有相同内容，将复用。"}
           </p>
         ) : null}
         {candidate.reason ? (
@@ -205,7 +204,6 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
         dialogRef={dialogRef}
         onClose={close}
         labelledBy={titleId}
-        describedBy={descriptionId}
         size="lg"
       >
         <DialogHeader>
@@ -213,9 +211,6 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
             <h2 id={titleId} className="text-[15px] font-semibold">
               导入 {toolMetadata(props.tool).label} 全局 Skills
             </h2>
-            <p id={descriptionId} className="text-muted-foreground mt-1">
-              “复制”只新增中央副本，不修改来源；“接管”只适用于正式目录中与中央副本完全一致的外链或目录，并且一定先进入持久化预览，不会直接应用。
-            </p>
           </div>
         </DialogHeader>
         <form
@@ -243,7 +238,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
           <DialogBody className="space-y-4">
             {props.tool === "codex" ? (
               <p className="text-muted-foreground text-sm">
-                Codex .system 内置技能不在本次导入范围，不会生成可选候选。
+                不包含 Codex 内置技能。
               </p>
             ) : null}
             {query.isPending ? (
@@ -259,12 +254,12 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               <p role="status" className="text-sm">
                 {copied
                   ? "已复制到中央库，正在刷新列表…"
-                  : "正在安全导入所选 Skills…"}
+                  : "正在导入所选 Skills…"}
               </p>
             ) : null}
             {takeover.isPending ? (
               <p role="status" className="text-sm">
-                正在校验接管证据并生成持久化预览…
+                正在生成预览…
               </p>
             ) : null}
             {preview ? (
@@ -307,11 +302,11 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                 ) : null}
                 {!importable?.length && !takeoverCandidates?.length ? (
                   <p role="status" className="text-sm">
-                    没有可复制或接管的用户技能，请查看来源和候选状态；处理后可重新检测。
+                    没有可导入的技能。
                   </p>
                 ) : !preview.previewId ? (
                   <p role="status" className="text-sm">
-                    当前检测结果不能确认导入，请处理来源诊断后重新检测。
+                    检测未完成，请处理诊断后重试。
                   </p>
                 ) : null}
                 {copyCandidates?.length ? (
@@ -342,8 +337,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                         接管正式目录
                       </h3>
                       <p className="text-warning mt-1 text-xs">
-                        继续后只生成变更预览。确认 Apply
-                        时，入口才会替换为中央链接；外链源不变，目录原件会先保存为完整树快照。
+                        确认后入口会替换为中央链接，原目录先保存为快照。
                       </p>
                     </div>
                     {takeoverCandidates.map((candidate) =>

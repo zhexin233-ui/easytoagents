@@ -165,7 +165,7 @@ describe("Skills 首次目标状态展示", () => {
     expect(await screen.findAllByText("已分配，待同步")).toHaveLength(2);
     expect(
       screen.getAllByText(
-        "分配已写入中央配置，但尚未写入工具目录；点击“预览全局同步”并确认应用。现有非受管内容会保留。",
+        "分配已写入，尚未写入工具目录；点击“预览全局同步”并确认应用。",
       ),
     ).toHaveLength(2);
     expect(commands.previewSkillSync).not.toHaveBeenCalled();
@@ -216,7 +216,7 @@ describe("Skills 首次目标状态展示", () => {
     expect(await screen.findByText("已分配，待同步")).toBeVisible();
     expect(
       screen.getAllByText(
-        "分配已写入中央配置，但尚未写入工具目录；重新切换该分配可触发自动同步。现有非受管内容会保留。",
+        "分配已写入，尚未写入工具目录；重新切换分配可触发自动同步。",
       ),
     ).toHaveLength(1);
     expect(
@@ -260,12 +260,12 @@ describe("Skills 首次目标状态展示", () => {
     [
       "SKILL_TARGET_INITIAL_EMPTY",
       "空目录，待配置",
-      "目标目录为空，尚未配置同步；可先导入技能到中央库，再分配并预览同步。",
+      "目标目录为空；可先导入技能到中央库，再分配并预览同步。",
     ],
     [
       "SKILL_TARGET_INITIAL_UNMANAGED",
       "未纳入同步管理",
-      "已有目录尚未纳入同步管理；可检测其中的用户技能并复制到中央库。导入不会自动接管原有安装。",
+      "已有目录尚未纳管；可检测其中的用户技能并复制到中央库，不会自动接管。",
     ],
   ] as const)(
     "%s 只解释首次目录状态，不宣称已发现或同步技能",

@@ -414,7 +414,7 @@ describe("McpPage", () => {
     fireEvent.keyDown(dialog, { key: "Tab" });
     const firstField = within(dialog).getByLabelText("名称");
     const lastField = within(dialog).getByRole("checkbox", {
-      name: /启用（停用后/,
+      name: "启用",
     });
     expect(firstField).toHaveFocus();
     fireEvent.keyDown(firstField, { key: "Tab", shiftKey: true });

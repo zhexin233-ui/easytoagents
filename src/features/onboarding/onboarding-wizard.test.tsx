@@ -217,7 +217,7 @@ describe("OnboardingWizard", () => {
   it("按检测、选择、预览、应用推进，跳过 Codex 时保持其非受管", async () => {
     renderWizard();
     expect(
-      await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/),
+      await screen.findByText(/已检测到版本 2\.1\.217，可接管的原生配置。/),
     ).toBeInTheDocument();
     const providerChoices = screen.getAllByLabelText("导入并接管 Provider");
     const claudeProviderChoice = providerChoices[0];
@@ -266,7 +266,7 @@ describe("OnboardingWizard", () => {
 
   it("暂停按钮保留选择并调用关闭回调", async () => {
     const { onClose } = renderWizard();
-    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
+    await screen.findByText(/已检测到版本 2\.1\.217，可接管的原生配置。/);
     fireEvent.click(screen.getByRole("button", { name: "暂停向导" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -281,7 +281,7 @@ describe("OnboardingWizard", () => {
     );
     renderWizard();
 
-    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
+    await screen.findByText(/已检测到版本 2\.1\.217，可接管的原生配置。/);
     const providerChoice = screen.getAllByLabelText("导入并接管 Provider")[0];
     if (!providerChoice) throw new Error("缺少 Claude Provider 选项");
     expect(providerChoice).toBeEnabled();
@@ -295,7 +295,7 @@ describe("OnboardingWizard", () => {
 
   it("要求每个工具明确选择，并持久化全跳过完成状态", async () => {
     renderWizard();
-    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
+    await screen.findByText(/已检测到版本 2\.1\.217，可接管的原生配置。/);
     const prepare = screen.getByRole("button", {
       name: "确认选择并生成预览",
     });
@@ -362,12 +362,10 @@ describe("OnboardingWizard", () => {
 
     renderWizard();
 
-    expect(
-      await screen.findByText(/未检测到工具安装；原生目标不会被读取或应用/),
-    ).toBeVisible();
+    expect(await screen.findByText(/未检测到安装，请跳过。/)).toBeVisible();
     expect(screen.getAllByLabelText("导入并接管 Provider")[0]).toBeDisabled();
     expect(
-      screen.getAllByText("未检测到工具安装，无法读取或应用原生目标。")[0],
+      screen.getAllByText("未检测到安装，无法读取或应用原生目标。")[0],
     ).toBeVisible();
     fireEvent.click(screen.getByLabelText("跳过 Claude，保持非受管"));
     fireEvent.click(screen.getByLabelText("跳过 Codex，保持非受管"));
@@ -420,9 +418,7 @@ describe("OnboardingWizard", () => {
     );
 
     renderWizard();
-    expect(
-      await screen.findByText("已存在中央档案，可继续生成新的持久化同步预览。"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("已有中央档案。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认选择并生成预览" }));
 
     expect(await screen.findByText("Claude · Provider")).toBeInTheDocument();
@@ -439,11 +435,7 @@ describe("OnboardingWizard", () => {
     renderWizard();
 
     expect(
-      (
-        await screen.findAllByText(
-          "未发现可导入 Provider，也没有生效的中央 Provider 档案。",
-        )
-      )[0],
+      (await screen.findAllByText("未发现可导入的 Provider。"))[0],
     ).toBeVisible();
     expect(screen.getAllByLabelText("导入并接管 Provider")[0]).toBeDisabled();
   });
@@ -500,7 +492,7 @@ describe("OnboardingWizard", () => {
       });
 
     renderWizard();
-    await screen.findByText(/已安全检测到版本 2\.1\.217，可接管的原生配置。/);
+    await screen.findByText(/已检测到版本 2\.1\.217，可接管的原生配置。/);
     const providerChoice = screen.getAllByLabelText("导入并接管 Provider")[0];
     const promptChoice =
       screen.getAllByLabelText("无损导入并接管全局提示词")[0];
