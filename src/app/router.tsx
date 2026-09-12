@@ -2,6 +2,7 @@ import { lazy } from "react";
 import { createHashRouter, RouterProvider } from "react-router-dom";
 
 import { AppShell } from "@/app/app-shell";
+import { TOOL_PROFILE_ROUTES } from "@/app/tool-profile-routes";
 
 const DashboardPage = lazy(() =>
   import("@/features/dashboard/dashboard-page").then((module) => ({
@@ -38,11 +39,6 @@ const SkillsPage = lazy(() =>
     default: module.SkillsPage,
   })),
 );
-const ToolProfilesPage = lazy(() =>
-  import("@/features/tool-profiles/tool-profiles-page").then((module) => ({
-    default: module.ToolProfilesPage,
-  })),
-);
 
 const router = createHashRouter([
   {
@@ -53,26 +49,7 @@ const router = createHashRouter([
         index: true,
         element: <DashboardPage />,
       },
-      {
-        path: "claude",
-        element: <ToolProfilesPage tool="claude" />,
-      },
-      {
-        path: "codex",
-        element: <ToolProfilesPage tool="codex" />,
-      },
-      {
-        path: "cursor",
-        element: <ToolProfilesPage tool="cursor" />,
-      },
-      {
-        path: "zcode",
-        element: <ToolProfilesPage tool="zcode" />,
-      },
-      {
-        path: "opencode",
-        element: <ToolProfilesPage tool="opencode" />,
-      },
+      ...TOOL_PROFILE_ROUTES.map(({ path, element }) => ({ path, element })),
       {
         path: "mcp",
         element: <McpPage />,

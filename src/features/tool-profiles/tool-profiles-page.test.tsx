@@ -5,6 +5,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { Suspense } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,6 +13,8 @@ import {
   type PreviewPlan,
   type ProviderProfileDto,
 } from "@/bindings/commands";
+import { TOOL_PROFILE_ROUTES } from "@/app/tool-profile-routes";
+import { Link, Route, Routes } from "react-router-dom";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 import { renderWithProviders } from "@/test/render";
 import {
@@ -128,6 +131,16 @@ function sectionByHeading(name: string): HTMLElement {
   return section;
 }
 
+/// 懒加载页面挂载是异步的，切换页签的场景用这个变体等待区域出现。
+async function sectionByHeadingAsync(name: string): Promise<HTMLElement> {
+  const heading = await screen.findByRole("heading", { name });
+  const section = heading.closest("section");
+  if (!section) {
+    throw new Error(`未找到 ${name} 区域`);
+  }
+  return section;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolvePromise) => {
@@ -149,6 +162,29 @@ function fillProfileForm(dialog: HTMLElement) {
   fireEvent.change(within(dialog).getByLabelText("默认模型"), {
     target: { value: "draft-model" },
   });
+}
+
+/// 与真实 router.tsx 共用同一份工具路由配置（含 key），验证切换页签重置。
+/// AppShell 在真实路由里也以 Suspense 包裹懒加载页面。
+function ToolRouteHarness() {
+  return (
+    <>
+      <nav aria-label="工具切换">
+        {TOOL_PROFILE_ROUTES.map(({ path }) => (
+          <Link key={path} to={`/${path}`}>
+            {path}
+          </Link>
+        ))}
+      </nav>
+      <Suspense fallback={<p role="status">正在加载页面…</p>}>
+        <Routes>
+          {TOOL_PROFILE_ROUTES.map(({ path, element }) => (
+            <Route key={path} path={`/${path}`} element={element} />
+          ))}
+        </Routes>
+      </Suspense>
+    </>
+  );
 }
 
 beforeEach(() => {
@@ -1079,5 +1115,74 @@ describe("ToolProfilesPage", () => {
         "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。",
       ),
     ).toHaveLength(1);
+  });
+
+  it("切换工具页签后导入预览不残留", async () => {
+    vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+      status: "ok",
+      data: makeProviderImportPreview(),
+    });
+    renderWithProviders(<ToolRouteHarness />, { route: "/claude" });
+
+    const claudeSection = await sectionByHeadingAsync("渠道");
+    fireEvent.click(
+      await within(claudeSection).findByRole("button", {
+        name: "检测已有配置",
+      }),
+    );
+    expect(
+      await screen.findByText("发现已有渠道，仅生成了导入预览"),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("link", { name: "zcode" }));
+    await screen.findByRole("heading", { name: "ZCode", level: 1 });
+    expect(
+      screen.queryByText("发现已有渠道，仅生成了导入预览"),
+    ).not.toBeInTheDocument();
+    // 切换页签不触发检测；确认导入也只发生在发起检测的工具上。
+    expect(commands.discoverProviderImport).toHaveBeenCalledTimes(1);
+    expect(commands.confirmProviderImport).not.toHaveBeenCalled();
+  });
+
+  it("切换工具页签后检测错误提示不残留", async () => {
+    vi.mocked(commands.discoverProviderImport).mockRejectedValue(
+      new Error("检测失败"),
+    );
+    renderWithProviders(<ToolRouteHarness />, { route: "/claude" });
+
+    const claudeSection = await sectionByHeadingAsync("渠道");
+    fireEvent.click(
+      await within(claudeSection).findByRole("button", {
+        name: "检测已有配置",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("检测失败");
+
+    fireEvent.click(screen.getByRole("link", { name: "codex" }));
+    await screen.findByRole("heading", { name: "Codex", level: 1 });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("切换工具页签后渠道表单内容重置", async () => {
+    renderWithProviders(<ToolRouteHarness />, { route: "/claude" });
+    const claudeSection = await sectionByHeadingAsync("渠道");
+    fireEvent.click(
+      await within(claudeSection).findByRole("button", { name: "新增渠道" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "新增 Claude 渠道" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "跨页签草稿" },
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "zcode" }));
+    await screen.findByRole("heading", { name: "ZCode", level: 1 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    const zcodeSection = await sectionByHeadingAsync("渠道");
+    fireEvent.click(
+      within(zcodeSection).getByRole("button", { name: "新增渠道" }),
+    );
+    const zcodeDialog = screen.getByRole("dialog", { name: "新增 ZCode 渠道" });
+    expect(within(zcodeDialog).getByLabelText("名称")).toHaveValue("");
   });
 });
