@@ -1,0 +1,28 @@
+{
+  "id": "provider-official-login",
+  "name": "provider-official-login",
+  "title": "修复 Claude/Codex 渠道问题并支持官方账号登录渠道",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "yang",
+  "assignee": "yang",
+  "createdAt": "2026-09-11",
+  "completedAt": "2026-09-12",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "description": "修复 Claude/Codex 渠道检测导入编辑缺陷（额外 env 不完整、数值型 TOKENS 键误判密钥、模型必填、wire_api 仅 responses），新增官方账号登录渠道类型并委托官方 CLI 完成 OAuth 登录。"
+  }
+}

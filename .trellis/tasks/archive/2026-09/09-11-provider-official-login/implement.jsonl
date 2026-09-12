@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范入口与开发前清单"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Provider codec / profiles / 探针子进程安全约束与 fail-closed 规则"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "命令层 async 约定、模块拆分与 include! 测试组织"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 稳定错误码合同"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范入口"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Provider 表单、预览对话框、直接应用例外、导入预览合同"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "生成绑定优先、Record 映射枚举、禁止断言"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "新增 DTO 字段跨 Rust/Specta/前端的贯通检查"}
+{"file": ".trellis/tasks/09-11-provider-official-login/research/findings.md", "reason": "已核实缺陷、cc-switch 设计要点与本机 CLI 能力"}

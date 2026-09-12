@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Provider 所有权、脱敏、子进程安全与测试覆盖要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查表单/预览/状态分层展示与无隐式 Apply"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查无断言、无 any、Record 枚举映射"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查校验入口与 codec 输入是否重复实现"}
+{"file": ".trellis/tasks/09-11-provider-official-login/research/findings.md", "reason": "对照缺陷清单逐条验证修复"}
