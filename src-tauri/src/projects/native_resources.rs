@@ -431,8 +431,9 @@ fn observe_items(
         ArtifactKind::Mcp => observe_mcp_items(database, adapter, descriptor, target_id),
         ArtifactKind::Skill => observe_skill_items(database, adapter, descriptor, target_id),
         ArtifactKind::Hook => observe_hook_items(database, adapter, descriptor, target_id),
-        // Prompt/Provider 不参与项目原生资源逐条观测。
-        ArtifactKind::Prompt | ArtifactKind::Provider => Ok(None),
+        // Prompt/Provider/Agent 不参与项目原生资源逐条观测
+        //（agents 的目录内非受管文件按 PRD 非目标处理）。
+        ArtifactKind::Prompt | ArtifactKind::Provider | ArtifactKind::Agent => Ok(None),
     }
 }
 
@@ -1032,9 +1033,14 @@ fn native_ownership(
             vec![external_key.to_owned()],
         )),
         // Hooks 条目是匿名数组元素，现有 ownership 无法定位单条，
-        // 临时禁用/恢复不支持，与 Provider 一样 fail closed。
-        ArtifactKind::Hook | ArtifactKind::Prompt | ArtifactKind::Provider => Err(
-            AppError::invalid_input("artifactKind", "Hooks 暂不支持临时禁用与恢复"),
+        // 临时禁用/恢复不支持；Agent 为整文件目标且不在项目原生资源范围内，
+        // 与 Provider 一样 fail closed。
+        ArtifactKind::Hook => Err(AppError::invalid_input(
+            "artifactKind",
+            "Hooks 暂不支持临时禁用与恢复",
+        )),
+        ArtifactKind::Prompt | ArtifactKind::Provider | ArtifactKind::Agent => Err(
+            AppError::invalid_input("artifactKind", "该资源类型暂不支持临时禁用与恢复"),
         ),
     }
 }
@@ -1199,7 +1205,12 @@ fn safe_summary(artifact_kind: ArtifactKind, entry_type: ProjectNativeEntryType)
     match artifact_kind {
         ArtifactKind::Mcp => json!({ "kind": "mcp" }),
         ArtifactKind::Skill => json!({ "entryType": entry_type.as_str() }),
-        ArtifactKind::Prompt | ArtifactKind::Hook | ArtifactKind::Provider => json!({}),
+        ArtifactKind::Prompt
+        | ArtifactKind::Hook
+        | ArtifactKind::Provider
+        | ArtifactKind::Agent => {
+            json!({})
+        }
     }
 }
 

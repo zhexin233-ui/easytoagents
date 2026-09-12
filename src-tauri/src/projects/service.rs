@@ -628,7 +628,9 @@ fn assess_managed_target(
             }
             ownership
         }
-        ArtifactKind::Provider | ArtifactKind::Prompt => return Ok(None),
+        // Agent 目标按"每文件一行 managed_targets"建模，其状态由 agents
+        // 服务的目标状态接口聚合；项目扫描的目录级 descriptor 不评估它。
+        ArtifactKind::Provider | ArtifactKind::Prompt | ArtifactKind::Agent => return Ok(None),
     };
     let scan = verify_managed_item_baselines(
         database,
@@ -718,7 +720,7 @@ fn verify_managed_item_baselines(
                 _ => return Ok(scan),
             }
         }
-        ArtifactKind::Provider | ArtifactKind::Prompt => return Ok(scan),
+        ArtifactKind::Provider | ArtifactKind::Prompt | ArtifactKind::Agent => return Ok(scan),
     };
     Ok(if matches {
         scan
@@ -736,7 +738,11 @@ fn status_from_unmanaged_scan(descriptor: &TargetDescriptor) -> (SyncStatus, Opt
             .unwrap_or_default()]]),
         ArtifactKind::Hook => crate::hooks::build_hook_ownership(descriptor.tool),
         ArtifactKind::Skill => ManagedOwnership::SymlinkNames(Vec::new()),
-        ArtifactKind::Provider | ArtifactKind::Prompt => ManagedOwnership::WholeDocument,
+        // Provider/Prompt/Agent 均为整文件所有权（Agent 不会进入项目扫描，
+        // 该分支仅为穷举保留）。
+        ArtifactKind::Provider | ArtifactKind::Prompt | ArtifactKind::Agent => {
+            ManagedOwnership::WholeDocument
+        }
     };
     match scan_target(descriptor.tool.adapter(), descriptor, &ownership) {
         TargetScan::Observed(_) => (

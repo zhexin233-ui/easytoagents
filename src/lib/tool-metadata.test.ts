@@ -4,7 +4,9 @@ import opencodeIconSource from "@/assets/brand/opencode-icon.svg?raw";
 import { TOOL_CAPABILITIES } from "@/bindings/commands";
 import {
   HOOK_TOOLS,
+  AGENT_TOOLS,
   MCP_TOOLS,
+  PROJECT_AGENT_TOOLS,
   PROFILE_TOOLS,
   SKILL_TOOLS,
   TOOL_METADATA,
@@ -23,6 +25,8 @@ describe("tool metadata", () => {
         mcp: capability.mcp,
         skills: capability.skills,
         hooks: capability.hooks,
+        agents: capability.agents,
+        projectAgents: capability.projectAgents,
       });
     }
 
@@ -39,6 +43,14 @@ describe("tool metadata", () => {
     );
     expect(HOOK_TOOLS).toEqual(
       TOOL_CAPABILITIES.filter(({ hooks }) => hooks).map(({ tool }) => tool),
+    );
+    expect(AGENT_TOOLS).toEqual(
+      TOOL_CAPABILITIES.filter(({ agents }) => agents).map(({ tool }) => tool),
+    );
+    expect(PROJECT_AGENT_TOOLS).toEqual(
+      TOOL_CAPABILITIES.filter(({ projectAgents }) => projectAgents).map(
+        ({ tool }) => tool,
+      ),
     );
   });
 
@@ -69,6 +81,19 @@ describe("tool metadata", () => {
       "codex",
       "cursor",
       "zcode",
+      "opencode",
+    ]);
+    expect(AGENT_TOOLS).toEqual([
+      "claude",
+      "codex",
+      "cursor",
+      "zcode",
+      "opencode",
+    ]);
+    expect(PROJECT_AGENT_TOOLS).toEqual([
+      "claude",
+      "codex",
+      "cursor",
       "opencode",
     ]);
     expect(toolMetadata("cursor")).toMatchObject({

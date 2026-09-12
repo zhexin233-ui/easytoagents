@@ -13,6 +13,7 @@ EasyToAgents 以 capability 为先，不要求新工具复制 Claude 或 Codex �
 | MCP            | Unknown | Unknown     | Unknown | Unknown | 路径、容器、transport、敏感字段                  |
 | Skills         | Unknown | Unknown     | Unknown | Unknown | 发现目录、嵌套规则、链接兼容性                   |
 | Hooks          | Unknown | Unknown     | Unknown | Unknown | 事件集合、承载方式、matcher 语义                 |
+| Agents         | Unknown | Unknown     | Unknown | Unknown | 子代理目录、Markdown/TOML 字段、项目支持范围     |
 
 状态只允许：
 
@@ -89,7 +90,7 @@ Cursor Prompt/Rules 证据矩阵（2026-09-06）：
 - Import 是只读发现 → 持久化脱敏预览 → 用户显式选择 → 中央导入，不隐式接管原生目标。全局 Skill 只有在正式目标入口与 Ready 中央副本的名称和完整树哈希精确一致时，才可另行准备 takeover-aware Preview；首次接管即使开启 direct Apply 也必须再次确认。
 - MCP renderer/parser 必须保留未知字段，只修改受管名称；`headers`、`env`、`auth` 和扩展凭据不能进入普通 DTO、日志或预览明文。
 - Skills 继续使用中央不可变副本和逐名称受管链接。普通 Apply 对普通目录、外部链接、断链和逃逸保持冲突保护；显式首次接管只能通过持久化证据生成专用 mutation。外部链接只替换入口，普通目录必须先创建可恢复目录树快照。工具是否发现符号链接必须由实机 smoke 证明。
-- Project service 只创建该工具支持的 MCP、Skills、Hooks assignment/status；Prompt 是全局资源，项目服务不能产生 Prompt 行。
+- Project service 只创建该工具支持的 MCP、Skills、Hooks、Agents assignment/status；Prompt 是全局资源，项目服务不能产生 Prompt 行。ZCode 项目 Agents 必须保持 Unsupported。
 - Overview 可以展示 Unsupported，但不能把它描述为“未接管”。
 - Restore 必须从 snapshot 的 tool/artifact/scope 重新推导同一窄 allowed root，并复用现有 journal、snapshot、写后校验与回滚。
 
@@ -106,8 +107,8 @@ pnpm bindings:check
 
 检查以下界面：
 
-- MCP/Skills：全局分配、导入、目标状态、直接应用与错误状态；
-- Projects：工具切换、资源标签、项目 assignment、Preview/Apply；
+- MCP/Skills/Agents：全局分配、导入、目标状态、直接应用与错误状态；
+- Projects：工具切换、资源标签、项目 assignment、Preview/Apply；Agents 页签只列出 Claude、Codex、Cursor、OpenCode；
 - Dashboard：工具计数、Supported/Unsupported 文案和管理入口；
 - Profiles/Prompts/AppShell：只为 `PROFILE_TOOLS` 提供 CRUD 与导航；
 - Onboarding：只展示真正可导入的首次配置，不为 Unsupported 能力创建空卡片；
@@ -127,7 +128,7 @@ pnpm bindings:check
 - 数据库上一版本升级、精确锚点、旧数据、约束 canary、外键/索引与重开；
 - MCP stdio/HTTP round-trip、未知字段、敏感值、Missing/InSync/漂移/解析失败/类型冲突/stale/恢复；
 - Skills 全局/项目分配、导入来源、普通目录/外部链接/断链/逃逸、恢复和实机发现 smoke；
-- 前端分配、导入、状态、项目视图、Unsupported、取消分配和无隐式 Apply；
+- 前端分配、导入、状态、项目视图、Unsupported、取消分配和无隐式 Apply；Agents 还要展示导入时被丢弃的工具特有字段；
 - `src-tauri/tests/phase8_e2e.rs` 的跨层 Preview → Apply → 漂移 → Restore。
 
 完整质量门：
@@ -186,3 +187,83 @@ Claude 的 `PostToolUseFailure`、ZCode 的 `process` 型、Cursor 的 `prompt` 
 一律 fail closed：不能分配、不能导入，也不猜测映射。
 
 OpenCode 的 Plugins/hooks object 仍不映射为统一事件；在新的插件运行时合同和回滚边界审核通过前，不为它新增 Hook 事件、猜测目标目录或复制 Cursor 的 Adapter。
+
+## 11. Agents 能力矩阵与合同（2026-09-12 官方证据核验）
+
+Agents 是独立的中央资源类型。实现前必须分别核对“目录 descriptor → 文件级目标 → 投影/解析 → Preview/Apply/Restore”四段边界；不能把目录直接交给文件扫描器，也不能因为工具枚举存在就推断项目级支持。
+
+| 工具          | 全局目录                       | 项目目录                  | 文件格式                    | 全局      | 项目        | 导入         | 关键约束                                                             |
+| ------------- | ------------------------------ | ------------------------- | --------------------------- | --------- | ----------- | ------------ | -------------------------------------------------------------------- |
+| Claude Code   | `<claude_config_dir>/agents`   | `<root>/.claude/agents`   | Markdown + YAML frontmatter | Supported | Supported   | 直属 `.md`   | `name`、`description` 必填；遵循 customization policy                |
+| Codex         | `<codex_home>/agents`          | `<root>/.codex/agents`    | TOML                        | Supported | Supported   | 直属 `.toml` | `name`、`description`、`developer_instructions` 必填；项目沿用 trust |
+| Cursor        | `~/.cursor/agents`             | `<root>/.cursor/agents`   | Markdown + YAML frontmatter | Supported | Supported   | 直属 `.md`   | 不读取 `.claude/agents` 或 `.codex/agents` 兼容目录                  |
+| ZCode（Beta） | `~/.zcode/agents`              | —                         | Markdown + YAML frontmatter | Supported | Unsupported | 直属 `.md`   | 项目接口返回 `ZCODE_PROJECT_AGENTS_UNSUPPORTED`                      |
+| OpenCode      | `<opencode_config_dir>/agents` | `<root>/.opencode/agents` | Markdown + YAML frontmatter | Supported | Supported   | 直属 `.md`   | 投影固定 `mode: subagent`，避免被当作主代理                          |
+
+### 11.1 Scope / Trigger
+
+- Trigger：新增或修改 Agent CRUD、工具分配、原生 Agents 目录、导入、状态聚合、Preview/Apply/Readopt/Restore 或生成 bindings。
+- 该合同覆盖后端数据库、服务、适配器、Tauri 命令以及前端 `/agents` 与项目详情页签；任何一层变更都必须重新跑跨层质量门。
+
+### 11.2 Signatures
+
+- 中央记录：`agents(id, name, description, prompt, enabled, row_version, ...)`；名称满足 `^[a-z0-9][a-z0-9-]{0,63}$`。
+- 分配命令：`set_global_agent_assignment(tool, agent_id, assigned, row_version)`、`set_project_agent_assignment(project_id, tool, agent_id, assigned, agent_row_version, project_row_version)`。
+- 同步命令：`preview_agent_sync(tool, project_id|null, exclude_from_git)`、`apply_agent_preview(preview_id, tool, project_id|null)`、`readopt_agent_target(tool, project_id|null, target_path)`。
+- 导入命令：`discover_agent_import(tool)`（只读全局目录）与 `confirm_agent_import(tool, agents[])`（仅写中央库）。
+- 一个受管文件对应一行 `managed_targets`（`artifact_kind = 'agent'`、`WholeDocument`）；目录级状态由 `AgentToolTargetStatusDto` 聚合，能力/策略诊断在卡片级 `diagnostic_code`，文件漂移诊断在 `files`。
+
+### 11.3 Contracts
+
+- 中央字段只保留 `name`、`description`、`prompt`、`enabled`；不建模工具特有 `model`、`tools`、`sandbox_mode` 等字段。
+- Markdown 投影写 YAML frontmatter + 正文；OpenCode 额外写 `mode: subagent`。Codex 投影只写 `name`、`description`、`developer_instructions` 三个 TOML 字段。
+- 分配改变中央意图但不隐式 Apply。Preview 必须持久化目标身份、基线与所有参与的 row versions；Apply 在通用 snapshot/journal 事务内写入或删除文件。
+- 停用、取消分配或中央删除在下一次确认 Apply 时删除对应受管文件；删除前快照可经通用 Restore 恢复。目录内非受管同名之外文件保持不变。
+- 全局分配在项目内只读继承；项目分配与全局分配互斥。Codex 项目未受信任时返回 `untrusted` 并禁止 Apply；ZCode 项目始终 Unsupported。
+- 导入只扫描全局目录直属普通文件；符号链接、子目录和扩展名不匹配项跳过。工具特有字段进入 `dropped_fields` 并在 UI 中明确提示，不静默丢弃。
+
+### 11.4 Validation & Error Matrix
+
+| 条件                                                                    | 必须结果                                                               |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 名称为空、大写、下划线、冒号、路径分隔符或长度 >64                      | 创建、更新、导入确认均返回 `INVALID_INPUT` / `AGENT_NAME_INVALID`      |
+| Markdown frontmatter/TOML 无法解析                                      | 候选 `importable=false`，诊断 `AGENT_FRONTMATTER_INVALID`              |
+| 缺少 `description` 或正文（Codex 还缺 `name`/`developer_instructions`） | 候选不可导入，诊断 `AGENT_REQUIRED_FIELD_MISSING`                      |
+| ZCode 项目分配或预览                                                    | 服务层和数据库均拒绝，诊断 `ZCODE_PROJECT_AGENTS_UNSUPPORTED`          |
+| 受管文件受外部改写                                                      | Preview 为 `ExternalOwnedChange`/Conflict；显式 Readopt 后才可再次写入 |
+| 目标路径缺失、类型变化、权限/策略/trust 不安全                          | fail closed，不写入原生目录                                            |
+
+### 11.5 Good / Base / Bad Cases
+
+- Good：同一 Agent 分配到 Claude 与 Codex，各自产生确定性 Markdown/TOML 文件；修改非受管文件不会被删除，停用后删除快照可恢复。
+- Base：全局 Agents 目录不存在时，Preview 只报告可创建的文件目标；无分配且无既有目标时不创建空目标或空运行。
+- Bad：把 Agents 目录当作单个文件扫描、把 OpenCode `mode` 省略、读取 Cursor 兼容目录、或把导入候选的 `tools/model` 静默写回中央字段。
+
+### 11.6 Tests Required
+
+- Adapter：五工具 global/project descriptor、ZCode 无路径 Unsupported、allowed root 与文件扩展名。
+- Database：从 v21 升级至 v22、旧行保留、`managed_targets` 五处 CHECK 金丝雀、全局/项目互斥触发器、外键与重开。
+- Service：CRUD/CAS、五工具投影 golden、导入 fail-closed 与 `dropped_fields`、全局继承、Codex untrusted、停用删除与状态聚合。
+- E2E：`src-tauri/tests/phase8_e2e.rs` 覆盖 Claude Markdown 与 Codex TOML 的 Preview → Apply → 漂移 → Readopt → 停用删除 → Restore。
+- Frontend：`/agents` CRUD/分配/状态展开/导入和项目详情页签；工具能力来自生成 bindings，ZCode 不得出现在项目工具切换。
+- 每次命令或 DTO 变化运行 `pnpm bindings:generate && pnpm bindings:check`，并通过 `pnpm check` 与 `git diff --check`。
+
+### 11.7 Wrong vs Correct
+
+#### Wrong
+
+```rust
+// 目录 descriptor 被直接交给文件扫描器，目录会被当作普通文件读取，
+// 还可能让 allowed_root 跟着文件名逃逸。
+let scan = scan_target(tool.adapter(), &agent_directory, &ManagedOwnership::WholeDocument);
+```
+
+#### Correct
+
+```rust
+// 目录只负责能力与写入边界；每个名称派生一个文件级目标。
+let file = agent_directory.for_agent_file(&agent.name, agent_file_extension(tool))?;
+let scan = scan_target(tool.adapter(), &file, &ManagedOwnership::WholeDocument);
+```
+
+> **Warning**：目录状态不是一个可写目标。状态聚合必须读取每个受管文件的 `SyncStatus`，取最严重状态；目录内未受管文件既不进入 `managed_targets`，也不因中央列表变化被删除。

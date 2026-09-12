@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/page-header";
 import { RefreshEnvironmentButton } from "@/components/refresh-environment-button";
 import { Button } from "@/components/ui/button";
 import { useEnabledTools } from "@/components/use-enabled-tools";
+import { agentsQueryOptions } from "@/lib/agents-api";
 import { dashboardSummaryQueryOptions } from "@/lib/dashboard-api";
 import { profileErrorText } from "@/lib/profile-api";
 import { toolMetadata } from "@/lib/tool-metadata";
@@ -27,6 +28,7 @@ const SnapshotRestoreDialog = lazy(() =>
 
 export function DashboardPage() {
   const dashboardQuery = useQuery(dashboardSummaryQueryOptions());
+  const agentsQuery = useQuery(agentsQueryOptions());
   const enabledTools = useEnabledTools();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -90,7 +92,19 @@ export function DashboardPage() {
               {dashboardQuery.data.tools
                 .filter((tool) => enabledTools.has(tool.tool))
                 .map((tool) => (
-                  <ToolSummaryCard key={tool.tool} tool={tool} />
+                  <ToolSummaryCard
+                    key={tool.tool}
+                    tool={tool}
+                    globalAgentCount={
+                      // 停用的中央 Agent 不会派生原生目标，因此总览只计入
+                      // 当前会实际同步的全局分配。
+                      agentsQuery.data?.filter(
+                        (agent) =>
+                          agent.enabled &&
+                          agent.globalAssignments.includes(tool.tool),
+                      ).length ?? 0
+                    }
+                  />
                 ))}
             </section>
 
@@ -189,7 +203,13 @@ function DialogLoading({ label }: { label: string }) {
   );
 }
 
-function ToolSummaryCard({ tool }: { tool: DashboardToolSummaryDto }) {
+function ToolSummaryCard({
+  tool,
+  globalAgentCount,
+}: {
+  tool: DashboardToolSummaryDto;
+  globalAgentCount: number;
+}) {
   const metadata = toolMetadata(tool.tool);
   const resourceRoute = metadata.profileRoute ?? "/mcp";
 
@@ -230,6 +250,16 @@ function ToolSummaryCard({ tool }: { tool: DashboardToolSummaryDto }) {
         />
         <SummaryItem label="全局 MCP" value={`${tool.globalMcpCount}`} />
         <SummaryItem label="全局 Skills" value={`${tool.globalSkillCount}`} />
+        <SummaryItem
+          label="全局 Agents"
+          value={
+            metadata.capabilities.agents ? `${globalAgentCount}` : "不支持"
+          }
+        />
+        <SummaryItem
+          label="项目 Agents"
+          value={metadata.capabilities.projectAgents ? "支持" : "不支持"}
+        />
       </dl>
     </article>
   );

@@ -3,46 +3,41 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   commands,
-  type McpProjectOptionDto,
+  type AgentProjectOptionDto,
   type ProjectDto,
-  type ReadoptMcpTargetResultDto,
+  type ReadoptAgentTargetResultDto,
   type Tool,
 } from "@/bindings/commands";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
-import { mcpProjectOptionsQueryOptions } from "@/lib/mcp-api";
-import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import { agentProjectOptionsQueryOptions } from "@/lib/agents-api";
+import { profileErrorText, unwrapResult } from "@/lib/rpc";
 import { invalidateProjectScope } from "@/lib/projects-api";
 import { toolMetadata } from "@/lib/tool-metadata";
 
-import { ProjectAssignmentsSection } from "./project-assignments-section";
 import { OptionTag, ProjectOptionRow } from "../option-row";
+import { ProjectAssignmentsSection } from "./project-assignments-section";
 import { projectBlocked } from "./shared";
 
-export function ProjectMcpAssignments({
-  project,
-  tool,
-  directApply,
-  onMessage,
-}: {
+interface ProjectAgentAssignmentsProps {
   project: ProjectDto;
   tool: Tool;
   directApply: boolean;
   onMessage: (message: string) => void;
-}) {
+}
+
+/** 项目级 Agents 追加管理；全局分配项在列表中保持只读继承。 */
+export function ProjectAgentAssignments({
+  project,
+  tool,
+  directApply,
+  onMessage,
+}: ProjectAgentAssignmentsProps) {
   const queryClient = useQueryClient();
   const optionsQuery = useQuery(
-    mcpProjectOptionsQueryOptions(project.id, tool),
+    agentProjectOptionsQueryOptions(project.id, tool),
   );
   const [excludeFromGit, setExcludeFromGit] = useState(false);
-  const invalidate = async () => {
-    await invalidateProjectScope(queryClient, [
-      "project",
-      "mcp",
-      "skill",
-      "hook",
-    ]);
-  };
   const {
     openPreview,
     requestPreview,
@@ -50,38 +45,44 @@ export function ProjectMcpAssignments({
     applyMutation,
     readoptMutation,
     closePreview,
-  } = useSyncPreviewFlow<ReadoptMcpTargetResultDto>({
-    artifactKind: "mcp",
+  } = useSyncPreviewFlow<ReadoptAgentTargetResultDto>({
+    artifactKind: "agent",
     directApply,
     preview: () =>
-      commands.previewMcpSync({
+      commands.previewAgentSync({
         tool,
         projectId: project.id,
         excludeFromGit,
       }),
     apply: ({ previewId, tool: previewTool }) =>
-      commands.applyMcpPreview({
+      commands.applyAgentPreview({
         previewId,
         tool: previewTool,
         projectId: project.id,
       }),
-    readopt: (previewTool) =>
-      commands.readoptMcpTarget({
+    readopt: (previewTool, targetPath) => {
+      if (!targetPath) {
+        throw new Error("重新接管 Agent 目标缺少文件路径。");
+      }
+      return commands.readoptAgentTarget({
         tool: previewTool,
         projectId: project.id,
-      }),
-    invalidate,
-    messages: {
-      previewFailed: "生成项目 MCP 预览失败。",
-      applyFailed: "应用项目 MCP 预览失败。",
-      readoptFailed: "重新接管项目 MCP 目标失败。",
-      empty: "该项目只有全局继承 MCP，不需要创建项目配置文件。",
-      // 保留项目详情页原有的持久化预览反馈文案；具体资源数量仍可在预览中审阅。
-      applied: () => "项目原生配置已通过持久化预览应用并完成写后验证。",
+        targetPath,
+      });
     },
-    onReadopted: (result) => {
+    invalidate: async () => {
+      await invalidateProjectScope(queryClient, ["project", "agent"]);
+    },
+    messages: {
+      previewFailed: "生成项目 Agents 预览失败。",
+      applyFailed: "应用项目 Agents 预览失败。",
+      empty: "该项目没有需要写入的项目级 Agent 文件。",
+      applied: () => "项目 Agents 已通过持久化预览应用并完成写后验证。",
+      readoptFailed: "重新接管项目 Agents 目标失败。",
+    },
+    onReadopted: () => {
       onMessage(
-        `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；请再次点击同步按钮完成写入。`,
+        "已以当前内容重新接管项目 Agent 目标；请再次点击同步按钮完成写入。",
       );
     },
   });
@@ -90,57 +91,60 @@ export function ProjectMcpAssignments({
       option,
       assigned,
     }: {
-      option: McpProjectOptionDto;
+      option: AgentProjectOptionDto;
       assigned: boolean;
     }) =>
       unwrapResult(
-        await commands.setProjectMcpAssignment({
+        await commands.setProjectAgentAssignment({
           projectId: project.id,
           tool,
-          mcpId: option.mcpId,
+          agentId: option.agentId,
           assigned,
-          mcpRowVersion: option.rowVersion,
+          agentRowVersion: option.rowVersion,
           projectRowVersion: project.rowVersion,
         }),
       ),
     onSuccess: async () => {
-      await invalidate();
+      await invalidateProjectScope(queryClient, ["project", "agent"]);
       if (directApply) {
         requestPreview(tool, true);
         return;
       }
-      onMessage("MCP 项目追加意图已更新；原生配置尚未写入。");
+      onMessage(
+        "项目 Agent 追加意图已更新；原生 Agent 文件尚未写入。请预览并确认应用。",
+      );
     },
   });
   const blocked = projectBlocked(project, tool);
+  const options = optionsQuery.data ?? [];
   const previewPending = previewMutation.isPending || applyMutation.isPending;
 
   return (
     <>
       <ProjectAssignmentsSection
-        title="MCP"
-        description="全局项只读继承；项目只能追加其他中央 MCP。"
+        title="Agents"
+        description="全局 Agent 只读继承；项目可以追加其他中央 Agents。"
         blocked={blocked}
         directApply={directApply}
         error={profileErrorText(optionsQuery.error ?? assignmentMutation.error)}
         pending={optionsQuery.isPending}
-        empty={optionsQuery.data?.length === 0}
+        empty={options.length === 0}
         excludeFromGit={excludeFromGit}
         onExcludeFromGit={setExcludeFromGit}
         previewPending={previewPending}
         previewLabel={
           directApply
-            ? `${toolMetadata(tool).label} MCP 直接应用`
-            : `${toolMetadata(tool).label} MCP 同步预览`
+            ? `${toolMetadata(tool).label} Agents 直接应用`
+            : `${toolMetadata(tool).label} Agents 同步预览`
         }
         onPreview={() => requestPreview(tool, true)}
       >
-        {optionsQuery.data?.map((option) => (
+        {options.map((option) => (
           <ProjectOptionRow
-            key={option.mcpId}
+            key={option.agentId}
             name={option.name}
             state={option.state}
-            actionLabel={`${option.name} MCP 项目追加`}
+            actionLabel={`${option.name} Agents 项目追加`}
             actionDisabled={
               option.state === "inherited" ||
               (option.state === "available" && !option.selectable) ||
@@ -162,7 +166,7 @@ export function ProjectMcpAssignments({
       <ChangePreviewDialog
         preview={openPreview?.plan ?? null}
         tool={openPreview?.tool ?? tool}
-        artifactKind="mcp"
+        artifactKind="agent"
         applying={applyMutation.isPending}
         readopting={readoptMutation.isPending}
         onClose={() => {
@@ -178,8 +182,13 @@ export function ProjectMcpAssignments({
             });
           }
         }}
-        onReadopt={() => {
-          if (openPreview) readoptMutation.mutate({ tool: openPreview.tool });
+        onReadopt={(targetPath) => {
+          if (openPreview) {
+            readoptMutation.mutate({
+              tool: openPreview.tool,
+              targetPath,
+            });
+          }
         }}
       />
     </>

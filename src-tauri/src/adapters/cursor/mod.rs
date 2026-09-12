@@ -82,6 +82,14 @@ impl ToolAdapter for CursorAdapter {
                 .managed_selectors(["version", "hooks"])
                 .capability(supported_capability.clone())
                 .build(),
+            // Agents（子代理）目录（官方 "Subagents" 合同，2026-09-12 核验）：
+            // `~/.cursor/agents/<name>.md`；兼容目录 `.claude/agents`、
+            // `.codex/agents` 不观测、不写入（同名时 `.cursor/` 优先）。
+            TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Agent, Scope::Global)
+                .path(Some(path_text(&cursor_home.join("agents"))?))
+                .format(TargetFormat::Markdown)
+                .capability(supported_capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -109,11 +117,18 @@ impl ToolAdapter for CursorAdapter {
                     .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
                     .build(),
                 TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Hook, Scope::Project)
-                    .project_root(project_root)
+                    .project_root(project_root.clone())
                     .path(Some(path_text(&root.join(".cursor/hooks.json"))?))
                     .format(TargetFormat::Json)
                     .managed_selectors(["version", "hooks"])
                     .capability(supported_capability.clone())
+                    .build(),
+                // 项目级子代理目录：`<root>/.cursor/agents`。
+                TargetDescriptor::builder(Tool::Cursor, ArtifactKind::Agent, Scope::Project)
+                    .project_root(project_root)
+                    .path(Some(path_text(&root.join(".cursor/agents"))?))
+                    .format(TargetFormat::Markdown)
+                    .capability(supported_capability)
                     .build(),
             ]);
         }
@@ -163,7 +178,11 @@ mod tests {
         for target in &targets {
             let supported = matches!(
                 target.artifact_kind,
-                ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook | ArtifactKind::Prompt
+                ArtifactKind::Mcp
+                    | ArtifactKind::Skill
+                    | ArtifactKind::Hook
+                    | ArtifactKind::Prompt
+                    | ArtifactKind::Agent
             );
             assert_eq!(
                 target.capability.state == CapabilityState::Supported,

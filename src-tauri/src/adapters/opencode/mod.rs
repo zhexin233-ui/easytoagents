@@ -98,6 +98,16 @@ impl ToolAdapter for OpencodeAdapter {
                 .capability(capability.clone())
                 .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
                 .build(),
+            // Agents（子代理）目录（官方 "Agents" 合同，2026-09-12 核验）：
+            // `<opencode_config_dir>/agents/<name>.md`；frontmatter 缺省
+            // `name` 时以文件名为准，投影层固定写 `mode: subagent`。
+            TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Agent, Scope::Global)
+                .path(optional_path_text(Some(
+                    &environment.opencode_config_dir().join("agents"),
+                )))
+                .format(TargetFormat::Markdown)
+                .capability(capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -121,12 +131,20 @@ impl ToolAdapter for OpencodeAdapter {
                     .capability(capability.clone())
                     .build(),
                 TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Skill, Scope::Project)
-                    .project_root(project_root)
+                    .project_root(project_root.clone())
                     .path(optional_path_text(Some(&root.join(".opencode/skills"))))
                     .format(TargetFormat::SymlinkDirectory)
                     .managed_selectors(["$children"])
-                    .capability(capability)
+                    .capability(capability.clone())
                     .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
+                    .build(),
+                // 项目级子代理目录：`<root>/.opencode/agents`；沿用与全局
+                // 相同的 OpenCode 门禁（config override / disabled）。
+                TargetDescriptor::builder(Tool::Opencode, ArtifactKind::Agent, Scope::Project)
+                    .project_root(project_root)
+                    .path(optional_path_text(Some(&root.join(".opencode/agents"))))
+                    .format(TargetFormat::Markdown)
+                    .capability(capability)
                     .build(),
             ]);
         }

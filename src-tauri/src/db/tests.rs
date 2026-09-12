@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn github_skill_source_migration_accepts_only_normalized_source_shape() {
         let (_temporary, _paths, database) = open_isolated_database();
-        assert_eq!(database.schema_version().unwrap(), 21);
+        assert_eq!(database.schema_version().unwrap(), 22);
         database
             .connection()
             .execute(
@@ -110,7 +110,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 21);
+        assert_eq!(database.schema_version().unwrap(), 22);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -723,7 +723,7 @@ mod tests {
         }
         for (iteration, _) in (0..2).enumerate() {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             // 只有第一次打开有待执行迁移，才产生启动备份。
             assert_eq!(database.startup_backup().is_some(), iteration == 0);
             let (name, previews): (String, i64) = database.connection().query_row(
@@ -759,7 +759,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -814,7 +814,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 21);
+        assert_eq!(database.schema_version().unwrap(), 22);
         let kinds = database
             .connection()
             .prepare_cached("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1056,7 +1056,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 21);
+        assert_eq!(database.schema_version().unwrap(), 22);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1204,7 +1204,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 21);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(
             reopened
                 .connection()
@@ -1264,7 +1264,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1329,7 +1329,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1417,7 +1417,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1571,7 +1571,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1688,7 +1688,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1768,7 +1768,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            21
+            22
         );
         for (tool, artifact, accepted) in [
             ("opencode", "provider", true),
@@ -1813,7 +1813,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 21);
+        assert_eq!(database.schema_version().unwrap(), 22);
         let connection = database.connection();
         connection
             .execute(
@@ -1869,7 +1869,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 21);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(
             reopened
                 .connection()
@@ -1912,7 +1912,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2061,7 +2061,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2173,7 +2173,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2349,7 +2349,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2481,7 +2481,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 21);
+            assert_eq!(database.schema_version().unwrap(), 22);
             let connection = database.connection();
             type PreservedRow = (
                 String,
@@ -2628,5 +2628,288 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn agents_migration_preserves_rows_and_widens_managed_target_checks() {
+        const HOOK_ID: &str = "00000000-0000-4000-8000-000000000501";
+        const HOOK_TARGET_ID: &str = "00000000-0000-4000-8000-000000000502";
+        const AGENT_ONE_ID: &str = "00000000-0000-4000-8000-000000000503";
+        // 金丝雀插入专用 ID（0..=11 位按序编号，避免相互冲突）。
+        const CANARY_IDS: [&str; 12] = [
+            "00000000-0000-4000-8000-000000000510",
+            "00000000-0000-4000-8000-000000000511",
+            "00000000-0000-4000-8000-000000000512",
+            "00000000-0000-4000-8000-000000000513",
+            "00000000-0000-4000-8000-000000000514",
+            "00000000-0000-4000-8000-000000000515",
+            "00000000-0000-4000-8000-000000000516",
+            "00000000-0000-4000-8000-000000000517",
+            "00000000-0000-4000-8000-000000000518",
+            "00000000-0000-4000-8000-000000000519",
+            "00000000-0000-4000-8000-00000000051a",
+            "00000000-0000-4000-8000-00000000051b",
+        ];
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v21-agents-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            // 先建到 0021 的旧库，插入既有 hook、分配与受管目标行，再交给真实迁移。
+            for migration in &super::MIGRATIONS[..21] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/agents-project");
+            connection
+                .execute(
+                    "INSERT INTO hooks(id, name, event, command) VALUES (?1, 'legacy-hook', 'PreToolUse', 'echo legacy')",
+                    params![HOOK_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO hook_global_assignments(tool, hook_id, event) VALUES ('claude', ?1, 'PreToolUse')",
+                    params![HOOK_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                     VALUES (?1, 'claude', 'hook', 'global', '/fixture/home/.claude/settings.json')",
+                    params![HOOK_TARGET_ID],
+                )
+                .unwrap();
+            // v21 的 CHECK 尚不接受 agent 目标：升级前证明旧边界存在。
+            assert!(
+                connection
+                    .execute(
+                        "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                         VALUES (?1, 'claude', 'agent', 'global', '/fixture/home/.claude/agents/x.md')",
+                        params![AGENT_ONE_ID],
+                    )
+                    .is_err(),
+                "v21 必须拒绝 agent 受管目标"
+            );
+        }
+
+        for _ in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 22);
+            let connection = database.connection();
+
+            // 旧行保留：hook、分配与受管目标在 writable_schema 改写后逐字保留。
+            let hook: (String, String, String) = connection
+                .query_row(
+                    "SELECT name, event, command FROM hooks WHERE id = ?1",
+                    [HOOK_ID],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                hook,
+                (
+                    "legacy-hook".to_owned(),
+                    "PreToolUse".to_owned(),
+                    "echo legacy".to_owned()
+                )
+            );
+            let assignment_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM hook_global_assignments WHERE hook_id = ?1",
+                    [HOOK_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(assignment_count, 1);
+            let hook_target_kind: String = connection
+                .query_row(
+                    "SELECT artifact_kind FROM managed_targets WHERE id = ?1",
+                    [HOOK_TARGET_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(hook_target_kind, "hook");
+
+            // 金丝雀 1：全局 agent 目标（claude）被接受。
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                     VALUES (?1, 'claude', 'agent', 'global', '/fixture/home/.claude/agents/reviewer.md')",
+                    params![AGENT_ONE_ID],
+                )
+                .unwrap();
+            // 金丝雀 2：项目级 agent 目标（claude + project）被接受。
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'claude', 'agent', 'project', ?2, '/fixture/agents-project/.claude/agents/reviewer.md')",
+                    params![CANARY_IDS[0], PROJECT_ONE_ID],
+                )
+                .unwrap();
+            // 金丝雀 3：cursor / opencode 的全局 agent 目标被接受。
+            for (index, (tool, target)) in [
+                ("cursor", "/fixture/home/.cursor/agents/reviewer.md"),
+                (
+                    "opencode",
+                    "/fixture/home/.config/opencode/agents/reviewer.md",
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                connection
+                    .execute(
+                        "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                         VALUES (?1, ?2, 'agent', 'global', ?3)",
+                        params![CANARY_IDS[index + 1], tool, target],
+                    )
+                    .unwrap_or_else(|error| panic!("{tool} 全局 agent 目标应被接受: {error}"));
+            }
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'opencode', 'agent', 'project', ?2, '/fixture/agents-project/.opencode/agents/reviewer.md')",
+                    params![CANARY_IDS[3], PROJECT_ONE_ID],
+                )
+                .unwrap();
+            // 金丝雀 4（负例）：ZCode 项目级 agent 目标被新作用域约束拒绝，
+            // 全局 agent 目标仍被接受。
+            assert!(
+                connection
+                    .execute(
+                        "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                         VALUES (?1, 'zcode', 'agent', 'project', ?2, '/fixture/agents-project/.zcode/agents/reviewer.md')",
+                        params![CANARY_IDS[4], PROJECT_ONE_ID],
+                    )
+                    .is_err(),
+                "ZCode 项目级 agent 目标必须被作用域约束拒绝"
+            );
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                     VALUES (?1, 'zcode', 'agent', 'global', '/fixture/home/.zcode/agents/reviewer.md')",
+                    params![CANARY_IDS[5]],
+                )
+                .unwrap();
+            // 金丝雀 5（负例）：既有边界未放宽——opencode hook 目标仍被拒绝。
+            assert!(connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path)
+                     VALUES (?1, 'opencode', 'hook', 'global', '/fixture/home/.config/opencode/hooks.json')",
+                    params![CANARY_IDS[6]],
+                )
+                .is_err());
+
+            // agents 表自身 CHECK：合法记录可插入，非法名称/空描述被拒。
+            connection
+                .execute(
+                    "INSERT INTO agents(id, name, description, prompt) VALUES (?1, 'code-reviewer', '审查代码', '正文')",
+                    params![AGENT_ONE_ID],
+                )
+                .unwrap();
+            for (index, bad_name) in ["Bad_Name", "-lead", "a b", "名前"].into_iter().enumerate() {
+                assert!(
+                    connection
+                        .execute(
+                            "INSERT INTO agents(id, name, description, prompt)
+                             VALUES (?1, ?2, '描述', '正文')",
+                            params![CANARY_IDS[index + 7], bad_name],
+                        )
+                        .is_err(),
+                        "非法名称 {bad_name} 必须被 agents.name CHECK 拒绝"
+                );
+            }
+            assert!(connection
+                .execute(
+                    "INSERT INTO agents(id, name, description, prompt)
+                     VALUES (?1, 'valid-name', '', '正文')",
+                    params![CANARY_IDS[11]],
+                )
+                .is_err(), "空描述必须被拒绝");
+
+            // 分配 + 互斥触发器：全局分配后项目分配被拒；删除被 RESTRICT 保护。
+            connection
+                .execute(
+                    "INSERT INTO agent_global_assignments(tool, agent_id) VALUES ('claude', ?1)",
+                    params![AGENT_ONE_ID],
+                )
+                .unwrap();
+            assert!(
+                connection
+                    .execute(
+                        "INSERT INTO agent_project_assignments(project_id, tool, agent_id)
+                         VALUES (?1, 'claude', ?2)",
+                        params![PROJECT_ONE_ID, AGENT_ONE_ID],
+                    )
+                    .is_err(),
+                "全局继承与项目分配必须互斥"
+            );
+            assert!(
+                connection
+                    .execute("DELETE FROM agents WHERE id = ?1", [AGENT_ONE_ID])
+                    .is_err(),
+                "仍有分配的 agent 必须被 RESTRICT 保护"
+            );
+
+            // row_version bump 触发器生效。
+            connection
+                .execute(
+                    "UPDATE agents SET description = description WHERE id = ?1",
+                    [AGENT_ONE_ID],
+                )
+                .unwrap();
+            let version: i64 = connection
+                .query_row(
+                    "SELECT row_version FROM agents WHERE id = ?1",
+                    [AGENT_ONE_ID],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(version, 2);
+
+            // 索引与外键完整性。
+            let index_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'index' AND name = 'idx_agent_project_assignments_tool_agent'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(index_count, 1);
+            let fk_violations: i64 = connection
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(fk_violations, 0);
+
+            // 清理本轮金丝雀行，保证重开（第二次循环）能重复全部断言。
+            connection
+                .execute(
+                    "DELETE FROM agent_global_assignments WHERE agent_id = ?1",
+                    [AGENT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute("DELETE FROM agents WHERE id = ?1", [AGENT_ONE_ID])
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM managed_targets WHERE artifact_kind = 'agent'",
+                    [],
+                )
+                .unwrap();
+        }
     }
 }

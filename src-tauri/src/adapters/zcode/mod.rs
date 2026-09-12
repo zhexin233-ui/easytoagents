@@ -94,6 +94,14 @@ impl ToolAdapter for ZcodeAdapter {
                 .managed_selectors(["hooks"])
                 .capability(supported_capability.clone())
                 .build(),
+            // Agents（子代理）目录（官方 "Subagents" 合同，2026-09-12 核验，
+            // Beta）：`~/.zcode/agents/<name>.md`。项目级官方明示不支持，
+            // descriptor 不提供路径（见下方 Project 分支）。
+            TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Agent, Scope::Global)
+                .path(Some(path_text(&environment.home().join(".zcode/agents"))?))
+                .format(TargetFormat::Markdown)
+                .capability(supported_capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -121,11 +129,22 @@ impl ToolAdapter for ZcodeAdapter {
                     .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
                     .build(),
                 TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Hook, Scope::Project)
-                    .project_root(project_root)
+                    .project_root(project_root.clone())
                     .path(Some(path_text(&root.join(".zcode/config.json"))?))
                     .format(TargetFormat::Json)
                     .managed_selectors(["hooks"])
-                    .capability(supported_capability)
+                    .capability(supported_capability.clone())
+                    .build(),
+                // ZCode 项目级子代理：官方明示不支持（诊断码
+                // ZCODE_PROJECT_AGENTS_UNSUPPORTED）。descriptor 无路径，
+                // 服务层在任何 scan / 写入之前即拒绝。
+                TargetDescriptor::builder(Tool::Zcode, ArtifactKind::Agent, Scope::Project)
+                    .project_root(project_root)
+                    .path(None)
+                    .format(TargetFormat::Markdown)
+                    .capability(TargetCapability::unsupported(
+                        "ZCODE_PROJECT_AGENTS_UNSUPPORTED",
+                    ))
                     .build(),
             ]);
         }
@@ -394,9 +413,24 @@ mod tests {
             project_skill.path.as_deref(),
             project.join(".zcode/skills").to_str()
         );
+        // 除项目级 Agent（官方明示不支持）外，其余目标全部受支持。
         assert!(targets
             .iter()
+            .filter(|target| {
+                !(target.artifact_kind == ArtifactKind::Agent && target.scope == Scope::Project)
+            })
             .all(|target| target.capability.state == CapabilityState::Supported));
+        let project_agent = targets
+            .iter()
+            .find(|target| {
+                target.artifact_kind == ArtifactKind::Agent && target.scope == Scope::Project
+            })
+            .unwrap();
+        assert!(project_agent.path.is_none());
+        assert_eq!(
+            project_agent.capability.diagnostic_code.as_deref(),
+            Some("ZCODE_PROJECT_AGENTS_UNSUPPORTED")
+        );
     }
 
     #[test]

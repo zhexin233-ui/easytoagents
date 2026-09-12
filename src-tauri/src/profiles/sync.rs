@@ -51,9 +51,10 @@ pub fn apply_profile_preview(
     let prepared = match artifact_kind {
         ArtifactKind::Provider => prepare_provider_sync(database, environment, redactor, tool)?,
         ArtifactKind::Prompt => prepare_prompt_sync(database, environment, tool)?,
-        ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
+        // 档案同步只服务 Provider/Prompt；MCP/Skill/Hook/Agent 有各自的同步入口。
+        ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook | ArtifactKind::Agent => {
             return Err(AppError::internal(
-                "非 Provider/Prompt 种类不应进入档���同步",
+                "非 Provider/Prompt 种类不应进入档案同步",
             ));
         }
     };

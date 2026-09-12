@@ -742,6 +742,134 @@ async confirmHookImport(input: ConfirmHookImportInput) : Promise<Result<HookImpo
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async listAgents() : Promise<Result<AgentDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_agents") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getAgent(id: string) : Promise<Result<AgentDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_agent", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createAgent(input: CreateAgentInput) : Promise<Result<AgentDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_agent", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateAgent(input: UpdateAgentInput) : Promise<Result<AgentDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_agent", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setAgentEnabled(input: VersionedAgentInput, enabled: boolean) : Promise<Result<AgentDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_agent_enabled", { input, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteAgent(input: VersionedAgentInput) : Promise<Result<DeleteAgentResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_agent", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setGlobalAgentAssignment(input: SetGlobalAgentAssignmentInput) : Promise<Result<AgentDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_global_agent_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setProjectAgentAssignment(input: SetProjectAgentAssignmentInput) : Promise<Result<AgentDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_project_agent_assignment", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listAgentProjects() : Promise<Result<AgentProjectDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_agent_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listAgentProjectOptions(input: AgentProjectOptionsInput) : Promise<Result<AgentProjectOptionDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_agent_project_options", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listGlobalAgentTargetStatuses() : Promise<Result<AgentToolTargetStatusDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_global_agent_target_statuses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewAgentSync(input: PreviewAgentSyncInput) : Promise<Result<PreviewPlan, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_agent_sync", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyAgentPreview(input: ApplyAgentPreviewInput) : Promise<Result<ApplyResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_agent_preview", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async readoptAgentTarget(input: ReadoptAgentTargetInput) : Promise<Result<ReadoptAgentTargetResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("readopt_agent_target", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async discoverAgentImport(input: DiscoverAgentImportInput) : Promise<Result<AgentImportPreviewDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("discover_agent_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async confirmAgentImport(input: ConfirmAgentImportInput) : Promise<Result<AgentImportResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_agent_import", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -751,17 +879,51 @@ async confirmHookImport(input: ConfirmHookImportInput) : Promise<Result<HookImpo
 
 /** user-defined constants **/
 
-export const TOOL_CAPABILITIES = [{"hooks":true,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"claude"},{"hooks":true,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"codex"},{"hooks":true,"mcp":true,"promptGlobal":true,"provider":false,"skills":true,"tool":"cursor"},{"hooks":true,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"zcode"},{"hooks":false,"mcp":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"opencode"}] as const;
+export const TOOL_CAPABILITIES = [{"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"claude"},{"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"codex"},{"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":false,"skills":true,"tool":"cursor"},{"agents":true,"hooks":true,"mcp":true,"projectAgents":false,"promptGlobal":true,"provider":true,"skills":true,"tool":"zcode"},{"agents":true,"hooks":false,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"opencode"}] as const;
 export const HOOK_EVENT_SUPPORT = [{"event":"SessionStart","tool":"claude"},{"event":"SessionEnd","tool":"claude"},{"event":"UserPromptSubmit","tool":"claude"},{"event":"PreToolUse","tool":"claude"},{"event":"PermissionRequest","tool":"claude"},{"event":"PostToolUse","tool":"claude"},{"event":"SubagentStop","tool":"claude"},{"event":"PreCompact","tool":"claude"},{"event":"Stop","tool":"claude"},{"event":"Notification","tool":"claude"},{"event":"SessionStart","tool":"codex"},{"event":"SessionEnd","tool":"codex"},{"event":"UserPromptSubmit","tool":"codex"},{"event":"PreToolUse","tool":"codex"},{"event":"PermissionRequest","tool":"codex"},{"event":"PostToolUse","tool":"codex"},{"event":"SubagentStart","tool":"codex"},{"event":"SubagentStop","tool":"codex"},{"event":"PreCompact","tool":"codex"},{"event":"PostCompact","tool":"codex"},{"event":"Stop","tool":"codex"},{"event":"SessionStart","tool":"cursor"},{"event":"SessionEnd","tool":"cursor"},{"event":"PreToolUse","tool":"cursor"},{"event":"PostToolUse","tool":"cursor"},{"event":"PostToolUseFailure","tool":"cursor"},{"event":"SubagentStart","tool":"cursor"},{"event":"SubagentStop","tool":"cursor"},{"event":"PreCompact","tool":"cursor"},{"event":"Stop","tool":"cursor"},{"event":"SessionStart","tool":"zcode"},{"event":"UserPromptSubmit","tool":"zcode"},{"event":"PreToolUse","tool":"zcode"},{"event":"PermissionRequest","tool":"zcode"},{"event":"PostToolUse","tool":"zcode"},{"event":"PostToolUseFailure","tool":"zcode"},{"event":"Stop","tool":"zcode"}] as const;
 
 /** user-defined types **/
 
+export type AgentDto = { id: string; name: string; description: string; prompt: string; enabled: boolean; globalAssignments: Tool[]; rowVersion: number }
+export type AgentFileTargetStatusDto = { targetPath: string; status: SyncStatus; diagnosticCode: string | null }
+export type AgentImportCandidateDto = { candidateId: string; sourcePath: string;
+/**
+ * 建议名称：frontmatter `name`（缺省时为文件名去扩展名）。
+ */
+name: string;
+/**
+ * 缺少必填字段时可能为空。
+ */
+description: string; prompt: string;
+/**
+ * 将被交集投影丢弃的工具特有 frontmatter / TOML 键名（知情丢弃）。
+ */
+droppedFields: string[]; importable: boolean;
+/**
+ * `AGENT_FRONTMATTER_INVALID` / `AGENT_REQUIRED_FIELD_MISSING` /
+ * `AGENT_NAME_INVALID` / `AGENT_NAME_CONFLICT`。
+ */
+diagnosticCode: string | null; reason: string | null }
+export type AgentImportPreviewDto = { tool: Tool; directoryPath: string; candidates: AgentImportCandidateDto[]; message: string | null }
+export type AgentImportResultDto = { tool: Tool; createdCount: number }
+export type AgentProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
+export type AgentProjectOptionDto = { agentId: string; name: string; enabled: boolean; state: ManagedProjectSelectionState; selectable: boolean; rowVersion: number }
+export type AgentProjectOptionsInput = { projectId: string; tool: Tool }
+/**
+ * 全局目标状态卡按工具聚合的一条记录；`files` 可展开到单文件状态。
+ */
+export type AgentToolTargetStatusDto = { tool: Tool; directoryPath: string | null; aggregateStatus: SyncStatus;
+/**
+ * 工具能力/策略层诊断；文件级漂移诊断仍位于 `files`。
+ */
+diagnosticCode: string | null; files: AgentFileTargetStatusDto[] }
 /**
  * 只有构造函数能写入 details，确保 allowlist 与统一脱敏无法被绕过。
  */
 export type AppError = { code: ErrorCode; message: string; details?: Partial<{ [key in string]: JsonValue }> | null; recoverable: boolean; action?: RecoveryAction | null }
 export type AppInfoDto = { name: string; version: string }
 export type AppSettingsDto = { applyMode: ApplyMode; enabledTools: Tool[] }
+export type ApplyAgentPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 export type ApplyHookPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 /**
@@ -776,7 +938,7 @@ export type ApplySnapshotRestoreInput = { previewId: string; snapshotId: string 
 /**
  * 受管资源种类。
  */
-export type ArtifactKind = "provider" | "prompt" | "mcp" | "skill" | "hook"
+export type ArtifactKind = "provider" | "prompt" | "mcp" | "skill" | "hook" | "agent"
 export type CapabilityState = "supported" | "unsupported" | "tool_not_installed"
 /**
  * 预览中的单目标变化。
@@ -785,6 +947,11 @@ export type ChangeKind = "add" | "update" | "delete" | "unchanged" | "warning" |
 export type ClaudeCredentialEnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN"
 export type CompleteOnboardingResultDto = { completed: boolean }
 /**
+ * 用户显式确认导入的条目；服务端只做中央校验，不引用持久化预览，
+ * 也不接管原生文件（导入后通过分配 + 预览 / Apply 进入受管）。
+ */
+export type ConfirmAgentImportInput = { tool: Tool; agents: CreateAgentInput[] }
+/**
  * 用户显式确认导入的条目；服务端只做中央校验，不引用持久化预览。
  */
 export type ConfirmHookImportInput = { tool: Tool; hooks: CreateHookInput[] }
@@ -792,6 +959,7 @@ export type ConfirmImportInput = { previewId: string; name: string }
 export type ConfirmMcpImportInput = { previewId: string; candidateIds: string[] }
 export type ConfirmSkillImportInput = { previewId: string; candidateIds: string[] }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
+export type CreateAgentInput = { name: string; description: string; prompt: string; enabled: boolean }
 /**
  * 导入接管时 `script_source_path` 为原脚本绝对路径，服务端会二次校验并
  * 复制到中央目录；手动新增（无脚本接管）传 NULL。
@@ -799,14 +967,16 @@ export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; tar
 export type CreateHookInput = { name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptSourcePath: string | null }
 export type DashboardSummaryDto = { tools: DashboardToolSummaryDto[]; projectCount: number; conflictCount: number; snapshotCount: number; recentSyncRuns: RecentSyncRunDto[]; interruptedRun: InterruptedRunPlan | null; needsOnboarding: boolean }
 export type DashboardToolSummaryDto = { tool: Tool; activeProviderName: string | null; activePromptName: string | null; globalMcpCount: number; globalSkillCount: number }
-export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "hook" | "project" | "managed_target" | "managed_item" | "project_native_resource"
+export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "hook" | "agent" | "project" | "managed_target" | "managed_item" | "project_native_resource"
 export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: string; rowVersion: number }
+export type DeleteAgentResultDto = { id: string; deleted: boolean }
 export type DeleteHookResultDto = { id: string; deleted: boolean }
 export type DeleteMcpResultDto = { id: string; deleted: boolean }
 export type DeleteProfileResultDto = { id: string; deleted: boolean }
 export type DeleteSkillResultDto = { id: string; deleted: boolean }
 export type DeleteSnapshotsInput = { snapshotIds: string[] }
 export type DeleteSnapshotsResultDto = { deletedIds: string[]; failures: SnapshotDeleteFailureDto[] }
+export type DiscoverAgentImportInput = { tool: Tool }
 export type DiscoverHookImportInput = { tool: Tool }
 /**
  * 前端可读的环境探测状态：`probing == true` 时 `tools` 为空。
@@ -861,6 +1031,10 @@ export type InterruptedRunPlan = { runId: string; status: string; journalAvailab
 export type InterruptedTargetPlan = { targetId: string; targetPath: string; snapshotId: string | null; phase: string; currentType: TargetType | null; currentFingerprint: string | null; errorCode: ErrorCode | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type ManagedOwnership = { kind: "whole_document" } | { kind: "selectors"; paths: string[][] } | { kind: "symlink_names"; paths: string[] }
+/**
+ * MCP、Skills 与 Hooks 共用的项目选择状态；各 RPC 模块保留历史别名。
+ */
+export type ManagedProjectSelectionState = "inherited" | "selected" | "available"
 export type McpImportAction = "create" | "reuse"
 export type McpImportCandidateDto = { candidateId: string; name: string; transport: McpTransport | null; status: McpImportCandidateStatus; action: McpImportAction | null; reason: string | null; redactedProjection: JsonValue }
 export type McpImportCandidateStatus = "importable" | "already_managed" | "name_conflict" | "disabled" | "unsupported" | "invalid"
@@ -906,6 +1080,7 @@ diagnostic: string | null;
 loginUrl: string | null; manualCommand: string }
 export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PrepareSkillTakeoverInput = { previewId: string; candidateIds: string[] }
+export type PreviewAgentSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewHookSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
@@ -950,6 +1125,8 @@ authKind?: ProviderAuthKind; credentialEnvKey: ClaudeCredentialEnvKey | null; ex
 opencodeNpm: string | null; opencodeApi: string | null }
 export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
 export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
+export type ReadoptAgentTargetInput = { tool: Tool; projectId: string | null; targetPath: string }
+export type ReadoptAgentTargetResultDto = { targetPath: string }
 export type ReadoptHookTargetInput = { tool: Tool; projectId: string | null }
 export type ReadoptHookTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
 export type ReadoptMcpTargetInput = { tool: Tool; projectId: string | null }
@@ -967,6 +1144,7 @@ export type Scope = "global" | "project"
 export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: string }
 export type SensitiveJsonUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: JsonValue }
 export type SensitiveMapUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: Partial<{ [key in string]: string }> }
+export type SetGlobalAgentAssignmentInput = { tool: Tool; agentId: string; assigned: boolean; rowVersion: number }
 /**
  * 分配时 `event` 为生效事件（可不同于中央建议事件）；取消分配时忽略。
  * 同一 (tool, hook) 已分配时传入不同 event 即切换事件。
@@ -979,6 +1157,7 @@ export type SetGlobalMcpAssignmentInput = { tool: Tool; mcpId: string; assigned:
  */
 export type SetGlobalPromptAssignmentInput = { tool: Tool; promptProfileId: string; assigned: boolean; rowVersion: number }
 export type SetGlobalSkillAssignmentInput = { tool: Tool; skillId: string; assigned: boolean; rowVersion: number }
+export type SetProjectAgentAssignmentInput = { projectId: string; tool: Tool; agentId: string; assigned: boolean; agentRowVersion: number; projectRowVersion: number }
 /**
  * 事件语义同全局分配（随分配存储，可切换）。
  */
@@ -1052,7 +1231,15 @@ export type ToolAvailabilityState = "installed" | "unavailable" | "unsupported"
  * 该结构是能力矩阵的唯一跨层来源；展示标签、图标和路由仍属于前端，
  * 但哪些工具支持哪类受管资源必须由领域层决定。
  */
-export type ToolCapabilities = { tool: Tool; provider: boolean; promptGlobal: boolean; mcp: boolean; skills: boolean; hooks: boolean }
+export type ToolCapabilities = { tool: Tool; provider: boolean; promptGlobal: boolean; mcp: boolean; skills: boolean; hooks: boolean;
+/**
+ * Agents（子代理）全局级管理：五工具均支持（ZCode 为官方 Beta，仍可用）。
+ */
+agents: boolean;
+/**
+ * Agents 项目级管理：ZCode 官方明示不支持，其余四工具支持。
+ */
+projectAgents: boolean }
 export type ToolInstallationDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; installationProbeDiagnostic: string | null }
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null;
 /**
@@ -1060,11 +1247,13 @@ export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityS
  */
 installationProbeDiagnostic: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
+export type UpdateAgentInput = { id: string; name: string; description: string; prompt: string; enabled: boolean; rowVersion: number }
 export type UpdateAppSettingsInput = { applyMode: ApplyMode; enabledTools: Tool[] }
 export type UpdateHookInput = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; rowVersion: number }
 export type UpdateMcpServerInput = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: SensitiveMapUpdate; env: SensitiveMapUpdate; extra: SensitiveJsonUpdate; enabled: boolean; rowVersion: number }
 export type UpdatePromptProfileInput = { id: string; name: string; body: string; rowVersion: number }
 export type UpdateProviderProfileInput = { id: string; name: string; apiBaseUrl: string; apiKey: SecretUpdate; defaultModel: string; options: ProviderOptionsInput; rowVersion: number }
+export type VersionedAgentInput = { id: string; rowVersion: number }
 export type VersionedHookInput = { id: string; rowVersion: number }
 export type VersionedMcpInput = { id: string; rowVersion: number }
 export type VersionedProfileInput = { id: string; rowVersion: number }

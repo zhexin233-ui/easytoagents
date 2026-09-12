@@ -65,6 +65,11 @@ function renderDashboard() {
 describe("DashboardPage", () => {
   beforeEach(() => {
     vi.mocked(commands.getDashboardSummary).mockReset();
+    vi.mocked(commands.listAgents).mockReset();
+    vi.mocked(commands.listAgents).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
     vi.mocked(commands.listSnapshots).mockReset();
     vi.mocked(commands.getAppSettings).mockReset();
     vi.mocked(commands.getEnvironmentState).mockReset();
@@ -150,6 +155,79 @@ describe("DashboardPage", () => {
     expect(screen.getByText("最近同步")).toBeInTheDocument();
     expect(screen.getByText("apply · global")).toBeInTheDocument();
     expect(screen.getByText("待处理冲突")).toBeInTheDocument();
+  });
+
+  it("展示全局 Agents 计数与项目级能力文案", async () => {
+    mockEnabledTools(["claude", "zcode"]);
+    vi.mocked(commands.getDashboardSummary).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...summary,
+        tools: [
+          summary.tools[0]!,
+          {
+            tool: "zcode",
+            activeProviderName: "ZCode 主渠道",
+            activePromptName: "ZCode 提示词",
+            globalMcpCount: 0,
+            globalSkillCount: 0,
+          },
+        ],
+      },
+    });
+    vi.mocked(commands.listAgents).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          id: "agent-enabled",
+          name: "reviewer",
+          description: "审阅变更。",
+          prompt: "审阅当前变更。",
+          enabled: true,
+          globalAssignments: ["claude"],
+          rowVersion: 1,
+        },
+        {
+          id: "agent-disabled",
+          name: "legacy",
+          description: "已停用。",
+          prompt: "不再使用。",
+          enabled: false,
+          globalAssignments: ["claude", "zcode"],
+          rowVersion: 1,
+        },
+        {
+          id: "agent-zcode",
+          name: "zcode-reviewer",
+          description: "ZCode 审阅。",
+          prompt: "审阅 ZCode 变更。",
+          enabled: true,
+          globalAssignments: ["zcode"],
+          rowVersion: 1,
+        },
+      ],
+    });
+    renderDashboard();
+
+    const claudeCard = (
+      await screen.findByRole("heading", {
+        name: "Claude",
+      })
+    ).closest("article");
+    if (!claudeCard) throw new Error("未找到 Claude 总览卡片");
+    const zcodeCard = screen
+      .getByRole("heading", { name: "ZCode" })
+      .closest("article");
+    if (!zcodeCard) throw new Error("未找到 ZCode 总览卡片");
+
+    const summaryValue = (card: HTMLElement, label: string) => {
+      const labelNode = within(card).getByText(label);
+      return labelNode.parentElement?.querySelector("dd")?.textContent;
+    };
+    expect(summaryValue(claudeCard, "全局 Agents")).toBe("1");
+    expect(summaryValue(claudeCard, "项目 Agents")).toBe("支持");
+    expect(summaryValue(zcodeCard, "全局 Agents")).toBe("1");
+    expect(summaryValue(zcodeCard, "项目 Agents")).toBe("不支持");
   });
 
   it("被关闭的工具不再渲染总览卡片", async () => {

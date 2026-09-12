@@ -8,6 +8,7 @@ use tauri::{Emitter, Manager};
 use tauri_specta::{collect_commands, Builder};
 
 pub mod adapters;
+pub mod agents;
 pub mod app;
 pub mod commands;
 pub mod db;
@@ -148,6 +149,27 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<hooks::DiscoverHookImportInput>()
         .typ::<hooks::ConfirmHookImportInput>()
         .typ::<hooks::HookImportResultDto>()
+        .typ::<agents::CreateAgentInput>()
+        .typ::<agents::UpdateAgentInput>()
+        .typ::<agents::VersionedAgentInput>()
+        .typ::<agents::DeleteAgentResultDto>()
+        .typ::<agents::AgentDto>()
+        .typ::<agents::SetGlobalAgentAssignmentInput>()
+        .typ::<agents::SetProjectAgentAssignmentInput>()
+        .typ::<agents::AgentProjectDto>()
+        .typ::<agents::AgentProjectOptionsInput>()
+        .typ::<agents::AgentProjectOptionDto>()
+        .typ::<agents::PreviewAgentSyncInput>()
+        .typ::<agents::ApplyAgentPreviewInput>()
+        .typ::<agents::ReadoptAgentTargetInput>()
+        .typ::<agents::ReadoptAgentTargetResultDto>()
+        .typ::<agents::AgentToolTargetStatusDto>()
+        .typ::<agents::AgentFileTargetStatusDto>()
+        .typ::<agents::AgentImportCandidateDto>()
+        .typ::<agents::AgentImportPreviewDto>()
+        .typ::<agents::DiscoverAgentImportInput>()
+        .typ::<agents::ConfirmAgentImportInput>()
+        .typ::<agents::AgentImportResultDto>()
         .typ::<projects::ProjectPathStatus>()
         .typ::<projects::GitRepositoryStatus>()
         .typ::<projects::ProjectTargetStatusDto>()
@@ -268,6 +290,22 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::hooks::readopt_hook_target,
             commands::hooks::discover_hook_import,
             commands::hooks::confirm_hook_import,
+            commands::agents::list_agents,
+            commands::agents::get_agent,
+            commands::agents::create_agent,
+            commands::agents::update_agent,
+            commands::agents::set_agent_enabled,
+            commands::agents::delete_agent,
+            commands::agents::set_global_agent_assignment,
+            commands::agents::set_project_agent_assignment,
+            commands::agents::list_agent_projects,
+            commands::agents::list_agent_project_options,
+            commands::agents::list_global_agent_target_statuses,
+            commands::agents::preview_agent_sync,
+            commands::agents::apply_agent_preview,
+            commands::agents::readopt_agent_target,
+            commands::agents::discover_agent_import,
+            commands::agents::confirm_agent_import,
         ])
 }
 

@@ -8,6 +8,53 @@ interface GlobalTargetStatusPresentation {
   previewBlocked: boolean;
 }
 
+const agentDiagnosticPresentations: Record<
+  string,
+  Pick<GlobalTargetStatusPresentation, "label" | "description" | "tone">
+> = {
+  AGENTS_UNSUPPORTED: {
+    label: "不支持 Agents",
+    description: "当前工具不支持 Agents 目标，无法生成同步预览。",
+    tone: "blocked",
+  },
+  AGENT_FRONTMATTER_INVALID: {
+    label: "Agent 格式错误",
+    description:
+      "Agent 文件的 frontmatter 或 TOML 格式无效，请修复后重新检测。",
+    tone: "blocked",
+  },
+  AGENT_REQUIRED_FIELD_MISSING: {
+    label: "Agent 缺少必填字段",
+    description: "Agent 必须包含描述和正文，请补齐后重新检测。",
+    tone: "warning",
+  },
+  AGENT_NAME_INVALID: {
+    label: "Agent 名称无效",
+    description: "名称只能使用小写字母、数字和连字符，长度为 1–64 个字符。",
+    tone: "warning",
+  },
+  AGENT_FIELD_INVALID: {
+    label: "Agent 字段无效",
+    description: "Agent 字段超出长度限制或包含无效内容，请修复后重新检测。",
+    tone: "warning",
+  },
+  AGENT_NAME_CONFLICT: {
+    label: "Agent 名称冲突",
+    description: "中央库中已有同名 Agent，请先处理名称冲突。",
+    tone: "blocked",
+  },
+  AGENT_FILE_TOO_LARGE: {
+    label: "Agent 文件过大",
+    description: "Agent 文件超过可导入大小限制，无法导入。",
+    tone: "warning",
+  },
+  ZCODE_PROJECT_AGENTS_UNSUPPORTED: {
+    label: "ZCode 不支持项目 Agents",
+    description: "ZCode 官方暂不支持项目级 Agents；请在全局 Agents 页面管理。",
+    tone: "blocked",
+  },
+};
+
 const globalPreviewBlockingStatuses = new Set<SyncStatus>([
   "failed",
   "policy_blocked",
@@ -21,6 +68,12 @@ export function globalTargetStatusPresentation(
 ): GlobalTargetStatusPresentation {
   const { directApply = false } = options;
   const previewBlocked = globalPreviewBlockingStatuses.has(status);
+  const agentDiagnostic = diagnosticCode
+    ? agentDiagnosticPresentations[diagnosticCode]
+    : undefined;
+  if (agentDiagnostic) {
+    return { ...agentDiagnostic, previewBlocked };
+  }
   if (
     diagnosticCode === "SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED" &&
     status === "external_owned_change"

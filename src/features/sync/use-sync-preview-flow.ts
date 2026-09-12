@@ -25,7 +25,10 @@ export interface SyncPreviewFlowOptions<TReadopt = never> {
     previewId: string;
     tool: Tool;
   }) => Promise<Result<ApplyResult, AppError>>;
-  readopt?: (tool: Tool) => Promise<Result<TReadopt, AppError>>;
+  readopt?: (
+    tool: Tool,
+    targetPath?: string,
+  ) => Promise<Result<TReadopt, AppError>>;
   invalidate: () => Promise<void>;
   messages: {
     previewFailed: string;
@@ -47,6 +50,14 @@ interface ApplyRequest {
   previewId: string;
   tool: Tool;
 }
+
+type ReadoptRequest =
+  | {
+      tool: Tool;
+      targetPath?: string;
+    }
+  // 保留旧的单目标调用形式；Agents 需要额外传入 targetPath。
+  | Tool;
 
 /**
  * Owns the persisted preview lifecycle shared by global and project resource
@@ -127,17 +138,20 @@ export function useSyncPreviewFlow<TReadopt = never>(
   });
 
   const readoptMutation = useMutation({
-    mutationFn: async (tool: Tool) => {
+    mutationFn: async (request: ReadoptRequest) => {
       if (!options.readopt) {
         throw new Error("当前预览不支持重新接管。");
       }
-      return unwrapResult(await options.readopt(tool));
+      const { tool, targetPath } =
+        typeof request === "string" ? { tool: request } : request;
+      return unwrapResult(await options.readopt(tool, targetPath));
     },
-    onSuccess: async (result, tool) => {
+    onSuccess: async (result, request) => {
       if (!mountedRef.current) return;
       closePreview();
       await options.invalidate();
       if (!mountedRef.current) return;
+      const tool = typeof request === "string" ? request : request.tool;
       await options.onReadopted?.(result, tool);
     },
     onError: (error) => {

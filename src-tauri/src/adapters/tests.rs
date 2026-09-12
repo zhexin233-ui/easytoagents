@@ -9,13 +9,13 @@ mod tests {
         canonicalize_project_root, parse_jsonc, render_cursor_mdc, strip_mdc_frontmatter,
         CapabilityState, ConservativeClaudeCustomizationPolicyProbe,
         ConservativeClaudeUserMcpProbe, DiscoveryContext, ExplicitEnvironment, ManagedOwnership,
-        ObservedRaw, PolicyState, PromptOverrideState, RenderedTarget, TargetTrustState,
-        ToolAdapter, ToolAvailability, ToolAvailabilityState,
+        ObservedRaw, PolicyState, PromptOverrideState, RenderedTarget, TargetFormat,
+        TargetTrustState, ToolAdapter, ToolAvailability, ToolAvailabilityState,
         VerifiedClaudeCustomizationPolicyEvidence, VerifiedClaudeUserMcpEvidence,
     };
     use crate::{
         adapters::{claude::ClaudeAdapter, codex::CodexAdapter},
-        domain::{ArtifactKind, Scope},
+        domain::{ArtifactKind, Scope, Tool},
     };
 
     fn fixture(name: &str) -> PathBuf {
@@ -115,6 +115,163 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn agent_descriptors_follow_each_tool_contract() {
+        // 五工具 Agent descriptor 矩阵（官方子代理目录合同，2026-09-12 核验）：
+        // 全局五工具目录齐备；项目级仅 ZCode 不支持且无路径。
+        let temporary = tempdir().unwrap();
+        let home = fs::canonicalize(temporary.path()).unwrap();
+        let project = home.join("project");
+        fs::create_dir(&project).unwrap();
+        let project = canonicalize_project_root(&project).unwrap();
+        let environment = environment(&home, None, None);
+        let user_probe = ConservativeClaudeUserMcpProbe;
+        let context = DiscoveryContext {
+            environment: &environment,
+            project_root: Some(&project),
+            claude_user_mcp_probe: &user_probe,
+            claude_customization_policy_probe: &ConservativeClaudeCustomizationPolicyProbe,
+        };
+
+        let expected_global_directory = |tool: Tool, environment: &ExplicitEnvironment| {
+            match tool {
+                Tool::Claude => environment.claude_config_dir().join("agents"),
+                Tool::Codex => environment.codex_home().join("agents"),
+                Tool::Cursor => environment.home().join(".cursor/agents"),
+                Tool::Zcode => environment.home().join(".zcode/agents"),
+                Tool::Opencode => environment.opencode_config_dir().join("agents"),
+            }
+        };
+        let expected_allowed_root = |tool: Tool, environment: &ExplicitEnvironment| {
+            match tool {
+                Tool::Claude => environment.claude_config_dir().to_path_buf(),
+                Tool::Codex => environment.codex_home().to_path_buf(),
+                Tool::Cursor => environment.home().join(".cursor"),
+                Tool::Zcode => environment.home().join(".zcode"),
+                Tool::Opencode => environment.opencode_config_dir().to_path_buf(),
+            }
+        };
+
+        for tool in Tool::ALL {
+            let targets = tool.adapter().discover(&context).unwrap();
+            let global = targets
+                .iter()
+                .find(|target| {
+                    target.artifact_kind == ArtifactKind::Agent && target.scope == Scope::Global
+                })
+                .unwrap_or_else(|| panic!("{tool} 缺少全局 Agent descriptor"));
+            let directory = expected_global_directory(tool, &environment);
+            assert_eq!(
+                global.path.as_deref(),
+                Some(directory.to_str().unwrap()),
+                "{tool} 全局 Agent 目录不符"
+            );
+            assert_eq!(
+                global.allowed_root.as_deref(),
+                Some(expected_allowed_root(tool, &environment).to_str().unwrap()),
+                "{tool} 全局 Agent allowed_root 必须是工具配置根"
+            );
+            assert_eq!(
+                global.format,
+                if tool == Tool::Codex {
+                    TargetFormat::Toml
+                } else {
+                    TargetFormat::Markdown
+                }
+            );
+            assert_eq!(
+                crate::adapters::agent_file_extension(tool),
+                if tool == Tool::Codex { "toml" } else { "md" }
+            );
+            assert_eq!(
+                global.capability.state,
+                CapabilityState::Supported,
+                "{tool} 全局 Agents 必须受支持"
+            );
+            if tool == Tool::Claude {
+                // strictPluginOnlyCustomization 封锁本地 agents：与 skill
+                // 同一策略字段。保守探针返回 Unknown，fail closed。
+                assert_eq!(global.policy, PolicyState::Unknown);
+            }
+
+            let project_descriptor = targets
+                .iter()
+                .find(|target| {
+                    target.artifact_kind == ArtifactKind::Agent && target.scope == Scope::Project
+                })
+                .unwrap_or_else(|| panic!("{tool} 缺少项目级 Agent descriptor"));
+            if tool == Tool::Zcode {
+                // 项目级官方明示不支持：无路径 + 稳定诊断码，杜绝任何写入。
+                assert!(project_descriptor.path.is_none());
+                assert_eq!(
+                    project_descriptor.capability.state,
+                    CapabilityState::Unsupported
+                );
+                assert_eq!(
+                    project_descriptor.capability.diagnostic_code.as_deref(),
+                    Some("ZCODE_PROJECT_AGENTS_UNSUPPORTED")
+                );
+                continue;
+            }
+            assert_eq!(
+                project_descriptor.capability.state,
+                CapabilityState::Supported,
+                "{tool} 项目级 Agents 必须受支持"
+            );
+            let expected_project_directory = match tool {
+                Tool::Claude => std::path::PathBuf::from(project.as_str()).join(".claude/agents"),
+                Tool::Codex => std::path::PathBuf::from(project.as_str()).join(".codex/agents"),
+                Tool::Cursor => std::path::PathBuf::from(project.as_str()).join(".cursor/agents"),
+                Tool::Opencode => {
+                    std::path::PathBuf::from(project.as_str()).join(".opencode/agents")
+                }
+                Tool::Zcode => unreachable!("ZCode 项目级已 continue"),
+            };
+            assert_eq!(
+                project_descriptor.path.as_deref(),
+                Some(expected_project_directory.to_str().unwrap()),
+                "{tool} 项目级 Agent 目录不符"
+            );
+            assert_eq!(
+                project_descriptor.allowed_root.as_deref(),
+                Some(project.as_str()),
+                "{tool} 项目级 Agent 写入边界必须是项目根"
+            );
+            if tool == Tool::Codex {
+                // 项目级 `.codex` 信任层与项目 MCP/Skills/Hooks 相同；
+                // 无 trust fixture 时保持 Unknown（fail closed）。
+                let codex_mcp = targets
+                    .iter()
+                    .find(|target| {
+                        target.artifact_kind == ArtifactKind::Mcp
+                            && target.scope == Scope::Project
+                    })
+                    .unwrap();
+                assert_eq!(project_descriptor.trust, codex_mcp.trust);
+                assert_eq!(project_descriptor.trust, TargetTrustState::Unknown);
+            }
+
+            // 文件级 descriptor：目录 + <name>.<ext>；allowed_root 保持为目录。
+            let file_descriptor = global
+                .for_agent_file("code-reviewer", crate::adapters::agent_file_extension(tool))
+                .unwrap();
+            let expected_file = expected_global_directory(tool, &environment).join(format!(
+                "code-reviewer.{}",
+                crate::adapters::agent_file_extension(tool)
+            ));
+            assert_eq!(
+                file_descriptor.path.as_deref(),
+                Some(expected_file.to_str().unwrap())
+            );
+            assert_eq!(file_descriptor.allowed_root, global.allowed_root);
+            assert_eq!(file_descriptor.capability, global.capability);
+            assert_eq!(file_descriptor.policy, global.policy);
+            // 非法文件名 fail closed。
+            assert!(global.for_agent_file("../escape", "md").is_err());
+            assert!(global.for_agent_file("a/b", "md").is_err());
         }
     }
 
@@ -468,6 +625,7 @@ mod tests {
                 .map(|target| target.trust)
                 .collect::<Vec<_>>(),
             vec![
+                TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,
                 TargetTrustState::Untrusted,

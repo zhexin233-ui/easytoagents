@@ -22,6 +22,7 @@ import {
 } from "@/lib/projects-api";
 import { interruptedRunQueryOptions } from "@/lib/sync-api";
 import {
+  PROJECT_AGENT_TOOLS,
   MCP_TOOLS,
   filterEnabledTools,
   toolMetadata,
@@ -33,6 +34,7 @@ import type { ProjectResourceView } from "./resource-types";
 import { ProjectMcpAssignments } from "./assignments/mcp";
 import { ProjectHookAssignments } from "./assignments/hook";
 import { ProjectSkillAssignments } from "./assignments/skill";
+import { ProjectAgentAssignments } from "./assignments/agent";
 
 interface OpenProjectPreview {
   plan: PreviewPlan;
@@ -59,11 +61,17 @@ const PROJECT_RESOURCE_VIEWS = [
     ariaLabel: "管理项目 Skill",
     capability: "skills",
   },
+  {
+    id: "agent",
+    label: "Agents",
+    ariaLabel: "管理项目 Agents",
+    capability: "projectAgents",
+  },
 ] as const satisfies readonly {
   id: ProjectResourceView;
   label: string;
   ariaLabel: string;
-  capability: "mcp" | "hooks" | "skills";
+  capability: "mcp" | "hooks" | "skills" | "projectAgents";
 }[];
 
 export function ProjectDetailPage() {
@@ -94,6 +102,10 @@ export function ProjectDetailPage() {
   )
     ? resourceView
     : (visibleResourceViews[0]?.id ?? resourceView);
+  const visibleProjectTools =
+    activeResourceView === "agent"
+      ? filterEnabledTools(PROJECT_AGENT_TOOLS, enabledTools)
+      : visibleTools;
   const [toolStatusOpen, setToolStatusOpen] = useState(false);
   const viewKey = projectViewKey(projectId, activeTool, activeResourceView);
   const [openPreview, setOpenPreview] = useState<OpenProjectPreview | null>(
@@ -344,7 +356,7 @@ export function ProjectDetailPage() {
                 role="group"
                 aria-label="项目平台管理视图"
               >
-                {visibleTools.map((tool) => (
+                {visibleProjectTools.map((tool) => (
                   <ProjectToolViewButton
                     key={tool}
                     tool={tool}
@@ -366,21 +378,25 @@ export function ProjectDetailPage() {
                 code={interruptedQuery.data?.status ?? "WRITE_IN_PROGRESS"}
               />
             ) : null}
-            <ProjectNativeResources
-              project={project}
-              tool={activeTool}
-              artifactKind={activeResourceView}
-              writerBlocked={writerBlocked}
-              applyPending={applyMutation.isPending}
-              onPreview={handleNativePreview}
-            />
+            {activeResourceView !== "agent" ? (
+              <ProjectNativeResources
+                project={project}
+                tool={activeTool}
+                artifactKind={activeResourceView}
+                writerBlocked={writerBlocked}
+                applyPending={applyMutation.isPending}
+                onPreview={handleNativePreview}
+              />
+            ) : null}
             <h2 className="text-[15px] font-semibold">
               {toolLabel(activeTool)}{" "}
               {activeResourceView === "mcp"
                 ? "MCP"
                 : activeResourceView === "hook"
                   ? "Hook"
-                  : "Skill"}{" "}
+                  : activeResourceView === "skill"
+                    ? "Skill"
+                    : "Agents"}{" "}
               项目追加
             </h2>
             {activeResourceView === "mcp" ? (
@@ -397,8 +413,15 @@ export function ProjectDetailPage() {
                 directApply={directApply}
                 onMessage={(message) => notify({ kind: "success", message })}
               />
-            ) : (
+            ) : activeResourceView === "skill" ? (
               <ProjectSkillAssignments
+                project={project}
+                tool={activeTool}
+                directApply={directApply}
+                onMessage={(message) => notify({ kind: "success", message })}
+              />
+            ) : (
+              <ProjectAgentAssignments
                 project={project}
                 tool={activeTool}
                 directApply={directApply}
@@ -441,7 +464,8 @@ function isProjectResourceKind(
   return (
     artifactKind === "mcp" ||
     artifactKind === "hook" ||
-    artifactKind === "skill"
+    artifactKind === "skill" ||
+    artifactKind === "agent"
   );
 }
 
@@ -478,6 +502,7 @@ const ARTIFACT_LABELS: Record<ArtifactKind, string> = {
   mcp: "MCP",
   skill: "Skills",
   hook: "Hooks",
+  agent: "Agents",
 };
 
 function artifactLabel(kind: ArtifactKind) {

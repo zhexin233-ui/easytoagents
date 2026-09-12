@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bot,
   ChevronRight,
   FileText,
   FolderKanban,
@@ -32,6 +33,7 @@ import {
 import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { invalidateEnvironmentDependents } from "@/lib/environment-api";
+import { agentsKeys } from "@/lib/agents-api";
 import { mcpKeys } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { projectKeys, projectsQueryOptions } from "@/lib/projects-api";
@@ -50,6 +52,7 @@ const primaryLinks = [
   { to: "/mcp", label: "MCP", end: false, icon: Plug },
   { to: "/hooks", label: "Hooks", end: false, icon: Webhook },
   { to: "/skills", label: "Skills", end: false, icon: Sparkles },
+  { to: "/agents", label: "Agents", end: false, icon: Bot },
 ] as const;
 
 // NavLink 的 className 直接传 render-prop（不能包进 cn：clsx 会吞函数参数）。
@@ -234,6 +237,7 @@ function ProjectNavSection({
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.projects() }),
         queryClient.invalidateQueries({ queryKey: skillKeys.projects() }),
+        queryClient.invalidateQueries({ queryKey: agentsKeys.projects() }),
       ]);
       renameGuard.end();
       setRenameSubmitting(false);
@@ -262,6 +266,7 @@ function ProjectNavSection({
         queryClient.invalidateQueries({ queryKey: projectKeys.all }),
         queryClient.invalidateQueries({ queryKey: mcpKeys.projects() }),
         queryClient.invalidateQueries({ queryKey: skillKeys.projects() }),
+        queryClient.invalidateQueries({ queryKey: agentsKeys.projects() }),
       ]);
       removeGuard.end();
       setRemoveSubmitting(false);

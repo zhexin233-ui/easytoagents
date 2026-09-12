@@ -6,6 +6,20 @@ pub const ASSIGNABLE_MCP_TOOLS: [Tool; 5] = Tool::ALL;
 pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 5] = Tool::ALL;
 /// Hooks 的可分配工具集合（四工具均有官方 hooks 合同，证据见任务 09-05-add-hooks-management）。
 pub const ASSIGNABLE_HOOK_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
+/// Agents 的全局可分配工具集合（五工具均有官方子代理目录合同，证据日期 2026-09-12；
+/// ZCode 为官方 Beta）。
+pub const ASSIGNABLE_AGENT_TOOLS: [Tool; 5] = Tool::ALL;
+/// Agents 的项目级可分配工具集合（ZCode 官方明示不支持项目级子代理）。
+pub const PROJECT_AGENT_TOOLS: [Tool; 4] =
+    [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Opencode];
+
+/// Agent 受管文件在目标工具下的扩展名：Codex 为 TOML，其余工具为 Markdown。
+pub fn agent_file_extension(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Codex => "toml",
+        Tool::Claude | Tool::Cursor | Tool::Zcode | Tool::Opencode => "md",
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -270,6 +284,42 @@ impl TargetDescriptor {
 
     fn path_for_error(&self) -> &str {
         self.path.as_deref().unwrap_or("<unsupported>")
+    }
+
+    /// Agent 目录 descriptor → 单个受管文件的 descriptor：
+    /// `path` 变为 `<目录>/<name>.<ext>`，其余字段（capability/policy/trust/
+    /// allowed_root 等）原样保留。目录 descriptor 本身不能 scan_target
+    /// （会把目录当文件读），所有 scan / preview / apply / restore 只处理
+    /// 文件级 descriptor；`allowed_root` 保持为目录，写入边界不变。
+    pub fn for_agent_file(
+        &self,
+        name: &str,
+        extension: &str,
+    ) -> Result<TargetDescriptor, AppError> {
+        // 名称来自数据库中的受管记录；出现路径分隔符即视为非法输入，fail closed。
+        if name.is_empty()
+            || name.contains(['/', '\\', '\0'])
+            || name.starts_with('.')
+        {
+            return Err(AppError::invalid_input(
+                "name",
+                "Agent 名称不能用于构造目标文件名",
+            ));
+        }
+        if extension.is_empty() || extension.contains(['/', '\\', '\0', '.']) {
+            return Err(AppError::invalid_input(
+                "extension",
+                "Agent 文件扩展名非法",
+            ));
+        }
+        let directory = self.path.as_deref().ok_or_else(|| {
+            AppError::invalid_input("targetPath", "Agent 目录目标缺少路径（该组合不受支持）")
+        })?;
+        let file_path = Path::new(directory).join(format!("{name}.{extension}"));
+        Ok(TargetDescriptor {
+            path: Some(path_text(&file_path)?),
+            ..self.clone()
+        })
     }
 }
 
@@ -1319,10 +1369,16 @@ pub fn validate_managed_ownership(
     ownership: &ManagedOwnership,
 ) -> Result<(), AppError> {
     let valid = match ownership {
-        ManagedOwnership::WholeDocument => target
-            .managed_selector_roots
-            .iter()
-            .any(|root| root == "$document"),
+        ManagedOwnership::WholeDocument => {
+            // Agent descriptor 的目录本身不声明 selector；服务层会从中派生
+            // 单文件 descriptor，文件级目标按整文件拥有。其他整文档目标
+            // 仍必须显式声明 `$document`，避免放宽既有边界。
+            target.artifact_kind == ArtifactKind::Agent
+                || target
+                    .managed_selector_roots
+                    .iter()
+                    .any(|root| root == "$document")
+        }
         ManagedOwnership::SymlinkNames(_) => target
             .managed_selector_roots
             .iter()

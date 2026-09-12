@@ -5,6 +5,7 @@ use specta::Type;
 
 use crate::{app::AppState, db::Database, error::AppError, security::SecretRedactor};
 
+pub mod agents;
 pub mod environment;
 pub mod hooks;
 pub mod mcp;
@@ -68,6 +69,7 @@ mod tests {
     /// 每个命令源文件；新增命令文件时必须加进来，否则线程模型检查会漏掉它。
     const COMMAND_SOURCES: &[(&str, &str)] = &[
         ("commands/mod.rs", include_str!("mod.rs")),
+        ("commands/agents.rs", include_str!("agents.rs")),
         ("commands/environment.rs", include_str!("environment.rs")),
         ("commands/hooks.rs", include_str!("hooks.rs")),
         ("commands/mcp.rs", include_str!("mcp.rs")),

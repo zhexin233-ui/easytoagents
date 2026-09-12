@@ -1,6 +1,7 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 
 import { commands } from "@/bindings/commands";
+import { agentsKeys } from "@/lib/agents-api";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { hooksKeys } from "@/lib/hooks-api";
 import { mcpKeys } from "@/lib/mcp-api";
@@ -34,6 +35,7 @@ export function invalidateEnvironmentDependents(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: mcpKeys.all }),
     queryClient.invalidateQueries({ queryKey: skillKeys.all }),
     queryClient.invalidateQueries({ queryKey: hooksKeys.all }),
+    queryClient.invalidateQueries({ queryKey: agentsKeys.all }),
     queryClient.invalidateQueries({ queryKey: projectKeys.all }),
   ]);
 }

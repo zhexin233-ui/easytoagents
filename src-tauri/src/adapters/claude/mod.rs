@@ -130,6 +130,18 @@ impl ToolAdapter for ClaudeAdapter {
                 .managed_selectors(["hooks"])
                 .capability(tool_capability.clone())
                 .build(),
+            // Agents（子代理）目录（官方 "Create custom subagents" 合同，
+            // 2026-09-12 核验）：目录 descriptor 指向 `<claude_config_dir>/agents`，
+            // 受管文件为目录内的 `<name>.md`。官方 strictPluginOnlyCustomization
+            // 会同时封锁本地自定义 agents，因此沿用 skill 的同一策略证据门禁。
+            TargetDescriptor::builder(Tool::Claude, ArtifactKind::Agent, Scope::Global)
+                .path(Some(path_text(
+                    &environment.claude_config_dir().join("agents"),
+                )?))
+                .format(TargetFormat::Markdown)
+                .capability(tool_capability.clone())
+                .policy(customization_policy.skill)
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -155,11 +167,20 @@ impl ToolAdapter for ClaudeAdapter {
                     .symlink_policy(SymlinkPolicy::ManagedChildrenOnly)
                     .build(),
                 TargetDescriptor::builder(Tool::Claude, ArtifactKind::Hook, Scope::Project)
-                    .project_root(project_root)
+                    .project_root(project_root.clone())
                     .path(Some(path_text(&root.join(".claude/settings.json"))?))
                     .format(TargetFormat::Json)
                     .managed_selectors(["hooks"])
+                    .capability(tool_capability.clone())
+                    .build(),
+                // 项目级子代理目录：`<root>/.claude/agents`；与全局同样受
+                // strictPluginOnlyCustomization 策略门禁。
+                TargetDescriptor::builder(Tool::Claude, ArtifactKind::Agent, Scope::Project)
+                    .project_root(project_root)
+                    .path(Some(path_text(&root.join(".claude/agents"))?))
+                    .format(TargetFormat::Markdown)
                     .capability(tool_capability)
+                    .policy(customization_policy.skill)
                     .build(),
             ]);
         }

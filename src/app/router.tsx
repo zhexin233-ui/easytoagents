@@ -14,6 +14,11 @@ const HooksPage = lazy(() =>
     default: module.HooksPage,
   })),
 );
+const AgentsPage = lazy(() =>
+  import("@/features/agents/agents-page").then((module) => ({
+    default: module.AgentsPage,
+  })),
+);
 const McpPage = lazy(() =>
   import("@/features/mcp/mcp-page").then((module) => ({
     default: module.McpPage,
@@ -57,6 +62,10 @@ const router = createHashRouter([
       {
         path: "hooks",
         element: <HooksPage />,
+      },
+      {
+        path: "agents",
+        element: <AgentsPage />,
       },
       {
         path: "skills",

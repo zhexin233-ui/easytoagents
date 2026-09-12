@@ -2,6 +2,7 @@ import { queryOptions, type QueryClient } from "@tanstack/react-query";
 
 import type { ArtifactKind, Tool } from "@/bindings/commands";
 import { commands } from "@/bindings/commands";
+import { agentsKeys } from "@/lib/agents-api";
 import { hooksKeys } from "@/lib/hooks-api";
 import { mcpKeys } from "@/lib/mcp-api";
 import { unwrapResult } from "@/lib/profile-api";
@@ -9,8 +10,15 @@ import { profileKeys } from "@/lib/profile-api";
 import { syncKeys } from "@/lib/sync-api";
 import { skillKeys } from "@/lib/skills-api";
 
-export type ProjectResourceKind = Exclude<ArtifactKind, "provider" | "prompt">;
-export type ProjectScopeKind = ProjectResourceKind | "project";
+// Agent targets use their own directory/file API.  They are not whole-project
+// native resources, so keep them out of the generic resource command union;
+// otherwise the frontend could send an Agent artifact to a backend command
+// that intentionally rejects it.
+export type ProjectResourceKind = Exclude<
+  ArtifactKind,
+  "provider" | "prompt" | "agent"
+>;
+export type ProjectScopeKind = ProjectResourceKind | "agent" | "project";
 
 export const projectKeys = {
   all: ["projects"] as const,
@@ -42,6 +50,7 @@ export function invalidateProjectScope(
         add(mcpKeys.projects());
         add(skillKeys.projects());
         add(hooksKeys.projects());
+        add(agentsKeys.projects());
         add(profileKeys.all);
         add(syncKeys.all);
         break;
@@ -58,6 +67,11 @@ export function invalidateProjectScope(
       case "hook":
         add(projectKeys.all);
         add(hooksKeys.all);
+        add(syncKeys.all);
+        break;
+      case "agent":
+        add(projectKeys.all);
+        add(agentsKeys.all);
         add(syncKeys.all);
         break;
     }

@@ -68,9 +68,11 @@ fn cursor_unsupported(artifact_kind: ArtifactKind) -> AppError {
         "capability",
         match artifact_kind {
             ArtifactKind::Provider => "CURSOR_PROVIDER_UNSUPPORTED",
-            ArtifactKind::Prompt | ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook => {
-                "Cursor 该能力不受支持"
-            }
+            ArtifactKind::Prompt
+            | ArtifactKind::Mcp
+            | ArtifactKind::Skill
+            | ArtifactKind::Hook
+            | ArtifactKind::Agent => "Cursor 该能力不受支持",
         },
     )
 }

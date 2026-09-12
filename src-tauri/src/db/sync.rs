@@ -959,6 +959,7 @@ pub(crate) fn load_row_version(
         | "prompt_profiles"
         | "mcp_servers"
         | "skills"
+        | "agents"
         | "projects"
         | "hooks"
         | "managed_targets"

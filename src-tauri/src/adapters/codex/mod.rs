@@ -108,6 +108,13 @@ impl ToolAdapter for CodexAdapter {
                 .managed_selectors(["hooks"])
                 .capability(capability.clone())
                 .build(),
+            // Agents（子代理）目录（官方 "Subagents" 合同，2026-09-12 核验）：
+            // 每个子代理一个 TOML 文件 `<codex_home>/agents/<name>.toml`。
+            TargetDescriptor::builder(Tool::Codex, ArtifactKind::Agent, Scope::Global)
+                .path(Some(path_text(&environment.codex_home().join("agents"))?))
+                .format(TargetFormat::Toml)
+                .capability(capability.clone())
+                .build(),
         ];
 
         if let Some(project_root) = context.project_root {
@@ -139,10 +146,19 @@ impl ToolAdapter for CodexAdapter {
                 // 项目级 hooks 只在项目 `.codex/` 层受信任时加载（官方合同），
                 // 与项目 MCP 相同的 trust 语义。
                 TargetDescriptor::builder(Tool::Codex, ArtifactKind::Hook, Scope::Project)
-                    .project_root(project_root)
+                    .project_root(project_root.clone())
                     .path(Some(path_text(&root.join(".codex/hooks.json"))?))
                     .format(TargetFormat::Json)
                     .managed_selectors(["hooks"])
+                    .capability(capability.clone())
+                    .trust(project_trust)
+                    .build(),
+                // 项目级子代理目录：`<root>/.codex/agents`，沿用 `.codex`
+                // 既有信任层（与项目 MCP/Skills/Hooks 相同）。
+                TargetDescriptor::builder(Tool::Codex, ArtifactKind::Agent, Scope::Project)
+                    .project_root(project_root)
+                    .path(Some(path_text(&root.join(".codex/agents"))?))
+                    .format(TargetFormat::Toml)
                     .capability(capability)
                     .trust(project_trust)
                     .build(),

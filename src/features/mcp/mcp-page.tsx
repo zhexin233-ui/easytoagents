@@ -595,7 +595,7 @@ export function McpPage() {
           readopting={readoptMutation.isPending}
           onReadopt={() => {
             if (openPreview) {
-              readoptMutation.mutate(openPreview.tool);
+              readoptMutation.mutate({ tool: openPreview.tool });
             }
           }}
           onClose={closePreview}

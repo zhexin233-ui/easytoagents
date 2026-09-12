@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/empty-state";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { projectNativeResourcesQueryOptions } from "@/lib/projects-api";
+import type { ProjectResourceKind } from "@/lib/projects-api";
 
 import type { ProjectResourceView } from "./resource-types";
 import { OptionTag } from "./option-row";
@@ -30,7 +31,7 @@ export function ProjectNativeResources({
 }: {
   project: ProjectDto;
   tool: Tool;
-  artifactKind: ProjectResourceView;
+  artifactKind: ProjectResourceKind;
   writerBlocked: boolean;
   applyPending: boolean;
   onPreview: (

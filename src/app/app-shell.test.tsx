@@ -110,7 +110,7 @@ describe("AppShell 侧边栏设置入口", () => {
     await waitFor(() => expect(commands.listProjects).toHaveBeenCalledTimes(2));
   });
 
-  it("按总览、提示词、MCP、Hooks、Skills、项目的顺序渲染一级导航", () => {
+  it("按总览、提示词、MCP、Hooks、Skills、Agents、项目的顺序渲染一级导航", () => {
     renderShell();
 
     const navigation = screen.getByRole("navigation", { name: "一级导航" });
@@ -118,7 +118,7 @@ describe("AppShell 侧边栏设置入口", () => {
       within(navigation)
         .getAllByRole("link")
         .map((link) => link.textContent),
-    ).toEqual(["总览", "提示词", "MCP", "Hooks", "Skills", "项目"]);
+    ).toEqual(["总览", "提示词", "MCP", "Hooks", "Skills", "Agents", "项目"]);
   });
 
   it("设置不再是一级导航链接，而是左下角的图标按钮", () => {

@@ -16,6 +16,8 @@ export interface ToolMetadata {
     mcp: boolean;
     skills: boolean;
     hooks: boolean;
+    agents: boolean;
+    projectAgents: boolean;
   };
 }
 
@@ -32,6 +34,8 @@ function capabilitiesFor(tool: Tool): ToolCapability {
     mcp: capability.mcp,
     skills: capability.skills,
     hooks: capability.hooks,
+    agents: capability.agents,
+    projectAgents: capability.projectAgents,
   };
 }
 
@@ -85,6 +89,12 @@ export const SKILL_TOOLS = ALL_TOOLS.filter(
 );
 export const HOOK_TOOLS = ALL_TOOLS.filter(
   (tool) => capabilitiesFor(tool).hooks,
+);
+export const AGENT_TOOLS = ALL_TOOLS.filter(
+  (tool) => capabilitiesFor(tool).agents,
+);
+export const PROJECT_AGENT_TOOLS = ALL_TOOLS.filter(
+  (tool) => capabilitiesFor(tool).projectAgents,
 );
 
 export const DEFAULT_ENABLED_TOOLS = [

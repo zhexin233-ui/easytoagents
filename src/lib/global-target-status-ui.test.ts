@@ -23,3 +23,26 @@ describe("首次 Skills 接管状态", () => {
     expect(result.description).toBeNull();
   });
 });
+
+describe("Agents 目标诊断状态", () => {
+  it("将 Agents 诊断码映射为中文状态并在不支持时阻止预览", () => {
+    expect(
+      globalTargetStatusPresentation(
+        "external_non_owned_change",
+        "AGENT_NAME_INVALID",
+      ),
+    ).toMatchObject({
+      label: "Agent 名称无效",
+      description: "名称只能使用小写字母、数字和连字符，长度为 1–64 个字符。",
+      tone: "warning",
+      previewBlocked: false,
+    });
+    expect(
+      globalTargetStatusPresentation("failed", "AGENTS_UNSUPPORTED"),
+    ).toMatchObject({
+      label: "不支持 Agents",
+      tone: "blocked",
+      previewBlocked: true,
+    });
+  });
+});

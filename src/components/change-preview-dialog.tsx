@@ -18,7 +18,7 @@ interface ChangePreviewDialogProps {
   artifactKind: ArtifactKind;
   applying: boolean;
   readopting?: boolean;
-  onReadopt?: () => void;
+  onReadopt?: (targetPath: string) => void;
   onClose: () => void;
   onApply: (previewId: string, tool: Tool, artifactKind: ArtifactKind) => void;
 }
@@ -106,7 +106,9 @@ export function ChangePreviewDialog({
                       description="请先重新扫描或处理冲突，再生成一份新的预览。"
                       code={target.errorCode}
                     />
-                    {target.readoptAvailable && onReadopt ? (
+                    {target.readoptAvailable &&
+                    onReadopt &&
+                    target.descriptor.path ? (
                       <div className="mt-3 space-y-2">
                         <p className="text-muted-foreground text-xs leading-5">
                           重新接管只更新基线，不会立即修改文件。
@@ -116,7 +118,10 @@ export function ChangePreviewDialog({
                           size="sm"
                           disabled={readopting || applying}
                           aria-label={`以当前内容重新接管 ${target.descriptor.path ?? "目标"}`}
-                          onClick={onReadopt}
+                          onClick={() => {
+                            const targetPath = target.descriptor.path;
+                            if (targetPath) onReadopt(targetPath);
+                          }}
                         >
                           {readopting ? "正在重新接管…" : "以当前内容重新接管"}
                         </Button>

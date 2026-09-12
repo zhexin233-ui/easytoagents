@@ -7,6 +7,7 @@ export const centralListLayoutStorageKeys = {
   skills: "easytoagents.skills.central-list-layout.v1",
   prompts: "easytoagents.prompts.central-list-layout.v1",
   hooks: "easytoagents.hooks.central-list-layout.v1",
+  agents: "easytoagents.agents.central-list-layout.v1",
 };
 
 type CentralListLayoutPreference = keyof typeof centralListLayoutStorageKeys;

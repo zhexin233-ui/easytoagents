@@ -11,6 +11,12 @@ use easytoagents_lib::{
         ExplicitEnvironment, ToolAvailability, VerifiedClaudeCustomizationPolicyEvidence,
         VerifiedClaudeUserMcpEvidence,
     },
+    agents::{
+        apply_agent_preview, create_agent, preview_agent_sync, readopt_agent_target,
+        set_agent_enabled, set_global_agent_assignment, ApplyAgentPreviewInput, CreateAgentInput,
+        PreviewAgentSyncInput, ReadoptAgentTargetInput, SetGlobalAgentAssignmentInput,
+        VersionedAgentInput,
+    },
     app::AppPaths,
     db::Database,
     domain::{ArtifactKind, ChangeKind, McpTransport, SyncStatus, Tool},
@@ -213,7 +219,11 @@ unknown = "preserve"
         )
         .expect("创建显式隔离环境失败")
         .with_claude_installation_version(CLAUDE_VERSION)
-        .expect("绑定 Claude fixture 版本失败");
+        .expect("绑定 Claude fixture 版本失败")
+        .with_claude_customization_policy_evidence(
+            VerifiedClaudeCustomizationPolicyEvidence::from_effective_setting(CLAUDE_VERSION, None)
+                .expect("创建 Claude Agents policy fixture 失败"),
+        );
         let user_mcp_evidence =
             VerifiedClaudeUserMcpEvidence::new(CLAUDE_VERSION, &claude_config, &claude_user_mcp)
                 .expect("创建 Claude MCP capability fixture 失败");
@@ -396,6 +406,100 @@ unknown = "preserve"
         )
     }
 
+    /// 应用一个全局 Agent 文件并返回其原生目标路径。该 helper 只用于
+    /// Phase 8 的跨层链路，确保 Agent 与 MCP/Skills 一样走持久化 Preview
+    /// 与通用 Apply，而不是直接写文件。
+    fn apply_agent_global(&mut self, tool: Tool, agent_id: &str) -> PathBuf {
+        let preview = preview_agent_sync(
+            &mut self.database,
+            &self.environment,
+            &mut self.redactor,
+            &PreviewAgentSyncInput {
+                tool,
+                project_id: None,
+                exclude_from_git: false,
+            },
+        )
+        .expect("生成 Agent 持久化预览失败");
+        assert_eq!(preview.targets.len(), 1, "每个工具应有一个 Agent 文件目标");
+        assert_eq!(preview.targets[0].status, SyncStatus::Missing);
+        assert_eq!(preview.targets[0].change_kind, ChangeKind::Add);
+        assert_eq!(
+            preview.targets[0]
+                .row_versions
+                .iter()
+                .find(|row| row.entity_id == agent_id)
+                .map(|row| row.entity_type),
+            Some(easytoagents_lib::sync::DatabaseEntityType::Agent),
+            "Agent 预览必须绑定中央记录版本"
+        );
+        let target_path = PathBuf::from(
+            preview.targets[0]
+                .descriptor
+                .path
+                .as_deref()
+                .expect("Agent 预览缺少目标路径"),
+        );
+        let result = apply_agent_preview(
+            &self.write_operations,
+            &mut self.database,
+            &self.paths,
+            &self.environment,
+            &ApplyAgentPreviewInput {
+                preview_id: preview.preview_id,
+                tool,
+                project_id: None,
+            },
+        )
+        .expect("应用 Agent 持久化预览失败");
+        assert_eq!(result.applied_targets, 1);
+        assert!(target_path.is_file(), "Agent Apply 必须写入目标文件");
+        target_path
+    }
+
+    fn apply_agent_delete(&mut self, tool: Tool) -> RestoreCase {
+        let preview = preview_agent_sync(
+            &mut self.database,
+            &self.environment,
+            &mut self.redactor,
+            &PreviewAgentSyncInput {
+                tool,
+                project_id: None,
+                exclude_from_git: false,
+            },
+        )
+        .expect("生成 Agent 停用删除预览失败");
+        assert_eq!(preview.targets.len(), 1);
+        assert_eq!(preview.targets[0].change_kind, ChangeKind::Delete);
+        let target_path = PathBuf::from(
+            preview.targets[0]
+                .descriptor
+                .path
+                .as_deref()
+                .expect("Agent 删除预览缺少目标路径"),
+        );
+        let result = apply_agent_preview(
+            &self.write_operations,
+            &mut self.database,
+            &self.paths,
+            &self.environment,
+            &ApplyAgentPreviewInput {
+                preview_id: preview.preview_id,
+                tool,
+                project_id: None,
+            },
+        )
+        .expect("应用 Agent 停用删除预览失败");
+        assert_eq!(result.applied_targets, 1);
+        assert!(!target_path.exists(), "停用后 Apply 必须删除 Agent 文件");
+        let allowed_root = match tool {
+            Tool::Claude => self.claude_config.clone(),
+            Tool::Codex => self.codex_home.clone(),
+            _ => unreachable!("Phase 8 Agent E2E 只覆盖 Claude 与 Codex"),
+        };
+        self.restore_case(&result.run_id, &target_path, allowed_root)
+    }
+
     fn restore_case(
         &self,
         run_id: &str,
@@ -442,6 +546,125 @@ unknown = "preserve"
         .expect("恢复写入前快照失败");
         assert_serialized_secrets_absent("恢复 Apply RPC DTO", &result);
     }
+}
+
+#[test]
+fn agents_global_chain_covers_claude_codex_drift_readopt_delete_and_restore() {
+    let mut fixture = Fixture::new();
+    let mut agent = create_agent(
+        &mut fixture.database,
+        &CreateAgentInput {
+            name: "phase8-reviewer".to_owned(),
+            description: "Phase 8 子代理审阅器".to_owned(),
+            prompt: "审阅当前变更并列出高优先级问题。".to_owned(),
+            enabled: true,
+        },
+    )
+    .expect("创建 Phase 8 Agent 中央意图失败");
+    agent = set_global_agent_assignment(
+        &mut fixture.database,
+        &SetGlobalAgentAssignmentInput {
+            tool: Tool::Claude,
+            agent_id: agent.id.clone(),
+            assigned: true,
+            row_version: agent.row_version,
+        },
+    )
+    .expect("分配 Claude 全局 Agent 失败");
+    agent = set_global_agent_assignment(
+        &mut fixture.database,
+        &SetGlobalAgentAssignmentInput {
+            tool: Tool::Codex,
+            agent_id: agent.id.clone(),
+            assigned: true,
+            row_version: agent.row_version,
+        },
+    )
+    .expect("分配 Codex 全局 Agent 失败");
+
+    // 两个工具分别通过持久化 Preview → Apply 生成自己的原生投影。
+    let claude_target = fixture.apply_agent_global(Tool::Claude, &agent.id);
+    let codex_target = fixture.apply_agent_global(Tool::Codex, &agent.id);
+    let claude_content = fs::read_to_string(&claude_target).expect("读取 Claude Agent 失败");
+    assert!(claude_content.contains("name: phase8-reviewer"));
+    assert!(claude_content.contains("description: Phase 8 子代理审阅器"));
+    assert!(claude_content.ends_with("审阅当前变更并列出高优先级问题。\n"));
+    let codex_content = fs::read_to_string(&codex_target).expect("读取 Codex Agent 失败");
+    assert!(codex_content.contains("name = \"phase8-reviewer\""));
+    assert!(codex_content.contains("description = \"Phase 8 子代理审阅器\""));
+    assert!(codex_content.contains("developer_instructions"));
+
+    // 外部改写受管文件会阻止 Apply；显式 readopt 刷新基线后，下一次预览
+    // 才允许把中央投影重新写回文件。
+    fs::write(
+        &claude_target,
+        "---\nname: phase8-reviewer\ndescription: 外部改写\n---\n\n外部正文\n",
+    )
+    .expect("写入 Claude Agent 漂移 fixture 失败");
+    let drift = preview_agent_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewAgentSyncInput {
+            tool: Tool::Claude,
+            project_id: None,
+            exclude_from_git: false,
+        },
+    )
+    .expect("生成 Agent 漂移预览失败");
+    assert_eq!(drift.targets.len(), 1);
+    assert_eq!(drift.targets[0].status, SyncStatus::ExternalOwnedChange);
+    assert_eq!(drift.targets[0].change_kind, ChangeKind::Conflict);
+    assert!(drift.targets[0].readopt_available);
+    readopt_agent_target(
+        &mut fixture.database,
+        &fixture.environment,
+        &ReadoptAgentTargetInput {
+            tool: Tool::Claude,
+            project_id: None,
+            target_path: claude_target.to_string_lossy().into_owned(),
+        },
+    )
+    .expect("重新接管 Claude Agent 基线失败");
+    let refreshed = preview_agent_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewAgentSyncInput {
+            tool: Tool::Claude,
+            project_id: None,
+            exclude_from_git: false,
+        },
+    )
+    .expect("重新接管后生成 Agent 预览失败");
+    assert_eq!(refreshed.targets[0].status, SyncStatus::InSync);
+    assert_eq!(refreshed.targets[0].change_kind, ChangeKind::Update);
+
+    // 停用是显式中央动作；对两个工具分别生成删除预览并 Apply，删除前的
+    // 内容会进入快照，随后走通用 Restore 链路恢复。
+    let disabled = set_agent_enabled(
+        &mut fixture.database,
+        &VersionedAgentInput {
+            id: agent.id.clone(),
+            row_version: agent.row_version,
+        },
+        false,
+    )
+    .expect("停用 Phase 8 Agent 失败");
+    assert!(!disabled.enabled);
+    let claude_restore = fixture.apply_agent_delete(Tool::Claude);
+    let codex_restore = fixture.apply_agent_delete(Tool::Codex);
+    fixture.restore(&codex_restore);
+    fixture.restore(&claude_restore);
+    assert_eq!(
+        fs::read_to_string(&claude_target).unwrap(),
+        "---\nname: phase8-reviewer\ndescription: 外部改写\n---\n\n外部正文\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&codex_target).unwrap(),
+        codex_content,
+        "Codex TOML 快照恢复必须逐字节还原"
+    );
 }
 
 #[test]

@@ -17,6 +17,7 @@ use crate::{
     security::{create_private_file, ensure_private_directory, ensure_private_file},
 };
 
+pub mod agents;
 pub mod hooks;
 pub mod mcp;
 pub(crate) mod mcp_imports;
@@ -142,6 +143,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 21,
         name: "project_native_hook_entries",
         sql: include_str!("migrations/0021_project_native_hook_entries.sql"),
+    },
+    Migration {
+        version: 22,
+        name: "agents",
+        sql: include_str!("migrations/0022_agents.sql"),
     },
 ];
 

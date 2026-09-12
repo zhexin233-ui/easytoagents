@@ -963,7 +963,7 @@ await invalidate(projectKeys.all, mcpKeys.projects(), skillKeys.projects());
 
 ### 1. Scope / Trigger
 
-- Trigger: adding a tool, changing a tool's Provider/MCP/Skills/Hook support,
+- Trigger: adding a tool, changing a tool's Provider/MCP/Skills/Hook/Agents support,
   changing Hook event support, or changing the generated capability constants.
 
 ### 2. Signatures
@@ -973,13 +973,15 @@ await invalidate(projectKeys.all, mcpKeys.projects(), skillKeys.projects());
   binding registration in `src-tauri/src/lib.rs`.
 - Frontend imports the generated readonly constants from
   `src/bindings/commands.ts`; `src/lib/tool-metadata.ts` derives
-  `PROFILE_TOOLS`, `MCP_TOOLS`, `SKILL_TOOLS`, `HOOK_TOOLS`, and event support
+  `PROFILE_TOOLS`, `MCP_TOOLS`, `SKILL_TOOLS`, `HOOK_TOOLS`, `AGENT_TOOLS`,
+  `PROJECT_AGENT_TOOLS`, and event support
   from those values while keeping labels/icons as presentation metadata.
 
 ### 3. Contracts
 
 - Every capability row has a generated `tool` plus boolean `provider`,
-  `promptGlobal`, `mcp`, `skills`, and `hooks` fields. Every Hook support row
+  `promptGlobal`, `mcp`, `skills`, `hooks`, `agents`, and `projectAgents`
+  fields. Every Hook support row
   has a generated `tool` and `event`.
 - A tool is included in a frontend capability set exactly when the backend flag
   is `true`; unsupported tools must not render controls or issue unsupported
@@ -994,6 +996,7 @@ await invalidate(projectKeys.all, mcpKeys.projects(), skillKeys.projects());
 | Rust constant and generated binding differ | `pnpm bindings:check` fails; regenerate bindings |
 | Capability flag is false | Hide the corresponding route/control and skip its query |
 | Hook event absent for a tool | `hookEventSupportedByTool` returns false and the event is not selectable |
+| Agent capability flag is false | Hide the Agents route/control and skip the corresponding list, assignment, or status query |
 | New enum/tool variant lacks metadata | TypeScript `Record`/exhaustiveness check fails before runtime |
 
 ### 5. Good/Base/Bad Cases
@@ -1003,7 +1006,8 @@ await invalidate(projectKeys.all, mcpKeys.projects(), skillKeys.projects());
 - Base: presentation metadata may add a label/icon without changing capability
   truth.
 - Bad: maintain a second handwritten support matrix in `hook-events.ts`, show a
-  disabled control after issuing its unsupported RPC, or edit generated bindings.
+  disabled control after issuing its unsupported RPC, expose ZCode in project
+  Agents, or edit generated bindings.
 
 ### 6. Tests Required
 
@@ -1011,6 +1015,8 @@ await invalidate(projectKeys.all, mcpKeys.projects(), skillKeys.projects());
   set equals the backend `true` flags.
 - Assert Hook event lookup matches `HOOK_EVENT_SUPPORT` for supported and
   unsupported pairs.
+- Assert `AGENT_TOOLS` and `PROJECT_AGENT_TOOLS` exactly match the generated
+  `agents`/`projectAgents` flags, including ZCode's global-only support.
 - Run `pnpm bindings:generate`, `pnpm bindings:check`, `pnpm check`, and the
   page capability fallback tests whenever the constants change.
 
@@ -1028,4 +1034,61 @@ const HOOK_TOOLS = ["claude", "codex", "cursor", "zcode"] as const;
 const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
   (item) => item.tool,
 );
+```
+
+## Scenario: Agents 页面与项目页签
+
+### 1. Scope / Trigger
+
+- Trigger：新增或修改 Agents 中央列表、全局分配/导入/同步、项目详情 Agents 页签，或 Agents 的生成命令绑定。
+
+### 2. Signatures
+
+- `agentsQueryOptions()` → `commands.listAgents()`；`globalAgentStatusesQueryOptions()` → `commands.listGlobalAgentTargetStatuses()`。
+- `/agents` 页面使用 `commands.createAgent/updateAgent/setAgentEnabled/deleteAgent`，分配使用 `setGlobalAgentAssignment`，同步使用 `previewAgentSync/applyAgentPreview/readoptAgentTarget`。
+- 项目页签使用 `agentProjectOptionsQueryOptions(projectId, tool)` 与 `setProjectAgentAssignment`；工具集合必须来自 `PROJECT_AGENT_TOOLS`。
+
+### 3. Contracts
+
+- `TOOL_CAPABILITIES` 是唯一能力来源；`AGENT_TOOLS` 包含五个工具，`PROJECT_AGENT_TOOLS` 排除 ZCode。关闭工具时不渲染其 Agents 控件或发起查询。
+- 分配成功只刷新中央意图；默认模式必须打开持久化 Preview 对话框，直接应用模式也只能自动应用无冲突预览。
+- 导入对话框只显示全局直属文件候选；`droppedFields` 必须明确展示，用户确认后只创建中央记录，不改写原生文件、不自动分配。
+- 全局状态按工具显示聚合状态，能力/策略诊断读取卡片级 `diagnosticCode`，展开可查看每个文件的漂移诊断；Readopt 按目标文件路径触发，不能用目录路径替代。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 必须结果 |
+| ---- | -------- |
+| 后端能力为 false（ZCode 项目 Agents） | 不出现在工具切换，不调用项目 Agents 查询/命令 |
+| 名称不符合交集规则 | 表单阻止提交并显示小写字母、数字、连字符与 1–64 长度提示 |
+| 预览状态为 failed/policy/untrusted/conflict | Apply 按钮禁用；诊断码和中文说明可见 |
+| 导入候选不可导入或含 dropped fields | 复选框禁用或显示丢弃提示；不可绕过 UI 校验提交 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：中央 Agent 保存后刷新列表与 Dashboard，分配按钮仅更新意图；用户在状态卡生成预览并确认后文件才变化。
+- Base：没有中央 Agent 或没有受管文件时显示可操作空状态，目录探测错误不被渲染成“未接管”。
+- Bad：把 Agents 加入 `MCP_TOOLS` 复用项目原生资源查询、在 ZCode 项目页签发送请求、或导入后自动 Apply。
+
+### 6. Tests Required
+
+- Agents 页面测试 CRUD、名称校验、全局分配、状态展开、Preview/Apply、导入 `droppedFields` 展示。
+- 项目详情测试全局继承只读、项目追加、Preview/Apply，并断言 ZCode 不在项目工具切换。
+- Dashboard/AppShell/tool metadata 测试 Agents 计数、导航顺序与能力集合；运行 `pnpm typecheck`、`pnpm lint`、`pnpm test --run`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+// Agents 误用项目原生资源 API，会把整文件目标当作可禁用的条目。
+useQuery(projectNativeResourcesQueryOptions(projectId, tool, "agent"));
+```
+
+#### Correct
+
+```tsx
+// Agents 使用独立的中央/项目分配查询与持久化 Preview 流程。
+useQuery(agentProjectOptionsQueryOptions(projectId, tool));
+requestPreview(tool, false); // 先展示 Preview，再由用户确认 Apply
 ```

@@ -84,6 +84,10 @@ pub struct ToolCapabilities {
     pub mcp: bool,
     pub skills: bool,
     pub hooks: bool,
+    /// Agents（子代理）全局级管理：五工具均支持（ZCode 为官方 Beta，仍可用）。
+    pub agents: bool,
+    /// Agents 项目级管理：ZCode 官方明示不支持，其余四工具支持。
+    pub project_agents: bool,
 }
 
 /// 主实体统一使用 UUID 文本标识，避免各功能自行发明 ID 规则。
@@ -131,6 +135,7 @@ string_enum! {
         Mcp => "mcp",
         Skill => "skill",
         Hook => "hook",
+        Agent => "agent",
     }
 }
 
@@ -277,6 +282,8 @@ pub fn tool_capabilities() -> Vec<ToolCapabilities> {
             mcp: true,
             skills: true,
             hooks: !matches!(tool, Tool::Opencode),
+            agents: true,
+            project_agents: !matches!(tool, Tool::Zcode),
         })
         .collect()
 }
@@ -439,6 +446,57 @@ impl ArtifactName {
 }
 
 impl<'de> Deserialize<'de> for ArtifactName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(de::Error::custom)
+    }
+}
+
+/// Agent 名称的五工具交集合同：`^[a-z0-9][a-z0-9-]{0,63}$`。
+///
+/// 该名称同时是原生文件名（`<name>.md` / `<name>.toml`）与各工具内部的
+/// 子代理标识符：
+/// - ZCode 命令/技能名规则 `^[a-z0-9][a-z0-9_:-]{0,63}$` 去掉 `_` 与 `:`；
+/// - Claude 官方建议小写字母、数字与连字符；
+/// - Codex 以 `name` 作为 spawn 标识；
+/// - OpenCode / Cursor 在 frontmatter 缺省 `name` 时直接取文件名。
+///
+/// 不满足交集的名称在创建、更新与导入确认时必须被拒绝。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct AgentName(String);
+
+impl AgentName {
+    pub fn parse(value: impl Into<String>) -> Result<Self, AppError> {
+        let value = value.into();
+        // 交集规则只含 ASCII 小写字母、数字与连字符；长度 1..=64。
+        let valid = !value.is_empty()
+            && value.len() <= 64
+            && value
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+            && value
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !valid {
+            return Err(AppError::invalid_input(
+                "name",
+                "Agent 名称只能包含小写字母、数字与连字符，以字母或数字开头，长度 1 到 64",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentName {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -625,10 +683,11 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        validate_global_assignment, validate_project_assignment, validate_single_active_profile,
-        validate_unique_names, ArtifactKind, ArtifactName, ChangeKind, EntityId, HookEvent,
-        McpTransport, ProjectRoot, Scope, SkillStatus, SyncRunKind, SyncRunStatus, SyncStatus,
-        TargetType, Tool, TrustStatus,
+        tool_capabilities, validate_global_assignment, validate_project_assignment,
+        validate_single_active_profile, validate_unique_names, AgentName, ArtifactKind,
+        ArtifactName, ChangeKind, EntityId, HookEvent, McpTransport, ProjectRoot, Scope,
+        SkillStatus, SyncRunKind, SyncRunStatus, SyncStatus, TargetType, Tool, ToolCapabilities,
+        TrustStatus,
     };
 
     /// 字符串→`Tool` 的映射只允许经 `Tool::from_stable_str`（`string_enum!` 生成）。
@@ -697,6 +756,7 @@ mod tests {
             serde_json::to_value(ArtifactKind::Mcp).unwrap(),
             serde_json::to_value(ArtifactKind::Skill).unwrap(),
             serde_json::to_value(ArtifactKind::Hook).unwrap(),
+            serde_json::to_value(ArtifactKind::Agent).unwrap(),
             serde_json::to_value(SyncStatus::InSync).unwrap(),
             serde_json::to_value(SyncStatus::ExternalNonOwnedChange).unwrap(),
             serde_json::to_value(SyncStatus::ExternalOwnedChange).unwrap(),
@@ -763,6 +823,7 @@ mod tests {
             "mcp",
             "skill",
             "hook",
+            "agent",
             "in_sync",
             "external_non_owned_change",
             "external_owned_change",
@@ -839,6 +900,76 @@ mod tests {
             ArtifactName::parse("生产渠道").unwrap().as_str(),
             "生产渠道"
         );
+    }
+
+    #[test]
+    fn agent_name_enforces_five_tool_intersection_rule() {
+        // 合法：小写字母、数字、连字符；以字母或数字开头；1..=64 长度。
+        assert_eq!(
+            AgentName::parse("code-reviewer").unwrap().as_str(),
+            "code-reviewer"
+        );
+        assert_eq!(AgentName::parse("a").unwrap().as_str(), "a");
+        assert_eq!(
+            AgentName::parse("9lives").unwrap().as_str(),
+            "9lives",
+            "允许以数字开头"
+        );
+        let max = "a".repeat(64); // 长度上限 64
+        assert_eq!(max.len(), 64);
+        assert!(AgentName::parse(max).is_ok());
+
+        // 非法：空、超长、大写、下划线/冒号/点、空白、首字符为连字符、多字节字符。
+        assert!(AgentName::parse("").is_err());
+        assert!(AgentName::parse("a".repeat(65)).is_err());
+        assert!(AgentName::parse("Code-Reviewer").is_err());
+        assert!(
+            AgentName::parse("code_reviewer").is_err(),
+            "ZCode 允许 `_` 但不在交集内"
+        );
+        assert!(AgentName::parse("code:reviewer").is_err());
+        assert!(AgentName::parse("code.reviewer").is_err());
+        assert!(AgentName::parse("-leading-hyphen").is_err());
+        assert!(AgentName::parse("带中文名").is_err());
+        assert!(AgentName::parse(" spaced ").is_err());
+        // 反序列化同样 fail closed。
+        assert!(serde_json::from_str::<AgentName>("\"Bad_Name\"").is_err());
+        assert_eq!(
+            serde_json::from_str::<AgentName>("\"good-name\"")
+                .unwrap()
+                .as_str(),
+            "good-name"
+        );
+    }
+
+    #[test]
+    fn tool_capabilities_cover_agents_per_tool_contract() {
+        // 2026-09-12 官方核验：五工具全局 Agents 均支持（ZCode 为 Beta）；
+        // 项目级仅 ZCode 明示不支持。
+        assert_eq!(tool_capabilities().len(), Tool::ALL.len());
+        for capability in tool_capabilities() {
+            assert!(
+                capability.agents,
+                "{:?} 全局 Agents 必须支持",
+                capability.tool
+            );
+            assert_eq!(
+                capability.project_agents,
+                capability.tool != Tool::Zcode,
+                "{:?} 项目级 Agents 支持状态不符",
+                capability.tool
+            );
+        }
+        let _ = ToolCapabilities {
+            tool: Tool::Claude,
+            provider: true,
+            prompt_global: true,
+            mcp: true,
+            skills: true,
+            hooks: true,
+            agents: true,
+            project_agents: true,
+        };
     }
 
     #[test]
