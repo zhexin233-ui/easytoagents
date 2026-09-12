@@ -12,7 +12,8 @@ targets and must not replace relational constraints with unvalidated JSON.
 
 Prompt is a global-only resource in the current schema. Project Prompt
 assignments, project Prompt targets, and PromptFile observations are retired;
-project-native observation now covers supported MCP and Skill resources (Hook
+project-native observation now covers supported MCP, Skill, and (read-only,
+since 0021) Hook resources (Hook
 project assignment/status remains separate from this observation table).
 Migration 0018 removes historical project Prompt rows and private snapshots
 without reading or deleting files under a registered project root.
@@ -90,6 +91,34 @@ All preconditions belong in the `.sql` migration, not in a Rust branch that
 silently chooses a different path. Existing migrations containing historical
 schema-text edits remain untouched; this rule applies to migrations added from
 now on.
+
+### Scenario: 0021 table rebuild widening a CHECK (canonical precedent)
+
+`0021_project_native_hook_entries.sql` is the first published migration to use
+the 12-step transactional table rebuild, widening
+`project_native_resources.entry_type` with `hook_entry`. Copy this shape for
+future CHECK/shape changes instead of `writable_schema`:
+
+- SQL-only preconditions: a TEMP table whose column has `CHECK(x = 1)` aborts
+  the whole migration transaction when the INSERT feeding it does not satisfy
+  the anchor (`COUNT(*)` over `sqlite_master` matching the exact 0018-era CHECK
+  text exactly once). `RAISE()` alone cannot be used outside triggers.
+- The replacement table is byte-for-byte the 0012 shape with only the CHECK
+  widened; copy all columns explicitly and assert row-count equality through a
+  second CHECK-validated TEMP table before dropping the old table.
+- Drop dependent triggers first (`DROP TRIGGER IF EXISTS`), including the
+  cross-table `trg_snapshots_reject_native_resource_id_update` on `snapshots`
+  whose body references the rebuilt table (0016 lesson: `DROP TABLE` re-parses
+  the schema). Recreate indexes, both row-version triggers, and the snapshots
+  cross-protection trigger verbatim.
+- Finish with `pragma_foreign_key_check` / `pragma_integrity_check`
+  table-valued functions feeding CHECK-validated TEMP tables, so any violation
+  aborts the migration, then drop the TEMP tables.
+- Migration test (`project_native_hook_entries_migration_preserves_rows_and_widens_check`)
+  builds a v20 database with `mcp_entry`/`directory`/`symlink` rows including a
+  disabled row holding a snapshot, then proves preservation, `hook_entry`
+  acceptance, `prompt_file` rejection, the row-version bump trigger, the
+  snapshots id-update trigger, and idempotent reopen.
 
 ### Scenario: In-place schema-text revision for CHECK-only changes (historical)
 
@@ -302,7 +331,7 @@ remove_regular_payload_if_present(&path)?;
   snapshot, and log files are `0600`.
 - The schema contains provider/prompt/MCP/skill/project entities, global profile
   state, MCP/Skill/Hook global and project assignments, managed targets/items,
-  `project_native_resources` for MCP/Skill observations, sync runs/items,
+  `project_native_resources` for MCP/Skill/Hook observations, sync runs/items,
   snapshots, and the `app_settings` key-value table for singleton user
   preferences (no `row_version`; unknown stored enum values fail closed with
   `DATABASE_ERROR`). Prompt profile state and its native targets are global-only.
@@ -360,17 +389,19 @@ let database = Database::open(&paths)?;
 ### 1. Scope / Trigger
 
 - Trigger: any change to migration `0012_project_native_resources.sql`,
+  migration `0021_project_native_hook_entries.sql`,
   `db/native_resources.rs`, native-resource CAS, target-identity upsert, snapshot
   FK/RESTRICT, `soft_remove_project`, or `delete_snapshots` reference checks.
-- Current project-native observation covers MCP entries and Skill directories or
-  links. Prompt/Rules files are outside this model and are never observed or
-  exposed as disable/restore resources.
+- Current project-native observation covers MCP entries, Skill directories or
+  links, and (since 0021, read-only) Hook entries. Prompt/Rules files are outside
+  this model and are never observed or exposed as disable/restore resources.
 
 ### 2. Signatures
 
 - Table `project_native_resources`: UUID `id`, `target_id` → `managed_targets(id)`
   `ON DELETE CASCADE`, `external_key`, `entry_type` in
-  `mcp_entry|directory|symlink`, `state` in
+  `mcp_entry|directory|symlink|hook_entry` (0021 widened the CHECK by table
+  rebuild), `state` in
   `active|disabled|missing|conflict`, optional SHA-256 `observed_item_hash`,
   `disabled_snapshot_id` → `snapshots(id)` `ON DELETE RESTRICT`, `disabled_at`,
   timestamps, `row_version`. Unique `(target_id, external_key)`.
@@ -381,7 +412,7 @@ let database = Database::open(&paths)?;
 - `snapshot_is_referenced(connection, snapshot_id, database_path) -> bool`
 - `count_blocking_native_resources(tx, project_id, database_path) -> u32`
   counts `disabled` + `conflict` for that project.
-- Compiled schema version is `18` (`src-tauri/src/app/mod.rs` assertion).
+- Compiled schema version is `21` (`src-tauri/src/app/mod.rs` assertion).
 
 ### 3. Contracts
 

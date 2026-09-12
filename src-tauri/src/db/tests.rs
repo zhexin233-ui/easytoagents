@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn github_skill_source_migration_accepts_only_normalized_source_shape() {
         let (_temporary, _paths, database) = open_isolated_database();
-        assert_eq!(database.schema_version().unwrap(), 20);
+        assert_eq!(database.schema_version().unwrap(), 21);
         database
             .connection()
             .execute(
@@ -110,7 +110,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 20);
+        assert_eq!(database.schema_version().unwrap(), 21);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -723,7 +723,7 @@ mod tests {
         }
         for (iteration, _) in (0..2).enumerate() {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             // 只有第一次打开有待执行迁移，才产生启动备份。
             assert_eq!(database.startup_backup().is_some(), iteration == 0);
             let (name, previews): (String, i64) = database.connection().query_row(
@@ -759,7 +759,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -814,7 +814,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 20);
+        assert_eq!(database.schema_version().unwrap(), 21);
         let kinds = database
             .connection()
             .prepare_cached("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1056,7 +1056,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 20);
+        assert_eq!(database.schema_version().unwrap(), 21);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1204,7 +1204,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 20);
+        assert_eq!(reopened.schema_version().unwrap(), 21);
         assert_eq!(
             reopened
                 .connection()
@@ -1264,7 +1264,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1329,7 +1329,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1417,7 +1417,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1571,7 +1571,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1688,7 +1688,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1768,7 +1768,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            20
+            21
         );
         for (tool, artifact, accepted) in [
             ("opencode", "provider", true),
@@ -1813,7 +1813,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 20);
+        assert_eq!(database.schema_version().unwrap(), 21);
         let connection = database.connection();
         connection
             .execute(
@@ -1869,7 +1869,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 20);
+        assert_eq!(reopened.schema_version().unwrap(), 21);
         assert_eq!(
             reopened
                 .connection()
@@ -1912,7 +1912,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2061,7 +2061,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2173,7 +2173,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2349,7 +2349,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 20);
+            assert_eq!(database.schema_version().unwrap(), 21);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2396,6 +2396,200 @@ mod tests {
                 .execute(
                     "DELETE FROM project_native_resources WHERE id = ?1",
                     [RESOURCE_ID],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn project_native_hook_entries_migration_preserves_rows_and_widens_check() {
+        const RUN_ID: &str = "00000000-0000-4000-8000-000000000421";
+        const SNAPSHOT_ID: &str = "00000000-0000-4000-8000-000000000422";
+        const TARGET_ID: &str = "00000000-0000-4000-8000-000000000423";
+        const RESOURCE_MCP: &str = "00000000-0000-4000-8000-000000000424";
+        const RESOURCE_DIRECTORY: &str = "00000000-0000-4000-8000-000000000425";
+        const RESOURCE_SYMLINK: &str = "00000000-0000-4000-8000-000000000426";
+        const RESOURCE_HOOK: &str = "00000000-0000-4000-8000-000000000427";
+        const SNAPSHOT_ID_NEW: &str = "00000000-0000-4000-8000-000000000428";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v20-native-hook-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            // 先建到 0020 的旧库，插入手持禁用快照的三种旧类型行，再交给真实迁移。
+            for migration in &super::MIGRATIONS[..20] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/hook-project");
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'claude', 'hook', 'project', ?2, '/fixture/hook-project/.claude/settings.json')",
+                    params![TARGET_ID, PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sync_runs(id, kind, status, scope, project_id, db_version)
+                     VALUES (?1, 'apply', 'succeeded', 'project', ?2, 0)",
+                    params![RUN_ID, PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO snapshots(id, run_id, target_id, target_path, snapshot_path, target_type, storage_kind)
+                     VALUES (?1, ?2, ?3, '/fixture/hook-project/.claude/settings.json', '/fixture/snapshot/hook.snapshot', 'file', 'payload_file')",
+                    params![SNAPSHOT_ID, RUN_ID, TARGET_ID],
+                )
+                .unwrap();
+            let disabled_at = "2026-09-01T00:00:00.000Z";
+            for (id, external_key, entry_type, state, snapshot, hash) in [
+                (RESOURCE_MCP, "mcp|native", "mcp_entry", "active", None, Some("a".repeat(64))),
+                (RESOURCE_DIRECTORY, "native-dir", "directory", "active", None, Some("b".repeat(64))),
+                (RESOURCE_SYMLINK, "native-link", "symlink", "disabled", Some(SNAPSHOT_ID), None),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO project_native_resources(
+                            id, target_id, external_key, entry_type, state, observed_item_hash,
+                            disabled_snapshot_id, disabled_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![
+                            id,
+                            TARGET_ID,
+                            external_key,
+                            entry_type,
+                            state,
+                            hash,
+                            snapshot,
+                            if snapshot.is_some() { Some(disabled_at) } else { None },
+                        ],
+                    )
+                    .unwrap();
+            }
+        }
+
+        for _ in 0..2 {
+            let database = Database::open(&paths).unwrap();
+            assert_eq!(database.schema_version().unwrap(), 21);
+            let connection = database.connection();
+            type PreservedRow = (
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+            );
+            let rows: Vec<PreservedRow> = connection
+                .prepare(
+                    "SELECT id, external_key, entry_type, disabled_snapshot_id, disabled_at
+                     FROM project_native_resources ORDER BY external_key",
+                )
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(
+                rows,
+                vec![
+                    (
+                        RESOURCE_MCP.to_owned(),
+                        "mcp|native".to_owned(),
+                        "mcp_entry".to_owned(),
+                        None,
+                        None,
+                    ),
+                    (
+                        RESOURCE_DIRECTORY.to_owned(),
+                        "native-dir".to_owned(),
+                        "directory".to_owned(),
+                        None,
+                        None,
+                    ),
+                    (
+                        RESOURCE_SYMLINK.to_owned(),
+                        "native-link".to_owned(),
+                        "symlink".to_owned(),
+                        Some(SNAPSHOT_ID.to_owned()),
+                        Some("2026-09-01T00:00:00.000Z".to_owned()),
+                    ),
+                ],
+                "旧类型行与禁用快照引用必须逐字保留"
+            );
+
+            // hook_entry 可插入，prompt_file 仍被拒绝。
+            connection
+                .execute(
+                    "INSERT INTO project_native_resources(
+                        id, target_id, external_key, entry_type, state, observed_item_hash
+                     ) VALUES (?1, ?2, 'UserPromptSubmit||abc123', 'hook_entry', 'active', ?3)",
+                    params![RESOURCE_HOOK, TARGET_ID, "c".repeat(64)],
+                )
+                .unwrap();
+            assert!(connection
+                .execute(
+                    "INSERT INTO project_native_resources(
+                        id, target_id, external_key, entry_type, state, observed_item_hash
+                     ) VALUES (?1, ?2, 'prompt-file', 'prompt_file', 'active', ?3)",
+                    params![RESOURCE_HOOK, TARGET_ID, "d".repeat(64)],
+                )
+                .is_err());
+
+            // row_version bump 触发器在重建后仍然生效。
+            let before_version: i64 = connection
+                .query_row(
+                    "SELECT row_version FROM project_native_resources WHERE id = ?1",
+                    [RESOURCE_HOOK],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE project_native_resources SET last_seen_at = last_seen_at WHERE id = ?1",
+                    [RESOURCE_HOOK],
+                )
+                .unwrap();
+            let after_version: i64 = connection
+                .query_row(
+                    "SELECT row_version FROM project_native_resources WHERE id = ?1",
+                    [RESOURCE_HOOK],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(after_version, before_version + 1);
+
+            // snapshots 交叉保护触发器在重建后仍然拒绝改 id。
+            let rename = connection.execute(
+                "UPDATE snapshots SET id = ?1 WHERE id = ?2",
+                params![SNAPSHOT_ID_NEW, SNAPSHOT_ID],
+            );
+            assert!(
+                rename.is_err(),
+                "被原生禁用记录引用的快照必须继续被触发器保护"
+            );
+            connection
+                .execute(
+                    "DELETE FROM project_native_resources WHERE id = ?1",
+                    [RESOURCE_HOOK],
                 )
                 .unwrap();
         }

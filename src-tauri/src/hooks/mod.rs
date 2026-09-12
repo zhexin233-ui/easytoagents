@@ -21,4 +21,4 @@ pub use service::{
     set_project_hook_assignment, update_hook,
 };
 
-pub(crate) use service::{build_hook_ownership, events_root, native_entry_hashes};
+pub(crate) use service::{build_hook_ownership, events_root, native_entries, native_entry_hashes};

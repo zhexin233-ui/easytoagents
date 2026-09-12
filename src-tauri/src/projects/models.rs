@@ -126,6 +126,7 @@ pub enum ProjectNativeEntryType {
     McpEntry,
     Directory,
     Symlink,
+    HookEntry,
 }
 
 impl ProjectNativeEntryType {
@@ -134,6 +135,7 @@ impl ProjectNativeEntryType {
             "mcp_entry" => Some(Self::McpEntry),
             "directory" => Some(Self::Directory),
             "symlink" => Some(Self::Symlink),
+            "hook_entry" => Some(Self::HookEntry),
             _ => None,
         }
     }
@@ -143,6 +145,7 @@ impl ProjectNativeEntryType {
             Self::McpEntry => "mcp_entry",
             Self::Directory => "directory",
             Self::Symlink => "symlink",
+            Self::HookEntry => "hook_entry",
         }
     }
 }

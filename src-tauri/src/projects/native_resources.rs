@@ -1,7 +1,7 @@
 //! 项目原生 Skill / MCP 的只读发现、对账与禁用/恢复 Preview。
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -23,14 +23,15 @@ use crate::{
     },
     app::AppPaths,
     db::{
-        mcp as mcp_repository, native_resources as repository, projects as project_repository,
-        skills as skill_repository, Database,
+        hooks as hooks_repository, mcp as mcp_repository, native_resources as repository,
+        projects as project_repository, skills as skill_repository, Database,
     },
     domain::{ArtifactKind, ChangeKind, ProjectRoot, Scope, TargetType, Tool},
     error::AppError,
     git::inspect_path,
+    hooks::{build_hook_ownership, events_root, native_entries},
     mcp::register_native_projection_secrets,
-    security::SecretRedactor,
+    security::{contains_detectable_secret, SecretRedactor},
     skills::library as skill_library,
     sync::{
         apply_persisted_preview, build_preview_plan, hash_json, load_persisted_preview,
@@ -42,6 +43,11 @@ use crate::{
 };
 
 const SKIPPED_SKILL_NAMES: &[&str] = &[".DS_Store", ".system", ".", ".."];
+
+/// Hook 条目展示索引：`(target_path, external_key) -> 原始条目 JSON`。
+/// 只存在于一次 list 调用的内存中（原生列表本就每次先重新扫描），
+/// 不落库，避免把可能含凭据的命令持久化。
+type HookDisplayIndex = BTreeMap<(String, String), Value>;
 
 struct ObservedNativeItem {
     external_key: String,
@@ -58,10 +64,26 @@ pub fn reconcile_project_native_resources(
     environment: &ExplicitEnvironment,
     project_id: &str,
 ) -> Result<ProjectNativeResourceSummaryDto, AppError> {
+    reconcile_project_native_resources_with_index(database, environment, project_id)
+        .map(|(summary, _)| summary)
+}
+
+/// 对账并附带 Hook 条目展示索引，供 `list_project_native_resources` 组装
+/// `display_name` / `safe_summary`。
+fn reconcile_project_native_resources_with_index(
+    database: &mut Database,
+    environment: &ExplicitEnvironment,
+    project_id: &str,
+) -> Result<(ProjectNativeResourceSummaryDto, HookDisplayIndex), AppError> {
     let record = project_repository::get_registered_project(database, project_id)?;
     let project_root = match canonicalize_project_root(Path::new(&record.root_path)) {
         Ok(root) if root.as_str() == record.root_path => root,
-        _ => return Ok(ProjectNativeResourceSummaryDto::empty()),
+        _ => {
+            return Ok((
+                ProjectNativeResourceSummaryDto::empty(),
+                HookDisplayIndex::new(),
+            ))
+        }
     };
     let mut observations = Vec::new();
     for descriptor in supported_project_descriptors(environment, &project_root)? {
@@ -83,7 +105,20 @@ pub fn reconcile_project_native_resources(
     transaction.commit().map_err(|error| {
         AppError::database(&database_path, "commit_reconcile_native_resources").with_source(error)
     })?;
-    summarize_project(database, &record.id)
+    let mut hook_display = HookDisplayIndex::new();
+    for observation in &observations {
+        if observation.artifact_kind != ArtifactKind::Hook {
+            continue;
+        }
+        for (external_key, entry) in &observation.hook_entries {
+            hook_display.insert(
+                (observation.target_path.clone(), external_key.clone()),
+                entry.clone(),
+            );
+        }
+    }
+    let summary = summarize_project(database, &record.id)?;
+    Ok((summary, hook_display))
 }
 
 /// 当前对账后的项目原生资源汇总，不触碰原生文件也不写库。
@@ -99,7 +134,8 @@ pub fn list_project_native_resources(
     environment: &ExplicitEnvironment,
     input: &ProjectNativeResourceQueryInput,
 ) -> Result<Vec<ProjectNativeResourceDto>, AppError> {
-    reconcile_project_native_resources(database, environment, &input.project_id)?;
+    let (_, hook_display) =
+        reconcile_project_native_resources_with_index(database, environment, &input.project_id)?;
     let records = repository::list_for_project(
         database,
         &input.project_id,
@@ -111,7 +147,12 @@ pub fn list_project_native_resources(
         if should_hide_centralized(&record, database)? {
             continue;
         }
-        dtos.push(to_dto(&record)?);
+        let hook_entry = if record.entry_type == ProjectNativeEntryType::HookEntry.as_str() {
+            hook_display.get(&(record.target_path.clone(), record.external_key.clone()))
+        } else {
+            None
+        };
+        dtos.push(to_dto(&record, hook_entry)?);
     }
     Ok(dtos)
 }
@@ -257,7 +298,7 @@ pub(super) fn supported_project_descriptors(
                 && target.path.is_some()
                 && matches!(
                     target.artifact_kind,
-                    ArtifactKind::Mcp | ArtifactKind::Skill
+                    ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook
                 )
         }));
     }
@@ -269,6 +310,8 @@ struct DescriptorObservation {
     artifact_kind: ArtifactKind,
     target_path: String,
     items: Vec<ObservedNativeItem>,
+    /// 仅 Hook 观测填充：外部键 -> 原始条目 JSON，用于组装展示信息。
+    hook_entries: BTreeMap<String, Value>,
 }
 
 /// 只读观测一个描述符；返回 `None` 表示该目标不参与对账（无路径、能力未证明或扫描不可用）。
@@ -293,15 +336,32 @@ fn observe_descriptor(
     )?
     .map(|identity| identity.target_id)
     .unwrap_or_default();
-    let Some(items) = observe_items(database, descriptor, &target_id)? else {
+    let Some(observed) = observe_items(database, descriptor, &target_id)? else {
         return Ok(None);
     };
+    let hook_entries = observed.hook_entries;
     Ok(Some(DescriptorObservation {
         tool: descriptor.tool,
         artifact_kind: descriptor.artifact_kind,
         target_path: target_path.to_owned(),
-        items,
+        items: observed.items,
+        hook_entries,
     }))
+}
+
+/// 一次只读观测的产物：通用条目登记数据，以及 Hook 专用的原始条目展示索引。
+struct ObservedItems {
+    items: Vec<ObservedNativeItem>,
+    hook_entries: BTreeMap<String, Value>,
+}
+
+impl ObservedItems {
+    fn plain(items: Vec<ObservedNativeItem>) -> Self {
+        Self {
+            items,
+            hook_entries: BTreeMap::new(),
+        }
+    }
 }
 
 fn reconcile_observation(
@@ -365,13 +425,14 @@ fn observe_items(
     database: &Database,
     descriptor: &TargetDescriptor,
     target_id: &str,
-) -> Result<Option<Vec<ObservedNativeItem>>, AppError> {
+) -> Result<Option<ObservedItems>, AppError> {
     let adapter = descriptor.tool.adapter();
     match descriptor.artifact_kind {
         ArtifactKind::Mcp => observe_mcp_items(database, adapter, descriptor, target_id),
         ArtifactKind::Skill => observe_skill_items(database, adapter, descriptor, target_id),
-        // Hooks 不参与项目原生资源逐条观测（MVP 范围外）。
-        ArtifactKind::Hook | ArtifactKind::Prompt | ArtifactKind::Provider => Ok(None),
+        ArtifactKind::Hook => observe_hook_items(database, adapter, descriptor, target_id),
+        // Prompt/Provider 不参与项目原生资源逐条观测。
+        ArtifactKind::Prompt | ArtifactKind::Provider => Ok(None),
     }
 }
 
@@ -380,7 +441,7 @@ fn observe_mcp_items(
     adapter: &dyn ToolAdapter,
     descriptor: &TargetDescriptor,
     target_id: &str,
-) -> Result<Option<Vec<ObservedNativeItem>>, AppError> {
+) -> Result<Option<ObservedItems>, AppError> {
     let container = native_mcp_container(descriptor.tool);
     let ownership = ManagedOwnership::selectors([container
         .iter()
@@ -390,14 +451,14 @@ fn observe_mcp_items(
     let scan = scan_target(adapter, descriptor, &ownership);
     let TargetScan::Observed(observed) = scan else {
         return Ok(match scan {
-            TargetScan::Missing => Some(Vec::new()),
+            TargetScan::Missing => Some(ObservedItems::plain(Vec::new())),
             _ => None,
         });
     };
     let Some(servers) =
         projection_value_at(&observed.managed_projection, container).and_then(Value::as_object)
     else {
-        return Ok(Some(Vec::new()));
+        return Ok(Some(ObservedItems::plain(Vec::new())));
     };
     let managed = mcp_repository::list_managed_mcp_items(database, target_id)?;
     let managed_by_key = managed
@@ -415,7 +476,7 @@ fn observe_mcp_items(
             centrally_owned,
         });
     }
-    Ok(Some(items))
+    Ok(Some(ObservedItems::plain(items)))
 }
 
 fn observe_skill_items(
@@ -423,7 +484,7 @@ fn observe_skill_items(
     adapter: &dyn ToolAdapter,
     descriptor: &TargetDescriptor,
     target_id: &str,
-) -> Result<Option<Vec<ObservedNativeItem>>, AppError> {
+) -> Result<Option<ObservedItems>, AppError> {
     let scan = scan_target(
         adapter,
         descriptor,
@@ -431,7 +492,7 @@ fn observe_skill_items(
     );
     let TargetScan::Observed(observed) = scan else {
         return Ok(match scan {
-            TargetScan::Missing => Some(Vec::new()),
+            TargetScan::Missing => Some(ObservedItems::plain(Vec::new())),
             _ => None,
         });
     };
@@ -466,7 +527,47 @@ fn observe_skill_items(
             centrally_owned: managed_by_key.contains_key(name),
         });
     }
-    Ok(Some(items))
+    Ok(Some(ObservedItems::plain(items)))
+}
+
+/// Hook 条目只读观测：复用中央 hooks 的拍平与哈希规则。外部键即
+/// `<原生事件>|<matcher>|<内容哈希前 16 位>`；中央所有权按条目内容哈希
+/// 与受管 hook 条目 `last_applied_item_hash` 匹配（受管键形态不同，无法按
+/// 键比较，与 `verify_hook_item_baselines` 一致）。
+fn observe_hook_items(
+    database: &Database,
+    adapter: &dyn ToolAdapter,
+    descriptor: &TargetDescriptor,
+    target_id: &str,
+) -> Result<Option<ObservedItems>, AppError> {
+    let tool = descriptor.tool;
+    let scan = scan_target(adapter, descriptor, &build_hook_ownership(tool));
+    let TargetScan::Observed(observed) = scan else {
+        return Ok(match scan {
+            TargetScan::Missing => Some(ObservedItems::plain(Vec::new())),
+            _ => None,
+        });
+    };
+    let entries = native_entries(&observed, events_root(tool));
+    let managed_hashes = hooks_repository::list_managed_hook_items(database, target_id)?
+        .into_iter()
+        .map(|item| item.last_applied_item_hash)
+        .collect::<BTreeSet<_>>();
+    let mut items = Vec::new();
+    for (external_key, entry) in &entries {
+        let item_hash = hash_json(entry);
+        let centrally_owned = managed_hashes.contains(&item_hash);
+        items.push(ObservedNativeItem {
+            external_key: external_key.clone(),
+            entry_type: ProjectNativeEntryType::HookEntry,
+            item_hash: item_hash.clone(),
+            centrally_owned,
+        });
+    }
+    Ok(Some(ObservedItems {
+        items,
+        hook_entries: entries,
+    }))
 }
 
 struct PreparedNativeAction {
@@ -618,7 +719,7 @@ fn build_action_projection(
                             .with_source(error)
                     })?,
                     action: NativeResourceActionKind::Disable,
-                    entry_type: evidence_entry_type(entry_type),
+                    entry_type: evidence_entry_type(entry_type)?,
                     external_key: record.external_key.clone(),
                     observed_item_hash: observed_hash,
                     expected_fingerprint: None,
@@ -648,7 +749,7 @@ fn build_action_projection(
                             .with_source(error)
                     })?,
                     action: NativeResourceActionKind::Restore,
-                    entry_type: evidence_entry_type(entry_type),
+                    entry_type: evidence_entry_type(entry_type)?,
                     external_key: record.external_key.clone(),
                     observed_item_hash: observed_hash,
                     expected_fingerprint: None,
@@ -688,6 +789,8 @@ fn disable_evidence_details(
             let _ = descriptor;
             Ok((None, None, None))
         }
+        // Hook 永远不会生成动作证据：native_ownership 已在此前 fail closed。
+        ProjectNativeEntryType::HookEntry => Err(AppError::internal("Hook 条目不支持生成禁用证据")),
     }
 }
 
@@ -727,8 +830,8 @@ fn restore_desired_projection(
                         AppError::conflict("snapshot", "符号链接快照缺少链接目标")
                     })?),
                 },
-                ProjectNativeEntryType::McpEntry => {
-                    return Err(AppError::internal("MCP 条目不应走 Skill 目录恢复投影"));
+                ProjectNativeEntryType::McpEntry | ProjectNativeEntryType::HookEntry => {
+                    return Err(AppError::internal("MCP/Hook 条目不应走 Skill 目录恢复投影"));
                 }
             };
             let mut root = Map::new();
@@ -741,6 +844,8 @@ fn restore_desired_projection(
             );
             Ok(Value::Object(root))
         }
+        // Hook 永远不会进入恢复流程：native_ownership 已在此前 fail closed。
+        ProjectNativeEntryType::HookEntry => Err(AppError::internal("Hook 条目不支持恢复投影")),
     }
 }
 
@@ -813,6 +918,10 @@ fn item_hash_from_scan(
                 .ok_or_else(|| AppError::conflict("projectNativeResource", "Skill 入口已不存在"))?;
             Ok(skill_entry_item_hash(&child, entry_type, value))
         }
+        // Hook 永远不会走到禁用证据：native_ownership 已在此前 fail closed。
+        ProjectNativeEntryType::HookEntry => {
+            Err(AppError::internal("Hook 条目不支持禁用 hash 采集"))
+        }
     }
 }
 
@@ -858,6 +967,10 @@ fn validate_live_occupancy(
                     )
                     .with_source(error)),
                 }
+            }
+            // Hook 永远不会走到占用校验：native_ownership 已在此前 fail closed。
+            ProjectNativeEntryType::HookEntry => {
+                Err(AppError::internal("Hook 条目不支持动作占用校验"))
             }
         },
     }
@@ -918,10 +1031,10 @@ fn native_ownership(
         ArtifactKind::Skill => Ok(ManagedOwnership::SymlinkNames(
             vec![external_key.to_owned()],
         )),
-        // Hooks 不参与项目原生资源的逐条停用/恢复（MVP 范围外），
-        // 与 Provider 一样 fail closed。
+        // Hooks 条目是匿名数组元素，现有 ownership 无法定位单条，
+        // 临时禁用/恢复不支持，与 Provider 一样 fail closed。
         ArtifactKind::Hook | ArtifactKind::Prompt | ArtifactKind::Provider => Err(
-            AppError::invalid_input("artifactKind", "该资源类型不是项目原生资源"),
+            AppError::invalid_input("artifactKind", "Hooks 暂不支持临时禁用与恢复"),
         ),
     }
 }
@@ -957,6 +1070,16 @@ fn should_hide_centralized(
         "skill" => skill_repository::list_managed_skill_items(database, &record.target_id)?
             .into_iter()
             .any(|item| item.external_key == record.external_key),
+        // Hook 条目是匿名数组元素，受管外部键形态与原生键不同，只能按
+        // 条目内容哈希匹配（与 verify_hook_item_baselines 一致）。
+        "hook" => match record.observed_item_hash.as_deref() {
+            Some(observed) => {
+                hooks_repository::list_managed_hook_items(database, &record.target_id)?
+                    .into_iter()
+                    .any(|item| item.last_applied_item_hash == observed)
+            }
+            None => false,
+        },
         _ => false,
     };
     // 禁用快照代表另一份待恢复的原生内容，不能因中央资源占用路径而隐藏。
@@ -987,7 +1110,10 @@ fn summarize_project(
     Ok(summary)
 }
 
-fn to_dto(record: &repository::NativeResourceRecord) -> Result<ProjectNativeResourceDto, AppError> {
+fn to_dto(
+    record: &repository::NativeResourceRecord,
+    hook_entry: Option<&Value>,
+) -> Result<ProjectNativeResourceDto, AppError> {
     let tool = parse_tool(&record.tool)?;
     let artifact_kind = parse_artifact(&record.artifact_kind)?;
     let entry_type = ProjectNativeEntryType::from_stable_str(&record.entry_type)
@@ -1006,24 +1132,67 @@ fn to_dto(record: &repository::NativeResourceRecord) -> Result<ProjectNativeReso
         }
         ProjectNativeResourceState::Active => {}
     }
+    let is_hook = entry_type == ProjectNativeEntryType::HookEntry;
+    let (display_name, safe_summary) = if is_hook {
+        hook_display(record.external_key.as_str(), hook_entry)
+    } else {
+        (
+            record.external_key.clone(),
+            safe_summary(artifact_kind, entry_type),
+        )
+    };
     Ok(ProjectNativeResourceDto {
         id: record.id.clone(),
         project_id: record.project_id.clone(),
         tool,
         artifact_kind,
-        display_name: record.external_key.clone(),
+        display_name,
         target_path: record.target_path.clone(),
         entry_type,
         state,
         row_version: u32::try_from(record.row_version).map_err(|error| {
             AppError::invalid_input("rowVersion", "原生资源版本超出范围").with_source(error)
         })?,
-        can_disable: state == ProjectNativeResourceState::Active,
-        can_restore: state == ProjectNativeResourceState::Disabled,
+        // Hook 条目是匿名数组元素，无法按条目定位改写，禁用/恢复不支持。
+        can_disable: state == ProjectNativeResourceState::Active && !is_hook,
+        can_restore: state == ProjectNativeResourceState::Disabled && !is_hook,
         diagnostic_codes,
-        safe_summary: safe_summary(artifact_kind, entry_type),
+        safe_summary,
         disabled_at: record.disabled_at.clone(),
     })
+}
+
+/// Hook 条目展示信息：外部键 `<原生事件>|<matcher>|<哈希前 16 位>` 解析出
+/// 事件与 matcher。条目仍在文件中时附带命令（可识别凭据只提示已脱敏）与
+/// 超时；条目已缺失时只有事件与 matcher（不持久化命令文本）。
+fn hook_display(external_key: &str, entry: Option<&Value>) -> (String, Value) {
+    let (event, matcher) = match external_key.splitn(3, '|').collect::<Vec<_>>()[..] {
+        [event, matcher, _] => (event.to_owned(), matcher.to_owned()),
+        _ => (external_key.to_owned(), String::new()),
+    };
+    let display_name = if matcher.is_empty() {
+        event.clone()
+    } else {
+        format!("{event} · {matcher}")
+    };
+    let mut summary = json!({ "kind": "hook", "event": event });
+    if !matcher.is_empty() {
+        summary["matcher"] = json!(matcher);
+    }
+    if let Some(entry) = entry {
+        let command = entry.get("command").and_then(Value::as_str).unwrap_or("");
+        if !command.is_empty() {
+            if contains_detectable_secret("command", command) {
+                summary["commandRedacted"] = json!(true);
+            } else {
+                summary["command"] = json!(command);
+            }
+        }
+        if let Some(timeout) = entry.get("timeout").and_then(Value::as_i64) {
+            summary["timeout"] = json!(timeout);
+        }
+    }
+    (display_name, summary)
 }
 
 fn safe_summary(artifact_kind: ArtifactKind, entry_type: ProjectNativeEntryType) -> Value {
@@ -1047,6 +1216,7 @@ fn parse_artifact(value: &str) -> Result<ArtifactKind, AppError> {
     match value {
         "mcp" => Ok(ArtifactKind::Mcp),
         "skill" => Ok(ArtifactKind::Skill),
+        "hook" => Ok(ArtifactKind::Hook),
         "prompt" => Ok(ArtifactKind::Prompt),
         "provider" => Ok(ArtifactKind::Provider),
         _ => Err(AppError::invalid_input("artifactKind", "资源类型无效")),
@@ -1060,11 +1230,15 @@ fn evidence_action(action: NativeResourceActionKind) -> ProjectNativeResourceAct
     }
 }
 
-fn evidence_entry_type(entry_type: ProjectNativeEntryType) -> NativeResourceEntryType {
+fn evidence_entry_type(
+    entry_type: ProjectNativeEntryType,
+) -> Result<NativeResourceEntryType, AppError> {
     match entry_type {
-        ProjectNativeEntryType::McpEntry => NativeResourceEntryType::McpEntry,
-        ProjectNativeEntryType::Directory => NativeResourceEntryType::Directory,
-        ProjectNativeEntryType::Symlink => NativeResourceEntryType::Symlink,
+        ProjectNativeEntryType::McpEntry => Ok(NativeResourceEntryType::McpEntry),
+        ProjectNativeEntryType::Directory => Ok(NativeResourceEntryType::Directory),
+        ProjectNativeEntryType::Symlink => Ok(NativeResourceEntryType::Symlink),
+        // Hook 永远不会生成动作证据：native_ownership 已在此前 fail closed。
+        ProjectNativeEntryType::HookEntry => Err(AppError::internal("Hook 条目不支持生成动作证据")),
     }
 }
 
@@ -1107,7 +1281,10 @@ fn skill_entry_item_hash(
         Ok(inspection) => match entry_type {
             ProjectNativeEntryType::Directory => inspection.content_hash,
             ProjectNativeEntryType::Symlink => inspection.fingerprint,
-            ProjectNativeEntryType::McpEntry => hash_json(fallback),
+            // 仅 Skill 观测会走到这里；Mcp/Hook 臂不可达。
+            ProjectNativeEntryType::McpEntry | ProjectNativeEntryType::HookEntry => {
+                hash_json(fallback)
+            }
         },
         Err(_) => hash_json(fallback),
     }

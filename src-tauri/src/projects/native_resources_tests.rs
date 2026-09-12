@@ -1145,4 +1145,354 @@ mod tests {
             );
         }
     }
+
+    // ---------------------------------------------------------------------------
+    // 项目级 Hooks 只读观测
+    // ---------------------------------------------------------------------------
+
+    const CLAUDE_PROJECT_HOOKS: &[u8] = br#"{
+        "model": "keep-model",
+        "hooks": {
+            "SessionStart": [
+                {"matcher": "startup", "hooks": [{"type": "command", "command": "echo startup-hook", "timeout": 10}]},
+                {"matcher": "clear", "hooks": [{"type": "command", "command": "echo clear-hook"}]},
+                {"matcher": "compact", "hooks": [{"type": "command", "command": "echo compact-hook"}]}
+            ],
+            "PreToolUse": [
+                {"matcher": "Task", "hooks": [{"type": "command", "command": "bash .claude/hooks/task.sh", "timeout": 30}]}
+            ],
+            "UserPromptSubmit": [
+                {"hooks": [{"type": "command", "command": "echo prompt-hook"}]}
+            ]
+        }
+    }"#;
+
+    fn list_native_hooks(
+        fixture: &mut Fixture,
+        project_id: &str,
+        tool: Tool,
+    ) -> Vec<ProjectNativeResourceDto> {
+        list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project_id.to_owned(),
+                tool,
+                artifact_kind: ArtifactKind::Hook,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn claude_project_hooks_are_listed_read_only() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".claude")).unwrap();
+            fs::write(root.join(".claude/settings.json"), CLAUDE_PROJECT_HOOKS).unwrap();
+        });
+        let items = list_native_hooks(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 5, "5 个 hook 条目都应被只读识别");
+        let names = items
+            .iter()
+            .map(|item| item.display_name.as_str())
+            .collect::<Vec<_>>();
+        for expected in [
+            "SessionStart · startup",
+            "SessionStart · clear",
+            "SessionStart · compact",
+            "PreToolUse · Task",
+            "UserPromptSubmit",
+        ] {
+            assert!(names.contains(&expected), "缺少 {expected}，实际 {names:?}");
+        }
+        for item in &items {
+            assert_eq!(item.entry_type, ProjectNativeEntryType::HookEntry);
+            assert_eq!(item.state, ProjectNativeResourceState::Active);
+            assert!(!item.can_disable, "Hook 条目不可禁用");
+            assert!(!item.can_restore, "Hook 条目不可恢复");
+            assert_eq!(item.safe_summary["kind"], "hook");
+        }
+        let startup = items
+            .iter()
+            .find(|item| item.display_name == "SessionStart · startup")
+            .unwrap();
+        assert_eq!(startup.safe_summary["event"], "SessionStart");
+        assert_eq!(startup.safe_summary["matcher"], "startup");
+        assert_eq!(startup.safe_summary["command"], "echo startup-hook");
+        assert_eq!(startup.safe_summary["timeout"], 10);
+        let prompt = items
+            .iter()
+            .find(|item| item.display_name == "UserPromptSubmit")
+            .unwrap();
+        assert!(prompt.safe_summary.get("matcher").is_none());
+        assert_eq!(prompt.safe_summary["command"], "echo prompt-hook");
+        // 只读观测：原生文件字节不变。
+        assert_eq!(
+            fs::read(fixture.home.join("projects/native/.claude/settings.json")).unwrap(),
+            CLAUDE_PROJECT_HOOKS
+        );
+    }
+
+    #[test]
+    fn cursor_flat_and_zcode_nested_hooks_are_listed() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".cursor")).unwrap();
+            fs::write(
+                root.join(".cursor/hooks.json"),
+                br#"{"version": 1, "hooks": {
+                    "preToolUse": [{"command": "echo cursor-before", "timeout": 15, "matcher": "Bash"}],
+                    "sessionStart": [{"command": "echo cursor-start"}]
+                }}"#,
+            )
+            .unwrap();
+            fs::create_dir_all(root.join(".zcode")).unwrap();
+            fs::write(
+                root.join(".zcode/config.json"),
+                br#"{"mcp": {"servers": {"keep": {"command": "keep"}}}, "hooks": {"enabled": true, "events": {
+                    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "echo zcode-prompt"}]}]
+                }}}"#,
+            )
+            .unwrap();
+            fs::create_dir_all(root.join(".codex")).unwrap();
+            fs::write(
+                root.join(".codex/hooks.json"),
+                br#"{"description": "keep", "hooks": {
+                    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "echo codex-prompt"}]}]
+                }}"#,
+            )
+            .unwrap();
+        });
+        let cursor = list_native_hooks(&mut fixture, &project.id, Tool::Cursor);
+        assert_eq!(cursor.len(), 2, "Cursor 扁平条目应逐条识别");
+        assert!(cursor
+            .iter()
+            .any(|item| item.display_name == "preToolUse · Bash"
+                && item.safe_summary["command"] == "echo cursor-before"
+                && item.safe_summary["timeout"] == 15));
+        assert!(cursor
+            .iter()
+            .any(|item| item.display_name == "sessionStart"));
+        let zcode = list_native_hooks(&mut fixture, &project.id, Tool::Zcode);
+        assert_eq!(zcode.len(), 1, "ZCode events 嵌套条目应被识别");
+        assert_eq!(zcode[0].display_name, "UserPromptSubmit");
+        assert_eq!(zcode[0].safe_summary["command"], "echo zcode-prompt");
+        // Codex 与 Claude 同为 matcher 组格式，但项目 hooks 需要项目信任证据。
+        let canonical_root = fs::canonicalize(fixture.home.join("projects/native")).unwrap();
+        fs::write(
+            fixture.home.join(".codex/config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                canonical_root.display()
+            ),
+        )
+        .unwrap();
+        let codex = list_native_hooks(&mut fixture, &project.id, Tool::Codex);
+        assert_eq!(codex.len(), 1);
+        assert_eq!(codex[0].display_name, "UserPromptSubmit");
+        assert_eq!(codex[0].safe_summary["command"], "echo codex-prompt");
+    }
+
+    #[test]
+    fn removed_hook_entry_becomes_missing() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".claude")).unwrap();
+            fs::write(root.join(".claude/settings.json"), CLAUDE_PROJECT_HOOKS).unwrap();
+        });
+        assert!(list_native_hooks(&mut fixture, &project.id, Tool::Claude)
+            .iter()
+            .all(|item| item.state == ProjectNativeResourceState::Active));
+        // 外部删除 PreToolUse 事件后重新列出：该条目 missing，其余仍 active。
+        fs::write(
+            fixture.home.join("projects/native/.claude/settings.json"),
+            br#"{"model": "keep-model", "hooks": {
+                "SessionStart": [
+                    {"matcher": "startup", "hooks": [{"type": "command", "command": "echo startup-hook", "timeout": 10}]}
+                ],
+                "UserPromptSubmit": [
+                    {"hooks": [{"type": "command", "command": "echo prompt-hook"}]}
+                ]
+            }}"#,
+        )
+        .unwrap();
+        let items = list_native_hooks(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 5, "missing 行保留在列表中（2 active + 3 missing）");
+        for gone in ["PreToolUse · Task", "SessionStart · clear", "SessionStart · compact"] {
+            let missing = items
+                .iter()
+                .find(|item| item.display_name == gone)
+                .unwrap_or_else(|| panic!("{gone} 应显示为 missing"));
+            assert_eq!(missing.state, ProjectNativeResourceState::Missing);
+            assert!(!missing.can_disable && !missing.can_restore);
+            assert!(missing
+                .diagnostic_codes
+                .contains(&"PROJECT_NATIVE_RESOURCE_MISSING".to_owned()));
+            assert!(missing.safe_summary.get("command").is_none());
+        }
+        assert!(items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item.display_name.as_str(),
+                    "SessionStart · startup" | "UserPromptSubmit"
+                )
+            })
+            .all(|item| item.state == ProjectNativeResourceState::Active));
+    }
+
+    #[test]
+    fn centrally_synced_hook_entry_is_hidden_from_native_list() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".claude")).unwrap();
+            fs::write(root.join(".claude/settings.json"), br#"{"model": "keep"}"#).unwrap();
+        });
+        // 登记（对账）先建空 baseline 的 Hook 目标身份行。
+        let identity = repository::find_project_target_identity(
+            &fixture.database,
+            &project.id,
+            Tool::Claude,
+            ArtifactKind::Hook,
+            fixture
+                .home
+                .join("projects/native/.claude/settings.json")
+                .to_string_lossy()
+                .as_ref(),
+        )
+        .unwrap()
+        .expect("登记后应有 Hook 目标身份行");
+        // 中央 Hook 经项目分配同步写入同一文件。
+        let hook = crate::hooks::create_hook(
+            &mut fixture.database,
+            &fixture.paths,
+            &crate::hooks::CreateHookInput {
+                name: "central-hook".to_owned(),
+                event: crate::domain::HookEvent::PreToolUse,
+                matcher: Some("Work".to_owned()),
+                command: "echo central-hook".to_owned(),
+                timeout_seconds: Some(20),
+                enabled: true,
+                script_source_path: None,
+            },
+        )
+        .unwrap();
+        crate::hooks::set_project_hook_assignment(
+            &mut fixture.database,
+            &crate::hooks::SetProjectHookAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Claude,
+                hook_id: hook.id.clone(),
+                event: crate::domain::HookEvent::PreToolUse,
+                assigned: true,
+                hook_row_version: hook.row_version,
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let plan = crate::hooks::preview_hook_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &crate::hooks::PreviewHookSyncInput {
+                tool: Tool::Claude,
+                project_id: Some(project.id.clone()),
+                exclude_from_git: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(plan.targets.len(), 1, "项目 Hook 同步应有恰好一个目标");
+        crate::hooks::apply_hook_preview(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &crate::hooks::ApplyHookPreviewInput {
+                preview_id: plan.preview_id,
+                tool: Tool::Claude,
+                project_id: Some(project.id.clone()),
+            },
+        )
+        .unwrap();
+        // 身份行共用：中央同步的 managed_items 必须挂在登记时建的同一 target 上。
+        let managed = hooks_repository::list_managed_hook_items(&fixture.database, &identity.target_id)
+            .unwrap();
+        assert_eq!(managed.len(), 1, "中央条目应复用登记时建立的目标身份行");
+
+        // 中央条目不展示为项目原生资源。
+        assert!(list_native_hooks(&mut fixture, &project.id, Tool::Claude).is_empty());
+        // 同一文件里外部新增的条目仍列出。
+        fs::write(
+            fixture.home.join("projects/native/.claude/settings.json"),
+            br#"{"model": "keep", "hooks": {"PreToolUse": [
+                {"matcher": "Work", "hooks": [{"type": "command", "command": "echo central-hook", "timeout": 20}]},
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo external-keep"}]}
+            ]}}"#,
+        )
+        .unwrap();
+        let items = list_native_hooks(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].display_name, "PreToolUse · Bash");
+        assert_eq!(items[0].state, ProjectNativeResourceState::Active);
+    }
+
+    #[test]
+    fn hook_entry_action_preview_is_rejected() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".claude")).unwrap();
+            fs::write(root.join(".claude/settings.json"), CLAUDE_PROJECT_HOOKS).unwrap();
+        });
+        let item = list_native_hooks(&mut fixture, &project.id, Tool::Claude)
+            .into_iter()
+            .next()
+            .expect("应列出 Hook 条目");
+        let mut redactor = SecretRedactor::default();
+        let error = preview_project_native_resource_action(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewProjectNativeResourceActionInput {
+                resource_id: item.id.clone(),
+                row_version: item.row_version,
+                action: ProjectNativeResourceAction::Disable,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        assert!(
+            error
+                .details()
+                .and_then(|details| details.get("reason"))
+                .and_then(Value::as_str)
+                .is_some_and(|reason| reason.contains("Hooks 暂不支持临时禁用与恢复")),
+            "实际错误：{error:?}"
+        );
+    }
+
+    #[test]
+    fn hook_command_with_secret_is_redacted_in_summary() {
+        let mut fixture = Fixture::new();
+        let secret = "sk-fixture-secret-000000";
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".claude")).unwrap();
+            fs::write(
+                root.join(".claude/settings.json"),
+                format!(
+                    r#"{{"hooks": {{"UserPromptSubmit": [
+                        {{"hooks": [{{"type": "command", "command": "curl -H 'Authorization: Bearer {secret}' https://example.test"}}]}}
+                    ]}}}}"#
+                ),
+            )
+            .unwrap();
+        });
+        let items = list_native_hooks(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].safe_summary["commandRedacted"], true);
+        assert!(items[0].safe_summary.get("command").is_none());
+        let serialized = serde_json::to_string(&items[0]).unwrap();
+        assert!(!serialized.contains(secret), "脱敏条目不得泄漏命令原文");
+    }
 }

@@ -475,7 +475,7 @@ pub(crate) fn native_entry_hashes(
 /// 把原生投影拍平为 `外部键 -> 条目值` 的映射，供逐条校验、重新接管与
 /// 导入解析复用。外部键形态：`<原生事件>|<matcher 或 空>|<内容哈希前 16 位>`。
 /// Cursor 的 matcher 属于条目本身；其余工具属于 matcher 组。
-pub(super) fn native_entries(
+pub(crate) fn native_entries(
     observed: &ObservedTarget,
     events_path: &[&str],
 ) -> BTreeMap<String, Value> {

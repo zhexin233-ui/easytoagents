@@ -138,6 +138,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "github_skill_sources",
         sql: include_str!("migrations/0020_github_skill_sources.sql"),
     },
+    Migration {
+        version: 21,
+        name: "project_native_hook_entries",
+        sql: include_str!("migrations/0021_project_native_hook_entries.sql"),
+    },
 ];
 
 pub(crate) struct Migration {

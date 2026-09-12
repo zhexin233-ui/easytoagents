@@ -1501,6 +1501,8 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   native MCP/Skill disable/restore preview/apply, MCP selector mutation, Skill
   entry removal/restore without central takeover, snapshot reference protection,
   or project-detail native UI. Prompt/Rules files are not part of this flow.
+  Project-level Hook entries are read-only observations (`hook_entry`): they are
+  listed and reconciled but never enter disable/restore.
 
 ### 2. Signatures
 
@@ -1511,18 +1513,22 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   `upsert_observed_active`, `snapshot_is_referenced`,
   `count_blocking_native_resources`) and `projects/native_resources.rs`.
   Commands live in `commands/projects.rs`.
-- `ProjectNativeResourceDto.safeSummary` is `{ kind: "mcp" }` for MCP and
-  `{ entryType }` for Skill. It never carries command, args, env, headers, URL,
-  or raw config.
-- Migration `0012_project_native_resources.sql` only. Do not rewrite historical
-  migrations.
+- `ProjectNativeResourceDto.safeSummary` is `{ kind: "mcp" }` for MCP,
+  `{ entryType }` for Skill, and for `hook_entry`
+  `{ kind: "hook", event, matcher?, timeout?, command | commandRedacted: true }`.
+  Hook display data comes from the in-memory scan index keyed by
+  `(target_path, external_key)`; the raw command text is never persisted. It
+  never carries args, env, headers, URL, or raw config beyond the command redaction rule.
+- Migration `0012_project_native_resources.sql` and the 0021 CHECK widening only.
+  Do not rewrite historical migrations.
 
 ### 3. Contracts
 
 - Three identities stay distinct:
   1. central resource + assignment = what the app wants to sync;
   2. `managed_items` + filled baselines = proven ownership;
-  3. `project_native_resources` = MCP/Skill observation and recoverable disable state.
+  3. `project_native_resources` = MCP/Skill/Hook observation and recoverable
+     disable state for MCP/Skill (Hook entries are read-only rows only).
 - Prompt/Rules are global-only. They do not produce project `managed_targets`,
   `managed_items`, `project_native_resources`, or disable/restore actions.
 - `insert_project_target_identity` may create a `managed_targets` row with empty
@@ -1580,6 +1586,20 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   an empty parent directory, rollback may `remove_dir` that empty directory.
   Requiring a central library path here turns `FailAfterTarget` into
   `rollback_failed` after the entry is already gone.
+- Hook entries are read-only observations. `observe_hook_items` reuses
+  `hooks::native_entries` flattening and hashing unchanged: the external key is
+  `<原生事件>|<matcher>|<内容哈希前 16 位>`, and `entry_type` is `hook_entry`
+  with only `active`/`missing` states. Because hook entries are anonymous array
+  elements, `native_ownership` keeps returning `INVALID_INPUT`
+  ("Hooks 暂不支持临时禁用与恢复"), `can_disable`/`can_restore` are always
+  false, and every action-evidence match arm returns an internal error for
+  `HookEntry` (fail closed, theoretically unreachable).
+- Central hook ownership is decided by content hash only: a native entry whose
+  `hash_json` equals any managed hook item's `last_applied_item_hash` is hidden
+  from the native list (the managed external key shape differs from the native
+  key, matching `verify_hook_item_baselines`). Hook entries hash over their full
+  content, so an externally edited command shows up as one `missing` + one
+  `active` row — accepted semantics, consistent with hook sync baselines.
 
 ### 4. Validation & Error Matrix
 
@@ -1589,6 +1609,8 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
 | `active` + `restore`, or `disabled` + `disable` | `INVALID_INPUT` |
 | `missing` or `conflict` + any action | `CONFLICT` |
 | Central-owned or central-drift item presented as native disable | `NOT_FOUND` / `CONFLICT`; no native write |
+| `hook_entry` resource action preview | `INVALID_INPUT` ("Hooks 暂不支持临时禁用与恢复"); `canDisable`/`canRestore` always false |
+| Hook command contains a detectable secret | `safeSummary.command` omitted; `commandRedacted: true` only |
 | Project Prompt/Rules path supplied to a native-resource command | `INVALID_INPUT` / `NOT_FOUND`; no native read or write |
 | Apply when `sync_runs.status != "previewed"` | `PREVIEW_ALREADY_CONSUMED` **before** the action matrix |
 | Stale resource/target `row_version` or target identity change | `STALE_PREVIEW` / `CONFLICT`; no overwrite |
@@ -1627,6 +1649,12 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   Skill symlink/directory `FailAfterTarget` with `central_root = None` rolls back.
 - `soft_remove_project` and `delete_snapshots` refuse while a disabled native
   resource references the snapshot.
+- Project-level hooks: Claude matcher groups, Codex matcher groups, Cursor flat
+  entries, and ZCode `hooks.events` are each listed read-only with original file
+  bytes unchanged; removing one entry externally marks that row `missing` while
+  the rest stay `active`; centrally synced hook entries are hidden while other
+  entries in the same file remain listed; action previews return
+  `INVALID_INPUT`; redacted commands never serialize.
 
 ### 7. Wrong vs Correct
 
