@@ -258,6 +258,40 @@ export const nativeResource: ProjectNativeResourceDto = {
   disabledAt: null,
 };
 
+export const hookNativeResource: ProjectNativeResourceDto = {
+  id: "00000000-0000-4000-8000-000000000743",
+  projectId: project.id,
+  tool: "claude",
+  artifactKind: "hook",
+  displayName: "PreToolUse · Task",
+  targetPath: "/isolated/projects/detail/.claude/settings.json",
+  entryType: "hook_entry",
+  state: "active",
+  rowVersion: 1,
+  canDisable: false,
+  canRestore: false,
+  diagnosticCodes: [],
+  safeSummary: {
+    kind: "hook",
+    event: "PreToolUse",
+    matcher: "Task",
+    command: "bash .claude/hooks/task.sh",
+    timeout: 30,
+  },
+  disabledAt: null,
+};
+
+export const hookRedactedResource: ProjectNativeResourceDto = {
+  ...hookNativeResource,
+  id: "00000000-0000-4000-8000-000000000744",
+  displayName: "UserPromptSubmit",
+  safeSummary: {
+    kind: "hook",
+    event: "UserPromptSubmit",
+    commandRedacted: true,
+  },
+};
+
 export const hookOptions: HookProjectOptionDto[] = [
   {
     hookId: "00000000-0000-4000-8000-000000000760",

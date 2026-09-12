@@ -138,6 +138,7 @@ function NativeResourceRow({
   pending: boolean;
   onAction: () => void;
 }) {
+  const isHook = resource.entryType === "hook_entry";
   const actionLabel = resource.canDisable
     ? `临时禁用 ${resource.displayName}`
     : resource.canRestore
@@ -165,6 +166,7 @@ function NativeResourceRow({
           <code className="text-muted-foreground block text-xs break-all">
             {resource.targetPath}
           </code>
+          {isHook ? <HookSummary resource={resource} /> : null}
           {resource.disabledAt ? (
             <p className="text-muted-foreground text-xs">
               禁用时间：{resource.disabledAt}
@@ -186,20 +188,64 @@ function NativeResourceRow({
             </p>
           ) : null}
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="shrink-0 shadow-none"
-          aria-label={actionLabel}
-          disabled={pending || (!resource.canDisable && !resource.canRestore)}
-          onClick={onAction}
-        >
-          {actionText}
-        </Button>
+        {isHook ? null : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0 shadow-none"
+            aria-label={actionLabel}
+            disabled={pending || (!resource.canDisable && !resource.canRestore)}
+            onClick={onAction}
+          >
+            {actionText}
+          </Button>
+        )}
       </div>
     </article>
   );
+}
+
+/// Hook 条目展示：原生事件、matcher、命令（可识别凭据只提示已脱敏）与超时。
+/// Hook 是匿名数组条目，无法按条目定位改写，因此不提供禁用/恢复。
+function HookSummary({ resource }: { resource: ProjectNativeResourceDto }) {
+  const fields = hookSummaryFields(resource.safeSummary);
+  const command = typeof fields.command === "string" ? fields.command : null;
+  const matcher = typeof fields.matcher === "string" ? fields.matcher : null;
+  const timeout = typeof fields.timeout === "number" ? fields.timeout : null;
+  const redacted = fields.commandRedacted === true;
+
+  return (
+    <div className="space-y-1">
+      {matcher ? (
+        <p className="text-xs">
+          matcher：<code className="break-all">{matcher}</code>
+        </p>
+      ) : null}
+      {command ? (
+        <p className="text-xs">
+          命令：<code className="break-all">{command}</code>
+        </p>
+      ) : redacted ? (
+        <p className="text-muted-foreground text-xs">
+          命令包含可识别凭据，已脱敏。
+        </p>
+      ) : null}
+      {timeout !== null ? <p className="text-xs">超时：{timeout} 秒</p> : null}
+      <p className="text-muted-foreground text-xs">
+        Hooks 暂不支持临时禁用与恢复。
+      </p>
+    </div>
+  );
+}
+
+/// `safeSummary` 是宽松 JSON；只有对象形态的 Hook 摘要才提供字段。
+function hookSummaryFields(summary: ProjectNativeResourceDto["safeSummary"]) {
+  return typeof summary === "object" &&
+    summary !== null &&
+    !Array.isArray(summary)
+    ? summary
+    : {};
 }
 
 function nativeStateLabel(state: ProjectNativeResourceDto["state"]) {
@@ -238,6 +284,8 @@ function entryTypeLabel(entryType: ProjectNativeResourceDto["entryType"]) {
       return "技能目录";
     case "symlink":
       return "符号链接";
+    case "hook_entry":
+      return "Hook 条目";
   }
 }
 

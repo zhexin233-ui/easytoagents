@@ -10,6 +10,8 @@ import {
   skillPreview,
   nativePreview,
   nativeResource,
+  hookNativeResource,
+  hookRedactedResource,
   renderPage,
   setupMocks,
 } from "./project-detail-page.test-helpers";
@@ -428,5 +430,73 @@ describe("ProjectDetailPage", () => {
       await screen.findByRole("dialog", { name: "确认原生配置变更" }),
     ).toBeVisible();
     expect(commands.applyProjectNativeResourcePreview).not.toHaveBeenCalled();
+  });
+
+  it("Hooks 视图渲染项目原生 Hook 条目且不提供禁用与恢复", async () => {
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [hookNativeResource],
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目 Hook" }),
+    );
+    await waitFor(() =>
+      expect(commands.listProjectNativeResources).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        artifactKind: "hook",
+      }),
+    );
+    expect(await screen.findByText("PreToolUse · Task")).toBeVisible();
+    expect(screen.getByText("Hook 条目")).toBeVisible();
+    expect(screen.getByText("项目原生 · 已启用")).toBeVisible();
+    expect(screen.getByText(/matcher：/)).toBeVisible();
+    expect(
+      screen.getByText("bash .claude/hooks/task.sh"),
+    ).toBeVisible();
+    expect(screen.getByText(/超时：30 秒/)).toBeVisible();
+    expect(
+      screen.getByText("Hooks 暂不支持临时禁用与恢复。"),
+    ).toBeVisible();
+    // Hook 条目是匿名数组条目，不渲染任何禁用/恢复操作。
+    expect(
+      screen.queryByRole("button", { name: "临时禁用 PreToolUse · Task" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "恢复 PreToolUse · Task" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "PreToolUse · Task 当前不可操作" }),
+    ).not.toBeInTheDocument();
+    expect(
+      commands.previewProjectNativeResourceAction,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("含凭据的 Hook 条目只显示脱敏提示且不显示命令", async () => {
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [hookRedactedResource],
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目 Hook" }),
+    );
+    await waitFor(() =>
+      expect(commands.listProjectNativeResources).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        artifactKind: "hook",
+      }),
+    );
+    expect(await screen.findByText("UserPromptSubmit")).toBeVisible();
+    expect(
+      screen.getByText("命令包含可识别凭据，已脱敏。"),
+    ).toBeVisible();
+    expect(screen.queryByText(/命令：/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("bash .claude/hooks/task.sh"),
+    ).not.toBeInTheDocument();
   });
 });
