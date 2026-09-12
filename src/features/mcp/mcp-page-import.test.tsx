@@ -512,14 +512,13 @@ describe("McpPage", () => {
     });
     expect(screen.queryByText("旧响应")).not.toBeInTheDocument();
     expect(commands.discoverMcpImport).toHaveBeenCalledTimes(2);
-    const close = screen.getByRole("button", { name: "关闭 MCP 导入" });
-    const rescan = screen.getByRole("button", { name: "重新检测" });
-    close.focus();
-    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
-    expect(rescan).toHaveFocus();
-    fireEvent.keyDown(rescan, { key: "Tab" });
-    expect(close).toHaveFocus();
-    fireEvent.keyDown(close, { key: "Escape" });
+    const dialog = screen.getByRole("dialog");
+    dialog.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(
+      screen.getByRole("checkbox", { name: "导入 native-new" }),
+    ).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
     expect(trigger).toHaveFocus();
     expect(commands.confirmMcpImport).not.toHaveBeenCalled();
   });
@@ -538,9 +537,10 @@ describe("McpPage", () => {
     expect(
       await screen.findByRole("button", { name: "正在导入…" }),
     ).toBeDisabled();
-    const close = screen.getByRole("button", { name: "关闭 MCP 导入" });
-    expect(close).toBeDisabled();
-    fireEvent.click(close);
+    const rescan = screen.getByRole("button", { name: "重新检测" });
+    expect(rescan).toBeDisabled();
+    expect(screen.getByRole("button", { name: "正在导入…" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "正在导入…" }));
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.getByRole("dialog")).toBeVisible();
     expect(commands.confirmMcpImport).toHaveBeenCalledTimes(1);

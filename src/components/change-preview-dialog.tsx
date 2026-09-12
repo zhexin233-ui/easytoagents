@@ -3,6 +3,7 @@ import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -49,24 +50,15 @@ export function ChangePreviewDialog({
         onClose={onClose}
         labelledBy="change-preview-title"
         describedBy="change-preview-description"
-        className="max-h-[88vh]"
+        size="lg"
       >
         <DialogHeader>
-          <div>
-            <p className="text-muted-foreground text-sm">持久化预览</p>
-            <h2
-              id="change-preview-title"
-              className="mt-1 text-xl font-semibold"
-            >
-              确认原生配置变更
-            </h2>
-          </div>
-          <Button variant="outline" size="sm" onClick={onClose}>
-            关闭
-          </Button>
+          <h2 id="change-preview-title" className="text-[15px] font-semibold">
+            确认原生配置变更
+          </h2>
         </DialogHeader>
 
-        <div className="mt-5 space-y-4">
+        <DialogBody className="space-y-4">
           {preview.warningCodes.length > 0 ? (
             <section
               aria-label="预览警告"
@@ -128,20 +120,20 @@ export function ChangePreviewDialog({
                   ) : null}
                 </div>
               ) : null}
-              <pre className="bg-muted mt-3 overflow-auto rounded-md p-3 text-xs leading-5">
+              <pre className="bg-muted rounded-control mt-3 overflow-auto p-3 text-xs leading-5">
                 {JSON.stringify(target.redactedDiff, null, 2)}
               </pre>
             </article>
           ))}
-        </div>
+        </DialogBody>
 
-        <p
-          id="change-preview-description"
-          className="text-muted-foreground mt-4 text-sm"
-        >
-          非受管字段与表会被保留。Apply 会再次校验目标 hash 与数据库版本。
-        </p>
         <DialogFooter>
+          <p
+            id="change-preview-description"
+            className="text-muted-foreground mr-auto"
+          >
+            非受管字段与表会被保留。Apply 会再次校验目标 hash 与数据库版本。
+          </p>
           <Button variant="outline" onClick={onClose}>
             取消
           </Button>

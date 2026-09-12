@@ -29,7 +29,7 @@ export function DialogOverlay({
       {...props}
       role="presentation"
       className={cn(
-        "fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4",
+        "bg-foreground/30 fixed inset-0 z-50 grid place-items-center p-4 backdrop-blur-[2px] dark:bg-black/50",
         className,
       )}
       onMouseDown={(event) => {
@@ -44,6 +44,12 @@ export function DialogOverlay({
   );
 }
 
+const dialogSizeClasses = {
+  sm: "max-w-md",
+  md: "max-w-xl",
+  lg: "max-w-3xl",
+} as const;
+
 interface DialogContentProps extends Omit<
   HTMLAttributes<HTMLElement>,
   "onKeyDown"
@@ -53,8 +59,13 @@ interface DialogContentProps extends Omit<
   labelledBy?: string;
   describedBy?: string;
   dialogRef?: RefObject<HTMLElement | null>;
+  /** 内容宽度档位：sm 448（确认类）/ md 576（表单、选择器，默认）/ lg 768（预览、导入）。 */
+  size?: keyof typeof dialogSizeClasses;
 }
 
+/** Three-part sheet: fixed header / scrollable body / fixed footer. Callers
+ * compose DialogHeader + DialogBody + DialogFooter inside; the content itself
+ * never scrolls so titles and actions stay visible. */
 export function DialogContent({
   children,
   className,
@@ -62,6 +73,7 @@ export function DialogContent({
   labelledBy,
   describedBy,
   dialogRef: externalDialogRef,
+  size = "md",
   ...props
 }: DialogContentProps) {
   const generatedTitleId = useId();
@@ -86,7 +98,8 @@ export function DialogContent({
       tabIndex={-1}
       onKeyDown={handleKeyDown}
       className={cn(
-        "bg-card max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl p-6 shadow-xl",
+        "rounded-dialog bg-card flex max-h-[calc(100dvh-4rem)] w-full flex-col overflow-hidden p-0 shadow-xl",
+        dialogSizeClasses[size],
         className,
       )}
     >
@@ -103,7 +116,25 @@ export function DialogHeader({
   return (
     <div
       {...props}
-      className={cn("flex items-start justify-between gap-4", className)}
+      className={cn(
+        "flex shrink-0 items-start justify-between gap-4 px-5 pt-5 pb-3",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function DialogBody({
+  children,
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      {...props}
+      className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-3", className)}
     >
       {children}
     </div>
@@ -118,7 +149,10 @@ export function DialogFooter({
   return (
     <div
       {...props}
-      className={cn("mt-6 flex flex-wrap justify-end gap-3", className)}
+      className={cn(
+        "flex shrink-0 flex-wrap items-center justify-end gap-2 px-5 pt-3 pb-5",
+        className,
+      )}
     >
       {children}
     </div>

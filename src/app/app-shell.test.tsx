@@ -139,7 +139,7 @@ describe("AppShell 侧边栏设置入口", () => {
     fireEvent.click(screen.getByRole("button", { name: "设置" }));
     expect(await screen.findByRole("dialog", { name: "设置" })).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(screen.getByRole("button", { name: "完成" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

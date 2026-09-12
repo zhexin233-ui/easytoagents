@@ -9,7 +9,9 @@ import {
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
 } from "@/components/ui/dialog";
@@ -72,76 +74,76 @@ export function HookAssignmentPickerDialog(
         onClose={close}
         labelledBy="hook-picker-title"
         describedBy="hook-picker-description"
-        className="max-h-[90vh] max-w-2xl"
       >
         <DialogHeader>
-          <h2 id="hook-picker-title" className="text-xl font-semibold">
+          <h2 id="hook-picker-title" className="text-[15px] font-semibold">
             添加到 {props.eventLabel}（{props.event}）
           </h2>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <p id="hook-picker-description" className="text-muted-foreground">
+            从中央库选择要加入该事件分组的
+            Hook；分配只更新中央意图，原生写入仍需预览后 Apply。
+          </p>
+          {error ? (
+            <p role="alert" className="text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <div className="space-y-2">
+            {props.hooks.length === 0 ? (
+              <p className="text-muted-foreground">
+                中央库尚无 Hook，请先在上方中央列表创建或导入。
+              </p>
+            ) : null}
+            {props.hooks.map((hook) => {
+              const current = hook.globalAssignments.find(
+                (assignment) => assignment.tool === props.tool,
+              );
+              const inThisGroup = current?.event === props.event;
+              return (
+                <div
+                  key={hook.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium" title={hook.name}>
+                      {hook.name}
+                      {!hook.enabled ? "（已停用）" : ""}
+                    </p>
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      {hook.event} ·{" "}
+                      {current
+                        ? inThisGroup
+                          ? "已在该分组"
+                          : `当前生效事件 ${current.event}，添加后将切换`
+                        : "未分配到该工具"}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant={inThisGroup ? "outline" : "default"}
+                    disabled={inThisGroup || assign.isPending}
+                    aria-label={`添加 ${hook.name} 到 ${props.eventLabel}`}
+                    onClick={() => assign.mutate({ hook })}
+                  >
+                    {inThisGroup ? "已在该分组" : "添加"}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </DialogBody>
+        <DialogFooter>
           <Button
+            type="button"
             variant="outline"
             disabled={assign.isPending}
             onClick={close}
-            aria-label="关闭选择器"
           >
-            关闭
+            取消
           </Button>
-        </DialogHeader>
-        <p
-          id="hook-picker-description"
-          className="text-muted-foreground mt-3 text-sm"
-        >
-          从中央库选择要加入该事件分组的
-          Hook；分配只更新中央意图，原生写入仍需预览后 Apply。
-        </p>
-        {error ? (
-          <p role="alert" className="text-destructive mt-4 text-sm">
-            {error}
-          </p>
-        ) : null}
-        <div className="mt-4 space-y-2">
-          {props.hooks.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              中央库尚无 Hook，请先在上方中央列表创建或导入。
-            </p>
-          ) : null}
-          {props.hooks.map((hook) => {
-            const current = hook.globalAssignments.find(
-              (assignment) => assignment.tool === props.tool,
-            );
-            const inThisGroup = current?.event === props.event;
-            return (
-              <div
-                key={hook.id}
-                className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium" title={hook.name}>
-                    {hook.name}
-                    {!hook.enabled ? "（已停用）" : ""}
-                  </p>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    {hook.event} ·{" "}
-                    {current
-                      ? inThisGroup
-                        ? "已在该分组"
-                        : `当前生效事件 ${current.event}，添加后将切换`
-                      : "未分配到该工具"}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant={inThisGroup ? "outline" : "default"}
-                  disabled={inThisGroup || assign.isPending}
-                  aria-label={`添加 ${hook.name} 到 ${props.eventLabel}`}
-                  onClick={() => assign.mutate({ hook })}
-                >
-                  {inThisGroup ? "已在该分组" : "添加"}
-                </Button>
-              </div>
-            );
-          })}
-        </div>
+        </DialogFooter>
       </DialogContent>
     </DialogOverlay>
   );

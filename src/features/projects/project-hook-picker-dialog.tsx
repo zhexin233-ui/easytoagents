@@ -10,7 +10,9 @@ import {
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
 } from "@/components/ui/dialog";
@@ -72,63 +74,69 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
         onClose={close}
         labelledBy="project-hook-picker-title"
         describedBy="project-hook-picker-description"
-        className="max-h-[90vh] max-w-2xl"
       >
         <DialogHeader>
-          <h2 id="project-hook-picker-title" className="text-xl font-semibold">
+          <h2
+            id="project-hook-picker-title"
+            className="text-[15px] font-semibold"
+          >
             添加到项目 {props.eventLabel}（{props.event}）
           </h2>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <p
+            id="project-hook-picker-description"
+            className="text-muted-foreground"
+          >
+            项目追加只更新中央意图；原生写入仍需生成项目预览并 Apply。
+          </p>
+          {error ? (
+            <p role="alert" className="text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <div className="space-y-2">
+            {available.length === 0 ? (
+              <p className="text-muted-foreground">
+                中央库中没有可追加的 Hook（已追加与全局继承项不会重复出现）。
+              </p>
+            ) : null}
+            {available.map((option) => (
+              <div
+                key={option.hookId}
+                className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium" title={option.name}>
+                    {option.name}
+                    {!option.enabled ? "（已停用）" : ""}
+                  </p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    默认事件 {option.event}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  aria-label={`添加 ${option.name} 到项目 ${props.eventLabel}`}
+                  disabled={assign.isPending}
+                  onClick={() => assign.mutate({ option })}
+                >
+                  添加
+                </Button>
+              </div>
+            ))}
+          </div>
+        </DialogBody>
+        <DialogFooter>
           <Button
+            type="button"
             variant="outline"
             disabled={assign.isPending}
             onClick={close}
-            aria-label="关闭项目 Hook 选择器"
           >
-            关闭
+            取消
           </Button>
-        </DialogHeader>
-        <p
-          id="project-hook-picker-description"
-          className="text-muted-foreground mt-3 text-sm"
-        >
-          项目追加只更新中央意图；原生写入仍需生成项目预览并 Apply。
-        </p>
-        {error ? (
-          <p role="alert" className="text-destructive mt-4 text-sm">
-            {error}
-          </p>
-        ) : null}
-        <div className="mt-4 space-y-2">
-          {available.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              中央库中没有可追加的 Hook（已追加与全局继承项不会重复出现）。
-            </p>
-          ) : null}
-          {available.map((option) => (
-            <div
-              key={option.hookId}
-              className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
-            >
-              <div className="min-w-0">
-                <p className="truncate font-medium" title={option.name}>
-                  {option.name}
-                  {!option.enabled ? "（已停用）" : ""}
-                </p>
-                <p className="text-muted-foreground mt-1 text-xs">
-                  默认事件 {option.event}
-                </p>
-              </div>
-              <Button
-                size="sm"
-                aria-label={`添加 ${option.name} 到项目 ${props.eventLabel}`}
-                disabled={assign.isPending}
-                onClick={() => assign.mutate({ option })}
-              >
-                添加
-              </Button>
-            </div>
-          ))}
-        </div>
+        </DialogFooter>
       </DialogContent>
     </DialogOverlay>
   );

@@ -9,6 +9,7 @@ import {
 import { BlockingState } from "@/components/blocking-state";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
   DialogHeader,
   DialogOverlay,
@@ -153,172 +154,160 @@ export function SnapshotRestoreDialog({
         onClose={handleClose}
         labelledBy="snapshot-restore-title"
         describedBy="snapshot-restore-description"
-        className="max-h-[88vh]"
+        size="lg"
       >
         <DialogHeader>
-          <div>
-            <p className="text-muted-foreground text-sm">私有恢复点</p>
-            <h2
-              id="snapshot-restore-title"
-              className="mt-1 text-xl font-semibold"
-            >
-              恢复原生目标快照
-            </h2>
-          </div>
-          <Button variant="outline" size="sm" onClick={handleClose}>
-            关闭
-          </Button>
+          <h2 id="snapshot-restore-title" className="text-[15px] font-semibold">
+            恢复原生目标快照
+          </h2>
         </DialogHeader>
-        <p
-          id="snapshot-restore-description"
-          className="text-muted-foreground mt-3 text-sm leading-6"
-        >
-          恢复前会再次创建当前状态快照并生成一次性持久化预览；目录树恢复会覆盖接管后的中央链接，并把目录恢复到接管时的内容，之后可能与中央副本产生漂移。
-        </p>
-
-        {snapshotsQuery.isPending ? (
-          <p role="status" className="mt-4 text-sm">
-            正在读取恢复点…
+        <DialogBody className="space-y-4">
+          <p
+            id="snapshot-restore-description"
+            className="text-muted-foreground leading-6"
+          >
+            恢复前会再次创建当前状态快照并生成一次性持久化预览；目录树恢复会覆盖接管后的中央链接，并把目录恢复到接管时的内容，之后可能与中央副本产生漂移。
           </p>
-        ) : null}
-        {error ? (
-          <div className="mt-4">
+
+          {snapshotsQuery.isPending ? (
+            <p role="status">正在读取恢复点…</p>
+          ) : null}
+          {error ? (
             <BlockingState
               title="恢复流程暂不可用"
               description={error}
               actionLabel="重新读取"
               onAction={() => void snapshotsQuery.refetch()}
             />
-          </div>
-        ) : null}
+          ) : null}
 
-        {preview ? (
-          <section className="mt-5 rounded-lg border p-4" aria-label="恢复预览">
-            <p className="font-medium">确认恢复此目标</p>
-            <code className="mt-2 block text-xs break-all">
-              {preview.targetPath}
-            </code>
-            <p className="mt-2 text-sm">
-              当前类型：{preview.currentType} · 快照类型：{preview.snapshotType}
-            </p>
-            <p className="text-muted-foreground mt-2 text-sm">
-              存储方式：{snapshotStorageLabel(preview.storageKind)}
-            </p>
-            {preview.storageKind === "directory_tree" ? (
-              <p className="text-warning mt-2 text-sm">
-                该恢复会重新放回完整目录树。恢复后此 Skill
-                不再指向中央副本，后续同步会把它识别为外部拥有变更。
+          {preview ? (
+            <section className="rounded-lg border p-4" aria-label="恢复预览">
+              <p className="font-medium">确认恢复此目标</p>
+              <code className="mt-2 block text-xs break-all">
+                {preview.targetPath}
+              </code>
+              <p className="mt-2 text-sm">
+                当前类型：{preview.currentType} · 快照类型：
+                {preview.snapshotType}
               </p>
-            ) : null}
-            <div className="mt-4 flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setPreview(null)}>
-                返回列表
-              </Button>
-              <Button
-                disabled={restoreMutation.isPending}
-                onClick={() => restoreMutation.mutate(preview)}
-              >
-                {restoreMutation.isPending ? "正在恢复…" : "执行恢复"}
-              </Button>
-            </div>
-          </section>
-        ) : deleteConfirm ? (
-          <section className="mt-5 rounded-lg border p-4" aria-label="删除确认">
-            <p className="font-medium">确认删除恢复点</p>
-            <p className="mt-2 text-sm">
-              {`将永久删除 ${deleteConfirm.length} 个恢复点，删除后无法再回滚到这些快照。`}
-            </p>
-            <div className="mt-4 flex justify-end gap-3">
-              <Button
-                variant="outline"
-                disabled={deleteMutation.isPending}
-                onClick={() => setDeleteConfirm(null)}
-              >
-                取消
-              </Button>
-              <Button
-                disabled={deleteMutation.isPending}
-                onClick={() => deleteMutation.mutate(deleteConfirm)}
-              >
-                {deleteMutation.isPending ? "正在删除…" : "确认删除"}
-              </Button>
-            </div>
-          </section>
-        ) : (
-          <div className="mt-5 space-y-3">
-            {deleteSummary ? (
-              <p role="status" className="text-sm">
-                {deleteSummaryText}
+              <p className="text-muted-foreground mt-2 text-sm">
+                存储方式：{snapshotStorageLabel(preview.storageKind)}
               </p>
-            ) : null}
-            {snapshots && snapshots.length > 0 ? (
-              <div className="flex justify-end gap-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={selectedCount === 0 || deleteMutation.isPending}
-                  onClick={requestDeleteSelected}
-                >
-                  删除选中 ({selectedCount})
+              {preview.storageKind === "directory_tree" ? (
+                <p className="text-warning mt-2 text-sm">
+                  该恢复会重新放回完整目录树。恢复后此 Skill
+                  不再指向中央副本，后续同步会把它识别为外部拥有变更。
+                </p>
+              ) : null}
+              <div className="mt-4 flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setPreview(null)}>
+                  返回列表
                 </Button>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={deleteMutation.isPending}
-                  onClick={requestDeleteAll}
+                  disabled={restoreMutation.isPending}
+                  onClick={() => restoreMutation.mutate(preview)}
                 >
-                  全部删除
+                  {restoreMutation.isPending ? "正在恢复…" : "执行恢复"}
                 </Button>
               </div>
-            ) : null}
-            {snapshots?.map((snapshot) => (
-              <article
-                key={snapshot.snapshotId}
-                className="rounded-lg border p-4"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      aria-label={`选择 ${snapshot.targetPath}`}
-                      checked={selectedIds.has(snapshot.snapshotId)}
-                      disabled={deleteMutation.isPending}
-                      onChange={() => toggleSelected(snapshot.snapshotId)}
-                    />
-                    <div className="min-w-0">
-                      <code className="text-xs break-all">
-                        {snapshot.targetPath}
-                      </code>
-                      <p className="text-muted-foreground mt-2 text-xs">
-                        {snapshot.createdAt} · {snapshot.targetType} ·{" "}
-                        {snapshotStorageLabel(snapshot.storageKind)}
-                      </p>
-                      {!snapshot.restorable ? (
-                        <p className="text-warning mt-2 text-xs">
-                          旧目录占位快照不含目录内容，只能删除，不能恢复。
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
+            </section>
+          ) : deleteConfirm ? (
+            <section className="rounded-lg border p-4" aria-label="删除确认">
+              <p className="font-medium">确认删除恢复点</p>
+              <p className="mt-2 text-sm">
+                {`将永久删除 ${deleteConfirm.length} 个恢复点，删除后无法再回滚到这些快照。`}
+              </p>
+              <div className="mt-4 flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => setDeleteConfirm(null)}
+                >
+                  取消
+                </Button>
+                <Button
+                  disabled={deleteMutation.isPending}
+                  onClick={() => deleteMutation.mutate(deleteConfirm)}
+                >
+                  {deleteMutation.isPending ? "正在删除…" : "确认删除"}
+                </Button>
+              </div>
+            </section>
+          ) : (
+            <div className="space-y-3">
+              {deleteSummary ? <p role="status">{deleteSummaryText}</p> : null}
+              {snapshots && snapshots.length > 0 ? (
+                <div className="flex justify-end gap-3">
                   <Button
-                    size="sm"
                     variant="outline"
-                    disabled={previewMutation.isPending || !snapshot.restorable}
-                    onClick={() => previewMutation.mutate(snapshot)}
+                    size="sm"
+                    disabled={selectedCount === 0 || deleteMutation.isPending}
+                    onClick={requestDeleteSelected}
                   >
-                    {snapshot.restorable ? "预览恢复" : "不可恢复"}
+                    删除选中 ({selectedCount})
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={deleteMutation.isPending}
+                    onClick={requestDeleteAll}
+                  >
+                    全部删除
                   </Button>
                 </div>
-              </article>
-            ))}
-            {snapshots?.length === 0 ? (
-              <p className="text-muted-foreground text-sm">
-                尚无快照。首次成功应用原生变更后会在这里出现恢复点。
-              </p>
-            ) : null}
-          </div>
-        )}
+              ) : null}
+              {snapshots?.map((snapshot) => (
+                <article
+                  key={snapshot.snapshotId}
+                  className="rounded-lg border p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        aria-label={`选择 ${snapshot.targetPath}`}
+                        checked={selectedIds.has(snapshot.snapshotId)}
+                        disabled={deleteMutation.isPending}
+                        onChange={() => toggleSelected(snapshot.snapshotId)}
+                      />
+                      <div className="min-w-0">
+                        <code className="text-xs break-all">
+                          {snapshot.targetPath}
+                        </code>
+                        <p className="text-muted-foreground mt-2 text-xs">
+                          {snapshot.createdAt} · {snapshot.targetType} ·{" "}
+                          {snapshotStorageLabel(snapshot.storageKind)}
+                        </p>
+                        {!snapshot.restorable ? (
+                          <p className="text-warning mt-2 text-xs">
+                            旧目录占位快照不含目录内容，只能删除，不能恢复。
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        previewMutation.isPending || !snapshot.restorable
+                      }
+                      onClick={() => previewMutation.mutate(snapshot)}
+                    >
+                      {snapshot.restorable ? "预览恢复" : "不可恢复"}
+                    </Button>
+                  </div>
+                </article>
+              ))}
+              {snapshots?.length === 0 ? (
+                <p className="text-muted-foreground">
+                  尚无快照。首次成功应用原生变更后会在这里出现恢复点。
+                </p>
+              ) : null}
+            </div>
+          )}
+        </DialogBody>
       </DialogContent>
     </DialogOverlay>
   );

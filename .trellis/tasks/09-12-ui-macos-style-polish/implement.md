@@ -37,14 +37,14 @@
 
 ## 阶段 2：UI 原语（`src/components/ui/`）
 
-- [ ] 2.1 `button.tsx`：按 design §3.1 更新 base/variant/size；新增 `ghost`、`icon`；
+- [x] 2.1 `button.tsx`：按 design §3.1 更新 base/variant/size；新增 `ghost`、`icon`；
       默认 variant/size 不变。
-- [ ] 2.2 `dialog.tsx`：`DialogOverlay` 改语义遮罩 + `backdrop-blur-[2px]`；
+- [x] 2.2 `dialog.tsx`：`DialogOverlay` 改语义遮罩 + `backdrop-blur-[2px]`；
       `DialogContent` 加 `size` prop（sm/md/lg）与三段式结构、统一
       `max-h-[calc(100dvh-4rem)]`、`rounded-dialog`；新增导出 `DialogBody`；
       `DialogHeader` 标题 15px；`DialogFooter` 改 `justify-between`（左状态槽、右按钮槽）。
-- [ ] 2.3 `field.tsx`：标签 `text-[13px] font-medium`，`space-y-1.5`。
-- [ ] 2.4 迁移全部对话框调用方：删除自带 `max-w-*`/`max-h-*`/`p-0 flex` 覆盖改传 `size`；
+- [x] 2.3 `field.tsx`：标签 `text-[13px] font-medium`，`space-y-1.5`。
+- [x] 2.4 迁移全部对话框调用方：删除自带 `max-w-*`/`max-h-*`/`p-0 flex` 覆盖改传 `size`；
       删除 `DialogHeader` 内右上"关闭"按钮（`onboarding-wizard.tsx` 的"暂停向导"保留）；
       删除眉标；body 内容包进 `DialogBody`。涉及：`form-dialog.tsx`、`settings-dialog.tsx`、
       `change-preview-dialog.tsx`、`snapshot-restore-dialog.tsx`、`mcp-import-dialog.tsx`、
@@ -53,9 +53,11 @@
       `skill-directory-import-dialog.tsx`、`skill-github-import-dialog.tsx`、
       `app-shell.tsx`（ProjectRemoveDialog）、`skills-page.tsx`（删除确认）。
       size 分配：确认类 sm；FormDialog/选择器/设置 md；预览/导入/快照恢复 lg。
-- [ ] 2.5 `FormDialog` 的 pending/error 文案从表单内移到 `DialogFooter` 左槽，
+      （注：`mcp-form-dialog.tsx` 不含 DialogContent，是 FormDialog 内的表单组件，无需迁移；
+      设置对话框补 footer"完成"作为可见关闭路径；两个 Hook 选择器补 footer"取消"。）
+- [x] 2.5 `FormDialog` 的 pending/error 文案从表单内移到 `DialogFooter` 左槽，
       `role=status/alert` 与 `aria-describedby` 关联保持。
-- [ ] 2.6 核对所有对话框底部按钮顺序"次按钮左、主按钮最右"。
+- [x] 2.6 核对所有对话框底部按钮顺序"次按钮左、主按钮最右"。
 
 验证：`pnpm lint && pnpm typecheck && pnpm test --run`；按阶段 0 清单更新依赖"关闭"
 按钮的测试（改走"取消"按钮或 Esc）；抽查 3 个对话框 Esc 关闭正常。

@@ -20,7 +20,9 @@ import { PlatformAssignmentButton } from "@/components/platform-assignment-butto
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
 } from "@/components/ui/dialog";
@@ -522,38 +524,35 @@ export function SkillsPage() {
             dialogRef={contentDialogRef}
             onClose={closeContentPreview}
             labelledBy="skill-content-title"
-            className="max-h-[88vh]"
+            size="lg"
           >
             <DialogHeader>
               <div>
-                <p className="text-muted-foreground text-sm">
-                  中央副本只读内容
-                </p>
+                <p className="text-muted-foreground">中央副本只读内容</p>
                 <h2
                   id="skill-content-title"
-                  className="mt-1 text-xl font-semibold"
+                  className="mt-1 text-[15px] font-semibold"
                 >
                   {contentPreview.name}
                 </h2>
               </div>
-              <Button variant="outline" size="sm" onClick={closeContentPreview}>
-                关闭
-              </Button>
             </DialogHeader>
-            <pre className="bg-muted mt-4 overflow-auto rounded p-4 text-xs leading-5">
-              {contentPreview.skillMd}
-            </pre>
-            <p className="mt-4 text-sm font-medium">目录文件</p>
-            <ul className="mt-2 list-disc pl-5 text-xs">
-              {contentPreview.files.map((file) => (
-                <li key={file}>{file}</li>
-              ))}
-            </ul>
-            {contentPreview.files.length === 0 ? (
-              <p className="text-muted-foreground mt-2 text-xs">
-                目录文件列表为空。
-              </p>
-            ) : null}
+            <DialogBody>
+              <pre className="bg-muted rounded-control overflow-auto p-4 text-xs leading-5">
+                {contentPreview.skillMd}
+              </pre>
+              <p className="mt-4 font-medium">目录文件</p>
+              <ul className="mt-2 list-disc pl-5 text-xs">
+                {contentPreview.files.map((file) => (
+                  <li key={file}>{file}</li>
+                ))}
+              </ul>
+              {contentPreview.files.length === 0 ? (
+                <p className="text-muted-foreground mt-2 text-xs">
+                  目录文件列表为空。
+                </p>
+              ) : null}
+            </DialogBody>
           </DialogContent>
         </DialogOverlay>
       ) : null}
@@ -565,36 +564,29 @@ export function SkillsPage() {
             onClose={closeAdoptDialog}
             labelledBy={adoptTitleId}
             describedBy={adoptDescriptionId}
-            className="max-w-lg"
+            size="sm"
           >
             <DialogHeader>
               <div>
-                <h2 id={adoptTitleId} className="text-xl font-semibold">
+                <h2 id={adoptTitleId} className="text-[15px] font-semibold">
                   同步更改
                 </h2>
                 <p
                   id={adoptDescriptionId}
-                  className="text-muted-foreground mt-2 text-sm"
+                  className="text-muted-foreground mt-1"
                 >
                   是否将当前中央文件采纳为权威内容？这只会更新应用内记录，不会改写工具目录中的符号链接。
                 </p>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={adoptMutation.isPending}
-                onClick={closeAdoptDialog}
-              >
-                关闭
-              </Button>
             </DialogHeader>
-            {adoptMutation.isPending ? (
-              <p role="status" className="text-muted-foreground mt-4 text-sm">
-                正在采纳当前中央文件…
-              </p>
-            ) : null}
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
+            <DialogBody>
+              {adoptMutation.isPending ? (
+                <p role="status" className="text-muted-foreground">
+                  正在采纳当前中央文件…
+                </p>
+              ) : null}
+            </DialogBody>
+            <DialogFooter>
               <Button
                 type="button"
                 variant="outline"
@@ -615,7 +607,7 @@ export function SkillsPage() {
               >
                 {adoptMutation.isPending ? "正在采纳…" : "是"}
               </Button>
-            </div>
+            </DialogFooter>
           </DialogContent>
         </DialogOverlay>
       ) : null}

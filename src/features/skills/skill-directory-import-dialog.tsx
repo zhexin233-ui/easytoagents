@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { commands, type SkillDto } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -69,35 +70,21 @@ export function SkillDirectoryImportDialog(
         onClose={close}
         labelledBy={titleId}
         describedBy={descriptionId}
-        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 flex-col overflow-hidden p-0"
       >
-        <DialogHeader className="shrink-0 border-b p-6">
+        <DialogHeader>
           <div className="min-w-0">
-            <h2 id={titleId} className="text-xl font-semibold">
+            <h2 id={titleId} className="text-[15px] font-semibold">
               从本地目录导入
             </h2>
-            <p
-              id={descriptionId}
-              className="text-muted-foreground mt-2 text-sm"
-            >
+            <p id={descriptionId} className="text-muted-foreground mt-1">
               目录必须包含合法 SKILL.md
               frontmatter。循环、断裂、逃逸链接和特殊文件会被拒绝。
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={importMutation.isPending}
-            onClick={close}
-            aria-label="关闭本地目录导入"
-          >
-            关闭
-          </Button>
         </DialogHeader>
         <form
           aria-labelledby={titleId}
-          className="flex min-h-0 flex-col"
+          className="flex min-h-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             if (!sourcePath) return;
@@ -107,7 +94,7 @@ export function SkillDirectoryImportDialog(
             importMutation.mutate(sourcePath);
           }}
         >
-          <div className="min-h-0 space-y-4 overflow-y-auto p-6">
+          <DialogBody className="space-y-4">
             <label
               htmlFor="skill-source-path"
               className="block text-sm font-medium"
@@ -144,8 +131,8 @@ export function SkillDirectoryImportDialog(
                 正在安全导入…
               </p>
             ) : null}
-          </div>
-          <DialogFooter className="shrink-0 border-t px-6 py-4">
+          </DialogBody>
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"

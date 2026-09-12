@@ -542,7 +542,7 @@ describe("ProjectDetailPage", () => {
     await waitFor(() =>
       expect(commands.applyMcpPreview).toHaveBeenCalledTimes(1),
     );
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     fireEvent.click(
       screen.getByRole("button", { name: "管理 Codex 项目资源" }),
     );

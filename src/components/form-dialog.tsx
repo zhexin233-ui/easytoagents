@@ -1,6 +1,7 @@
 import { useId, type FormEvent, type ReactNode } from "react";
 
 import {
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -50,33 +51,20 @@ export function FormDialog({
         onClose={close}
         labelledBy={titleId}
         describedBy={descriptionId}
-        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 flex-col overflow-hidden p-0"
       >
-        <DialogHeader className="shrink-0 border-b p-6">
+        <DialogHeader>
           <div className="min-w-0">
-            <h2 id={titleId} className="text-xl font-semibold">
+            <h2 id={titleId} className="text-[15px] font-semibold">
               {title}
             </h2>
-            <p
-              id={descriptionId}
-              className="text-muted-foreground mt-2 text-sm"
-            >
+            <p id={descriptionId} className="text-muted-foreground mt-1">
               {description}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={pending}
-            onClick={close}
-          >
-            关闭
-          </Button>
         </DialogHeader>
         <form
           aria-labelledby={titleId}
-          className="flex min-h-0 flex-col"
+          className="flex min-h-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             if (!pending) {
@@ -86,20 +74,18 @@ export function FormDialog({
             }
           }}
         >
-          <div className="min-h-0 space-y-4 overflow-y-auto p-6">
-            {children}
+          <DialogBody className="space-y-4">{children}</DialogBody>
+          <DialogFooter>
             {error ? (
-              <p role="alert" className="text-destructive text-sm">
+              <p role="alert" className="text-destructive mr-auto">
                 {error}
               </p>
             ) : null}
             {pending ? (
-              <p role="status" className="text-muted-foreground text-sm">
+              <p role="status" className="text-muted-foreground mr-auto">
                 正在保存，请稍候…
               </p>
             ) : null}
-          </div>
-          <DialogFooter className="shrink-0 border-t px-6 py-4">
             <Button
               type="button"
               variant="outline"

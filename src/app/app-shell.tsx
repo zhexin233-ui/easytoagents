@@ -12,7 +12,9 @@ import { useTheme } from "@/components/use-theme";
 import { useNotify } from "@/components/use-notify";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
 } from "@/components/ui/dialog";
@@ -591,26 +593,25 @@ function ProjectRemoveDialog({
         onClose={close}
         labelledBy={titleId}
         describedBy={descriptionId}
-        className="max-w-md"
+        size="sm"
       >
         <DialogHeader>
-          <h2 id={titleId} className="text-xl font-semibold">
+          <h2 id={titleId} className="text-[15px] font-semibold">
             确认移除项目
           </h2>
         </DialogHeader>
-        <p
-          id={descriptionId}
-          className="text-muted-foreground mt-3 text-sm leading-6"
-        >
-          确定要移除项目“{project.displayName}
-          ”的登记吗？此操作只移除登记，不删除项目目录或原生配置。
-        </p>
-        {pending ? (
-          <p role="status" className="text-muted-foreground mt-4 text-sm">
-            正在移除，请稍候…
+        <DialogBody>
+          <p id={descriptionId} className="text-muted-foreground leading-6">
+            确定要移除项目“{project.displayName}
+            ”的登记吗？此操作只移除登记，不删除项目目录或原生配置。
           </p>
-        ) : null}
-        <div className="mt-6 flex justify-end gap-3">
+          {pending ? (
+            <p role="status" className="text-muted-foreground mt-4">
+              正在移除，请稍候…
+            </p>
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
           <Button
             type="button"
             variant="outline"
@@ -631,7 +632,7 @@ function ProjectRemoveDialog({
           >
             {pending ? "正在移除…" : "确认移除"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </DialogOverlay>
   );

@@ -13,6 +13,7 @@ import {
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -205,34 +206,21 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
         onClose={close}
         labelledBy={titleId}
         describedBy={descriptionId}
-        className="flex max-h-[calc(100dvh-2rem)] max-w-3xl min-w-0 flex-col overflow-hidden p-0"
+        size="lg"
       >
-        <DialogHeader className="shrink-0 border-b p-6">
+        <DialogHeader>
           <div className="min-w-0">
-            <h2 id={titleId} className="text-xl font-semibold">
+            <h2 id={titleId} className="text-[15px] font-semibold">
               导入 {toolMetadata(props.tool).label} 全局 Skills
             </h2>
-            <p
-              id={descriptionId}
-              className="text-muted-foreground mt-2 text-sm"
-            >
+            <p id={descriptionId} className="text-muted-foreground mt-1">
               “复制”只新增中央副本，不修改来源；“接管”只适用于正式目录中与中央副本完全一致的外链或目录，并且一定先进入持久化预览，不会直接应用。
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={close}
-            aria-label="关闭 Skills 导入"
-          >
-            关闭
-          </Button>
         </DialogHeader>
         <form
           aria-labelledby={titleId}
-          className="flex min-h-0 flex-col"
+          className="flex min-h-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             if (
@@ -252,7 +240,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
             });
           }}
         >
-          <div className="min-h-0 space-y-4 overflow-y-auto p-6">
+          <DialogBody className="space-y-4">
             {props.tool === "codex" ? (
               <p className="text-muted-foreground text-sm">
                 Codex .system 内置技能不在本次导入范围，不会生成可选候选。
@@ -365,8 +353,8 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                 ) : null}
               </>
             ) : null}
-          </div>
-          <DialogFooter className="shrink-0 border-t px-6 py-4">
+          </DialogBody>
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"

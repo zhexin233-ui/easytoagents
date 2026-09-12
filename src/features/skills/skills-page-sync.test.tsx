@@ -210,7 +210,6 @@ describe("SkillsPage", () => {
       await within(dialog).findByRole("button", { name: "正在采纳…" }),
     ).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "取消" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "关闭" })).toBeDisabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
     fireEvent.keyDown(dialog, { key: "Escape" });
     fireEvent.click(within(dialog).getByRole("button", { name: "正在采纳…" }));

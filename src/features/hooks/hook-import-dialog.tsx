@@ -12,7 +12,9 @@ import {
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
 } from "@/components/ui/dialog";
@@ -59,104 +61,89 @@ export function HookImportDialog(props: HookImportDialogProps) {
         onClose={close}
         labelledBy="hook-import-title"
         describedBy="hook-import-description"
-        className="max-h-[90vh]"
+        size="lg"
       >
         <DialogHeader>
-          <h2 id="hook-import-title" className="text-xl font-semibold">
+          <h2 id="hook-import-title" className="text-[15px] font-semibold">
             导入 {toolMetadata(props.tool).label} 全局 Hooks
           </h2>
-          <Button
-            variant="outline"
-            disabled={confirm.isPending}
-            onClick={close}
-            aria-label="关闭 Hooks 导入"
-          >
-            关闭
-          </Button>
         </DialogHeader>
-        <p
-          id="hook-import-description"
-          className="text-muted-foreground mt-3 text-sm"
-        >
-          仅将勾选项创建为中央 Hook
-          记录；不修改原生配置，也不接管目标基线。后续写入仍需分配后单独预览并
-          Apply。
-        </p>
-        {query.isPending ? (
-          <p role="status" className="mt-4">
-            正在检测已有全局 Hooks…
+        <DialogBody className="space-y-4">
+          <p id="hook-import-description" className="text-muted-foreground">
+            仅将勾选项创建为中央 Hook
+            记录；不修改原生配置，也不接管目标基线。后续写入仍需分配后单独预览并
+            Apply。
           </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="text-destructive mt-4 text-sm">
-            {error} 请重新检测后再确认。
-          </p>
-        ) : null}
-        {preview ? (
-          <>
-            <code className="mt-4 block text-xs break-all">
-              {preview.targetPath}
-            </code>
-            {preview.message ? (
-              <p role="status" className="mt-4 text-sm">
-                {preview.message}
-              </p>
-            ) : null}
-            {preview.candidates.length > 0 ? (
-              <div className="mt-4 space-y-3">
-                {preview.candidates.map((candidate) => (
-                  <article
-                    key={candidate.candidateId}
-                    className="rounded-lg border p-4 text-sm"
-                  >
-                    <label className="flex items-center gap-2 font-medium">
-                      <input
-                        type="checkbox"
-                        aria-label={`导入 ${candidate.name || candidate.command}`}
-                        checked={selectedIds.includes(candidate.candidateId)}
-                        disabled={
-                          candidate.status !== "importable" ||
-                          confirm.isPending ||
-                          confirm.isError
-                        }
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setSelectedIds((current) =>
-                            checked
-                              ? [...current, candidate.candidateId]
-                              : current.filter(
-                                  (id) => id !== candidate.candidateId,
-                                ),
-                          );
-                        }}
-                      />
-                      {candidate.name || candidate.command}
-                    </label>
-                    <p className="text-muted-foreground mt-2 text-xs">
-                      {candidateLabels[candidate.status]}
-                      {candidate.event ? ` · ${candidate.event}` : ""}
-                      {candidate.matcher
-                        ? ` · matcher: ${candidate.matcher}`
-                        : ""}
-                      {candidate.timeoutSeconds
-                        ? ` · ${candidate.timeoutSeconds}s`
-                        : ""}
-                    </p>
-                    <code className="mt-2 block text-xs break-all">
-                      {candidate.command}
-                    </code>
-                    {candidate.reason ? (
-                      <p className="text-warning mt-2 text-xs">
-                        {candidate.reason}
+          {query.isPending ? (
+            <p role="status">正在检测已有全局 Hooks…</p>
+          ) : null}
+          {error ? (
+            <p role="alert" className="text-destructive">
+              {error} 请重新检测后再确认。
+            </p>
+          ) : null}
+          {preview ? (
+            <>
+              <code className="block text-xs break-all">
+                {preview.targetPath}
+              </code>
+              {preview.message ? <p role="status">{preview.message}</p> : null}
+              {preview.candidates.length > 0 ? (
+                <div className="space-y-3">
+                  {preview.candidates.map((candidate) => (
+                    <article
+                      key={candidate.candidateId}
+                      className="rounded-lg border p-4 text-sm"
+                    >
+                      <label className="flex items-center gap-2 font-medium">
+                        <input
+                          type="checkbox"
+                          aria-label={`导入 ${candidate.name || candidate.command}`}
+                          checked={selectedIds.includes(candidate.candidateId)}
+                          disabled={
+                            candidate.status !== "importable" ||
+                            confirm.isPending ||
+                            confirm.isError
+                          }
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setSelectedIds((current) =>
+                              checked
+                                ? [...current, candidate.candidateId]
+                                : current.filter(
+                                    (id) => id !== candidate.candidateId,
+                                  ),
+                            );
+                          }}
+                        />
+                        {candidate.name || candidate.command}
+                      </label>
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        {candidateLabels[candidate.status]}
+                        {candidate.event ? ` · ${candidate.event}` : ""}
+                        {candidate.matcher
+                          ? ` · matcher: ${candidate.matcher}`
+                          : ""}
+                        {candidate.timeoutSeconds
+                          ? ` · ${candidate.timeoutSeconds}s`
+                          : ""}
                       </p>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-            ) : null}
-          </>
-        ) : null}
-        <div className="mt-6 flex flex-wrap justify-end gap-3">
+                      <code className="mt-2 block text-xs break-all">
+                        {candidate.command}
+                      </code>
+                      {candidate.reason ? (
+                        <p className="text-warning mt-2 text-xs">
+                          {candidate.reason}
+                        </p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
           <Button
             variant="outline"
             disabled={confirm.isPending || query.isPending}
@@ -201,7 +188,7 @@ export function HookImportDialog(props: HookImportDialogProps) {
               ? "正在导入…"
               : `确认导入所选项（${selectedIds.length}）`}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </DialogOverlay>
   );

@@ -519,20 +519,15 @@ describe("全局 Skills 检测与复制导入", () => {
       expect(screen.queryByText("不应显示的旧响应")).not.toBeInTheDocument();
       expect(commands.discoverSkillImport).toHaveBeenCalledTimes(2);
       expect(commands.discoverSkillImport).toHaveBeenLastCalledWith(nextTool);
-      const close = screen.getByRole("button", { name: "关闭 Skills 导入" });
       const rescan = screen.getByRole("button", { name: "重新检测" });
-      close.focus();
-      fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
-      expect(rescan).toHaveFocus();
-      fireEvent.keyDown(rescan, { key: "Tab" });
-      expect(close).toHaveFocus();
       const dialog = screen.getByRole("dialog");
-      dialog.focus();
-      fireEvent.keyDown(dialog, { key: "Tab" });
-      expect(close).toHaveFocus();
       dialog.focus();
       fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
       expect(rescan).toHaveFocus();
+      fireEvent.keyDown(rescan, { key: "Tab" });
+      expect(
+        screen.getByRole("checkbox", { name: "导入 new-skill" }),
+      ).toHaveFocus();
       fireEvent.click(screen.getByRole("checkbox", { name: "导入 new-skill" }));
       fireEvent.keyDown(dialog, { key: "Escape" });
       expect(nextTrigger).toHaveFocus();
@@ -561,12 +556,12 @@ describe("全局 Skills 检测与复制导入", () => {
     );
     const form = screen.getByRole("form", { name: "导入 Claude 全局 Skills" });
     const dialog = screen.getByRole("dialog");
-    const close = screen.getByRole("button", { name: "关闭 Skills 导入" });
+    const cancel = screen.getByRole("button", { name: "取消" });
     const rescan = screen.getByRole("button", { name: "重新检测" });
     act(() => {
       fireEvent.submit(form);
       fireEvent.submit(form);
-      fireEvent.click(close);
+      fireEvent.click(cancel);
       fireEvent.click(rescan);
       fireEvent.keyDown(dialog, { key: "Escape" });
     });

@@ -10,7 +10,7 @@ export interface FieldProps {
 export function Field({ label, id, children }: FieldProps) {
   if (id) {
     return (
-      <div className="block space-y-2 text-sm">
+      <div className="block space-y-1.5 text-[13px]">
         <label htmlFor={id} className="font-medium">
           {label}
         </label>
@@ -20,7 +20,7 @@ export function Field({ label, id, children }: FieldProps) {
   }
 
   return (
-    <label className="block space-y-2 text-sm">
+    <label className="block space-y-1.5 text-[13px]">
       <span className="font-medium">{label}</span>
       {children}
     </label>

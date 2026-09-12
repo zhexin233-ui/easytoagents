@@ -10,7 +10,9 @@ import { RefreshEnvironmentButton } from "@/components/refresh-environment-butto
 import { type ThemePreference } from "@/components/use-theme";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
 } from "@/components/ui/dialog";
@@ -99,30 +101,25 @@ export function SettingsDialog({
         onClose={onClose}
         labelledBy="settings-dialog-title"
         describedBy="settings-dialog-description"
-        className="max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 p-0"
       >
-        <DialogHeader className="border-b p-6">
+        <DialogHeader>
           <div className="min-w-0">
-            <p className="text-muted-foreground text-sm">应用偏好</p>
             <h2
               id="settings-dialog-title"
-              className="mt-1 text-xl font-semibold"
+              className="text-[15px] font-semibold"
             >
               设置
             </h2>
             <p
               id="settings-dialog-description"
-              className="text-muted-foreground mt-2 text-sm"
+              className="text-muted-foreground mt-1"
             >
               设置立即生效并保存在本机应用数据库中。
             </p>
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            关闭
-          </Button>
         </DialogHeader>
 
-        <div className="space-y-4 p-6">
+        <DialogBody className="space-y-4">
           <section
             aria-labelledby="settings-appearance-title"
             className="rounded-lg border p-4"
@@ -238,7 +235,12 @@ export function SettingsDialog({
               </div>
             ) : null}
           </section>
-        </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" onClick={onClose}>
+            完成
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </DialogOverlay>
   );

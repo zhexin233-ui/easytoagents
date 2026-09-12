@@ -14,6 +14,7 @@ import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
   DialogHeader,
   DialogOverlay,
@@ -334,12 +335,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         onClose={onClose}
         labelledBy="onboarding-title"
         describedBy="onboarding-description"
-        className="max-h-[90vh] max-w-4xl"
+        size="lg"
       >
         <DialogHeader>
           <div>
-            <p className="text-muted-foreground text-sm">首次接管向导</p>
-            <h2 id="onboarding-title" className="mt-1 text-xl font-semibold">
+            <p className="text-muted-foreground">首次接管向导</p>
+            <h2
+              id="onboarding-title"
+              className="mt-1 text-[15px] font-semibold"
+            >
               检测 → 选择 → 预览 → 应用
             </h2>
           </div>
@@ -347,291 +351,295 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             暂停向导
           </Button>
         </DialogHeader>
-        <p
-          id="onboarding-description"
-          className="text-muted-foreground mt-3 text-sm"
-        >
-          暂停会保留选择；下次继续时会重新检测。跳过工具不会创建档案，也不会写入其配置。
-        </p>
-        <ol className="mt-4 flex flex-wrap gap-2 text-xs" aria-label="向导步骤">
-          {(["detect", "select", "preview", "done"] as const).map(
-            (item, index) => (
-              <li
-                key={item}
-                aria-current={step === item ? "step" : undefined}
-                className={
-                  step === item ? "font-semibold" : "text-muted-foreground"
-                }
-              >
-                {index + 1}. {stepLabel(item)}
-              </li>
-            ),
-          )}
-        </ol>
-
-        {operationError ? (
-          <div className="mt-4">
-            <BlockingState
-              title="向导操作未完成"
-              description={operationError}
-              {...(step === "detect"
-                ? {
-                    actionLabel: "重新检测",
-                    onAction: () => detectMutation.mutate(),
-                  }
-                : {})}
-            />
-          </div>
-        ) : null}
-
-        {step === "detect" ? (
-          <p role="status" className="mt-6 text-sm">
-            正在只读检测各工具的 Provider 与全局提示词…
+        <DialogBody>
+          <p id="onboarding-description" className="text-muted-foreground">
+            暂停会保留选择；下次继续时会重新检测。跳过工具不会创建档案，也不会写入其配置。
           </p>
-        ) : null}
+          <ol
+            className="mt-4 flex flex-wrap gap-2 text-xs"
+            aria-label="向导步骤"
+          >
+            {(["detect", "select", "preview", "done"] as const).map(
+              (item, index) => (
+                <li
+                  key={item}
+                  aria-current={step === item ? "step" : undefined}
+                  className={
+                    step === item ? "font-semibold" : "text-muted-foreground"
+                  }
+                >
+                  {index + 1}. {stepLabel(item)}
+                </li>
+              ),
+            )}
+          </ol>
 
-        {step === "select" && discovery ? (
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {tools.map((tool) => {
-              const found = discovery[tool];
-              const choice = choices[tool];
-              const providerDisabledReason = toolMetadata(tool).capabilities
-                .provider
-                ? providerChoiceDisabledReason(found)
-                : "渠道不受支持；本应用不会读取或写入该工具的 Provider 配置。";
-              const promptDisabledReason = promptChoiceDisabledReason(found);
-              const providerReasonId = `${tool}-provider-choice-reason`;
-              const promptReasonId = `${tool}-prompt-choice-reason`;
-              return (
-                <fieldset key={tool} className="rounded-lg border p-4">
-                  <legend className="px-1 font-semibold">
-                    {toolLabel(tool)}
-                  </legend>
-                  <p className="text-muted-foreground text-sm">
-                    {found.availability === "unavailable"
-                      ? "未检测到工具安装；原生目标不会被读取或应用，请跳过并保持非受管。"
-                      : found.availability === "unsupported"
-                        ? "安装探针未能安全确认版本；原生目标保持阻止，请跳过并检查工具安装。"
-                        : found.provider || found.prompt
-                          ? `已安全检测到${found.installationVersion ? `版本 ${found.installationVersion}，` : ""}可接管的原生配置。`
-                          : found.providerManaged || found.promptManaged
-                            ? "已存在中央档案，可继续生成新的持久化同步预览。"
-                            : "未发现可导入配置；可保持非受管。"}
-                  </p>
-                  {found.provider ? (
-                    <div className="bg-muted mt-3 rounded p-3 text-xs">
-                      <p className="font-medium">发现 Provider</p>
-                      <code className="mt-1 block break-all">
-                        {found.provider.targetPath}
-                      </code>
-                      <p className="text-muted-foreground mt-1">
-                        {providerModelText(found.provider.defaultModel)} ·{" "}
-                        {providerImportCredentialText(found.provider)}
-                      </p>
-                      {found.provider.skippedEnvKeys.length > 0 ? (
-                        <p className="text-muted-foreground mt-1">
-                          以下 env
-                          疑似凭据或格式不受支持，不纳入管理并保持原样：
-                          {found.provider.skippedEnvKeys.join("、")}
-                        </p>
-                      ) : null}
-                      <pre className="mt-2 overflow-auto">
-                        {JSON.stringify(
-                          found.provider.redactedProjection,
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </div>
-                  ) : null}
-                  {found.prompt ? (
-                    <div className="bg-muted mt-3 rounded p-3 text-xs">
-                      <p className="font-medium">发现全局提示词</p>
-                      <code className="mt-1 block break-all">
-                        {found.prompt.targetPath}
-                      </code>
-                    </div>
-                  ) : null}
-                  {found.errors.map((error) => (
-                    <p
-                      key={error}
-                      role="alert"
-                      className="text-warning mt-2 text-xs"
-                    >
-                      {error}
-                    </p>
-                  ))}
-                  <label className="mt-4 flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={choice.provider}
-                      disabled={providerDisabledReason !== null}
-                      aria-describedby={
-                        providerDisabledReason ? providerReasonId : undefined
-                      }
-                      onChange={(event) =>
-                        updateChoice(
-                          setChoices,
-                          tool,
-                          "provider",
-                          event.target.checked,
-                        )
-                      }
-                    />
-                    导入并接管 Provider
-                  </label>
-                  {providerDisabledReason ? (
-                    <p
-                      id={providerReasonId}
-                      className="text-muted-foreground mt-1 pl-6 text-xs"
-                    >
-                      {providerDisabledReason}
-                    </p>
-                  ) : null}
-                  <label className="mt-3 flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={choice.prompt}
-                      disabled={promptDisabledReason !== null}
-                      aria-describedby={
-                        promptDisabledReason ? promptReasonId : undefined
-                      }
-                      onChange={(event) =>
-                        updateChoice(
-                          setChoices,
-                          tool,
-                          "prompt",
-                          event.target.checked,
-                        )
-                      }
-                    />
-                    无损导入并接管全局提示词
-                  </label>
-                  {promptDisabledReason ? (
-                    <p
-                      id={promptReasonId}
-                      className="text-muted-foreground mt-1 pl-6 text-xs"
-                    >
-                      {promptDisabledReason}
-                    </p>
-                  ) : null}
-                  <label className="mt-3 flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={choice.skip}
-                      onChange={(event) =>
-                        setChoices((current) => ({
-                          ...current,
-                          [tool]: {
-                            provider: false,
-                            prompt: false,
-                            skip: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    跳过 {toolLabel(tool)}，保持非受管
-                  </label>
-                </fieldset>
-              );
-            })}
-            <div className="flex justify-end md:col-span-2">
-              <Button
-                disabled={!canPrepare || prepareMutation.isPending}
-                onClick={() => prepareMutation.mutate()}
-              >
-                {prepareMutation.isPending
-                  ? "正在生成预览…"
-                  : "确认选择并生成预览"}
-              </Button>
+          {operationError ? (
+            <div className="mt-4">
+              <BlockingState
+                title="向导操作未完成"
+                description={operationError}
+                {...(step === "detect"
+                  ? {
+                      actionLabel: "重新检测",
+                      onAction: () => detectMutation.mutate(),
+                    }
+                  : {})}
+              />
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {step === "preview" ? (
-          <div className="mt-6 space-y-4">
-            {previewWarnings.length > 0 ? (
-              <ul
-                className={`text-warning list-disc rounded-lg border p-4 pl-9 text-sm ${toneClass("warning")}`}
-              >
-                {previewWarnings.map((warning, index) => (
-                  <li key={`${warning}-${index}`}>{warning}</li>
-                ))}
-              </ul>
-            ) : null}
-            {previews.map((preview) => (
-              <article
-                key={`${preview.tool}-${preview.artifactKind}`}
-                className="rounded-lg border p-4"
-              >
-                <h3 className="font-medium">
-                  {toolLabel(preview.tool)} ·{" "}
-                  {artifactLabel(preview.artifactKind)}
-                </h3>
-                <div className="mt-3 space-y-2">
-                  {preview.plan.targets.map((target) => (
-                    <div key={target.targetId} className="rounded border p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <code className="text-xs break-all">
-                          {target.descriptor.path ?? "目标路径不可用"}
-                        </code>
-                        <SyncStatusBadge
-                          status={target.status}
-                          changeKind={target.changeKind}
-                        />
-                      </div>
-                      {target.errorCode ? (
-                        <p
-                          role="alert"
-                          className="text-destructive mt-2 text-xs"
-                        >
-                          阻止应用：{target.errorCode}
-                        </p>
-                      ) : null}
-                      {target.warningCodes.length > 0 ? (
-                        <ul className="text-warning mt-2 list-disc pl-5 text-xs">
-                          {target.warningCodes.map((warning) => (
-                            <li key={warning}>{warning}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      <pre className="bg-muted mt-3 overflow-auto rounded p-3 text-xs">
-                        {JSON.stringify(target.redactedDiff, null, 2)}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            ))}
-            <div className="flex justify-end gap-3">
-              <Button
-                variant="outline"
-                disabled={hasAppliedPreview}
-                onClick={() => setStep("select")}
-              >
-                {hasAppliedPreview ? "已有应用，不能返回选择" : "返回选择"}
-              </Button>
-              <Button
-                disabled={blockedPreview || applyMutation.isPending}
-                onClick={() => applyMutation.mutate()}
-              >
-                {applyMutation.isPending ? "正在应用…" : "应用全部预览"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
-        {step === "done" ? (
-          <div className={`mt-6 rounded-lg border p-5 ${toneClass("success")}`}>
-            <p className="font-semibold">向导已完成</p>
-            <p className="mt-2 text-sm">
-              已选择项完成导入与显式应用；跳过或未选择的工具保持非受管。
+          {step === "detect" ? (
+            <p role="status" className="mt-6 text-sm">
+              正在只读检测各工具的 Provider 与全局提示词…
             </p>
-            <Button className="mt-4" onClick={onClose}>
-              返回总览
-            </Button>
-          </div>
-        ) : null}
+          ) : null}
+
+          {step === "select" && discovery ? (
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              {tools.map((tool) => {
+                const found = discovery[tool];
+                const choice = choices[tool];
+                const providerDisabledReason = toolMetadata(tool).capabilities
+                  .provider
+                  ? providerChoiceDisabledReason(found)
+                  : "渠道不受支持；本应用不会读取或写入该工具的 Provider 配置。";
+                const promptDisabledReason = promptChoiceDisabledReason(found);
+                const providerReasonId = `${tool}-provider-choice-reason`;
+                const promptReasonId = `${tool}-prompt-choice-reason`;
+                return (
+                  <fieldset key={tool} className="rounded-lg border p-4">
+                    <legend className="px-1 font-semibold">
+                      {toolLabel(tool)}
+                    </legend>
+                    <p className="text-muted-foreground text-sm">
+                      {found.availability === "unavailable"
+                        ? "未检测到工具安装；原生目标不会被读取或应用，请跳过并保持非受管。"
+                        : found.availability === "unsupported"
+                          ? "安装探针未能安全确认版本；原生目标保持阻止，请跳过并检查工具安装。"
+                          : found.provider || found.prompt
+                            ? `已安全检测到${found.installationVersion ? `版本 ${found.installationVersion}，` : ""}可接管的原生配置。`
+                            : found.providerManaged || found.promptManaged
+                              ? "已存在中央档案，可继续生成新的持久化同步预览。"
+                              : "未发现可导入配置；可保持非受管。"}
+                    </p>
+                    {found.provider ? (
+                      <div className="bg-muted mt-3 rounded p-3 text-xs">
+                        <p className="font-medium">发现 Provider</p>
+                        <code className="mt-1 block break-all">
+                          {found.provider.targetPath}
+                        </code>
+                        <p className="text-muted-foreground mt-1">
+                          {providerModelText(found.provider.defaultModel)} ·{" "}
+                          {providerImportCredentialText(found.provider)}
+                        </p>
+                        {found.provider.skippedEnvKeys.length > 0 ? (
+                          <p className="text-muted-foreground mt-1">
+                            以下 env
+                            疑似凭据或格式不受支持，不纳入管理并保持原样：
+                            {found.provider.skippedEnvKeys.join("、")}
+                          </p>
+                        ) : null}
+                        <pre className="mt-2 overflow-auto">
+                          {JSON.stringify(
+                            found.provider.redactedProjection,
+                            null,
+                            2,
+                          )}
+                        </pre>
+                      </div>
+                    ) : null}
+                    {found.prompt ? (
+                      <div className="bg-muted mt-3 rounded p-3 text-xs">
+                        <p className="font-medium">发现全局提示词</p>
+                        <code className="mt-1 block break-all">
+                          {found.prompt.targetPath}
+                        </code>
+                      </div>
+                    ) : null}
+                    {found.errors.map((error) => (
+                      <p
+                        key={error}
+                        role="alert"
+                        className="text-warning mt-2 text-xs"
+                      >
+                        {error}
+                      </p>
+                    ))}
+                    <label className="mt-4 flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={choice.provider}
+                        disabled={providerDisabledReason !== null}
+                        aria-describedby={
+                          providerDisabledReason ? providerReasonId : undefined
+                        }
+                        onChange={(event) =>
+                          updateChoice(
+                            setChoices,
+                            tool,
+                            "provider",
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      导入并接管 Provider
+                    </label>
+                    {providerDisabledReason ? (
+                      <p
+                        id={providerReasonId}
+                        className="text-muted-foreground mt-1 pl-6 text-xs"
+                      >
+                        {providerDisabledReason}
+                      </p>
+                    ) : null}
+                    <label className="mt-3 flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={choice.prompt}
+                        disabled={promptDisabledReason !== null}
+                        aria-describedby={
+                          promptDisabledReason ? promptReasonId : undefined
+                        }
+                        onChange={(event) =>
+                          updateChoice(
+                            setChoices,
+                            tool,
+                            "prompt",
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      无损导入并接管全局提示词
+                    </label>
+                    {promptDisabledReason ? (
+                      <p
+                        id={promptReasonId}
+                        className="text-muted-foreground mt-1 pl-6 text-xs"
+                      >
+                        {promptDisabledReason}
+                      </p>
+                    ) : null}
+                    <label className="mt-3 flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={choice.skip}
+                        onChange={(event) =>
+                          setChoices((current) => ({
+                            ...current,
+                            [tool]: {
+                              provider: false,
+                              prompt: false,
+                              skip: event.target.checked,
+                            },
+                          }))
+                        }
+                      />
+                      跳过 {toolLabel(tool)}，保持非受管
+                    </label>
+                  </fieldset>
+                );
+              })}
+              <div className="flex justify-end md:col-span-2">
+                <Button
+                  disabled={!canPrepare || prepareMutation.isPending}
+                  onClick={() => prepareMutation.mutate()}
+                >
+                  {prepareMutation.isPending
+                    ? "正在生成预览…"
+                    : "确认选择并生成预览"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {step === "preview" ? (
+            <div className="mt-6 space-y-4">
+              {previewWarnings.length > 0 ? (
+                <ul
+                  className={`text-warning list-disc rounded-lg border p-4 pl-9 text-sm ${toneClass("warning")}`}
+                >
+                  {previewWarnings.map((warning, index) => (
+                    <li key={`${warning}-${index}`}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {previews.map((preview) => (
+                <article
+                  key={`${preview.tool}-${preview.artifactKind}`}
+                  className="rounded-lg border p-4"
+                >
+                  <h3 className="font-medium">
+                    {toolLabel(preview.tool)} ·{" "}
+                    {artifactLabel(preview.artifactKind)}
+                  </h3>
+                  <div className="mt-3 space-y-2">
+                    {preview.plan.targets.map((target) => (
+                      <div key={target.targetId} className="rounded border p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <code className="text-xs break-all">
+                            {target.descriptor.path ?? "目标路径不可用"}
+                          </code>
+                          <SyncStatusBadge
+                            status={target.status}
+                            changeKind={target.changeKind}
+                          />
+                        </div>
+                        {target.errorCode ? (
+                          <p
+                            role="alert"
+                            className="text-destructive mt-2 text-xs"
+                          >
+                            阻止应用：{target.errorCode}
+                          </p>
+                        ) : null}
+                        {target.warningCodes.length > 0 ? (
+                          <ul className="text-warning mt-2 list-disc pl-5 text-xs">
+                            {target.warningCodes.map((warning) => (
+                              <li key={warning}>{warning}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        <pre className="bg-muted mt-3 overflow-auto rounded p-3 text-xs">
+                          {JSON.stringify(target.redactedDiff, null, 2)}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  disabled={hasAppliedPreview}
+                  onClick={() => setStep("select")}
+                >
+                  {hasAppliedPreview ? "已有应用，不能返回选择" : "返回选择"}
+                </Button>
+                <Button
+                  disabled={blockedPreview || applyMutation.isPending}
+                  onClick={() => applyMutation.mutate()}
+                >
+                  {applyMutation.isPending ? "正在应用…" : "应用全部预览"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {step === "done" ? (
+            <div
+              className={`mt-6 rounded-lg border p-5 ${toneClass("success")}`}
+            >
+              <p className="font-semibold">向导已完成</p>
+              <p className="mt-2 text-sm">
+                已选择项完成导入与显式应用；跳过或未选择的工具保持非受管。
+              </p>
+              <Button className="mt-4" onClick={onClose}>
+                返回总览
+              </Button>
+            </div>
+          ) : null}
+        </DialogBody>
       </DialogContent>
     </DialogOverlay>
   );

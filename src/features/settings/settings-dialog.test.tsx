@@ -180,7 +180,7 @@ describe("SettingsDialog", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
-  it("点击关闭按钮触发 onClose", async () => {
+  it("点击完成按钮触发 onClose", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
@@ -191,7 +191,7 @@ describe("SettingsDialog", () => {
     const onClose = vi.fn();
     renderDialog({ onClose });
 
-    fireEvent.click(await screen.findByRole("button", { name: "关闭" }));
+    fireEvent.click(await screen.findByRole("button", { name: "完成" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

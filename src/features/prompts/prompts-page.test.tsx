@@ -222,15 +222,15 @@ describe("PromptsPage", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(dialog).toHaveAccessibleDescription(/保存只更新中央/);
     expect(within(dialog).getByLabelText("名称")).toHaveValue("");
-    const close = within(dialog).getByRole("button", { name: "关闭" });
     const submit = within(dialog).getByRole("button", {
       name: "创建提示词",
     });
-    expect(close).toHaveFocus();
-    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    const nameInput = within(dialog).getByLabelText("名称");
+    expect(nameInput).toHaveFocus();
+    fireEvent.keyDown(nameInput, { key: "Tab", shiftKey: true });
     expect(submit).toHaveFocus();
     fireEvent.keyDown(submit, { key: "Tab" });
-    expect(close).toHaveFocus();
+    expect(nameInput).toHaveFocus();
     fillPromptForm(dialog);
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -240,7 +240,7 @@ describe("PromptsPage", () => {
     dialog = screen.getByRole("dialog", { name: "新增提示词" });
     expect(within(dialog).getByLabelText("名称")).toHaveValue("");
     expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue("");
-    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
     expect(commands.createPromptProfile).not.toHaveBeenCalled();
@@ -533,7 +533,7 @@ describe("PromptsPage", () => {
     expect(await within(dialog).findByRole("status")).toHaveTextContent(
       "正在保存",
     );
-    for (const name of ["关闭", "取消", "正在保存…"]) {
+    for (const name of ["取消", "正在保存…"]) {
       const button = within(dialog).getByRole("button", { name });
       expect(button).toBeDisabled();
       fireEvent.click(button);

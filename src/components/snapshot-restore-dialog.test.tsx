@@ -79,7 +79,7 @@ describe("SnapshotRestoreDialog", () => {
       name: "恢复原生目标快照",
     });
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(screen.getByRole("button", { name: "关闭" })).toHaveFocus();
+    expect(dialog).toHaveFocus();
 
     fireEvent.click(await screen.findByRole("button", { name: "预览恢复" }));
     expect(await screen.findByText("确认恢复此目标")).toBeInTheDocument();

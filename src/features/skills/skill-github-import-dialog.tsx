@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { commands, type SkillDto } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
 import {
+  DialogBody,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -56,35 +57,24 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
         onClose={close}
         labelledBy={titleId}
         describedBy={descriptionId}
-        className="flex max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 flex-col overflow-hidden p-0"
       >
-        <DialogHeader className="shrink-0 border-b p-6">
+        <DialogHeader>
           <div className="min-w-0">
-            <h2 id={titleId} className="text-xl font-semibold">
+            <h2 id={titleId} className="text-[15px] font-semibold">
               从 GitHub 导入
             </h2>
             <p
               id={descriptionId}
-              className="text-muted-foreground mt-2 text-sm leading-6"
+              className="text-muted-foreground mt-1 leading-6"
             >
               支持公开仓库的单个 Skill
               目录链接。下载会固定到一次解析的提交，只复制到应用私有中央库，不执行脚本，也不会自动分配或同步。
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={importMutation.isPending}
-            onClick={close}
-            aria-label="关闭 GitHub 导入"
-          >
-            关闭
-          </Button>
         </DialogHeader>
         <form
           aria-labelledby={titleId}
-          className="flex min-h-0 flex-col"
+          className="flex min-h-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             if (committed || normalizedInput.length === 0) return;
@@ -94,7 +84,7 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
             importMutation.mutate(normalizedInput);
           }}
         >
-          <div className="min-h-0 space-y-4 overflow-y-auto p-6">
+          <DialogBody className="space-y-4">
             <label
               htmlFor="skill-github-url"
               className="block text-sm font-medium"
@@ -131,8 +121,8 @@ export function SkillGithubImportDialog(props: SkillGithubImportDialogProps) {
                 。请关闭后刷新页面查看；为避免重复导入，本次链接不能再次提交。
               </p>
             ) : null}
-          </div>
-          <DialogFooter className="shrink-0 border-t px-6 py-4">
+          </DialogBody>
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
