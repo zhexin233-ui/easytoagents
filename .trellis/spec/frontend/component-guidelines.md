@@ -286,6 +286,13 @@ rules.
   (or any clsx call): clsx skips function arguments silently, so the
   `isActive`/`isPending` classes disappear with no error or test failure. Pass
   the function directly to `className` and call `cn` inside its body.
+- Rendering the same page component for several routes without a `key`
+  (tool profile routes: `src/app/tool-profile-routes.tsx`). React reuses the
+  component instance across tool switches, so page-local state — import
+  previews, mutation errors, form drafts, preview dialogs — leaks into the
+  other tool's tab. Every tool route element carries `key=<tool>`; the shared
+  `TOOL_PROFILE_ROUTES` constant is exported so the navigation regression test
+  exercises the real config (a copy in the test would not catch key removal).
 
 ## 新增与编辑弹窗
 
