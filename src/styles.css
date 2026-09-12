@@ -103,6 +103,14 @@
 }
 
 html,
+body,
+#root {
+  /* 透明窗口：侧栏区域透出 NSVisualEffect 原生材质；任何未铺底色的
+     区域都会"漏底"透出桌面，内容列必须自带不透明背景。 */
+  background: transparent;
+}
+
+html,
 body {
   height: 100%;
   /* 外壳（AppShell）自管滚动：WebKit 会把内部滚动容器的内容误计入文档
@@ -113,7 +121,6 @@ body {
 body {
   min-width: 320px;
   margin: 0;
-  background: var(--background);
   color: var(--foreground);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

@@ -1,11 +1,16 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import {
   applyThemeFromStorage,
   themeStorageKey,
   useTheme,
 } from "@/components/use-theme";
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: vi.fn(),
+}));
 
 interface FakeMediaQueryList {
   matches: boolean;
@@ -53,6 +58,7 @@ describe("useTheme", () => {
   beforeEach(() => {
     localStorage.clear();
     resetDocumentTheme();
+    vi.mocked(getCurrentWindow).mockClear();
   });
 
   afterEach(() => {
@@ -154,5 +160,17 @@ describe("useTheme", () => {
     localStorage.setItem(themeStorageKey, "invalid");
     applyThemeFromStorage();
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+  });
+
+  it("非 Tauri 环境（无 __TAURI_INTERNALS__）不调用窗口 setTheme", async () => {
+    expect("__TAURI_INTERNALS__" in window).toBe(false);
+
+    const { result } = renderHook(() => useTheme());
+    act(() => {
+      result.current.setPreference("dark");
+    });
+
+    await Promise.resolve();
+    expect(vi.mocked(getCurrentWindow).mock.calls).toHaveLength(0);
   });
 });

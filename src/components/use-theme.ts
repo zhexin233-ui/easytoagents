@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export const themeStorageKey = "easytoagents.theme.v1";
 
@@ -42,8 +43,19 @@ function resolveTheme(preference: ThemePreference): ResolvedTheme {
   return readSystemDark() ? "dark" : "light";
 }
 
-function applyResolvedTheme(resolved: ResolvedTheme): void {
+function applyResolvedTheme(
+  resolved: ResolvedTheme,
+  preference?: ThemePreference,
+): void {
   document.documentElement.classList.toggle("dark", resolved === "dark");
+  // 让 Tauri 窗口的原生外观（含侧栏 NSVisualEffect 材质）跟随应用主题：
+  // system 偏好传 null 让窗口回到跟随系统。vitest / 浏览器环境无 Tauri
+  // IPC（__TAURI_INTERNALS__ 不存在），静默跳过。
+  if (preference && "__TAURI_INTERNALS__" in window) {
+    void getCurrentWindow()
+      .setTheme(preference === "system" ? null : resolved)
+      .catch(() => {});
+  }
 }
 
 /**
@@ -52,7 +64,8 @@ function applyResolvedTheme(resolved: ResolvedTheme): void {
  * （Tauri CSP 禁止 index.html 内联脚本，因此不用 head 内联引导方案）。
  */
 export function applyThemeFromStorage(): void {
-  applyResolvedTheme(resolveTheme(readStoredPreference()));
+  const preference = readStoredPreference();
+  applyResolvedTheme(resolveTheme(preference), preference);
 }
 
 export function useTheme(): ThemeState {
@@ -64,7 +77,7 @@ export function useTheme(): ThemeState {
 
   // 同步外部系统：把当前解析结果落到 <html> 的 dark class 与持久化存储。
   useEffect(() => {
-    applyResolvedTheme(resolvedTheme);
+    applyResolvedTheme(resolvedTheme, preference);
     try {
       localStorage.setItem(themeStorageKey, preference);
     } catch {

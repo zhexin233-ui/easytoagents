@@ -176,22 +176,23 @@
 
 前提：阶段 1–7 已通过。本阶段单独一个 commit。
 
-- [ ] 8.1 `src-tauri/tauri.conf.json`：`app.macOSPrivateApi: true`；主窗口
+- [x] 8.1 `src-tauri/tauri.conf.json`：`app.macOSPrivateApi: true`；主窗口
       `transparent: true`、`windowEffects: { effects: ["sidebar"], state: "followsWindowActiveState" }`。
-- [ ] 8.2 `src-tauri/capabilities/default.json` 新增 `core:window:allow-set-theme`。
-- [ ] 8.3 `src/styles.css`：`html, body, #root` 背景改 `transparent`；`overflow: hidden`
+- [x] 8.2 `src-tauri/capabilities/default.json` 新增 `core:window:allow-set-theme`。
+- [x] 8.3 `src/styles.css`：`html, body, #root` 背景改 `transparent`；`overflow: hidden`
       与 `height: 100%` 不变。
-- [ ] 8.4 `src/app/app-shell.tsx`：`<aside>` 由 `bg-sidebar` 改 `bg-transparent`；右列根
+- [x] 8.4 `src/app/app-shell.tsx`：`<aside>` 由 `bg-sidebar` 改 `bg-transparent`；右列根
       容器加 `bg-background`；顶部工具栏改 `bg-background/80 backdrop-blur`。
-- [ ] 8.5 `src/components/use-theme.ts`：`applyResolvedTheme` 内追加
+- [x] 8.5 `src/components/use-theme.ts`：`applyResolvedTheme` 内追加
       `getCurrentWindow().setTheme(...)`（`system` → `null`），仅当
       `"__TAURI_INTERNALS__" in window` 时调用并 `catch` 吞错；`use-theme` 现有测试
       补一条"非 Tauri 环境不调用"的断言。
-- [ ] 8.6 Tauri 窗口验收：拖动窗口到不同壁纸上侧栏透出；设置中切换 浅色 / 深色 /
-      系统 三种偏好，侧栏材质与应用主题一致；全部页面与至少三个对话框无"漏底"；
-      窗口失焦时材质变淡属正常。
+- [ ] 8.6 Tauri 窗口验收 —— **待用户执行**：拖动窗口到不同壁纸上侧栏透出；设置中切换
+      浅色 / 深色 / 系统 三种偏好，侧栏材质与应用主题一致；全部页面与至少三个对话框
+      无"漏底"；窗口失焦时材质变淡属正常。
 - [ ] 8.7 回退预案：若 8.6 任一项不通过且当场不可修复，revert 本阶段 commit，侧栏回到
-      `bg-sidebar` 不透明，其余阶段成果不受影响；在任务 `notes` 记录原因。
+      `bg-sidebar` 不透明（把 `<aside>` 的 `bg-transparent` 改回 `bg-sidebar`、body 背景
+      恢复即可），其余阶段成果不受影响；在任务 `notes` 记录原因。
 
 验证：`pnpm lint && pnpm typecheck && pnpm test --run`；`git diff --stat src-tauri`
 只含 `tauri.conf.json` 与 `capabilities/default.json`。

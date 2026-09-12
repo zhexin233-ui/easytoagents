@@ -85,7 +85,7 @@ export function AppShell() {
   return (
     <NotifyProvider>
       <div className="flex h-screen overflow-hidden">
-        <aside className="bg-sidebar flex w-[220px] shrink-0 flex-col border-r select-none">
+        <aside className="flex w-[220px] shrink-0 flex-col border-r select-none">
           <nav
             aria-label="一级导航"
             className="min-h-0 flex-1 space-y-px overflow-y-auto px-2 pt-3"
@@ -119,7 +119,7 @@ export function AppShell() {
             </button>
           </div>
         </aside>
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="bg-background flex min-w-0 flex-1 flex-col">
           <TopBar />
           <div className="min-w-0 flex-1 overflow-y-auto">
             <Suspense fallback={<PageLoading />}>
@@ -160,7 +160,7 @@ function TopBar() {
   );
 
   return (
-    <header className="bg-sidebar/70 flex h-11 shrink-0 items-center justify-end border-b px-4 backdrop-blur">
+    <header className="bg-background/80 flex h-11 shrink-0 items-center justify-end border-b px-4 backdrop-blur">
       <nav aria-label="工具入口" className="flex items-center gap-1">
         {toolLinks.map((link) => (
           <NavLink
