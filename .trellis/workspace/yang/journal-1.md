@@ -1582,3 +1582,44 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Next Steps
 
 - implement.md 4.4 手动验收仍待用户在 GUI 中登记 picslicer 确认 Claude/Codex/Cursor Hooks 视图展示（不阻塞归档）
+
+
+## Session 62: UI macOS 风格优化落地与验收修复
+
+**Date**: 2026-09-12
+**Task**: UI macOS 风格优化落地与验收修复
+**Branch**: `main`
+
+### Summary
+
+按 implement.md 九个阶段完成前端 macOS 风格改造：设计 token（系统字体/accent/三档圆角/13px 基准）、对话框三段式与按钮原语、侧栏外壳、PageHeader/EmptyState 页面骨架、divide-y 列表与色板收敛、copy-audit 文案清理、规范更新、侧栏原生毛玻璃材质。用户验收后追加修复：弹窗外部点击关闭、页头与内容列对齐、内容随窗口宽度自适应；补充 macos-private-api feature 使透明材质生效。测试 299→309 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `556a562` | (see git log) |
+| `afd84a2` | (see git log) |
+| `27a4b03` | (see git log) |
+| `7e350a7` | (see git log) |
+| `1145707` | (see git log) |
+| `22fe49f` | (see git log) |
+| `5a6d8ac` | (see git log) |
+| `f3c30d0` | (see git log) |
+| `ae14579` | (see git log) |
+| `dfd44f7` | (see git log) |
+| `45432fb` | (see git log) |
+| `8ea4b6a` | (see git log) |
+| `0f81436` | (see git log) |
+
+### Testing
+
+- [OK] pnpm lint && pnpm typecheck && pnpm format:check && pnpm test --run（309 通过）&& cargo check
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 推送 main；后续如需回退侧栏材质，revert f3c30d0 并还原 aside 类名

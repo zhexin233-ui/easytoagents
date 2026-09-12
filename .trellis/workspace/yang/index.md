@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 61
+- **Total Sessions**: 62
 - **Last Active**: 2026-09-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1584 | Active |
+| `journal-1.md` | ~1625 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 62 | 2026-09-12 | UI macOS 风格优化落地与验收修复 | `556a562`, `afd84a2`, `27a4b03`, `7e350a7`, `1145707`, `22fe49f`, `5a6d8ac`, `f3c30d0`, `ae14579`, `dfd44f7`, `45432fb`, `8ea4b6a`, `0f81436` | `main` |
 | 61 | 2026-09-12 | 收尾归档：项目级 Hooks 只读纳入项目原生资源（09-12-fix-project-native-hooks-empty） | `e6a8f15`, `7424291`, `3df5f63` | `main` |
 | 60 | 2026-09-12 | 修复渠道导入孤儿基线冲突与工具页签状态残留 | `c2c2a83`, `eb902d6`, `2f10cc4` | `main` |
 | 59 | 2026-09-12 | 修复 Claude/Codex 渠道缺陷并新增官方账号登录渠道 | `34c89cc`, `654a23a` | `main` |
