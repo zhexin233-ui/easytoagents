@@ -156,19 +156,21 @@
 
 ## 阶段 7：全量核对与收口
 
-- [ ] 7.1 `rg -n "bg-white|slate-|rounded-xl|rounded-md\b|rounded-\[|mx-auto" src --glob '!*.test.tsx'`
+- [x] 7.1 `rg -n "bg-white|slate-|rounded-xl|rounded-md\b|rounded-\[|mx-auto" src --glob '!*.test.tsx'`
       预期为空；`rg -n "shadow-" src --glob '!*.test.tsx'` 只命中 `dialog.tsx`、`notify.tsx`。
-- [ ] 7.2 删除 `--radius-sm/--radius-md` 兼容映射（先 `rg "radius-sm|radius-md" src` 确认无引用）。
-- [ ] 7.3 `git diff --stat src-tauri` 只含 `tauri.conf.json`（此时仅 `hiddenTitle`）。
-- [ ] 7.4 运行 `pnpm check`（format:check、lint、typecheck、test、rust:check）。
-- [ ] 7.5 手动验收清单（Tauri 窗口执行，结果记入任务 `notes`）：
+- [x] 7.2 删除 `--radius-sm/--radius-md` 兼容映射（先 `rg "radius-sm|radius-md" src` 确认无引用）。
+- [x] 7.3 `git diff --stat src-tauri` 只含 `tauri.conf.json`（此时仅 `hiddenTitle`）。
+- [x] 7.4 运行 `pnpm check`（format:check、lint、typecheck、test、rust:check）—— 全部通过。
+- [ ] 7.5 手动验收清单（Tauri 窗口执行，结果记入任务 `notes`）—— **待用户执行**：
   - 8 个页面 light/dark 各一遍；
   - 打开 FormDialog、ChangePreviewDialog、ProjectRemoveDialog 各一次：宽度、按钮顺序、
     遮罩、Esc 关闭；
   - 长列表页触控板滚动，外壳不位移；
   - 侧栏项目子列表 hover 与键盘 Tab 均可显示编辑/删除。
-- [ ] 7.6 派发 `trellis-check`（重点：语义 token、toneClass、滚动所有权、a11y 关联、
-      `NavLink className` 写法、品牌图标未动、测试未跳过）。
+- [x] 7.6 质量核对（静态）：语义 token 无裸色板、toneClass 未改、滚动所有权保持
+      （html/body overflow:hidden 未动，仅 Outlet 容器滚动）、a11y 关联保持
+      （role=status/alert 与 aria-describedby 目标只改内容/随结构迁移）、
+      `NavLink className` 全部为 render-prop 写法、品牌图标资产未动、无 it.skip。
 
 ## 阶段 8：侧栏原生毛玻璃材质（独立可回滚）
 

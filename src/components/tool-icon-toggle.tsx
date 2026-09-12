@@ -26,7 +26,7 @@ export function ToolIconToggle({
       size="sm"
       variant="outline"
       className={cn(
-        "size-8 p-0 shadow-none",
+        "size-8 p-0",
         active ? "border-border bg-muted" : "border-border bg-transparent",
       )}
       aria-label={label}

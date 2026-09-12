@@ -196,7 +196,7 @@ function NativeResourceRow({
             type="button"
             size="sm"
             variant="outline"
-            className="shrink-0 shadow-none"
+            className="shrink-0"
             aria-label={actionLabel}
             disabled={pending || (!resource.canDisable && !resource.canRestore)}
             onClick={onAction}

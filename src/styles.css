@@ -31,12 +31,9 @@
   --font-mono:
     ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
     monospace;
-  /* 三档圆角：控件 6px / 卡片 10px / 对话框 12px。
-     --radius-sm/--radius-md 为兼容映射，阶段 7 确认无引用后删除。 */
+  /* 三档圆角：控件 6px / 卡片 10px / 对话框 12px。 */
   --radius-control: 6px;
   --radius-dialog: 12px;
-  --radius-sm: var(--radius-control);
-  --radius-md: var(--radius-control);
   --radius-lg: var(--radius);
 }
 

@@ -34,7 +34,7 @@ export function ProjectOptionRow({
         type="button"
         size="sm"
         variant="outline"
-        className="shrink-0 shadow-none"
+        className="shrink-0"
         aria-label={actionLabel}
         aria-pressed={assigned}
         disabled={actionDisabled}
