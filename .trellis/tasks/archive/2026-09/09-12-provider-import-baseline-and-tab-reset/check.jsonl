@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-12-provider-import-baseline-and-tab-reset/research/root-cause.md", "reason": "校验实现是否与根因结论一致（孤儿基线刷新 + 路由 key）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量检查清单"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量检查清单"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "复核事务与乐观锁实现是否符合数据库规范"}

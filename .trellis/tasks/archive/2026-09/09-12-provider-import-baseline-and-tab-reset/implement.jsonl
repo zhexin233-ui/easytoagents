@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-12-provider-import-baseline-and-tab-reset/research/root-cause.md", "reason": "两个 bug 的完整根因链路、代码行号与修复方向论证"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端 Pre-Development Checklist 与质量要求入口"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "adopt_baseline 涉及事务、乐观锁与 SQLite 约束，需遵循数据库规范"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 Pre-Development Checklist 入口"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "路由 key 重挂载涉及组件状态管理约定"}
