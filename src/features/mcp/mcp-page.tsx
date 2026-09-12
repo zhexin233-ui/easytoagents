@@ -400,9 +400,11 @@ export function McpPage() {
                             </dd>
                           </div>
                         </dl>
-                        <pre className="bg-muted rounded-control mt-3 overflow-auto p-2 text-xs">
-                          {JSON.stringify(server.redactedExtra, null, 2)}
-                        </pre>
+                        {server.redactedExtra !== null ? (
+                          <pre className="bg-muted rounded-control mt-3 overflow-auto p-2 text-xs">
+                            {JSON.stringify(server.redactedExtra, null, 2)}
+                          </pre>
+                        ) : null}
                       </>
                     ) : (
                       <div className="mt-4 min-w-0 space-y-3">
