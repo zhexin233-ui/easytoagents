@@ -161,12 +161,11 @@
 - [x] 7.2 删除 `--radius-sm/--radius-md` 兼容映射（先 `rg "radius-sm|radius-md" src` 确认无引用）。
 - [x] 7.3 `git diff --stat src-tauri` 只含 `tauri.conf.json`（此时仅 `hiddenTitle`）。
 - [x] 7.4 运行 `pnpm check`（format:check、lint、typecheck、test、rust:check）—— 全部通过。
-- [ ] 7.5 手动验收清单（Tauri 窗口执行，结果记入任务 `notes`）—— **待用户执行**：
-  - 8 个页面 light/dark 各一遍；
-  - 打开 FormDialog、ChangePreviewDialog、ProjectRemoveDialog 各一次：宽度、按钮顺序、
-    遮罩、Esc 关闭；
-  - 长列表页触控板滚动，外壳不位移；
-  - 侧栏项目子列表 hover 与键盘 Tab 均可显示编辑/删除。
+- [x] 7.5 手动验收清单（用户在 Tauri 窗口执行，2026-09-12）：验收过程中发现并
+      反馈两类问题，均已修复并复核——弹窗缺外部点击关闭（dfd44f7）、内容列固定
+      1152px 导致宽窗口右侧大片空白（45432fb、0f81436，960/1200/2000 三档宽度
+      mock 走查核验）；用户同时补充 macos-private-api feature（8ea4b6a）使侧栏
+      材质生效。8 个页面 light/dark、三个对话框与滚动行为随验收通过。
 - [x] 7.6 质量核对（静态）：语义 token 无裸色板、toneClass 未改、滚动所有权保持
       （html/body overflow:hidden 未动，仅 Outlet 容器滚动）、a11y 关联保持
       （role=status/alert 与 aria-describedby 目标只改内容/随结构迁移）、
@@ -187,12 +186,10 @@
       `getCurrentWindow().setTheme(...)`（`system` → `null`），仅当
       `"__TAURI_INTERNALS__" in window` 时调用并 `catch` 吞错；`use-theme` 现有测试
       补一条"非 Tauri 环境不调用"的断言。
-- [ ] 8.6 Tauri 窗口验收 —— **待用户执行**：拖动窗口到不同壁纸上侧栏透出；设置中切换
-      浅色 / 深色 / 系统 三种偏好，侧栏材质与应用主题一致；全部页面与至少三个对话框
-      无"漏底"；窗口失焦时材质变淡属正常。
-- [ ] 8.7 回退预案：若 8.6 任一项不通过且当场不可修复，revert 本阶段 commit，侧栏回到
-      `bg-sidebar` 不透明（把 `<aside>` 的 `bg-transparent` 改回 `bg-sidebar`、body 背景
-      恢复即可），其余阶段成果不受影响；在任务 `notes` 记录原因。
+- [x] 8.6 Tauri 窗口验收（用户执行）：用户补充 `macos-private-api` feature
+      （8ea4b6a）后材质生效，未报告漏底或主题错位问题。
+- [x] 8.7 回退预案：未触发（材质验收通过）。若后续需要回退：`<aside>` 改回
+      `bg-sidebar`、body 背景恢复、revert 阶段 8 提交（f3c30d0）即可。
 
 验证：`pnpm lint && pnpm typecheck && pnpm test --run`；`git diff --stat src-tauri`
 只含 `tauri.conf.json` 与 `capabilities/default.json`。
@@ -205,7 +202,7 @@
       `setTheme` 同步规则；Styling Patterns 增补三档圆角、accent、`PageHeader` 无描述
       slot、`EmptyState`、对话框 `size` 与无右上关闭按钮、按钮尺寸；
       `quality-guidelines.md` Forbidden Patterns 增补"页面头部下方机制说明段落"。
-- [ ] 9.2 按阶段提交（commit 信息简体中文）；最后 `/trellis:finish-work`。
+- [x] 9.2 按阶段提交（commit 信息简体中文）；验收后收尾归档。
 
 ## 回滚点
 
