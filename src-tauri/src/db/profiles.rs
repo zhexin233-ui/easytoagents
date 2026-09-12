@@ -895,28 +895,22 @@ fn adopt_baseline(
 ) -> Result<(), AppError> {
     let existing = transaction
         .query_row(
-            "SELECT id, baseline_full_hash, baseline_managed_hash
+            "SELECT id, row_version
              FROM managed_targets
              WHERE tool = ?1 AND artifact_kind = ?2 AND scope = 'global'
                AND project_id IS NULL AND target_path = ?3",
             params![tool.as_str(), artifact_kind.as_str(), baseline.target_path],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
         )
         .optional()
         .map_err(|error| {
             AppError::database(database_path, "find_import_managed_target").with_source(error)
         })?;
-    let target_id = match existing {
-        Some((id, None, None)) => id,
-        Some((_id, _, _)) => {
-            return Err(AppError::conflict("import", "该原生目标已经建立受管基线"));
-        }
+    // 导入守卫（reject_existing_profiles / reject_prompt_import_blocked）已保证
+    // 没有任何生效或同源档案引用该目标；历史同步或导入留下的既有基线属于孤儿
+    // 基线，按当前原生内容刷新而不是拒绝重新接管。
+    let (target_id, target_row_version) = match existing {
+        Some(row) => row,
         None => {
             transaction
                 .execute(
@@ -934,7 +928,7 @@ fn adopt_baseline(
                     AppError::database(database_path, "insert_import_managed_target")
                         .with_source(error)
                 })?;
-            baseline.target_id.clone()
+            (baseline.target_id.clone(), 1)
         }
     };
     let updated = transaction
@@ -942,12 +936,13 @@ fn adopt_baseline(
             "UPDATE managed_targets
              SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
                  baseline_projection_json = ?4, last_status = 'in_sync'
-             WHERE id = ?1 AND baseline_full_hash IS NULL AND baseline_managed_hash IS NULL",
+             WHERE id = ?1 AND row_version = ?5",
             params![
                 target_id,
                 baseline.full_hash,
                 baseline.managed_hash,
                 baseline.projection_json,
+                target_row_version,
             ],
         )
         .map_err(|error| {

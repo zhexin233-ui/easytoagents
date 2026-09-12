@@ -578,6 +578,215 @@ mod tests {
         ));
     }
 
+    /// 删光渠道后重新导入：历史导入/同步留下的孤儿受管基线应被刷新而不是报 CONFLICT。
+    #[test]
+    fn provider_import_reattaches_orphaned_managed_baseline_after_profile_delete() {
+        fn baseline_row(fixture: &Fixture) -> (String, String, String) {
+            fixture
+                .database
+                .connection()
+                .query_row(
+                    "SELECT baseline_full_hash, baseline_managed_hash, last_status
+                     FROM managed_targets
+                     WHERE tool = 'claude' AND artifact_kind = 'provider'
+                       AND scope = 'global' AND project_id IS NULL",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .unwrap()
+        }
+
+        let mut fixture = fixture();
+        let settings_path = fixture.home.join(".claude/settings.json");
+        let secret = "fixture-reattach-provider-secret";
+        let original = format!(
+            r#"{{
+  "env": {{
+    "ANTHROPIC_BASE_URL": "https://reattach.example.com/v1",
+    "ANTHROPIC_API_KEY": "{secret}",
+    "ANTHROPIC_MODEL": "claude-reattach"
+  }}
+}}
+"#,
+        );
+        fs::write(&settings_path, &original).unwrap();
+        let mut redactor = SecretRedactor::default();
+        let first_preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        let first = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: first_preview.preview_id,
+                name: "首次导入".to_owned(),
+            },
+        )
+        .unwrap();
+        let (first_full_hash, first_managed_hash, first_status) = baseline_row(&fixture);
+        assert_eq!(first_status, "in_sync");
+
+        super::delete_provider_profile(
+            &mut fixture.database,
+            &crate::profiles::VersionedProfileInput {
+                id: first.id.clone(),
+                row_version: first.row_version,
+            },
+        )
+        .unwrap();
+        assert!(list_provider_profiles(&fixture.database, Tool::Claude)
+            .unwrap()
+            .is_empty());
+
+        // 原生文件在删除后被外部修改；重新导入必须接管当前内容并刷新基线。
+        let externally_changed = original.replace("reattach.example.com", "moved.example.com");
+        fs::write(&settings_path, &externally_changed).unwrap();
+        let second_preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        let second = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: second_preview.preview_id,
+                name: "重新导入".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(second.name, "重新导入");
+        let profiles = list_provider_profiles(&fixture.database, Tool::Claude).unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, second.id);
+
+        let (second_full_hash, second_managed_hash, second_status) = baseline_row(&fixture);
+        assert_eq!(second_status, "in_sync");
+        assert_ne!(second_full_hash, first_full_hash);
+        assert_ne!(second_managed_hash, first_managed_hash);
+        assert_eq!(
+            fs::read_to_string(&settings_path).unwrap(),
+            externally_changed
+        );
+    }
+
+    /// 基线行的 row_version 会随历史同步递增；重导入必须在确认时重读当前
+    /// row_version 并刷新基线，而不是依赖某个固定版本。
+    #[test]
+    fn provider_import_refreshes_orphaned_baseline_regardless_of_row_version() {
+        let mut fixture = fixture();
+        let settings_path = fixture.home.join(".claude/settings.json");
+        fs::write(
+            &settings_path,
+            r#"{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://lock.example.com/v1",
+    "ANTHROPIC_API_KEY": "fixture-lock-provider-secret",
+    "ANTHROPIC_MODEL": "claude-lock"
+  }
+}
+"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let first_preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        let first = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: first_preview.preview_id,
+                name: "首次导入".to_owned(),
+            },
+        )
+        .unwrap();
+        super::delete_provider_profile(
+            &mut fixture.database,
+            &crate::profiles::VersionedProfileInput {
+                id: first.id,
+                row_version: first.row_version,
+            },
+        )
+        .unwrap();
+
+        // 模拟历史同步对基线行的多次写入（row_version 递增）。
+        fixture
+            .database
+            .connection_mut()
+            .execute(
+                "UPDATE managed_targets SET row_version = row_version + 2
+                 WHERE tool = 'claude' AND artifact_kind = 'provider' AND scope = 'global'",
+                [],
+            )
+            .unwrap();
+        let (before_version,) = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT row_version FROM managed_targets
+                 WHERE tool = 'claude' AND artifact_kind = 'provider' AND scope = 'global'",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?,)),
+            )
+            .unwrap();
+        assert!(before_version > 1);
+
+        let second_preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Claude,
+        )
+        .unwrap()
+        .unwrap();
+        let second = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmImportInput {
+                preview_id: second_preview.preview_id,
+                name: "重新导入".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(second.name, "重新导入");
+        let (after_version, status) = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT row_version, last_status FROM managed_targets
+                 WHERE tool = 'claude' AND artifact_kind = 'provider' AND scope = 'global'",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(after_version, before_version + 1);
+        assert_eq!(status, "in_sync");
+    }
+
     #[test]
     fn claude_provider_import_keeps_default_model_family_as_extra_env_without_anthropic_model() {
         let mut fixture = fixture();
