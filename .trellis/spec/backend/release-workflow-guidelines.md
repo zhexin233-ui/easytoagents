@@ -9,6 +9,7 @@ Use this contract when creating or changing the GitHub Actions workflow that pub
 ### 2. Signatures
 
 - Workflow input: `version: string`, required, plain `x.y.z` without a `v` prefix.
+- Workflow input: `notes: string`, optional; Markdown release notes prepended verbatim to the published body.
 - Git tag: `v<version>`.
 - Rust target: `aarch64-apple-darwin`.
 - Release asset: `EasyToAgents_<version>_aarch64.dmg`.
@@ -23,6 +24,7 @@ Use this contract when creating or changing the GitHub Actions workflow that pub
 - The build job has `contents: read`; only the publish job has `contents: write` through `GITHUB_TOKEN`.
 - The public package is unsigned and unnotarized until the product scope explicitly changes. No signing secrets are required.
 - Pin third-party Actions to full commit SHAs and keep the resolved release name in a comment.
+- Every published Release must carry version notes describing what changed since the previous version tag. Derive them from `git log <previous-tag>..<release-commit>`: keep user-facing changes, group them (features / UI / fixes / performance), and drop `chore`, journal, and task-archive commits. The workflow prepends the `notes` input verbatim, then appends a fixed installation section; when `notes` is empty it publishes the generic template without a changelog, which is acceptable only for reruns of an already-annotated version.
 
 ### 4. Validation & Error Matrix
 
@@ -38,9 +40,11 @@ Use this contract when creating or changing the GitHub Actions workflow that pub
 
 ### 5. Good / Base / Bad Cases
 
-- Good: `0.2.0` matches all four files, the tag is absent, and one ARM64 DMG passes inspection; create the tag, upload to a draft Release, then publish it.
+- Good: `0.2.0` matches all four files, the tag is absent, one ARM64 DMG passes inspection, and `notes` carries the changelog derived from `git log v0.1.0..HEAD`; create the tag, upload to a draft Release, then publish it.
 - Base: `v0.2.0` already points to the current commit; rerun the workflow and replace `EasyToAgents_0.2.0_aarch64.dmg`.
+- Base: `notes` is empty on a rerun; the installation-only template replaces the body, acceptable only because the notes already exist or the version is being republished.
 - Bad: `v0.2.0` points to a different commit; stop and publish a corrected version instead of moving the tag.
+- Bad: a first publish of a new version ships with template-only notes and no changelog.
 
 ### 6. Tests Required
 

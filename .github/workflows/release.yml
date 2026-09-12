@@ -10,6 +10,10 @@ on:
         required: true
         default: 0.1.0
         type: string
+      notes:
+        description: 版本说明（Markdown，自上个版本的变更总结；留空则仅生成安装说明）
+        required: false
+        type: string
 
 concurrency:
   group: release-v${{ inputs.version }}
@@ -21,6 +25,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RELEASE_VERSION: ${{ inputs.version }}
+  RELEASE_NOTES: ${{ inputs.notes }}
   RELEASE_TARGET: aarch64-apple-darwin
 
 jobs:
@@ -214,8 +219,16 @@ jobs:
           notes_file="$RUNNER_TEMP/release-notes.md"
 
           {
-            echo "EasyToAgents ${RELEASE_VERSION} 的 macOS 安装包。"
-            echo
+            if [[ -n "${RELEASE_NOTES:-}" ]]; then
+              printf '%s\n\n' "$RELEASE_NOTES"
+              echo "---"
+              echo
+              echo "## 安装说明"
+              echo
+            else
+              echo "EasyToAgents ${RELEASE_VERSION} 的 macOS 安装包。"
+              echo
+            fi
             echo "- 仅支持 Apple Silicon（M 系列）Mac"
             echo "- 最低系统版本：macOS 13"
             echo "- 此安装包未使用 Apple Developer 签名，也未经 Apple 公证"
