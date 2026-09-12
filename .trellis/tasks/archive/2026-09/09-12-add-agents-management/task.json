@@ -1,0 +1,28 @@
+{
+  "id": "add-agents-management",
+  "name": "add-agents-management",
+  "title": "新增 Agents（子代理）全局级与项目级管理（Claude/Codex/Cursor/ZCode/OpenCode 适配）",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "fullstack",
+  "package": null,
+  "priority": "P2",
+  "creator": "yang",
+  "assignee": "yang",
+  "createdAt": "2026-09-12",
+  "completedAt": "2026-09-12",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "description": "新增 ArtifactKind::Agent：五工具子代理目录 descriptor、迁移 0022、agents 服务与 /agents 页面；ZCode 仅全局；不做 Commands"
+  }
+}

@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-12-add-agents-management/research/agents-capability-matrix.md", "reason": "核对 descriptor 与投影是否与官方合同一致"}
+{"file": "docs/maintainers/adding-tool-adapter.md", "reason": "检查 fail-closed 与注册点是否齐全"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查预览/应用/恢复合同"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端预览与无隐式 Apply"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查与 hooks/mcp 的重复代码"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 DTO/绑定/前端一致性"}

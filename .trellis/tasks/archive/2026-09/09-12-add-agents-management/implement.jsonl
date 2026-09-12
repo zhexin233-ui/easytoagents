@@ -1,0 +1,12 @@
+{"file": ".trellis/tasks/09-12-add-agents-management/research/agents-capability-matrix.md", "reason": "五工具子代理官方路径、格式、必填字段与优先级矩阵"}
+{"file": "docs/maintainers/adding-tool-adapter.md", "reason": "新增 artifact 的证据先行、fail-closed、迁移与注册点规范"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "writable_schema 放宽 CHECK 与前向迁移规则"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "显式发现、预览、原生资源禁用/恢复与集成安全"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 与诊断码约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "后端模块布局，agents 模块镜像 hooks"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "页面与对话框组件模式"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "queryOptions 与数据获取模式"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "TanStack Query 状态约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "预览对话框、直接应用例外、项目原生资源"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "新增 artifact 跨层数据流检查"}
+{"file": ".trellis/tasks/archive/2026-09/09-05-add-hooks-management/design.md", "reason": "Hooks 先例：新增 artifact 的完整设计参照"}
