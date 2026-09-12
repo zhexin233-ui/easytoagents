@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-12-fix-project-native-hooks-empty/research/root-cause.md", "reason": "校验实现是否与根因结论一致（复用 native_entries、按哈希隐藏、只读）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量检查清单与原生资源合同"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "复核 0021 迁移是否满足 12 步表重建与幂等测试要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量检查清单"}
