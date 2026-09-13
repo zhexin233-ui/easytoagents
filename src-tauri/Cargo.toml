@@ -1,6 +1,6 @@
 [package]
 name = "easytoagents"
-version = "0.1.1"
+version = "0.1.2"
 description = "Claude、Codex、Cursor、ZCode 与 OpenCode 的本地配置管理桌面端"
 authors = ["EasyToAgents"]
 edition = "2021"
