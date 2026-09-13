@@ -799,16 +799,24 @@ function AgentStatusCard({
         >
           检测并导入已有 Agents
         </Button>
-        {!directApply ? (
+        {!directApply || status.aggregateStatus === "external_owned_change" ? (
           <Button
             type="button"
             size="sm"
             variant="outline"
             disabled={previewPending || presentation.previewBlocked}
-            aria-label={`${label} Agents 同步预览`}
+            aria-label={
+              directApply
+                ? `处理 ${label} Agents 同步冲突`
+                : `${label} Agents 同步预览`
+            }
             onClick={onPreview}
           >
-            {previewPending ? "正在生成…" : "预览全局同步"}
+            {previewPending
+              ? "正在生成…"
+              : directApply
+                ? "处理同步冲突"
+                : "预览全局同步"}
           </Button>
         ) : null}
       </div>

@@ -183,6 +183,41 @@ fn ensure_agent_target(
     load_managed_target_baseline(database, &id)
 }
 
+/// 当原生文件的交集字段与中央 Agent 一致时，首次分配可以安全地把当前
+/// 内容登记为基线。这个动作只写数据库，不改原生文件；后续真正的外部改写
+/// 仍会按完整文档漂移阻断。
+pub(super) fn adopt_initial_agent_baseline(
+    database: &mut Database,
+    baseline: &ManagedTargetBaseline,
+    observed: &crate::sync::ObservedTarget,
+) -> Result<ManagedTargetBaseline, AppError> {
+    if baseline.full_hash.is_some() || baseline.managed_hash.is_some() {
+        return Ok(baseline.clone());
+    }
+    let database_path = database.path().to_string_lossy().into_owned();
+    let projection = serde_json::to_string(&observed.managed_projection).map_err(|error| {
+        AppError::database(&database_path, "serialize_initial_agent_baseline")
+            .with_source(error)
+    })?;
+    let expected_row_version = safe_row_version(baseline.target_row_version)?;
+    let updated = crate::db::sync::update_managed_target_baseline(
+        database.connection(),
+        &baseline.target_id,
+        Some(&observed.full_hash),
+        Some(&observed.managed_hash),
+        &projection,
+        expected_row_version,
+        &database_path,
+    )?;
+    if updated != 1 {
+        return Err(AppError::conflict(
+            "agentTarget",
+            "首次接管 Agent 基线时目标已被其他操作更新",
+        ));
+    }
+    load_managed_target_baseline(database, &baseline.target_id)
+}
+
 pub(super) fn find_agent_target_baseline(
     database: &Database,
     descriptor: &TargetDescriptor,
@@ -218,6 +253,74 @@ pub(super) fn find_agent_target_baseline(
         .map_err(|error| {
             AppError::database(&database_path, "find_agent_managed_target").with_source(error)
         })
+}
+
+/// 判断一个尚未登记基线的原生文件，是否至少在中央交集字段上代表同一个
+/// Agent。匹配成功时首次同步沿用原文件投影，保留导入时的未知字段与排版；
+/// 后续中央编辑再回到确定性的中央投影。
+pub(super) fn agent_observed_matches_central(
+    tool: Tool,
+    descriptor: &TargetDescriptor,
+    record: &AgentRecord,
+    settings: Option<&Value>,
+    observed: &crate::sync::ObservedTarget,
+) -> bool {
+    match (tool, observed.document()) {
+        (Tool::Claude | Tool::Cursor | Tool::Zcode | Tool::Opencode,
+         crate::adapters::ObservedDocument::Markdown(text)) => {
+            let Ok(parsed) = parse_markdown_agent_file(text, tool) else {
+                return false;
+            };
+            let fallback_name = descriptor.path.as_deref().and_then(file_stem_of);
+            let name = parsed.name.or(fallback_name);
+            if name.as_deref() != Some(record.name.as_str())
+                || parsed.description.as_deref() != Some(record.description.as_str())
+                || parsed.prompt != record.prompt
+            {
+                return false;
+            }
+            if tool != Tool::Claude {
+                return settings.is_none();
+            }
+            let Ok(normalized) = validate_agent_tool_settings(
+                Tool::Claude,
+                &Value::Object(parsed.retained),
+            ) else {
+                return false;
+            };
+            normalized.map(|value| value.value) == settings.cloned()
+        }
+        (Tool::Codex, crate::adapters::ObservedDocument::Toml { semantic, .. }) => {
+            let Some(object) = semantic.as_object() else {
+                return false;
+            };
+            if object.get("name").and_then(Value::as_str) != Some(record.name.as_str())
+                || object.get("description").and_then(Value::as_str)
+                    != Some(record.description.as_str())
+                || object.get("developer_instructions").and_then(Value::as_str)
+                    != Some(record.prompt.as_str())
+            {
+                return false;
+            }
+            let mut retained = serde_json::Map::new();
+            for (source_key, central_key) in [
+                ("model", "model"),
+                ("model_reasoning_effort", "modelReasoningEffort"),
+                ("features", "features"),
+            ] {
+                if let Some(value) = object.get(source_key) {
+                    retained.insert(central_key.to_owned(), value.clone());
+                }
+            }
+            let Ok(normalized) =
+                validate_agent_tool_settings(Tool::Codex, &Value::Object(retained))
+            else {
+                return false;
+            };
+            normalized.map(|value| value.value) == settings.cloned()
+        }
+        _ => false,
+    }
 }
 
 fn canonical_project(path: &str) -> Result<ProjectRoot, AppError> {

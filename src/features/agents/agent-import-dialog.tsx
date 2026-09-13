@@ -86,7 +86,7 @@ export function AgentImportDialog({
         <DialogBody className="space-y-4">
           <p id="agent-import-description" className="text-muted-foreground">
             只读扫描工具全局 Agents
-            目录；确认后仅复制到中央库，不修改原生文件或自动分配。
+            目录；确认后复制到中央库并记住当前内容，不修改原生文件或自动分配。
           </p>
           {query.isPending ? (
             <p role="status">正在检测已有全局 Agents…</p>

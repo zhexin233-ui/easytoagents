@@ -630,22 +630,41 @@ fn prepare_agents_sync(
             .path
             .clone()
             .ok_or_else(|| AppError::internal("agent 文件级目标缺少路径"))?;
-        let baseline = match rows_by_path.remove(&target_path) {
+        let mut baseline = match rows_by_path.remove(&target_path) {
             Some(row) => row.to_baseline()?,
             None => ensure_agent_target(database, &file_descriptor, project.as_ref())?,
         };
+        let settings = all_tool_settings
+            .get(&record.id)
+            .and_then(|settings| settings.get(&input.tool));
         let projection = build_agent_projection(
             input.tool,
             record,
-            all_tool_settings
-                .get(&record.id)
-                .and_then(|settings| settings.get(&input.tool)),
+            settings,
         )?;
         let scan = scan_target(
             input.tool.adapter(),
             &file_descriptor,
             &ManagedOwnership::WholeDocument,
         );
+        let mut desired_projection = projection;
+        if baseline.full_hash.is_none() && baseline.managed_hash.is_none() {
+            if let TargetScan::Observed(observed) = &scan {
+                if agent_observed_matches_central(
+                    input.tool,
+                    &file_descriptor,
+                    record,
+                    settings,
+                    observed,
+                ) {
+                    baseline = adopt_initial_agent_baseline(database, &baseline, observed)?;
+                    // 首次导入/分配沿用原文件的完整投影，避免直接应用模式把未知
+                    // 字段或原有排版当作冲突后直接抹掉；后续中央编辑再使用上面的
+                    // 确定性中央投影。
+                    desired_projection = observed.managed_projection.clone();
+                }
+            }
+        }
         let assessment = assess_drift(&file_descriptor, &baseline, &scan);
         // 重新接管只对「外部改写了受管内容」这一类冲突有意义。
         let readopt_available = assessment.status == SyncStatus::ExternalOwnedChange;
@@ -663,7 +682,7 @@ fn prepare_agents_sync(
             baseline,
             scan,
             readopt_available,
-            desired_projection: projection,
+            desired_projection,
             row_versions,
             git,
             delete_target: false,

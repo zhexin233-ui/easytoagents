@@ -1852,6 +1852,11 @@ let relocated = if let [event, _identity, matcher] = parts.as_slice() {
   persisted previews. Existing four-field projections remain byte-for-byte unchanged
   when no overlay is present.
 - Cursor, OpenCode, and ZCode reject settings with `AGENT_TOOL_SETTINGS_UNSUPPORTED`.
+- When an imported or otherwise matching native Agent has no baseline yet, the first
+  assignment adopts the observed full-document baseline only after the central
+  intersection fields match; the first projection reuses the observed document so
+  direct-apply mode does not erase unknown fields or formatting. Later central
+  edits and genuine drift use the normal full-document conflict rules.
 
 ### 4. Validation & Error Matrix
 

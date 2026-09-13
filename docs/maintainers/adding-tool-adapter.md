@@ -210,7 +210,7 @@ Agents 是独立的中央资源类型。实现前必须分别核对“目录 des
 - 中央记录：`agents(id, name, description, prompt, enabled, row_version, ...)`；名称满足 `^[a-z0-9][a-z0-9-]{0,63}$`。
 - 分配命令：`set_global_agent_assignment(tool, agent_id, assigned, row_version)`、`set_project_agent_assignment(project_id, tool, agent_id, assigned, agent_row_version, project_row_version)`。
 - 同步命令：`preview_agent_sync(tool, project_id|null, exclude_from_git)`、`apply_agent_preview(preview_id, tool, project_id|null)`、`readopt_agent_target(tool, project_id|null, target_path)`。
-- 导入命令：`discover_agent_import(tool)`（只读全局目录）与 `confirm_agent_import(tool, agents[])`（仅写中央库）。
+- 导入命令：`discover_agent_import(tool)`（只读全局目录）与 `confirm_agent_import(tool, agents[])`（写中央库，不改原文件；首次分配时若交集字段仍一致则自动登记当前文件基线）。
 - 一个受管文件对应一行 `managed_targets`（`artifact_kind = 'agent'`、`WholeDocument`）；目录级状态由 `AgentToolTargetStatusDto` 聚合，能力/策略诊断在卡片级 `diagnostic_code`，文件漂移诊断在 `files`。
 
 ### 11.3 Contracts

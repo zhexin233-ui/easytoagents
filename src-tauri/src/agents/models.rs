@@ -280,7 +280,7 @@ pub struct AgentImportPreviewDto {
 }
 
 /// 用户显式确认导入的条目；服务端只做中央校验，不引用持久化预览，
-/// 也不接管原生文件（导入后通过分配 + 预览 / Apply 进入受管）。
+/// 不改写原生文件；首次分配时若交集字段仍一致则自动登记当前基线。
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmAgentImportInput {

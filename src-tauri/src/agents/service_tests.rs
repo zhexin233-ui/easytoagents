@@ -850,6 +850,7 @@ mod tests {
                 ClaudeAgentColor, ConfirmAgentImportAgent, ConfirmAgentImportInput,
                 CreateAgentInput, DiscoverAgentImportInput,
             },
+            domain::{ChangeKind, SyncStatus},
             error::ErrorCode,
         };
         use std::fs;
@@ -1089,7 +1090,7 @@ mod tests {
         }
 
         #[test]
-        fn confirm_import_creates_central_records_without_touching_native_files() {
+        fn confirm_import_preserves_native_files_and_adopts_matching_content() {
             let mut fixture = Fixture::new();
             let source = fixture.claude_agents_dir().join("code-reviewer.md");
             fs::create_dir_all(fixture.claude_agents_dir()).unwrap();
@@ -1121,7 +1122,8 @@ mod tests {
             )
             .unwrap();
             assert_eq!(result.created_count, 1);
-            // 导入不隐式接管原生文件：源文件原样保留，也没有 managed target 行。
+            // 导入不改写原生文件；中央记录与原文件的交集字段一致时，
+            // 后续首次分配会自动登记当前内容为基线，不再误报外部冲突。
             assert!(source.exists());
             assert_eq!(
                 fs::read_to_string(&source).unwrap(),
@@ -1131,6 +1133,21 @@ mod tests {
             assert_eq!(agents.len(), 1);
             assert_eq!(agents[0].name, "code-reviewer");
             assert!(agents[0].global_assignments.is_empty());
+
+            fixture.assign_global(&agents[0], Tool::Claude);
+            let plan = fixture.preview_global(Tool::Claude);
+            assert_eq!(plan.targets.len(), 1);
+            assert_eq!(plan.targets[0].status, SyncStatus::InSync);
+            assert_eq!(plan.targets[0].change_kind, ChangeKind::Unchanged);
+
+            fs::write(
+                &source,
+                "---\nname: code-reviewer\ndescription: 外部修改\n---\n\n正文\n",
+            )
+            .unwrap();
+            let drifted = fixture.preview_global(Tool::Claude);
+            assert_eq!(drifted.targets[0].status, SyncStatus::ExternalOwnedChange);
+            assert_eq!(drifted.targets[0].change_kind, ChangeKind::Conflict);
 
             // 名称冲突：再次导入同名（名称规则只允许小写，冲突即精确同名，
             // 由 agents.name 的 NOCASE 唯一索引拦截）→ CONFLICT。
@@ -1191,6 +1208,11 @@ mod tests {
             let settings = agents[0].tool_settings.claude.as_ref().unwrap();
             assert_eq!(settings.color, Some(ClaudeAgentColor::Cyan));
             assert_eq!(settings.tools.as_deref(), Some(["Read".to_owned()].as_slice()));
+
+            fixture.assign_global(&agents[0], Tool::Claude);
+            let plan = fixture.preview_global(Tool::Claude);
+            assert_eq!(plan.targets[0].status, SyncStatus::InSync);
+            assert_eq!(plan.targets[0].change_kind, ChangeKind::Unchanged);
         }
     }
 }
