@@ -52,7 +52,7 @@
 - [x] E2 `src-tauri/tests/phase8_e2e.rs`：Claude 与 Codex 各一条「设置覆盖 → Preview(Update) → Apply → 文件含新字段 → 清除覆盖 → Preview(Update) → Apply 回到交集内容」。
 - [x] E3 实机 smoke（可选，需本机安装 CLI）：未执行（本机未安装/未授权 Claude 与 Codex CLI）；隔离 fixture E2E 已覆盖同等投影与链路。
 - [x] E4 文档：README、`docs/maintainers/adding-tool-adapter.md` §11.3 / §11.4 / §11.5；spec 更新（`trellis-update-spec`）沉淀「交集 + 白名单覆盖层」。
-- [ ] E5 提交（`feat(agents): 支持按工具配置 Claude / Codex 特有字段`）。
+- [x] E5 提交（`feat(agents): 支持按工具配置 Claude / Codex 特有字段`）。
 
 ## 回滚点
 
