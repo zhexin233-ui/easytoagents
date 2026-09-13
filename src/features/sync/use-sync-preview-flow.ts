@@ -84,6 +84,9 @@ export function useSyncPreviewFlow<TReadopt = never>(
   const mountedRef = useRef(true);
 
   useEffect(() => {
+    // React StrictMode 在开发环境会执行一次 setup → cleanup → setup。
+    // 第二次 setup 必须恢复挂载状态，否则后续直接 Apply 会被误判为卸载。
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
@@ -161,13 +164,12 @@ export function useSyncPreviewFlow<TReadopt = never>(
   };
 
   const previewMutation = useMutation({
-    mutationFn: async ({ tool }: PreviewRequest) => ({
-      tool,
-      plan: unwrapResult(await options.preview(tool)),
-    }),
-    onSuccess: async ({ plan, tool }, { autoApply, staleRetry = 0 }) => {
-      if (!mountedRef.current) return;
+    mutationFn: async ({ tool, autoApply, staleRetry = 0 }: PreviewRequest) => {
+      const plan = unwrapResult(await options.preview(tool));
+      // 将 Apply 保持在 mutation promise 内。React Query 在重新渲染时可能替换
+      // observer 回调；持久化预览链不能依赖 observer 级别的 onSuccess 仍被保留。
       await submitPersistedPreview(plan, tool, autoApply, staleRetry);
+      return { tool, plan };
     },
     onError: (error) => {
       if (!mountedRef.current) return;

@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,8 +24,16 @@ const agent: AgentDto = {
   rowVersion: 3,
 };
 
-function renderAgents() {
-  return renderWithProviders(<AgentsPage />);
+function renderAgents(strict = false) {
+  return renderWithProviders(
+    strict ? (
+      <StrictMode>
+        <AgentsPage />
+      </StrictMode>
+    ) : (
+      <AgentsPage />
+    ),
+  );
 }
 
 describe("AgentsPage", () => {
@@ -264,7 +273,7 @@ describe("AgentsPage", () => {
     );
   });
 
-  it("直接应用模式下取消全局分配会自动应用删除预览", async () => {
+  it("StrictMode 下直接应用模式取消全局分配会自动应用删除预览", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
@@ -297,7 +306,7 @@ describe("AgentsPage", () => {
       }),
     });
 
-    renderAgents();
+    renderAgents(true);
     fireEvent.click(
       await screen.findByRole("button", { name: "Claude 全局已分配" }),
     );
