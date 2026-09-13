@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn github_skill_source_migration_accepts_only_normalized_source_shape() {
         let (_temporary, _paths, database) = open_isolated_database();
-        assert_eq!(database.schema_version().unwrap(), 23);
+        assert_eq!(database.schema_version().unwrap(), 24);
         database
             .connection()
             .execute(
@@ -110,7 +110,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 23);
+        assert_eq!(database.schema_version().unwrap(), 24);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -723,7 +723,7 @@ mod tests {
         }
         for (iteration, _) in (0..2).enumerate() {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             // 只有第一次打开有待执行迁移，才产生启动备份。
             assert_eq!(database.startup_backup().is_some(), iteration == 0);
             let (name, previews): (String, i64) = database.connection().query_row(
@@ -759,7 +759,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -814,7 +814,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 23);
+        assert_eq!(database.schema_version().unwrap(), 24);
         let kinds = database
             .connection()
             .prepare_cached("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1056,7 +1056,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 23);
+        assert_eq!(database.schema_version().unwrap(), 24);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1204,7 +1204,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 23);
+        assert_eq!(reopened.schema_version().unwrap(), 24);
         assert_eq!(
             reopened
                 .connection()
@@ -1264,7 +1264,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1329,7 +1329,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1417,7 +1417,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1571,7 +1571,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1688,7 +1688,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1768,7 +1768,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            23
+            24
         );
         for (tool, artifact, accepted) in [
             ("opencode", "provider", true),
@@ -1813,7 +1813,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 23);
+        assert_eq!(database.schema_version().unwrap(), 24);
         let connection = database.connection();
         connection
             .execute(
@@ -1869,7 +1869,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 23);
+        assert_eq!(reopened.schema_version().unwrap(), 24);
         assert_eq!(
             reopened
                 .connection()
@@ -1912,7 +1912,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2061,7 +2061,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2173,7 +2173,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2349,7 +2349,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2481,7 +2481,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
             type PreservedRow = (
                 String,
@@ -2596,6 +2596,195 @@ mod tests {
     }
 
     #[test]
+    fn project_native_agent_files_migration_preserves_rows_and_widens_check() {
+        const RUN_ID: &str = "00000000-0000-4000-8000-000000000441";
+        const SNAPSHOT_ID: &str = "00000000-0000-4000-8000-000000000442";
+        const TARGET_ID: &str = "00000000-0000-4000-8000-000000000443";
+        const RESOURCE_MCP: &str = "00000000-0000-4000-8000-000000000444";
+        const RESOURCE_DIRECTORY: &str = "00000000-0000-4000-8000-000000000445";
+        const RESOURCE_SYMLINK: &str = "00000000-0000-4000-8000-000000000446";
+        const RESOURCE_HOOK: &str = "00000000-0000-4000-8000-000000000447";
+        const RESOURCE_AGENT: &str = "00000000-0000-4000-8000-000000000448";
+        const RESOURCE_PROMPT: &str = "00000000-0000-4000-8000-000000000449";
+        const SNAPSHOT_ID_NEW: &str = "00000000-0000-4000-8000-00000000044a";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v23-native-agent-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..23] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            insert_project(&connection, PROJECT_ONE_ID, "/fixture/agent-project");
+        }
+
+        // 0022 通过 writable_schema 放宽 managed_targets 的 CHECK；关闭并
+        // 重新打开连接，确保 SQLite 丢弃旧 schema cache 后再写入 Agent 目标。
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, project_id, target_path)
+                     VALUES (?1, 'claude', 'agent', 'project', ?2, '/fixture/agent-project/.claude/agents')",
+                    params![TARGET_ID, PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sync_runs(id, kind, status, scope, project_id, db_version)
+                     VALUES (?1, 'apply', 'succeeded', 'project', ?2, 0)",
+                    params![RUN_ID, PROJECT_ONE_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO snapshots(id, run_id, target_id, target_path, snapshot_path, target_type, storage_kind)
+                     VALUES (?1, ?2, ?3, '/fixture/agent-project/.claude/agents/link.md', '/fixture/snapshot/agent.snapshot', 'file', 'payload_file')",
+                    params![SNAPSHOT_ID, RUN_ID, TARGET_ID],
+                )
+                .unwrap();
+            let disabled_at = "2026-09-01T00:00:00.000Z";
+            for (id, external_key, entry_type, state, observed_hash, snapshot) in [
+                (RESOURCE_MCP, "mcp-native", "mcp_entry", "active", Some("a".repeat(64)), None),
+                (RESOURCE_DIRECTORY, "native-dir", "directory", "active", Some("b".repeat(64)), None),
+                (RESOURCE_SYMLINK, "native-link", "symlink", "disabled", None, Some(SNAPSHOT_ID)),
+                (RESOURCE_HOOK, "PreToolUse||abc123", "hook_entry", "active", Some("c".repeat(64)), None),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO project_native_resources(
+                            id, target_id, external_key, entry_type, state, observed_item_hash,
+                            disabled_snapshot_id, disabled_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![
+                            id,
+                            TARGET_ID,
+                            external_key,
+                            entry_type,
+                            state,
+                            observed_hash,
+                            snapshot,
+                            if snapshot.is_some() { Some(disabled_at) } else { None },
+                        ],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let database = Database::open(&paths).unwrap();
+        assert_eq!(database.schema_version().unwrap(), 24);
+        let connection = database.connection();
+        type PreservedRow = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<PreservedRow> = connection
+            .prepare(
+                "SELECT id, external_key, entry_type, state, observed_item_hash,
+                        disabled_snapshot_id, disabled_at
+                 FROM project_native_resources ORDER BY external_key",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().any(|row| {
+            row.0 == RESOURCE_SYMLINK
+                && row.2 == "symlink"
+                && row.3 == "disabled"
+                && row.5.as_deref() == Some(SNAPSHOT_ID)
+        }));
+        connection
+            .execute(
+                "INSERT INTO project_native_resources(
+                    id, target_id, external_key, entry_type, state, observed_item_hash
+                 ) VALUES (?1, ?2, 'reviewer.md', 'agent_file', 'active', ?3)",
+                params![RESOURCE_AGENT, TARGET_ID, "d".repeat(64)],
+            )
+            .unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO project_native_resources(
+                    id, target_id, external_key, entry_type, state, observed_item_hash
+                 ) VALUES (?1, ?2, 'prompt-file', 'prompt_file', 'active', ?3)",
+                params![RESOURCE_PROMPT, TARGET_ID, "e".repeat(64)],
+            )
+            .is_err());
+
+        let before_version: i64 = connection
+            .query_row(
+                "SELECT row_version FROM project_native_resources WHERE id = ?1",
+                [RESOURCE_AGENT],
+                |row| row.get(0),
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE project_native_resources SET last_seen_at = last_seen_at WHERE id = ?1",
+                [RESOURCE_AGENT],
+            )
+            .unwrap();
+        let after_version: i64 = connection
+            .query_row(
+                "SELECT row_version FROM project_native_resources WHERE id = ?1",
+                [RESOURCE_AGENT],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after_version, before_version + 1);
+        assert!(connection
+            .execute(
+                "UPDATE snapshots SET id = ?1 WHERE id = ?2",
+                params![SNAPSHOT_ID_NEW, SNAPSHOT_ID],
+            )
+            .is_err());
+        drop(database);
+
+        let reopened = Database::open(&paths).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 24);
+        let (count, agent_type): (i64, String) = reopened
+            .connection()
+            .query_row(
+                "SELECT COUNT(*), (SELECT entry_type FROM project_native_resources
+                 WHERE target_id = ?1 AND entry_type = 'agent_file' LIMIT 1)
+                 FROM project_native_resources WHERE target_id = ?1",
+                [TARGET_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 5);
+        assert_eq!(agent_type, "agent_file");
+    }
+
+    #[test]
     fn empty_target_identity_is_not_ownership() {
         let (_temporary, _paths, database) = open_isolated_database();
         insert_project(database.connection(), PROJECT_ONE_ID, "/fixture/identity");
@@ -2704,7 +2893,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 23);
+            assert_eq!(database.schema_version().unwrap(), 24);
             let connection = database.connection();
 
             // 旧行保留：hook、分配与受管目标在 writable_schema 改写后逐字保留。
@@ -2952,7 +3141,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 23);
+        assert_eq!(database.schema_version().unwrap(), 24);
         let record: (String, String) = database
             .connection()
             .query_row(
@@ -3019,6 +3208,6 @@ mod tests {
             assert_eq!(remaining, 0);
         }
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 23);
+        assert_eq!(reopened.schema_version().unwrap(), 24);
     }
 }

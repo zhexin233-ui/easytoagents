@@ -154,6 +154,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "agent_tool_settings",
         sql: include_str!("migrations/0023_agent_tool_settings.sql"),
     },
+    Migration {
+        version: 24,
+        name: "project_native_agent_files",
+        sql: include_str!("migrations/0024_project_native_agent_files.sql"),
+    },
 ];
 
 pub(crate) struct Migration {
