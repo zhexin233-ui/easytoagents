@@ -50,6 +50,18 @@ For each boundary:
 - What is the exact output format?
 - What errors can occur?
 
+For a persisted-preview workflow, also write down the event sequence explicitly:
+
+```
+central mutation → persisted Preview(row versions) → Apply(claim) → native write → invalidation
+```
+
+The Preview and Apply calls are not independent reads. Concurrent requests can
+supersede one another, and a database/environment refresh can make the first
+plan stale between the two calls. Keep the sequence behind one shared lifecycle
+owner, serialize requests, and allow only a bounded fresh-preview retry for
+`STALE_PREVIEW`; never retry conflicts or skip the persisted claim.
+
 ---
 
 ## Common Cross-Layer Mistakes

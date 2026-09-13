@@ -160,11 +160,7 @@ export function AgentsPage() {
           kind: "success",
           message: "中央 Agent 已保存；正在自动同步已分配工具。",
         });
-        for (const tool of globalTools) {
-          await previewMutation
-            .mutateAsync({ tool, autoApply: true })
-            .catch(() => undefined);
-        }
+        for (const tool of globalTools) requestPreview(tool, true);
         return;
       }
       notify({
@@ -188,11 +184,7 @@ export function AgentsPage() {
     onSuccess: async (_result, agent) => {
       await invalidateAgents();
       if (!directApply) return;
-      for (const tool of agent.globalAssignments) {
-        await previewMutation
-          .mutateAsync({ tool, autoApply: true })
-          .catch(() => undefined);
-      }
+      for (const tool of agent.globalAssignments) requestPreview(tool, true);
     },
     onError: (error) => {
       notify({
@@ -217,11 +209,7 @@ export function AgentsPage() {
           kind: "success",
           message: "中央 Agent 已删除；正在自动清理旧受管文件。",
         });
-        for (const tool of agent.globalAssignments) {
-          await previewMutation
-            .mutateAsync({ tool, autoApply: true })
-            .catch(() => undefined);
-        }
+        for (const tool of agent.globalAssignments) requestPreview(tool, true);
         return;
       }
       notify({

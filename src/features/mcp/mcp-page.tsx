@@ -91,11 +91,7 @@ export function McpPage() {
           kind: "success",
           message: "中央 MCP 已保存；正在自动同步已分配工具。",
         });
-        for (const tool of globalTools) {
-          await previewMutation
-            .mutateAsync({ tool, autoApply: true })
-            .catch(() => undefined);
-        }
+        for (const tool of globalTools) requestPreview(tool, true);
         return;
       }
       notify({
@@ -136,11 +132,7 @@ export function McpPage() {
       await invalidateMcp();
       if (!directApply) return;
       // 启停改变已分配工具的期望投影；逐个工具自动同步，未分配则无需同步。
-      for (const tool of server.globalTools) {
-        await previewMutation
-          .mutateAsync({ tool, autoApply: true })
-          .catch(() => undefined);
-      }
+      for (const tool of server.globalTools) requestPreview(tool, true);
     },
     onError: (error) => {
       notify({
@@ -165,11 +157,7 @@ export function McpPage() {
           kind: "success",
           message: "中央 MCP 已删除；正在自动清理旧受管条目。",
         });
-        for (const tool of server.globalTools) {
-          await previewMutation
-            .mutateAsync({ tool, autoApply: true })
-            .catch(() => undefined);
-        }
+        for (const tool of server.globalTools) requestPreview(tool, true);
         return;
       }
       notify({
@@ -580,9 +568,7 @@ export function McpPage() {
                 kind: "success",
                 message: `${summary}正在自动同步写入。`,
               });
-              await previewMutation
-                .mutateAsync({ tool: result.tool, autoApply: true })
-                .catch(() => undefined);
+              requestPreview(result.tool, true);
             }}
           />
         ) : null}

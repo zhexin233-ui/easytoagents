@@ -107,11 +107,7 @@ export function PromptsPage() {
           kind: "success",
           message: "中央提示词档案已保存；正在自动同步已分配工具。",
         });
-        for (const tool of globalTools) {
-          await previewMutation
-            .mutateAsync({ tool, autoApply: true })
-            .catch(() => undefined);
-        }
+        for (const tool of globalTools) requestPreview(tool, true);
         return;
       }
       notify({
@@ -218,11 +214,7 @@ export function PromptsPage() {
           kind: "success",
           message: "中央提示词已删除；正在自动清理已接管文件。",
         });
-        for (const tool of profile.globalTools) {
-          await previewMutation
-            .mutateAsync({ tool, autoApply: true })
-            .catch(() => undefined);
-        }
+        for (const tool of profile.globalTools) requestPreview(tool, true);
         return;
       }
       notify({

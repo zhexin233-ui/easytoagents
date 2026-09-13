@@ -81,6 +81,14 @@ disable/restore keeps its dedicated resource mutation because its request is
 keyed by `ProjectNativeResourceDto` rather than a `Tool`; it follows the same
 no-implicit-write and post-Apply invalidation contract.
 
+Every preview request must enter `requestPreview`; pages must not call the
+returned `previewMutation.mutateAsync` directly. The hook serializes persisted
+preview → Apply chains because each preview snapshots the same mutable database
+row versions. In direct mode, an Apply that returns `STALE_PREVIEW` is retried
+once from a freshly persisted preview; a second stale result is surfaced, and a
+conflict or error still opens the review dialog instead of bypassing safety
+checks.
+
 `useImportDialogState()` owns `{ tool, requestId }` and changes the request ID
 on every rescan so discovery results cannot be reused accidentally.
 `useSubmitGuard()` exposes synchronous `begin()`, `end()`, and `isInFlight()`;

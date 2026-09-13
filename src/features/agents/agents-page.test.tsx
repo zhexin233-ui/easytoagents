@@ -264,6 +264,127 @@ describe("AgentsPage", () => {
     );
   });
 
+  it("直接应用模式下取消全局分配会自动应用删除预览", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "direct",
+        enabledTools: ["claude", "codex", "cursor", "zcode", "opencode"],
+      },
+    });
+    const assignedAgent: AgentDto = {
+      ...agent,
+      globalAssignments: ["claude"],
+    };
+    vi.mocked(commands.listAgents).mockResolvedValue({
+      status: "ok",
+      data: [assignedAgent],
+    });
+    vi.mocked(commands.setGlobalAgentAssignment).mockResolvedValue({
+      status: "ok",
+      data: { ...assignedAgent, globalAssignments: [], rowVersion: 4 },
+    });
+    vi.mocked(commands.previewAgentSync).mockResolvedValue({
+      status: "ok",
+      data: makePreviewPlan({
+        targets: [
+          makeTarget({
+            changeKind: "delete",
+            status: "in_sync",
+            errorCode: null,
+          }),
+        ],
+      }),
+    });
+
+    renderAgents();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude 全局已分配" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewAgentSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyAgentPreview).toHaveBeenCalledWith({
+        previewId: "00000000-0000-4000-8000-000000000001",
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("直接应用遇到过期预览时会重建一次并继续清理", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "direct",
+        enabledTools: ["claude", "codex", "cursor", "zcode", "opencode"],
+      },
+    });
+    vi.mocked(commands.previewAgentSync)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: makePreviewPlan({
+          previewId: "stale-preview-1",
+          targets: [makeTarget({ changeKind: "delete", errorCode: null })],
+        }),
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: makePreviewPlan({
+          previewId: "fresh-preview-2",
+          targets: [makeTarget({ changeKind: "delete", errorCode: null })],
+        }),
+      });
+    vi.mocked(commands.applyAgentPreview)
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          code: "STALE_PREVIEW",
+          message: "预览已过期",
+          recoverable: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          runId: "agent-run-2",
+          status: "succeeded",
+          appliedTargets: 1,
+          snapshotCount: 1,
+        },
+      });
+
+    renderAgents();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Claude 全局未分配" }),
+    );
+    await waitFor(() =>
+      expect(commands.previewAgentSync).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(commands.applyAgentPreview).toHaveBeenNthCalledWith(1, {
+        previewId: "stale-preview-1",
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyAgentPreview).toHaveBeenNthCalledWith(2, {
+        previewId: "fresh-preview-2",
+        tool: "claude",
+        projectId: null,
+      }),
+    );
+  });
+
   it("列表徽标显示有工具特有设置的工具数量", async () => {
     vi.mocked(commands.listAgents).mockResolvedValue({
       status: "ok",

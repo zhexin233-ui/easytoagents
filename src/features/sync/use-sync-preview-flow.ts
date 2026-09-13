@@ -11,7 +11,11 @@ import {
 } from "@/bindings/commands";
 import { useNotify } from "@/components/use-notify";
 import { canAutoApplyPreview } from "@/lib/settings-api";
-import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import {
+  ProfileRpcError,
+  profileErrorText,
+  unwrapResult,
+} from "@/lib/profile-api";
 
 export interface OpenSyncPreview {
   plan: PreviewPlan;
@@ -44,11 +48,13 @@ export interface SyncPreviewFlowOptions<TReadopt = never> {
 interface PreviewRequest {
   tool: Tool;
   autoApply: boolean;
+  staleRetry?: number;
 }
 
 interface ApplyRequest {
   previewId: string;
   tool: Tool;
+  retryOnStale?: boolean;
 }
 
 type ReadoptRequest =
@@ -58,6 +64,12 @@ type ReadoptRequest =
     }
   // 保留旧的单目标调用形式；Agents 需要额外传入 targetPath。
   | Tool;
+
+function isStalePreviewError(error: unknown): boolean {
+  return (
+    error instanceof ProfileRpcError && error.appError.code === "STALE_PREVIEW"
+  );
+}
 
 /**
  * Owns the persisted preview lifecycle shared by global and project resource
@@ -91,7 +103,12 @@ export function useSyncPreviewFlow<TReadopt = never>(
       if (!mountedRef.current) return;
       notify({ kind: "success", message: options.messages.applied(result) });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      // Direct mode retries one stale preview with a fresh persisted plan;
+      // suppress the intermediate error and report only a failed retry.
+      if (variables.retryOnStale && isStalePreviewError(error)) {
+        return;
+      }
       if (!mountedRef.current) return;
       notify({
         kind: "error",
@@ -100,10 +117,11 @@ export function useSyncPreviewFlow<TReadopt = never>(
     },
   });
 
-  const submitPersistedPreview = (
+  const submitPersistedPreview = async (
     plan: PreviewPlan,
     tool: Tool,
     autoApply: boolean,
+    staleRetry = 0,
   ) => {
     if (plan.targets.length === 0) {
       closePreview();
@@ -113,7 +131,30 @@ export function useSyncPreviewFlow<TReadopt = never>(
       return;
     }
     if (options.directApply && autoApply && canAutoApplyPreview(plan)) {
-      applyMutation.mutate({ previewId: plan.previewId, tool });
+      // Keep the preview → Apply chain alive until the native write has
+      // completed. This matters when a central-list mutation invalidates and
+      // rerenders the page while direct mode is applying a deletion preview.
+      try {
+        await applyMutation.mutateAsync({
+          previewId: plan.previewId,
+          tool,
+          retryOnStale: staleRetry === 0,
+        });
+      } catch (error) {
+        if (
+          staleRetry === 0 &&
+          isStalePreviewError(error) &&
+          mountedRef.current
+        ) {
+          // A query invalidation or environment refresh can make the persisted
+          // plan stale between Preview and Apply. Rebuild once in the same
+          // mutation chain so two central-list changes cannot leave cleanup
+          // work stranded in an old preview.
+          await previewMutation
+            .mutateAsync({ tool, autoApply, staleRetry: 1 })
+            .catch(() => undefined);
+        }
+      }
       return;
     }
     setOpenPreview({ plan, tool });
@@ -124,9 +165,9 @@ export function useSyncPreviewFlow<TReadopt = never>(
       tool,
       plan: unwrapResult(await options.preview(tool)),
     }),
-    onSuccess: ({ plan, tool }, { autoApply }) => {
+    onSuccess: async ({ plan, tool }, { autoApply, staleRetry = 0 }) => {
       if (!mountedRef.current) return;
-      submitPersistedPreview(plan, tool, autoApply);
+      await submitPersistedPreview(plan, tool, autoApply, staleRetry);
     },
     onError: (error) => {
       if (!mountedRef.current) return;
@@ -166,8 +207,19 @@ export function useSyncPreviewFlow<TReadopt = never>(
     },
   });
 
-  const requestPreview = (tool: Tool, autoApply: boolean) => {
-    previewMutation.mutate({ tool, autoApply });
+  const previewQueueRef = useRef(Promise.resolve());
+  const requestPreview = (tool: Tool, autoApply: boolean): void => {
+    // Serialize preview → Apply chains. TanStack mutations can run multiple
+    // calls concurrently, but each persisted preview claims the same mutable
+    // database state; concurrent calls otherwise leave an older plan behind.
+    const queued = previewQueueRef.current
+      .catch(() => undefined)
+      .then(() =>
+        previewMutation.mutateAsync({ tool, autoApply }).then(() => undefined),
+      )
+      .catch(() => undefined);
+    previewQueueRef.current = queued;
+    void queued;
   };
 
   return {
