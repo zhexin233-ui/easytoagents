@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 64
+- **Total Sessions**: 65
 - **Last Active**: 2026-09-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1667 | Active |
+| `journal-1.md` | ~1690 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 65 | 2026-09-13 | 项目级 Agent 原生资源支持 | `b9c8adb`, `29ff07d`, `f1b3a4e` | `main` |
 | 64 | 2026-09-13 | Agents 工具特有字段配置 | `330fff5` | `main` |
 | 63 | 2026-09-12 | Agents 子代理全局与项目级管理 | `4800914` | `main` |
 | 62 | 2026-09-12 | UI macOS 风格优化落地与验收修复 | `556a562`, `afd84a2`, `27a4b03`, `7e350a7`, `1145707`, `22fe49f`, `5a6d8ac`, `f3c30d0`, `ae14579`, `dfd44f7`, `45432fb`, `8ea4b6a`, `0f81436` | `main` |

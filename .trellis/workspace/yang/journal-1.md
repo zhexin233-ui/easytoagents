@@ -1665,3 +1665,26 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 65: 项目级 Agent 原生资源支持
+
+**Date**: 2026-09-13
+**Task**: 项目级 Agent 原生资源支持
+**Branch**: `main`
+
+### Summary
+
+完成项目级 Agent 文件只读观测、agent_file 迁移、Agents 同步目录身份行隔离、前端展示与脱敏；pnpm check、Rust 测试/clippy/fmt、bindings 与差异检查全部通过。真实 GUI 手动验收待用户确认。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9c8adb` | (see git log) |
+| `29ff07d` | (see git log) |
+| `f1b3a4e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
