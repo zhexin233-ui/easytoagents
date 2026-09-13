@@ -292,6 +292,40 @@ export const hookRedactedResource: ProjectNativeResourceDto = {
   },
 };
 
+export const agentNativeResource: ProjectNativeResourceDto = {
+  id: "00000000-0000-4000-8000-000000000745",
+  projectId: project.id,
+  tool: "claude",
+  artifactKind: "agent",
+  displayName: "code-reviewer",
+  targetPath: "/isolated/projects/detail/.claude/agents",
+  entryType: "agent_file",
+  state: "active",
+  rowVersion: 1,
+  canDisable: false,
+  canRestore: false,
+  diagnosticCodes: [],
+  safeSummary: {
+    kind: "agent",
+    name: "code-reviewer",
+    description: "审查项目代码质量。",
+    fileName: "code-reviewer.md",
+  },
+  disabledAt: null,
+};
+
+export const agentRedactedResource: ProjectNativeResourceDto = {
+  ...agentNativeResource,
+  id: "00000000-0000-4000-8000-000000000746",
+  displayName: "secret-reviewer",
+  safeSummary: {
+    kind: "agent",
+    name: "secret-reviewer",
+    descriptionRedacted: true,
+    fileName: "secret-reviewer.md",
+  },
+};
+
 export const hookOptions: HookProjectOptionDto[] = [
   {
     hookId: "00000000-0000-4000-8000-000000000760",

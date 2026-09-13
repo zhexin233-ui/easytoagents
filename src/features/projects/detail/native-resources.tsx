@@ -143,6 +143,8 @@ function NativeResourceRow({
   onAction: () => void;
 }) {
   const isHook = resource.entryType === "hook_entry";
+  const isAgent = resource.entryType === "agent_file";
+  const readOnly = isHook || isAgent;
   const actionLabel = resource.canDisable
     ? `临时禁用 ${resource.displayName}`
     : resource.canRestore
@@ -171,6 +173,7 @@ function NativeResourceRow({
             {resource.targetPath}
           </code>
           {isHook ? <HookSummary resource={resource} /> : null}
+          {isAgent ? <AgentSummary resource={resource} /> : null}
           {resource.disabledAt ? (
             <p className="text-muted-foreground text-xs">
               禁用时间：{resource.disabledAt}
@@ -192,7 +195,7 @@ function NativeResourceRow({
             </p>
           ) : null}
         </div>
-        {isHook ? null : (
+        {readOnly ? null : (
           <Button
             type="button"
             size="sm"
@@ -210,10 +213,45 @@ function NativeResourceRow({
   );
 }
 
+/// Agent 文件展示：只读取后端 safeSummary，不在页面端解析或保存 prompt 正文。
+function AgentSummary({ resource }: { resource: ProjectNativeResourceDto }) {
+  const fields = summaryFields(resource.safeSummary);
+  const fileName = typeof fields.fileName === "string" ? fields.fileName : null;
+  const description =
+    typeof fields.description === "string" ? fields.description : null;
+  const redacted = fields.descriptionRedacted === true;
+  const parseError =
+    typeof fields.parseError === "string" ? fields.parseError : null;
+
+  return (
+    <div className="space-y-1">
+      {fileName ? (
+        <p className="text-xs">
+          文件：<code className="break-all">{fileName}</code>
+        </p>
+      ) : null}
+      {description ? <p className="text-xs">描述：{description}</p> : null}
+      {redacted ? (
+        <p className="text-muted-foreground text-xs">
+          描述包含可识别凭据，已脱敏。
+        </p>
+      ) : null}
+      {parseError ? (
+        <p className="text-xs">
+          解析失败：<code>{parseError}</code>
+        </p>
+      ) : null}
+      <p className="text-muted-foreground text-xs">
+        Agent 文件暂不支持临时禁用与恢复。
+      </p>
+    </div>
+  );
+}
+
 /// Hook 条目展示：原生事件、matcher、命令（可识别凭据只提示已脱敏）与超时。
 /// Hook 是匿名数组条目，无法按条目定位改写，因此不提供禁用/恢复。
 function HookSummary({ resource }: { resource: ProjectNativeResourceDto }) {
-  const fields = hookSummaryFields(resource.safeSummary);
+  const fields = summaryFields(resource.safeSummary);
   const command = typeof fields.command === "string" ? fields.command : null;
   const matcher = typeof fields.matcher === "string" ? fields.matcher : null;
   const timeout = typeof fields.timeout === "number" ? fields.timeout : null;
@@ -243,8 +281,8 @@ function HookSummary({ resource }: { resource: ProjectNativeResourceDto }) {
   );
 }
 
-/// `safeSummary` 是宽松 JSON；只有对象形态的 Hook 摘要才提供字段。
-function hookSummaryFields(summary: ProjectNativeResourceDto["safeSummary"]) {
+/// `safeSummary` 是宽松 JSON；只有对象形态的原生条目摘要才提供字段。
+function summaryFields(summary: ProjectNativeResourceDto["safeSummary"]) {
   return typeof summary === "object" &&
     summary !== null &&
     !Array.isArray(summary)
@@ -290,5 +328,7 @@ function entryTypeLabel(entryType: ProjectNativeResourceDto["entryType"]) {
       return "符号链接";
     case "hook_entry":
       return "Hook 条目";
+    case "agent_file":
+      return "Agent 文件";
   }
 }

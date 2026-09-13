@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands, type AgentProjectOptionDto } from "@/bindings/commands";
 import {
+  agentNativeResource,
+  agentRedactedResource,
   project,
   renderPage,
   setupMocks,
@@ -136,6 +138,57 @@ describe("ProjectDetailPage Agents", () => {
       within(platformGroup).queryByRole("button", {
         name: "管理 ZCode 项目资源",
       }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("Agents 视图列出项目原生 Agent 文件并保持只读", async () => {
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [agentNativeResource],
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目 Agents" }),
+    );
+
+    await waitFor(() =>
+      expect(commands.listProjectNativeResources).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        artifactKind: "agent",
+      }),
+    );
+    expect(await screen.findByText("code-reviewer")).toBeVisible();
+    expect(screen.getByText("Agent 文件")).toBeVisible();
+    expect(screen.getByText("文件：")).toBeVisible();
+    expect(screen.getByText("code-reviewer.md")).toBeVisible();
+    expect(screen.getByText("描述：审查项目代码质量。")).toBeVisible();
+    expect(
+      screen.getByText("Agent 文件暂不支持临时禁用与恢复。"),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: /code-reviewer (临时禁用|恢复|当前不可操作)/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(commands.previewProjectNativeResourceAction).not.toHaveBeenCalled();
+  });
+
+  it("项目原生 Agent 描述脱敏时不显示描述原文", async () => {
+    vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
+      status: "ok",
+      data: [agentRedactedResource],
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "管理项目 Agents" }),
+    );
+
+    expect(
+      await screen.findByText("描述包含可识别凭据，已脱敏。"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("secret-reviewer 的描述原文"),
     ).not.toBeInTheDocument();
   });
 });

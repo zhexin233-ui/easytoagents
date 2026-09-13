@@ -10,11 +10,13 @@ Backend integrations use explicit inputs and fail-closed evidence. Discovery, sc
 preview generation, and Git inspection are read-only operations; they must be safe to
 run against hostile paths and configuration contents.
 
-Project-native Skill/MCP observation is a third identity: it is not a central
+Project-native Skill/MCP/Hook/Agent observation is a third identity: it is not a central
 assignment and not `managed_items` ownership. Empty-baseline target identity rows exist
-only to hang that supported observation; they must not relax ordinary Apply. Prompt is
-global-only, so project Prompt/Rules files are outside discovery, observation,
-ownership, disable/restore, and Apply.
+only to hang that supported observation; they must not relax ordinary Apply. Agent files
+are read-only observations keyed by their containing directory identity and must be
+excluded from Agents synchronization unless a separate file target has a non-empty
+central baseline. Prompt is global-only, so project Prompt/Rules files are outside
+discovery, observation, ownership, disable/restore, and Apply.
 
 ---
 
@@ -1493,16 +1495,17 @@ retire_rows(database, &plan)?;                      // queue + DELETE, single IM
 remove_files_and_dequeue(database, &plan)?;         // failures stay queued for startup
 ```
 
-## Scenario: Project-native MCP/Skill resource observation, disable, and restore
+## Scenario: Project-native MCP/Skill/Hook/Agent resource observation, disable, and restore
 
 ### 1. Scope / Trigger
 
 - Trigger: project registration/rescan/get DTOs, `project_native_resources`,
   native MCP/Skill disable/restore preview/apply, MCP selector mutation, Skill
-  entry removal/restore without central takeover, snapshot reference protection,
-  or project-detail native UI. Prompt/Rules files are not part of this flow.
-  Project-level Hook entries are read-only observations (`hook_entry`): they are
-  listed and reconciled but never enter disable/restore.
+  entry removal/restore without central takeover, project Agent file observation,
+  snapshot reference protection, or project-detail native UI. Prompt/Rules files are
+  not part of this flow. Project-level Hook entries are read-only observations
+  (`hook_entry`), and project Agent files are read-only observations (`agent_file`):
+  they are listed and reconciled but never enter disable/restore.
 
 ### 2. Signatures
 
@@ -1514,28 +1517,32 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   `count_blocking_native_resources`) and `projects/native_resources.rs`.
   Commands live in `commands/projects.rs`.
 - `ProjectNativeResourceDto.safeSummary` is `{ kind: "mcp" }` for MCP,
-  `{ entryType }` for Skill, and for `hook_entry`
-  `{ kind: "hook", event, matcher?, timeout?, command | commandRedacted: true }`.
-  Hook display data comes from the in-memory scan index keyed by
-  `(target_path, external_key)`; the raw command text is never persisted. It
-  never carries args, env, headers, URL, or raw config beyond the command redaction rule.
-- Migration `0012_project_native_resources.sql` and the 0021 CHECK widening only.
-  Do not rewrite historical migrations.
+  `{ entryType }` for Skill, for `hook_entry`
+  `{ kind: "hook", event, matcher?, timeout?, command | commandRedacted: true }`,
+  and for `agent_file` `{ kind: "agent", name?, description |
+  descriptionRedacted: true, fileName, parseError? }`. Hook and Agent display data
+  comes from the in-memory scan index keyed by `(target_path, external_key)`; raw
+  command, description, and prompt text are never persisted. Agent summaries never
+  carry prompt or developer instructions, and all native summaries remain free of
+  unredacted credentials.
+- Migration `0012_project_native_resources.sql`, the 0021 Hook widening, and the
+  0024 Agent-file widening are the current table-shape history. Do not rewrite
+  historical migrations.
 
 ### 3. Contracts
 
 - Three identities stay distinct:
   1. central resource + assignment = what the app wants to sync;
   2. `managed_items` + filled baselines = proven ownership;
-  3. `project_native_resources` = MCP/Skill/Hook observation and recoverable
-     disable state for MCP/Skill (Hook entries are read-only rows only).
+  3. `project_native_resources` = MCP/Skill/Hook/Agent observation and recoverable
+     disable state for MCP/Skill (Hook and Agent entries are read-only rows only).
 - Prompt/Rules are global-only. They do not produce project `managed_targets`,
   `managed_items`, `project_native_resources`, or disable/restore actions.
 - `insert_project_target_identity` may create a `managed_targets` row with empty
-  `baseline_*` and no `managed_items` for an observed MCP or Skill target. That
-  row is not ownership. Ordinary `preview_mcp_sync` / Skill Apply with no
-  assignment must still produce zero targets and must not create an empty project
-  configuration file.
+  `baseline_*` and no `managed_items` for an observed MCP, Skill, or Agent
+  directory target. That row is not ownership. Ordinary `preview_mcp_sync` /
+  Skill / Agent Apply with no assignment must still produce zero targets and must
+  not create an empty project configuration or Agent file.
 - Read commands never write. `list_projects` / `get_project` only observe
   targets and summarize the already reconciled `project_native_resources`
   rows; they must not call `reconcile_project_native_resources`. Reconciliation
@@ -1559,8 +1566,8 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
 - Register/get/rescan reuse adapter `discover` + `scan_target`. Classification:
   matching managed item hash → central-owned (hidden from operable native list);
   managed key with drifted hash → central drift (not a native disable target);
-  no ownership evidence → project-native MCP/Skill resource. Project Prompt/Rules
-  files are not read and remain outside the application-owned target set.
+  no ownership evidence → project-native MCP/Skill/Agent resource. Project
+  Prompt/Rules files are not read and remain outside the application-owned target set.
 - Reconciliation: new MCP/Skill native keys upsert `active`; vanished `active`
   rows become `missing` (no snapshot, unrestorable); `disabled` stays disabled
   while the snapshot is valid and the key is absent; a disabled key that
@@ -1600,6 +1607,17 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   key, matching `verify_hook_item_baselines`). Hook entries hash over their full
   content, so an externally edited command shows up as one `missing` + one
   `active` row — accepted semantics, consistent with hook sync baselines.
+- Agent files are read-only observations of the top-level `<name>.<ext>` regular files
+  in each supported project Agent directory; regular-file symlinks are accepted, while
+  nested directories and unrelated extensions are skipped. Missing directories retain
+  prior rows as `missing`, and unreadable scans leave the prior state unchanged. The
+  `agent_file` external key is the filename and its item hash is the full byte hash.
+  The Agent directory itself owns one empty-baseline `managed_targets` identity row;
+  Agents synchronization must filter that directory path through `agent_file_descriptor`
+  before considering deletion candidates. A file is centrally owned only when its exact
+  path has a non-empty full or managed baseline; empty-baseline preview rows remain
+  visible as project-native files. Agent `safeSummary` includes only a bounded,
+  redacted description and stable parse diagnostics, never prompt text.
 
 ### 4. Validation & Error Matrix
 
@@ -1611,6 +1629,8 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
 | Central-owned or central-drift item presented as native disable | `NOT_FOUND` / `CONFLICT`; no native write |
 | `hook_entry` resource action preview | `INVALID_INPUT` ("Hooks 暂不支持临时禁用与恢复"); `canDisable`/`canRestore` always false |
 | Hook command contains a detectable secret | `safeSummary.command` omitted; `commandRedacted: true` only |
+| `agent_file` resource action preview | `INVALID_INPUT` ("Agent 文件暂不支持临时禁用与恢复"); `canDisable`/`canRestore` always false |
+| Agent description contains a detectable secret | `safeSummary.description` omitted; `descriptionRedacted: true` only |
 | Project Prompt/Rules path supplied to a native-resource command | `INVALID_INPUT` / `NOT_FOUND`; no native read or write |
 | Apply when `sync_runs.status != "previewed"` | `PREVIEW_ALREADY_CONSUMED` **before** the action matrix |
 | Stale resource/target `row_version` or target identity change | `STALE_PREVIEW` / `CONFLICT`; no overwrite |
@@ -1655,6 +1675,12 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   the rest stay `active`; centrally synced hook entries are hidden while other
   entries in the same file remain listed; action previews return
   `INVALID_INPUT`; redacted commands never serialize.
+- Project-level Agents: Claude/Codex/Cursor/OpenCode top-level files are listed
+  read-only with stable summaries, missing-file transitions, central-baseline hiding,
+  action rejection, redacted/oversized/malformed diagnostics, and unchanged native
+  bytes. ZCode project Agent descriptors remain pathless/unsupported. Verify the
+  directory identity row never becomes an Agents deletion target and empty desired
+  assignments create no run or target.
 
 ### 7. Wrong vs Correct
 

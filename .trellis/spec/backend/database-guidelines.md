@@ -12,9 +12,9 @@ targets and must not replace relational constraints with unvalidated JSON.
 
 Prompt is a global-only resource in the current schema. Project Prompt
 assignments, project Prompt targets, and PromptFile observations are retired;
-project-native observation now covers supported MCP, Skill, and (read-only,
-since 0021) Hook resources (Hook
-project assignment/status remains separate from this observation table).
+project-native observation now covers supported MCP, Skill, and read-only Hook /
+Agent-file resources (Hook and Agent project assignment/status remains separate
+from this observation table).
 Migration 0018 removes historical project Prompt rows and private snapshots
 without reading or deleting files under a registered project root.
 
@@ -92,12 +92,13 @@ silently chooses a different path. Existing migrations containing historical
 schema-text edits remain untouched; this rule applies to migrations added from
 now on.
 
-### Scenario: 0021 table rebuild widening a CHECK (canonical precedent)
+### Scenario: 0021/0024 table rebuild widening a CHECK (canonical precedent)
 
 `0021_project_native_hook_entries.sql` is the first published migration to use
 the 12-step transactional table rebuild, widening
-`project_native_resources.entry_type` with `hook_entry`. Copy this shape for
-future CHECK/shape changes instead of `writable_schema`:
+`project_native_resources.entry_type` with `hook_entry`; migration
+`0024_project_native_agent_files.sql` repeats the same shape for `agent_file`.
+Copy this shape for future CHECK/shape changes instead of `writable_schema`:
 
 - SQL-only preconditions: a TEMP table whose column has `CHECK(x = 1)` aborts
   the whole migration transaction when the INSERT feeding it does not satisfy
@@ -114,11 +115,13 @@ future CHECK/shape changes instead of `writable_schema`:
 - Finish with `pragma_foreign_key_check` / `pragma_integrity_check`
   table-valued functions feeding CHECK-validated TEMP tables, so any violation
   aborts the migration, then drop the TEMP tables.
-- Migration test (`project_native_hook_entries_migration_preserves_rows_and_widens_check`)
+- Migration tests (`project_native_hook_entries_migration_preserves_rows_and_widens_check`
+  and `project_native_agent_files_migration_preserves_rows_and_widens_check`)
   builds a v20 database with `mcp_entry`/`directory`/`symlink` rows including a
-  disabled row holding a snapshot, then proves preservation, `hook_entry`
-  acceptance, `prompt_file` rejection, the row-version bump trigger, the
-  snapshots id-update trigger, and idempotent reopen.
+  disabled row holding a snapshot, then prove preservation, their new entry-type
+  acceptance, `prompt_file` rejection, the row-version bump trigger, the snapshots
+  id-update trigger, and idempotent reopen. The Agent-file migration preserves the
+  existing MCP/Skill/Hook rows and adds only the `agent_file` CHECK value.
 
 ### Scenario: In-place schema-text revision for CHECK-only changes (historical)
 
@@ -331,7 +334,7 @@ remove_regular_payload_if_present(&path)?;
   snapshot, and log files are `0600`.
 - The schema contains provider/prompt/MCP/skill/project entities, global profile
   state, MCP/Skill/Hook global and project assignments, managed targets/items,
-  `project_native_resources` for MCP/Skill/Hook observations, sync runs/items,
+  `project_native_resources` for MCP/Skill/Hook/Agent-file observations, sync runs/items,
   snapshots, and the `app_settings` key-value table for singleton user
   preferences (no `row_version`; unknown stored enum values fail closed with
   `DATABASE_ERROR`). Prompt profile state and its native targets are global-only.
@@ -389,30 +392,33 @@ let database = Database::open(&paths)?;
 ### 1. Scope / Trigger
 
 - Trigger: any change to migration `0012_project_native_resources.sql`,
-  migration `0021_project_native_hook_entries.sql`,
+  migration `0021_project_native_hook_entries.sql`, migration
+  `0024_project_native_agent_files.sql`,
   `db/native_resources.rs`, native-resource CAS, target-identity upsert, snapshot
   FK/RESTRICT, `soft_remove_project`, or `delete_snapshots` reference checks.
 - Current project-native observation covers MCP entries, Skill directories or
-  links, and (since 0021, read-only) Hook entries. Prompt/Rules files are outside
+  links, and (since 0021/0024, read-only) Hook and Agent-file entries. Prompt/Rules files are outside
   this model and are never observed or exposed as disable/restore resources.
 
 ### 2. Signatures
 
 - Table `project_native_resources`: UUID `id`, `target_id` → `managed_targets(id)`
   `ON DELETE CASCADE`, `external_key`, `entry_type` in
-  `mcp_entry|directory|symlink|hook_entry` (0021 widened the CHECK by table
-  rebuild), `state` in
+  `mcp_entry|directory|symlink|hook_entry|agent_file` (0021/0024 widened the CHECK
+  by table rebuild), `state` in
   `active|disabled|missing|conflict`, optional SHA-256 `observed_item_hash`,
   `disabled_snapshot_id` → `snapshots(id)` `ON DELETE RESTRICT`, `disabled_at`,
   timestamps, `row_version`. Unique `(target_id, external_key)`.
 - `insert_project_target_identity(...)` inserts only
   `id, tool, artifact_kind, scope='project', project_id, target_path` when no
   row exists; baselines stay NULL. Valid project artifact kinds are `mcp`,
-  `skill`, and `hook`; Prompt is not a project target.
+  `skill`, `hook`, and `agent`; Prompt is not a project target. Agent identity
+  rows use the containing directory path; individual `agent_file` rows use the
+  filename as `external_key` and remain read-only.
 - `snapshot_is_referenced(connection, snapshot_id, database_path) -> bool`
 - `count_blocking_native_resources(tx, project_id, database_path) -> u32`
   counts `disabled` + `conflict` for that project.
-- Compiled schema version is `23` (`src-tauri/src/app/mod.rs` assertion).
+- Compiled schema version is `24` (`src-tauri/src/app/mod.rs` assertion).
 
 ### 3. Contracts
 
@@ -424,8 +430,10 @@ let database = Database::open(&paths)?;
 - Identity upsert does not write `baseline_full_hash`, `baseline_managed_hash`,
   `baseline_projection_json`, or `managed_items`.
 - Project scans may create empty-baseline identity rows only for supported MCP,
-  Skill, or Hook targets. Such a row is observation scaffolding, not ownership;
-  it must not create an empty project file or widen ordinary Apply.
+  Skill, Hook, or Agent-directory targets. Such a row is observation scaffolding,
+  not ownership; it must not create an empty project file or widen ordinary Apply.
+  Agents synchronization must first exclude the Agent directory identity path with
+  `agent_file_descriptor`; only exact file paths are sync targets.
 - Product deletion of snapshots still goes through `delete_snapshots` +
   `snapshot_is_referenced`. Project removal calls
   `count_blocking_native_resources` inside the same IMMEDIATE transaction as
@@ -444,8 +452,8 @@ let database = Database::open(&paths)?;
 
 ### 5. Good/Base/Bad Cases
 
-- Good: register or rescan an old project, lazily insert active MCP/Skill
-  observations, and leave all project Prompt/Rules files untouched.
+- Good: register or rescan an old project, lazily insert active MCP/Skill/Hook/
+  Agent-file observations, and leave all project Prompt/Rules files untouched.
 - Base: an empty-baseline identity row exists after registration; ordinary Apply
   still has no target until a supported assignment exists.
 - Bad: create a Prompt project target, infer ownership from an empty baseline,
@@ -458,6 +466,10 @@ let database = Database::open(&paths)?;
   v18 canaries that reject project Prompt targets and `prompt_file` entries.
 - Empty identity is not treated as ownership and does not create project files;
   project scans do not read Prompt/Rules files.
+- Agent directory identity rows do not enter Agents deletion candidates; with no
+  assignments the Agent preview has zero targets, while direct top-level files
+  remain byte-for-byte unchanged. Applied Agent file targets hide by exact path
+  only after a non-empty baseline is present.
 - Referenced snapshot survives `delete_snapshots`; `soft_remove_project` refuses
   while supported native rows are disabled or conflicted.
 

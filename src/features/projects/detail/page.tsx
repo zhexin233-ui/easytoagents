@@ -127,6 +127,7 @@ export function ProjectDetailPage() {
         "mcp",
         "skill",
         "hook",
+        "agent",
       ]);
       notify({
         kind: "success",
@@ -378,16 +379,14 @@ export function ProjectDetailPage() {
                 code={interruptedQuery.data?.status ?? "WRITE_IN_PROGRESS"}
               />
             ) : null}
-            {activeResourceView !== "agent" ? (
-              <ProjectNativeResources
-                project={project}
-                tool={activeTool}
-                artifactKind={activeResourceView}
-                writerBlocked={writerBlocked}
-                applyPending={applyMutation.isPending}
-                onPreview={handleNativePreview}
-              />
-            ) : null}
+            <ProjectNativeResources
+              project={project}
+              tool={activeTool}
+              artifactKind={activeResourceView}
+              writerBlocked={writerBlocked}
+              applyPending={applyMutation.isPending}
+              onPreview={handleNativePreview}
+            />
             <h2 className="text-[15px] font-semibold">
               {toolLabel(activeTool)}{" "}
               {activeResourceView === "mcp"

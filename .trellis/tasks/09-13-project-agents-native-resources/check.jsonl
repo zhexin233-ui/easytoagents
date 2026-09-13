@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-13-project-agents-native-resources/research/root-cause.md", "reason": "校验实现是否守住目录级身份行与 Agents 同步的隔离、按路径 + 非空 baseline 隐藏、只读观测"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量检查清单与原生资源合同"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "复核 0024 迁移是否满足 12 步表重建与幂等测试要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量检查清单与原生资源视图合同"}

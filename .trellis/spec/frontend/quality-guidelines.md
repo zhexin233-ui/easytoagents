@@ -14,7 +14,8 @@ they always open `ChangePreviewDialog` and never auto-Apply.
 
 Prompt is global-only. The frontend must not render project Prompt assignment,
 PromptFile management, or project Prompt preview/apply controls; project
-scanning and native-resource views cover supported MCP and Skill resources only.
+scanning and native-resource views cover supported MCP/Skill resources plus
+read-only Hook and Agent-file observations.
 
 ## Forbidden Patterns
 
@@ -452,7 +453,7 @@ const adopted = unwrapResult(
   checked and read-only; there is no project-level global-disable mutation.
 - `ProjectDetailPage` is the single UI owner for project MCP/Skill/Hook assignment
   **and** project-native resources. It uses independent local resource
-  (`"mcp" | "hook" | "skill"`) and tool view state, defaults to MCP + the first
+  (`"mcp" | "hook" | "skill" | "agent"`) and tool view state, defaults to MCP + the first
   enabled tool, and exposes both switches as accessible pressed-button groups. Tool
   selection uses the bundled brand assets with an accessible button name, `title`, and
   `aria-pressed`; the decorative image stays hidden from assistive technology. Filter
@@ -464,7 +465,9 @@ const adopted = unwrapResult(
   never issue an RPC and unsubmitted child state cannot leak across combinations.
   Inside the active combination, render a "项目原生资源" heading
   **above** "中央追加". The project-native resource list contains supported MCP and
-  Skill observations only; Hook assignment uses its own central assignment flow.
+  Skill observations plus read-only Hook and Agent-file observations; Hook and Agent
+  assignment uses its own central assignment flow. Agent-file rows never render a
+  disable/restore action and show "Agent 文件暂不支持临时禁用与恢复。".
   Prompt/Rules files are not queried, listed, or managed. Native `safeSummary` and
   diagnostics never render MCP secrets.
 - Native disable/restore always call `previewProjectNativeResourceAction` then open
@@ -562,6 +565,9 @@ const adopted = unwrapResult(
 - Assert the native-resources heading appears above 中央追加; disable/restore with
   `applyMode: "direct"` opens `ChangePreviewDialog` and does not call Apply until
   confirm; MCP fixture secrets never appear in rendered native copy.
+- Agents view must query `artifactKind: "agent"`, render Agent-file display name,
+  file name, description or the redacted-description notice, and the read-only
+  explanation without rendering disable/restore or "不可操作" controls.
 - Resolve deferred preview, assignment, and Apply mutations after switching combinations
   and assert they cannot reopen a stale dialog, close the current dialog, or write the
   inactive combination's message. Keep the exact current tool in preview/Apply payload

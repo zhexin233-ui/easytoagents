@@ -10,15 +10,10 @@ import { profileKeys } from "@/lib/profile-api";
 import { syncKeys } from "@/lib/sync-api";
 import { skillKeys } from "@/lib/skills-api";
 
-// Agent targets use their own directory/file API.  They are not whole-project
-// native resources, so keep them out of the generic resource command union;
-// otherwise the frontend could send an Agent artifact to a backend command
-// that intentionally rejects it.
-export type ProjectResourceKind = Exclude<
-  ArtifactKind,
-  "provider" | "prompt" | "agent"
->;
-export type ProjectScopeKind = ProjectResourceKind | "agent" | "project";
+// Agent targets are listed as read-only files in the project-native resource
+// view; mutation commands still fail closed in the backend.
+export type ProjectResourceKind = Exclude<ArtifactKind, "provider" | "prompt">;
+export type ProjectScopeKind = ProjectResourceKind | "project";
 
 export const projectKeys = {
   all: ["projects"] as const,
