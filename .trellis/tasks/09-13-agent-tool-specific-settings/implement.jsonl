@@ -1,0 +1,13 @@
+{"file": ".trellis/tasks/09-13-agent-tool-specific-settings/research/tool-specific-fields.md", "reason": "Claude / Codex 特有字段官方定义、白名单取值与现有实现约束点"}
+{"file": ".trellis/tasks/archive/2026-09/09-12-add-agents-management/design.md", "reason": "上一任务的 Agents 设计：投影、导入解析、目标模型的既有决策"}
+{"file": ".trellis/tasks/archive/2026-09/09-12-add-agents-management/research/agents-capability-matrix.md", "reason": "五工具子代理格式与全部特有字段清单"}
+{"file": "docs/maintainers/adding-tool-adapter.md", "reason": "§11 Agents 合同与 fail-closed 规范，本任务需同步修订"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新建表、迁移编号与升级测试规则"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "预览 / Apply / 校验合同"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 与稳定诊断码约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "agents 模块布局"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "表单弹窗与折叠区组件模式"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "mutation 与查询失效模式"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "生成 bindings 与 DTO 类型使用"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "无隐式 Apply、预览对话框约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "DTO / bindings / 前端跨层一致性"}

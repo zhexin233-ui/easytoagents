@@ -16,7 +16,7 @@ macro_rules! string_enum {
         }
     ) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize, Type)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, Type)]
         pub enum $name {
             $(#[serde(rename = $value)] $variant),+
         }
@@ -88,6 +88,8 @@ pub struct ToolCapabilities {
     pub agents: bool,
     /// Agents 项目级管理：ZCode 官方明示不支持，其余四工具支持。
     pub project_agents: bool,
+    /// Agent 工具特有设置覆盖层：首期仅 Claude / Codex 有白名单合同。
+    pub agent_tool_settings: bool,
 }
 
 /// 主实体统一使用 UUID 文本标识，避免各功能自行发明 ID 规则。
@@ -284,6 +286,7 @@ pub fn tool_capabilities() -> Vec<ToolCapabilities> {
             hooks: !matches!(tool, Tool::Opencode),
             agents: true,
             project_agents: !matches!(tool, Tool::Zcode),
+            agent_tool_settings: matches!(tool, Tool::Claude | Tool::Codex),
         })
         .collect()
 }
@@ -969,6 +972,7 @@ mod tests {
             hooks: true,
             agents: true,
             project_agents: true,
+            agent_tool_settings: true,
         };
     }
 

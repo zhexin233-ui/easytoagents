@@ -713,9 +713,36 @@ fn render_document(
             }
         }
         (TargetFormat::Toml, _, ManagedOwnership::WholeDocument) => {
-            let document = toml_edit::ser::to_document(desired_projection).map_err(|error| {
+            let mut document = toml_edit::ser::to_document(desired_projection).map_err(|error| {
                 AppError::parse(target.path_for_error(), target.format.as_str()).with_source(error)
             })?;
+            if target.artifact_kind == ArtifactKind::Agent {
+                // `toml_edit::ser::to_document` represents nested serde maps as
+                // inline tables.  Agent settings use a conventional `[features]`
+                // table so Codex can merge and inspect feature flags naturally;
+                // move top-level inline tables after scalar keys while preserving
+                // deterministic key order.  Other TOML whole-document artifacts
+                // keep their existing renderer byte-for-byte contract.
+                let nested_keys = document
+                    .as_table()
+                    .iter()
+                    .filter_map(|(key, item)| {
+                        item.as_value()
+                            .and_then(|value| value.as_inline_table())
+                            .map(|_| key.to_owned())
+                    })
+                    .collect::<Vec<_>>();
+                for key in nested_keys {
+                    if let Some(item) = document.as_table_mut().remove(&key) {
+                        let table = item.into_table().map_err(|_| {
+                            AppError::parse(target.path_for_error(), target.format.as_str())
+                        })?;
+                        document
+                            .as_table_mut()
+                            .insert(&key, toml_edit::Item::Table(table));
+                    }
+                }
+            }
             Ok(RenderedTarget::File(document.to_string().into_bytes()))
         }
         (TargetFormat::Toml, current, ManagedOwnership::Selectors(selectors)) => {
@@ -978,4 +1005,3 @@ fn json_to_toml_item(value: &Value) -> Result<Item, AppError> {
         )),
     }
 }
-

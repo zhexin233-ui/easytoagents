@@ -13,9 +13,9 @@ use easytoagents_lib::{
     },
     agents::{
         apply_agent_preview, create_agent, preview_agent_sync, readopt_agent_target,
-        set_agent_enabled, set_global_agent_assignment, ApplyAgentPreviewInput, CreateAgentInput,
-        PreviewAgentSyncInput, ReadoptAgentTargetInput, SetGlobalAgentAssignmentInput,
-        VersionedAgentInput,
+        set_agent_enabled, set_agent_tool_settings, set_global_agent_assignment,
+        ApplyAgentPreviewInput, CreateAgentInput, PreviewAgentSyncInput, ReadoptAgentTargetInput,
+        SetAgentToolSettingsInput, SetGlobalAgentAssignmentInput, VersionedAgentInput,
     },
     app::AppPaths,
     db::Database,
@@ -593,6 +593,191 @@ fn agents_global_chain_covers_claude_codex_drift_readopt_delete_and_restore() {
     assert!(codex_content.contains("name = \"phase8-reviewer\""));
     assert!(codex_content.contains("description = \"Phase 8 子代理审阅器\""));
     assert!(codex_content.contains("developer_instructions"));
+
+    // 工具特有设置变更应使已有目标生成 Update 预览，Apply 后写入原生字段；
+    // 清除覆盖层后再次生成 Update 并 Apply，文件应逐字节回到交集投影。
+    let claude_base_content = claude_content.clone();
+    let codex_base_content = codex_content.clone();
+    agent = set_agent_tool_settings(
+        &mut fixture.database,
+        &SetAgentToolSettingsInput {
+            agent_id: agent.id.clone(),
+            tool: Tool::Claude,
+            settings: Some(json!({
+                "model": "sonnet",
+                "color": "cyan",
+                "tools": ["Read", "Edit", "Read"],
+            })),
+            row_version: agent.row_version,
+        },
+    )
+    .expect("写入 Claude 工具特有设置失败");
+    agent = set_agent_tool_settings(
+        &mut fixture.database,
+        &SetAgentToolSettingsInput {
+            agent_id: agent.id.clone(),
+            tool: Tool::Codex,
+            settings: Some(json!({
+                "model": "gpt-5.6-terra",
+                "modelReasoningEffort": "high",
+                "features": {"multi_agent": true, "hooks": false},
+            })),
+            row_version: agent.row_version,
+        },
+    )
+    .expect("写入 Codex 工具特有设置失败");
+
+    let claude_settings_preview = preview_agent_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewAgentSyncInput {
+            tool: Tool::Claude,
+            project_id: None,
+            exclude_from_git: false,
+        },
+    )
+    .expect("生成 Claude 工具设置更新预览失败");
+    assert_eq!(
+        claude_settings_preview.targets[0].change_kind,
+        ChangeKind::Update
+    );
+    apply_agent_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &ApplyAgentPreviewInput {
+            preview_id: claude_settings_preview.preview_id,
+            tool: Tool::Claude,
+            project_id: None,
+        },
+    )
+    .expect("应用 Claude 工具设置更新失败");
+    let claude_with_settings =
+        fs::read_to_string(&claude_target).expect("读取 Claude 设置投影失败");
+    assert!(claude_with_settings.contains("model: sonnet"));
+    assert!(claude_with_settings.contains("color: cyan"));
+    assert!(claude_with_settings.contains("tools: Read, Edit"));
+
+    let codex_settings_preview = preview_agent_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewAgentSyncInput {
+            tool: Tool::Codex,
+            project_id: None,
+            exclude_from_git: false,
+        },
+    )
+    .expect("生成 Codex 工具设置更新预览失败");
+    assert_eq!(
+        codex_settings_preview.targets[0].change_kind,
+        ChangeKind::Update
+    );
+    apply_agent_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &ApplyAgentPreviewInput {
+            preview_id: codex_settings_preview.preview_id,
+            tool: Tool::Codex,
+            project_id: None,
+        },
+    )
+    .expect("应用 Codex 工具设置更新失败");
+    let codex_with_settings = fs::read_to_string(&codex_target).expect("读取 Codex 设置投影失败");
+    assert!(codex_with_settings.contains("model = \"gpt-5.6-terra\""));
+    assert!(codex_with_settings.contains("model_reasoning_effort = \"high\""));
+    assert!(codex_with_settings.contains("[features]"));
+    assert!(codex_with_settings.contains("multi_agent = true"));
+    assert!(codex_with_settings.contains("hooks = false"));
+
+    agent = set_agent_tool_settings(
+        &mut fixture.database,
+        &SetAgentToolSettingsInput {
+            agent_id: agent.id.clone(),
+            tool: Tool::Claude,
+            settings: None,
+            row_version: agent.row_version,
+        },
+    )
+    .expect("清除 Claude 工具特有设置失败");
+    agent = set_agent_tool_settings(
+        &mut fixture.database,
+        &SetAgentToolSettingsInput {
+            agent_id: agent.id.clone(),
+            tool: Tool::Codex,
+            settings: None,
+            row_version: agent.row_version,
+        },
+    )
+    .expect("清除 Codex 工具特有设置失败");
+
+    let claude_clear_preview = preview_agent_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewAgentSyncInput {
+            tool: Tool::Claude,
+            project_id: None,
+            exclude_from_git: false,
+        },
+    )
+    .expect("生成 Claude 工具设置清除预览失败");
+    assert_eq!(
+        claude_clear_preview.targets[0].change_kind,
+        ChangeKind::Update
+    );
+    apply_agent_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &ApplyAgentPreviewInput {
+            preview_id: claude_clear_preview.preview_id,
+            tool: Tool::Claude,
+            project_id: None,
+        },
+    )
+    .expect("应用 Claude 工具设置清除失败");
+
+    let codex_clear_preview = preview_agent_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewAgentSyncInput {
+            tool: Tool::Codex,
+            project_id: None,
+            exclude_from_git: false,
+        },
+    )
+    .expect("生成 Codex 工具设置清除预览失败");
+    assert_eq!(
+        codex_clear_preview.targets[0].change_kind,
+        ChangeKind::Update
+    );
+    apply_agent_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &ApplyAgentPreviewInput {
+            preview_id: codex_clear_preview.preview_id,
+            tool: Tool::Codex,
+            project_id: None,
+        },
+    )
+    .expect("应用 Codex 工具设置清除失败");
+    assert_eq!(
+        fs::read_to_string(&claude_target).unwrap(),
+        claude_base_content
+    );
+    assert_eq!(
+        fs::read_to_string(&codex_target).unwrap(),
+        codex_base_content
+    );
 
     // 外部改写受管文件会阻止 Apply；显式 readopt 刷新基线后，下一次预览
     // 才允许把中央投影重新写回文件。

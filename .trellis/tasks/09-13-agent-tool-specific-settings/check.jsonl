@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-13-agent-tool-specific-settings/research/tool-specific-fields.md", "reason": "核对白名单字段、枚举取值与投影格式是否与官方证据一致"}
+{"file": "docs/maintainers/adding-tool-adapter.md", "reason": "检查 §11 合同修订是否完整、fail-closed 是否落实"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查预览 / Apply / CAS 合同"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查迁移与升级测试"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端无隐式 Apply 与表单校验"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查校验与拼装逻辑是否与 mcp / hooks 重复"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 DTO / bindings / 前端一致性"}

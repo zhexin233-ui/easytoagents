@@ -5,6 +5,7 @@ import { Pencil, Power, PowerOff, Trash2 } from "lucide-react";
 import {
   commands,
   type AgentDto,
+  type AgentToolSettingsDto,
   type AgentImportResultDto,
   type AgentToolTargetStatusDto,
   type ReadoptAgentTargetResultDto,
@@ -36,6 +37,7 @@ import {
   agentsKeys,
   agentsQueryOptions,
   globalAgentStatusesQueryOptions,
+  setAgentToolSettings,
 } from "@/lib/agents-api";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
@@ -43,10 +45,16 @@ import { profileErrorText, unwrapResult } from "@/lib/rpc";
 import { appSettingsQueryOptions } from "@/lib/settings-api";
 import {
   AGENT_TOOLS,
+  AGENT_TOOL_SETTINGS_TOOLS,
   filterEnabledTools,
   toolMetadata,
 } from "@/lib/tool-metadata";
 import { AgentImportDialog } from "@/features/agents/agent-import-dialog";
+import { AgentToolSettingsForm } from "@/features/agents/agent-tool-settings-form";
+import {
+  EMPTY_AGENT_TOOL_SETTINGS,
+  validateAgentToolSettingsDraft,
+} from "@/features/agents/agent-tool-settings-validation";
 
 interface AgentFormState {
   id: string | null;
@@ -55,6 +63,7 @@ interface AgentFormState {
   description: string;
   prompt: string;
   enabled: boolean;
+  toolSettings: AgentToolSettingsDto;
 }
 
 interface AgentSaveVariables {
@@ -69,6 +78,7 @@ const emptyForm: AgentFormState = {
   description: "",
   prompt: "",
   enabled: true,
+  toolSettings: EMPTY_AGENT_TOOL_SETTINGS,
 };
 
 export function AgentsPage() {
@@ -99,8 +109,13 @@ export function AgentsPage() {
 
   const saveMutation = useMutation({
     mutationFn: async ({ state }: AgentSaveVariables) => {
+      const current =
+        state.id === null
+          ? null
+          : (agentsQuery.data?.find((agent) => agent.id === state.id) ?? null);
+      let saved: AgentDto;
       if (state.id !== null && state.rowVersion !== null) {
-        return unwrapResult(
+        saved = unwrapResult(
           await commands.updateAgent({
             id: state.id,
             name: state.name,
@@ -110,15 +125,32 @@ export function AgentsPage() {
             rowVersion: state.rowVersion,
           }),
         );
+      } else {
+        saved = unwrapResult(
+          await commands.createAgent({
+            name: state.name,
+            description: state.description,
+            prompt: state.prompt,
+            enabled: state.enabled,
+          }),
+        );
       }
-      return unwrapResult(
-        await commands.createAgent({
-          name: state.name,
-          description: state.description,
-          prompt: state.prompt,
-          enabled: state.enabled,
-        }),
-      );
+      const previous = current?.toolSettings ?? EMPTY_AGENT_TOOL_SETTINGS;
+      for (const tool of AGENT_TOOL_SETTINGS_TOOLS) {
+        const before = tool === "claude" ? previous.claude : previous.codex;
+        const after =
+          tool === "claude"
+            ? state.toolSettings.claude
+            : state.toolSettings.codex;
+        if (JSON.stringify(before) === JSON.stringify(after)) continue;
+        saved = await setAgentToolSettings({
+          agentId: saved.id,
+          tool,
+          settings: after,
+          rowVersion: saved.rowVersion,
+        });
+      }
+      return saved;
     },
     onSuccess: async (_updated, { globalTools }) => {
       await invalidateAgents();
@@ -481,6 +513,12 @@ export function AgentsPage() {
                           {agent.enabled ? "已启用" : "已停用"} · 全局分配：
                           {assignedSummary}
                         </p>
+                        {countToolSettings(agent.toolSettings) > 0 ? (
+                          <span className="bg-muted text-muted-foreground mt-2 inline-flex rounded-full px-2 py-0.5 text-[11px]">
+                            {countToolSettings(agent.toolSettings)}{" "}
+                            个工具有特有设置
+                          </span>
+                        ) : null}
                       </div>
                       {listLayout === "list" ? actions : null}
                     </div>
@@ -622,7 +660,14 @@ function editForm(agent: AgentDto): AgentFormState {
     description: agent.description,
     prompt: agent.prompt,
     enabled: agent.enabled,
+    toolSettings: agent.toolSettings,
   };
+}
+
+function countToolSettings(settings: AgentToolSettingsDto): number {
+  return [settings.claude, settings.codex].filter(
+    (value) => value !== null && Object.keys(value).length > 0,
+  ).length;
 }
 
 function showImportSuccess(
@@ -846,6 +891,8 @@ function AgentFormDialog({
     if (draft.prompt.trim().length === 0) {
       return nameValid ? "系统提示正文不能为空。" : null;
     }
+    const settingsError = validateAgentToolSettingsDraft(draft.toolSettings);
+    if (settingsError) return settingsError;
     return nameValid ? null : "名称无效。";
   };
 
@@ -923,6 +970,12 @@ function AgentFormDialog({
         />
         启用
       </label>
+      <AgentToolSettingsForm
+        value={draft.toolSettings}
+        onChange={(toolSettings) =>
+          setDraft((current) => ({ ...current, toolSettings }))
+        }
+      />
     </FormDialog>
   );
 }

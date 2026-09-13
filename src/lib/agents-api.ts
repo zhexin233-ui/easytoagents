@@ -1,6 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 
-import { commands, type Tool } from "@/bindings/commands";
+import {
+  commands,
+  type SetAgentToolSettingsInput,
+  type Tool,
+} from "@/bindings/commands";
 import { unwrapResult } from "@/lib/rpc";
 
 /** Agents 查询键与生成命令的唯一前端边界。 */
@@ -51,6 +55,10 @@ export function globalAgentStatusesQueryOptions() {
 
 export const globalAgentTargetStatusesQueryOptions =
   globalAgentStatusesQueryOptions;
+
+export async function setAgentToolSettings(input: SetAgentToolSettingsInput) {
+  return unwrapResult(await commands.setAgentToolSettings(input));
+}
 
 /** 每次显式打开或重扫都使用独立缓存，避免复用旧的原生发现结果。 */
 export function agentImportQueryOptions(tool: Tool, requestId: string) {

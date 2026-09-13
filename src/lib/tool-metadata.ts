@@ -18,6 +18,7 @@ export interface ToolMetadata {
     hooks: boolean;
     agents: boolean;
     projectAgents: boolean;
+    agentToolSettings: boolean;
   };
 }
 
@@ -36,6 +37,7 @@ function capabilitiesFor(tool: Tool): ToolCapability {
     hooks: capability.hooks,
     agents: capability.agents,
     projectAgents: capability.projectAgents,
+    agentToolSettings: capability.agentToolSettings,
   };
 }
 
@@ -95,6 +97,9 @@ export const AGENT_TOOLS = ALL_TOOLS.filter(
 );
 export const PROJECT_AGENT_TOOLS = ALL_TOOLS.filter(
   (tool) => capabilitiesFor(tool).projectAgents,
+);
+export const AGENT_TOOL_SETTINGS_TOOLS = ALL_TOOLS.filter(
+  (tool) => capabilitiesFor(tool).agentToolSettings,
 );
 
 export const DEFAULT_ENABLED_TOOLS = [

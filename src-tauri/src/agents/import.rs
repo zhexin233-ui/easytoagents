@@ -13,8 +13,8 @@ use super::service::{
     AGENT_NAME_INVALID, AGENT_REQUIRED_FIELD_MISSING,
 };
 use super::{
-    AgentImportCandidateDto, AgentImportPreviewDto, AgentImportResultDto, ConfirmAgentImportInput,
-    DiscoverAgentImportInput,
+    set_agent_tool_settings, AgentImportCandidateDto, AgentImportPreviewDto, AgentImportResultDto,
+    ConfirmAgentImportInput, DiscoverAgentImportInput, SetAgentToolSettingsInput,
 };
 use crate::{
     adapters::{agent_file_extension, ExplicitEnvironment, PolicyState},
@@ -159,6 +159,8 @@ pub fn discover_agent_import(
             description: String::new(),
             prompt: String::new(),
             dropped_fields: Vec::new(),
+            retained_fields: Vec::new(),
+            tool_settings: None,
             importable: false,
             diagnostic_code: None,
             reason: None,
@@ -189,7 +191,7 @@ pub fn discover_agent_import(
         let parsed = if tool == Tool::Codex {
             parse_codex_agent_file(&text)
         } else {
-            parse_markdown_agent_file(&text)
+            parse_markdown_agent_file(&text, tool)
         };
         let parsed = match parsed {
             Ok(parsed) => parsed,
@@ -201,11 +203,37 @@ pub fn discover_agent_import(
             }
         };
         candidate.dropped_fields = parsed.dropped_fields.clone();
+        candidate.retained_fields = parsed
+            .retained
+            .keys()
+            .map(|key| {
+                if tool == Tool::Codex && key == "modelReasoningEffort" {
+                    "model_reasoning_effort".to_owned()
+                } else {
+                    key.clone()
+                }
+            })
+            .collect();
+        candidate.retained_fields.sort();
         candidate.prompt = parsed.prompt.clone();
         candidate.description = parsed.description.clone().unwrap_or_default();
         // Markdown 系 name 缺省取文件名去扩展名（OpenCode 以文件名为名）。
         let name = parsed.name.clone().unwrap_or(stem);
         candidate.name = name.clone();
+
+        if !parsed.retained.is_empty() {
+            let retained = serde_json::Value::Object(parsed.retained.clone());
+            match crate::agents::models::validate_agent_tool_settings(tool, &retained) {
+                Ok(Some(settings)) => candidate.tool_settings = Some(settings.value.clone()),
+                Ok(None) => candidate.retained_fields.clear(),
+                Err(_) => {
+                    candidate.diagnostic_code = Some(AGENT_FIELD_INVALID.to_owned());
+                    candidate.reason = Some("工具特有字段的类型或取值不符合白名单。".to_owned());
+                    candidates.push(candidate);
+                    continue;
+                }
+            }
+        }
 
         if let Err(code) = validate_candidate(&name, parsed.description.as_deref(), &parsed.prompt)
         {
@@ -257,7 +285,18 @@ pub fn confirm_agent_import(
     ensure_readable(&descriptor, descriptor.path.as_deref().unwrap_or_default())?;
     let mut created = 0u32;
     for agent in &input.agents {
-        create_agent(database, agent)?;
+        let created_agent = create_agent(database, &agent.definition)?;
+        if let Some(tool_settings) = &agent.tool_settings {
+            set_agent_tool_settings(
+                database,
+                &SetAgentToolSettingsInput {
+                    agent_id: created_agent.id.clone(),
+                    tool: input.tool,
+                    settings: Some(tool_settings.clone()),
+                    row_version: created_agent.row_version,
+                },
+            )?;
+        }
         created += 1;
     }
     Ok(AgentImportResultDto {

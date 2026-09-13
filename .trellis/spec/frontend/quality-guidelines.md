@@ -1051,8 +1051,10 @@ const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
 ### 3. Contracts
 
 - `TOOL_CAPABILITIES` 是唯一能力来源；`AGENT_TOOLS` 包含五个工具，`PROJECT_AGENT_TOOLS` 排除 ZCode。关闭工具时不渲染其 Agents 控件或发起查询。
+- `AGENT_TOOL_SETTINGS_TOOLS` 只来自生成的 `agentToolSettings` 能力位（首期 Claude/Codex）。编辑弹窗通过 `setAgentToolSettings` 串行提交差异，携带最新 `rowVersion`；保存完成后统一刷新 Agents 与 Dashboard 查询。
+- 工具设置表单只允许 Claude `model`/`color`/`tools` 与 Codex `model`/`modelReasoningEffort`/`features`，前端校验字节长度、集合数量和键名格式，但后端仍是最终校验边界。
 - 分配成功只刷新中央意图；默认模式必须打开持久化 Preview 对话框，直接应用模式也只能自动应用无冲突预览。
-- 导入对话框只显示全局直属文件候选；`droppedFields` 必须明确展示，用户确认后只创建中央记录，不改写原生文件、不自动分配。
+- 导入对话框只显示全局直属文件候选；`retainedFields` 与 `droppedFields` 必须分别明确展示，确认负载携带 `toolSettings`，只创建中央记录，不改写原生文件、不自动分配。
 - 全局状态按工具显示聚合状态，能力/策略诊断读取卡片级 `diagnosticCode`，展开可查看每个文件的漂移诊断；Readopt 按目标文件路径触发，不能用目录路径替代。
 
 ### 4. Validation & Error Matrix
@@ -1062,7 +1064,7 @@ const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
 | 后端能力为 false（ZCode 项目 Agents） | 不出现在工具切换，不调用项目 Agents 查询/命令 |
 | 名称不符合交集规则 | 表单阻止提交并显示小写字母、数字、连字符与 1–64 长度提示 |
 | 预览状态为 failed/policy/untrusted/conflict | Apply 按钮禁用；诊断码和中文说明可见 |
-| 导入候选不可导入或含 dropped fields | 复选框禁用或显示丢弃提示；不可绕过 UI 校验提交 |
+| 导入候选不可导入或含 retained/dropped fields | 复选框禁用或分别显示保留/丢弃提示；不可绕过 UI 校验提交 |
 
 ### 5. Good / Base / Bad Cases
 
@@ -1073,6 +1075,7 @@ const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
 ### 6. Tests Required
 
 - Agents 页面测试 CRUD、名称校验、全局分配、状态展开、Preview/Apply、导入 `droppedFields` 展示。
+- 工具设置测试表单枚举/字节/集合校验、差异提交的 row version、列表徽标以及导入 retained/dropped 字段展示。
 - 项目详情测试全局继承只读、项目追加、Preview/Apply，并断言 ZCode 不在项目工具切换。
 - Dashboard/AppShell/tool metadata 测试 Agents 计数、导航顺序与能力集合；运行 `pnpm typecheck`、`pnpm lint`、`pnpm test --run`。
 

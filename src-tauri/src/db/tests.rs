@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn github_skill_source_migration_accepts_only_normalized_source_shape() {
         let (_temporary, _paths, database) = open_isolated_database();
-        assert_eq!(database.schema_version().unwrap(), 22);
+        assert_eq!(database.schema_version().unwrap(), 23);
         database
             .connection()
             .execute(
@@ -110,7 +110,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 22);
+        assert_eq!(database.schema_version().unwrap(), 23);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -723,7 +723,7 @@ mod tests {
         }
         for (iteration, _) in (0..2).enumerate() {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             // 只有第一次打开有待执行迁移，才产生启动备份。
             assert_eq!(database.startup_backup().is_some(), iteration == 0);
             let (name, previews): (String, i64) = database.connection().query_row(
@@ -759,7 +759,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -814,7 +814,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 22);
+        assert_eq!(database.schema_version().unwrap(), 23);
         let kinds = database
             .connection()
             .prepare_cached("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1056,7 +1056,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 22);
+        assert_eq!(database.schema_version().unwrap(), 23);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1204,7 +1204,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 22);
+        assert_eq!(reopened.schema_version().unwrap(), 23);
         assert_eq!(
             reopened
                 .connection()
@@ -1264,7 +1264,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1329,7 +1329,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1417,7 +1417,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1571,7 +1571,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1688,7 +1688,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1768,7 +1768,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            22
+            23
         );
         for (tool, artifact, accepted) in [
             ("opencode", "provider", true),
@@ -1813,7 +1813,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 22);
+        assert_eq!(database.schema_version().unwrap(), 23);
         let connection = database.connection();
         connection
             .execute(
@@ -1869,7 +1869,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 22);
+        assert_eq!(reopened.schema_version().unwrap(), 23);
         assert_eq!(
             reopened
                 .connection()
@@ -1912,7 +1912,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2061,7 +2061,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2173,7 +2173,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2349,7 +2349,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2481,7 +2481,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
             type PreservedRow = (
                 String,
@@ -2704,7 +2704,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 22);
+            assert_eq!(database.schema_version().unwrap(), 23);
             let connection = database.connection();
 
             // 旧行保留：hook、分配与受管目标在 writable_schema 改写后逐字保留。
@@ -2911,5 +2911,114 @@ mod tests {
                 )
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn agent_tool_settings_migration_upgrades_v22_and_preserves_agents() {
+        const AGENT_ID: &str = "00000000-0000-4000-8000-000000000298";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v22-agent-settings-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations(
+                       version INTEGER PRIMARY KEY,
+                       name TEXT NOT NULL UNIQUE,
+                       applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                     )",
+                )
+                .unwrap();
+            for migration in &super::MIGRATIONS[..22] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO agents(id, name, description, prompt)
+                     VALUES (?1, 'legacy-agent', '旧记录', '旧正文')",
+                    [AGENT_ID],
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&paths).unwrap();
+        assert_eq!(database.schema_version().unwrap(), 23);
+        let record: (String, String) = database
+            .connection()
+            .query_row(
+                "SELECT name, prompt FROM agents WHERE id = ?1",
+                [AGENT_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(record, ("legacy-agent".to_owned(), "旧正文".to_owned()));
+        let settings: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM agent_tool_settings WHERE agent_id = ?1",
+                [AGENT_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(settings, 0);
+    }
+
+    #[test]
+    fn agent_tool_settings_table_enforces_json_and_cascades_on_delete() {
+        let (_temporary, paths, mut database) = open_isolated_database();
+        let agent_id = "00000000-0000-4000-8000-000000000299";
+        {
+            let connection = database.connection_mut();
+            connection
+                .execute(
+                    "INSERT INTO agents(id, name, description, prompt) VALUES (?1, 'settings-agent', '描述', '正文')",
+                    [agent_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO agent_tool_settings(agent_id, tool, settings_json)
+                     VALUES (?1, 'claude', '{\"color\":\"cyan\"}')",
+                    [agent_id],
+                )
+                .unwrap();
+            assert!(connection
+                .execute(
+                    "INSERT INTO agent_tool_settings(agent_id, tool, settings_json)
+                     VALUES (?1, 'cursor', '{}')",
+                    [agent_id],
+                )
+                .is_err());
+            assert!(connection
+                .execute(
+                    "INSERT INTO agent_tool_settings(agent_id, tool, settings_json)
+                     VALUES (?1, 'codex', '[]')",
+                    [agent_id],
+                )
+                .is_err());
+            connection
+                .execute("DELETE FROM agents WHERE id = ?1", [agent_id])
+                .unwrap();
+            let remaining: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_tool_settings WHERE agent_id = ?1",
+                    [agent_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(remaining, 0);
+        }
+        let reopened = Database::open(&paths).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 23);
     }
 }

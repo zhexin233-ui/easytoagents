@@ -3,12 +3,17 @@
 // ---------------------------------------------------------------------------
 
 pub fn list_agents(database: &Database) -> Result<Vec<AgentDto>, AppError> {
-    // 列表只发两条 SQL（记录 + 全部全局分配），逐条组装不再回库。
+    // 列表只发三条 SQL（记录、全部全局分配、全部工具覆盖），逐条组装不再回库。
     let mut assignments = repository::global_assignments_for_all_agents(database)?;
+    let mut tool_settings = repository::tool_settings_for_all_agents(database)?;
     repository::list_agents(database)?
         .iter()
         .map(|record| {
-            agent_dto_with_assignments(record, assignments.remove(&record.id).unwrap_or_default())
+            agent_dto_with_assignments(
+                record,
+                assignments.remove(&record.id).unwrap_or_default(),
+                tool_settings.remove(&record.id).unwrap_or_default(),
+            )
         })
         .collect()
 }
@@ -52,6 +57,39 @@ pub fn delete_agent(
         id: input.id.clone(),
         deleted: true,
     })
+}
+
+/// 写入单个工具的特有设置覆盖层。覆盖层与 Agent 共用 row_version，因而
+/// 任何覆盖变更都会使已持久化的 Preview 失效；空对象 / null 清除该行。
+pub fn set_agent_tool_settings(
+    database: &mut Database,
+    input: &SetAgentToolSettingsInput,
+) -> Result<AgentDto, AppError> {
+    let normalized = match input.settings.as_ref() {
+        Some(value) => validate_agent_tool_settings(input.tool, value)?,
+        None => validate_agent_tool_settings(input.tool, &serde_json::json!({}))?,
+    };
+    let record = match normalized {
+        Some(settings) => {
+            let json = serde_json::to_string(settings.value()).map_err(|_| {
+                AppError::invalid_input("settings", "AGENT_FIELD_INVALID")
+            })?;
+            repository::upsert_tool_settings(
+                database,
+                &input.agent_id,
+                input.tool,
+                &json,
+                input.row_version,
+            )?
+        }
+        None => repository::delete_tool_settings(
+            database,
+            &input.agent_id,
+            input.tool,
+            input.row_version,
+        )?,
+    };
+    agent_dto(database, &record)
 }
 
 /// 分配 / 预览前的作用域门禁：ZCode 项目级官方明示不支持，服务层在任何
@@ -542,8 +580,9 @@ fn prepare_agents_sync(
         project.as_ref().map(|project| project.id.as_str()),
     )?
     .into_iter()
-    .filter(|record| record.enabled)
-    .collect();
+        .filter(|record| record.enabled)
+        .collect();
+    let all_tool_settings = repository::tool_settings_for_all_agents(database)?;
     if scope == Scope::Project {
         // 全局分配在项目内只读继承；互斥触发器保证同一 agent 不会同时
         // 出现在全局与项目分配中，这里按 id 防御性去重。
@@ -595,7 +634,13 @@ fn prepare_agents_sync(
             Some(row) => row.to_baseline()?,
             None => ensure_agent_target(database, &file_descriptor, project.as_ref())?,
         };
-        let projection = build_agent_projection(input.tool, record)?;
+        let projection = build_agent_projection(
+            input.tool,
+            record,
+            all_tool_settings
+                .get(&record.id)
+                .and_then(|settings| settings.get(&input.tool)),
+        )?;
         let scan = scan_target(
             input.tool.adapter(),
             &file_descriptor,

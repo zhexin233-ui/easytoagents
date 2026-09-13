@@ -5,6 +5,7 @@ import { TOOL_CAPABILITIES } from "@/bindings/commands";
 import {
   HOOK_TOOLS,
   AGENT_TOOLS,
+  AGENT_TOOL_SETTINGS_TOOLS,
   MCP_TOOLS,
   PROJECT_AGENT_TOOLS,
   PROFILE_TOOLS,
@@ -27,6 +28,7 @@ describe("tool metadata", () => {
         hooks: capability.hooks,
         agents: capability.agents,
         projectAgents: capability.projectAgents,
+        agentToolSettings: capability.agentToolSettings,
       });
     }
 
@@ -51,6 +53,11 @@ describe("tool metadata", () => {
       TOOL_CAPABILITIES.filter(({ projectAgents }) => projectAgents).map(
         ({ tool }) => tool,
       ),
+    );
+    expect(AGENT_TOOL_SETTINGS_TOOLS).toEqual(
+      TOOL_CAPABILITIES.filter(
+        ({ agentToolSettings }) => agentToolSettings,
+      ).map(({ tool }) => tool),
     );
   });
 

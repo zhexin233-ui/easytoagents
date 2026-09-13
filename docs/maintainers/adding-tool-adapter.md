@@ -215,12 +215,12 @@ Agents 是独立的中央资源类型。实现前必须分别核对“目录 des
 
 ### 11.3 Contracts
 
-- 中央字段只保留 `name`、`description`、`prompt`、`enabled`；不建模工具特有 `model`、`tools`、`sandbox_mode` 等字段。
-- Markdown 投影写 YAML frontmatter + 正文；OpenCode 额外写 `mode: subagent`。Codex 投影只写 `name`、`description`、`developer_instructions` 三个 TOML 字段。
+- 中央记录仍只保留 `name`、`description`、`prompt`、`enabled` 四个交集字段；工具特有字段通过 `agent_tool_settings(agent_id, tool, settings_json)` 白名单覆盖层建模。首期（官方证据核对日期 2026-09-12）Claude 保留 `model`、`color`、`tools`，Codex 保留 `model`、`model_reasoning_effort`、`features`；Cursor、OpenCode、ZCode 明确不支持覆盖层。
+- Markdown 投影写 YAML frontmatter + 正文；Claude 会合并其覆盖层（`tools` 渲染为逗号分隔单行），OpenCode 额外写 `mode: subagent`。Codex 投影在 `name`、`description`、`developer_instructions` 之外合并顶层覆盖键，并将布尔 `features` 渲染为 `[features]` 子表。
 - 分配改变中央意图但不隐式 Apply。Preview 必须持久化目标身份、基线与所有参与的 row versions；Apply 在通用 snapshot/journal 事务内写入或删除文件。
 - 停用、取消分配或中央删除在下一次确认 Apply 时删除对应受管文件；删除前快照可经通用 Restore 恢复。目录内非受管同名之外文件保持不变。
 - 全局分配在项目内只读继承；项目分配与全局分配互斥。Codex 项目未受信任时返回 `untrusted` 并禁止 Apply；ZCode 项目始终 Unsupported。
-- 导入只扫描全局目录直属普通文件；符号链接、子目录和扩展名不匹配项跳过。工具特有字段进入 `dropped_fields` 并在 UI 中明确提示，不静默丢弃。
+- 导入只扫描全局目录直属普通文件；符号链接、子目录和扩展名不匹配项跳过。白名单字段进入 `retained_fields` 并写入覆盖层，其他工具特有字段进入 `dropped_fields`，两类都必须在 UI 中明确提示，不静默丢弃。
 
 ### 11.4 Validation & Error Matrix
 
@@ -232,18 +232,20 @@ Agents 是独立的中央资源类型。实现前必须分别核对“目录 des
 | ZCode 项目分配或预览                                                    | 服务层和数据库均拒绝，诊断 `ZCODE_PROJECT_AGENTS_UNSUPPORTED`          |
 | 受管文件受外部改写                                                      | Preview 为 `ExternalOwnedChange`/Conflict；显式 Readopt 后才可再次写入 |
 | 目标路径缺失、类型变化、权限/策略/trust 不安全                          | fail closed，不写入原生目录                                            |
+| 覆盖层未知键、类型不符、枚举外取值或 JSON 超过 16 KiB                   | `INVALID_INPUT` / `AGENT_FIELD_INVALID`；不写入数据库                  |
+| Cursor、OpenCode、ZCode 请求工具特有设置                                | `INVALID_INPUT` / `AGENT_TOOL_SETTINGS_UNSUPPORTED`                    |
 
 ### 11.5 Good / Base / Bad Cases
 
 - Good：同一 Agent 分配到 Claude 与 Codex，各自产生确定性 Markdown/TOML 文件；修改非受管文件不会被删除，停用后删除快照可恢复。
 - Base：全局 Agents 目录不存在时，Preview 只报告可创建的文件目标；无分配且无既有目标时不创建空目标或空运行。
-- Bad：把 Agents 目录当作单个文件扫描、把 OpenCode `mode` 省略、读取 Cursor 兼容目录、或把导入候选的 `tools/model` 静默写回中央字段。
+- Bad：把 Agents 目录当作单个文件扫描、把 OpenCode `mode` 省略、读取 Cursor 兼容目录、自由透传原始 frontmatter，或把导入候选的 `tools/model` 静默丢弃/写回中央交集字段。
 
 ### 11.6 Tests Required
 
 - Adapter：五工具 global/project descriptor、ZCode 无路径 Unsupported、allowed root 与文件扩展名。
-- Database：从 v21 升级至 v22、旧行保留、`managed_targets` 五处 CHECK 金丝雀、全局/项目互斥触发器、外键与重开。
-- Service：CRUD/CAS、五工具投影 golden、导入 fail-closed 与 `dropped_fields`、全局继承、Codex untrusted、停用删除与状态聚合。
+- Database：从 v22 升级至 v23、旧 Agent 行保留、`agent_tool_settings` 的 JSON/tool CHECK 金丝雀、级联删除、外键与重开；既有 `managed_targets` 五处 CHECK 金丝雀仍需保留。
+- Service：CRUD/CAS、五工具投影 golden、覆盖层未知键/类型/枚举 fail-closed、导入 `retained_fields` / `dropped_fields`、全局继承、Codex untrusted、停用删除与状态聚合。
 - E2E：`src-tauri/tests/phase8_e2e.rs` 覆盖 Claude Markdown 与 Codex TOML 的 Preview → Apply → 漂移 → Readopt → 停用删除 → Restore。
 - Frontend：`/agents` CRUD/分配/状态展开/导入和项目详情页签；工具能力来自生成 bindings，ZCode 不得出现在项目工具切换。
 - 每次命令或 DTO 变化运行 `pnpm bindings:generate && pnpm bindings:check`，并通过 `pnpm check` 与 `git diff --check`。

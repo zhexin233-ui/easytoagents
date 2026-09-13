@@ -783,6 +783,14 @@ async setAgentEnabled(input: VersionedAgentInput, enabled: boolean) : Promise<Re
     else return { status: "error", error: e  as any };
 }
 },
+async setAgentToolSettings(input: SetAgentToolSettingsInput) : Promise<Result<AgentDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_agent_tool_settings", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteAgent(input: VersionedAgentInput) : Promise<Result<DeleteAgentResultDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_agent", { input }) };
@@ -879,12 +887,12 @@ async confirmAgentImport(input: ConfirmAgentImportInput) : Promise<Result<AgentI
 
 /** user-defined constants **/
 
-export const TOOL_CAPABILITIES = [{"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"claude"},{"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"codex"},{"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":false,"skills":true,"tool":"cursor"},{"agents":true,"hooks":true,"mcp":true,"projectAgents":false,"promptGlobal":true,"provider":true,"skills":true,"tool":"zcode"},{"agents":true,"hooks":false,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"opencode"}] as const;
 export const HOOK_EVENT_SUPPORT = [{"event":"SessionStart","tool":"claude"},{"event":"SessionEnd","tool":"claude"},{"event":"UserPromptSubmit","tool":"claude"},{"event":"PreToolUse","tool":"claude"},{"event":"PermissionRequest","tool":"claude"},{"event":"PostToolUse","tool":"claude"},{"event":"SubagentStop","tool":"claude"},{"event":"PreCompact","tool":"claude"},{"event":"Stop","tool":"claude"},{"event":"Notification","tool":"claude"},{"event":"SessionStart","tool":"codex"},{"event":"SessionEnd","tool":"codex"},{"event":"UserPromptSubmit","tool":"codex"},{"event":"PreToolUse","tool":"codex"},{"event":"PermissionRequest","tool":"codex"},{"event":"PostToolUse","tool":"codex"},{"event":"SubagentStart","tool":"codex"},{"event":"SubagentStop","tool":"codex"},{"event":"PreCompact","tool":"codex"},{"event":"PostCompact","tool":"codex"},{"event":"Stop","tool":"codex"},{"event":"SessionStart","tool":"cursor"},{"event":"SessionEnd","tool":"cursor"},{"event":"PreToolUse","tool":"cursor"},{"event":"PostToolUse","tool":"cursor"},{"event":"PostToolUseFailure","tool":"cursor"},{"event":"SubagentStart","tool":"cursor"},{"event":"SubagentStop","tool":"cursor"},{"event":"PreCompact","tool":"cursor"},{"event":"Stop","tool":"cursor"},{"event":"SessionStart","tool":"zcode"},{"event":"UserPromptSubmit","tool":"zcode"},{"event":"PreToolUse","tool":"zcode"},{"event":"PermissionRequest","tool":"zcode"},{"event":"PostToolUse","tool":"zcode"},{"event":"PostToolUseFailure","tool":"zcode"},{"event":"Stop","tool":"zcode"}] as const;
+export const TOOL_CAPABILITIES = [{"agentToolSettings":true,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"claude"},{"agentToolSettings":true,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"codex"},{"agentToolSettings":false,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":false,"skills":true,"tool":"cursor"},{"agentToolSettings":false,"agents":true,"hooks":true,"mcp":true,"projectAgents":false,"promptGlobal":true,"provider":true,"skills":true,"tool":"zcode"},{"agentToolSettings":false,"agents":true,"hooks":false,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"opencode"}] as const;
 
 /** user-defined types **/
 
-export type AgentDto = { id: string; name: string; description: string; prompt: string; enabled: boolean; globalAssignments: Tool[]; rowVersion: number }
+export type AgentDto = { id: string; name: string; description: string; prompt: string; enabled: boolean; globalAssignments: Tool[]; toolSettings: AgentToolSettingsDto; rowVersion: number }
 export type AgentFileTargetStatusDto = { targetPath: string; status: SyncStatus; diagnosticCode: string | null }
 export type AgentImportCandidateDto = { candidateId: string; sourcePath: string;
 /**
@@ -898,7 +906,15 @@ description: string; prompt: string;
 /**
  * 将被交集投影丢弃的工具特有 frontmatter / TOML 键名（知情丢弃）。
  */
-droppedFields: string[]; importable: boolean;
+droppedFields: string[];
+/**
+ * 将按工具白名单保留并写入覆盖层的字段名。
+ */
+retainedFields: string[];
+/**
+ * 候选确认时写入该工具覆盖层的规范化 JSON。
+ */
+toolSettings: JsonValue | null; importable: boolean;
 /**
  * `AGENT_FRONTMATTER_INVALID` / `AGENT_REQUIRED_FIELD_MISSING` /
  * `AGENT_NAME_INVALID` / `AGENT_NAME_CONFLICT`。
@@ -909,6 +925,10 @@ export type AgentImportResultDto = { tool: Tool; createdCount: number }
 export type AgentProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
 export type AgentProjectOptionDto = { agentId: string; name: string; enabled: boolean; state: ManagedProjectSelectionState; selectable: boolean; rowVersion: number }
 export type AgentProjectOptionsInput = { projectId: string; tool: Tool }
+/**
+ * Agent 的工具特有覆盖层。缺省工具或 null 表示没有覆盖。
+ */
+export type AgentToolSettingsDto = { claude: ClaudeAgentSettings | null; codex: CodexAgentSettings | null }
 /**
  * 全局目标状态卡按工具聚合的一条记录；`files` 可展开到单文件状态。
  */
@@ -944,13 +964,30 @@ export type CapabilityState = "supported" | "unsupported" | "tool_not_installed"
  * 预览中的单目标变化。
  */
 export type ChangeKind = "add" | "update" | "delete" | "unchanged" | "warning" | "conflict"
+/**
+ * Claude 官方允许的 agent 颜色。
+ */
+export type ClaudeAgentColor = "red" | "blue" | "green" | "yellow" | "purple" | "orange" | "pink" | "cyan"
+/**
+ * Claude frontmatter 的首期工具特有设置白名单。
+ */
+export type ClaudeAgentSettings = { model?: string | null; color?: ClaudeAgentColor | null; tools?: string[] | null }
 export type ClaudeCredentialEnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN"
+/**
+ * Codex agent 的首期工具特有设置白名单。
+ */
+export type CodexAgentSettings = { model?: string | null; modelReasoningEffort?: CodexReasoningEffort | null; features?: Partial<{ [key in string]: boolean }> | null }
+/**
+ * Codex 自定义 agent 支持的 reasoning effort。
+ */
+export type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 export type CompleteOnboardingResultDto = { completed: boolean }
+export type ConfirmAgentImportAgent = { definition: CreateAgentInput; toolSettings: JsonValue | null }
 /**
  * 用户显式确认导入的条目；服务端只做中央校验，不引用持久化预览，
  * 也不接管原生文件（导入后通过分配 + 预览 / Apply 进入受管）。
  */
-export type ConfirmAgentImportInput = { tool: Tool; agents: CreateAgentInput[] }
+export type ConfirmAgentImportInput = { tool: Tool; agents: ConfirmAgentImportAgent[] }
 /**
  * 用户显式确认导入的条目；服务端只做中央校验，不引用持久化预览。
  */
@@ -1144,6 +1181,7 @@ export type Scope = "global" | "project"
 export type SecretUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: string }
 export type SensitiveJsonUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: JsonValue }
 export type SensitiveMapUpdate = { action: "keep" } | { action: "clear" } | { action: "replace"; value: Partial<{ [key in string]: string }> }
+export type SetAgentToolSettingsInput = { agentId: string; tool: Tool; settings: JsonValue | null; rowVersion: number }
 export type SetGlobalAgentAssignmentInput = { tool: Tool; agentId: string; assigned: boolean; rowVersion: number }
 /**
  * 分配时 `event` 为生效事件（可不同于中央建议事件）；取消分配时忽略。
@@ -1239,7 +1277,11 @@ agents: boolean;
 /**
  * Agents 项目级管理：ZCode 官方明示不支持，其余四工具支持。
  */
-projectAgents: boolean }
+projectAgents: boolean;
+/**
+ * Agent 工具特有设置覆盖层：首期仅 Claude / Codex 有白名单合同。
+ */
+agentToolSettings: boolean }
 export type ToolInstallationDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null; installationProbeDiagnostic: string | null }
 export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityState; installationVersion: string | null;
 /**

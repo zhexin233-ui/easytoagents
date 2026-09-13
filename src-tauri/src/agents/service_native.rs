@@ -239,12 +239,14 @@ fn agent_dto(database: &Database, record: &AgentRecord) -> Result<AgentDto, AppE
     agent_dto_with_assignments(
         record,
         repository::global_assignments_for_agent(database, &record.id)?,
+        repository::tool_settings_for_agent(database, &record.id)?,
     )
 }
 
 fn agent_dto_with_assignments(
     record: &AgentRecord,
     assignments: Vec<Tool>,
+    tool_settings: BTreeMap<Tool, Value>,
 ) -> Result<AgentDto, AppError> {
     Ok(AgentDto {
         id: record.id.clone(),
@@ -253,6 +255,7 @@ fn agent_dto_with_assignments(
         prompt: record.prompt.clone(),
         enabled: record.enabled,
         global_assignments: assignments,
+        tool_settings: tool_settings_dto(&tool_settings)?,
         // 整文件目标没有 managed items，行版本直接取中央记录。
         row_version: safe_row_version(record.row_version)?,
     })
@@ -263,8 +266,9 @@ fn agent_dto_with_assignments(
 // ---------------------------------------------------------------------------
 
 /// 各工具原生投影（整文件内容）：
-/// - claude / cursor / zcode：YAML frontmatter（name + description，
-///   由 serde_yaml_ng 序列化 BTreeMap，键序确定并自动处理引号与多行）+ 正文；
+/// - claude / cursor / zcode：YAML frontmatter（name + description；Claude
+///   另合并白名单覆盖层），由 serde_yaml_ng 序列化 BTreeMap，键序确定并自动
+///   处理引号与多行 + 正文；
 /// - opencode：frontmatter 为 description + `mode: subagent`，不写 name
 ///   （OpenCode 以文件名为名；固定 subagent 模式避免出现在主代理切换列表）；
 /// - codex：TOML 三字段 name / description / developer_instructions，
@@ -272,12 +276,38 @@ fn agent_dto_with_assignments(
 ///   多行字符串与键序的确定性）。
 ///
 /// 重复渲染字节一致，保证漂移判定稳定。
-pub(super) fn build_agent_projection(tool: Tool, record: &AgentRecord) -> Result<Value, AppError> {
+pub(super) fn build_agent_projection(
+    tool: Tool,
+    record: &AgentRecord,
+    settings: Option<&Value>,
+) -> Result<Value, AppError> {
     match tool {
         Tool::Claude | Tool::Cursor | Tool::Zcode => {
             let mut frontmatter = BTreeMap::<&str, String>::new();
             frontmatter.insert("name", record.name.clone());
             frontmatter.insert("description", record.description.clone());
+            if tool == Tool::Claude {
+                if let Some(settings) = settings.and_then(Value::as_object) {
+                    if let Some(model) = settings.get("model").and_then(Value::as_str) {
+                        frontmatter.insert("model", model.to_owned());
+                    }
+                    if let Some(color) = settings.get("color").and_then(Value::as_str) {
+                        frontmatter.insert("color", color.to_owned());
+                    }
+                    if let Some(tools) = settings.get("tools").and_then(Value::as_array) {
+                        if !tools.is_empty() {
+                            let rendered = tools
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            if !rendered.is_empty() {
+                                frontmatter.insert("tools", rendered);
+                            }
+                        }
+                    }
+                }
+            }
             let yaml = serde_yaml_ng::to_string(&frontmatter).map_err(|error| {
                 AppError::internal("Agent frontmatter 序列化失败").with_source(error)
             })?;
@@ -298,11 +328,36 @@ pub(super) fn build_agent_projection(tool: Tool, record: &AgentRecord) -> Result
                 &record.prompt,
             )))
         }
-        Tool::Codex => Ok(serde_json::json!({
-            "name": record.name,
-            "description": record.description,
-            "developer_instructions": record.prompt,
-        })),
+        Tool::Codex => {
+            let mut object = serde_json::Map::new();
+            object.insert("name".to_owned(), Value::String(record.name.clone()));
+            object.insert(
+                "description".to_owned(),
+                Value::String(record.description.clone()),
+            );
+            object.insert(
+                "developer_instructions".to_owned(),
+                Value::String(record.prompt.clone()),
+            );
+            if let Some(settings) = settings.and_then(Value::as_object) {
+                if let Some(model) = settings.get("model").and_then(Value::as_str) {
+                    object.insert("model".to_owned(), Value::String(model.to_owned()));
+                }
+                if let Some(effort) = settings
+                    .get("modelReasoningEffort")
+                    .and_then(Value::as_str)
+                {
+                    object.insert(
+                        "model_reasoning_effort".to_owned(),
+                        Value::String(effort.to_owned()),
+                    );
+                }
+                if let Some(features) = settings.get("features") {
+                    object.insert("features".to_owned(), features.clone());
+                }
+            }
+            Ok(Value::Object(object))
+        }
     }
 }
 
@@ -342,13 +397,18 @@ pub(super) struct ParsedAgentFile {
     pub prompt: String,
     /// 将被交集投影丢弃的工具特有键名（知情丢弃）。
     pub dropped_fields: Vec<String>,
+    /// 当前工具首期白名单内可保留的原始字段（已转换为中央 DTO 的键名）。
+    pub retained: serde_json::Map<String, Value>,
 }
 
 /// Markdown 系（claude/cursor/zcode/opencode）agent 文件解析：
 /// 按 `---` 分隔 frontmatter，serde_yaml_ng 解析为 Mapping；name 缺省取
 /// 文件名去扩展名。frontmatter 缺失不算解析失败（交给必填字段校验），
 /// YAML 无法解析才算。
-pub(super) fn parse_markdown_agent_file(text: &str) -> Result<ParsedAgentFile, &'static str> {
+pub(super) fn parse_markdown_agent_file(
+    text: &str,
+    tool: Tool,
+) -> Result<ParsedAgentFile, &'static str> {
     match split_frontmatter(text)? {
         Some((frontmatter, body)) => {
             let value: serde_yaml_ng::Value =
@@ -367,12 +427,52 @@ pub(super) fn parse_markdown_agent_file(text: &str) -> Result<ParsedAgentFile, &
                         .ok_or(AGENT_FIELD_INVALID),
                 }
             };
-            // 交集投影只保留 name/description；mode、tools、model 等
-            // 工具特有键全部列入 dropped_fields（知情丢弃）。
             let mut dropped_fields = Vec::new();
+            let mut retained = serde_json::Map::new();
             for key in mapping.keys() {
                 if let Some(key) = key.as_str() {
-                    if key != "name" && key != "description" {
+                    if key == "name" || key == "description" {
+                        continue;
+                    }
+                    if tool == Tool::Claude && matches!(key, "model" | "color" | "tools") {
+                        let Some(value) = mapping.get(serde_yaml_ng::Value::String(key.to_owned())) else {
+                            continue;
+                        };
+                        match key {
+                            "model" | "color" => {
+                                let string = value.as_str().ok_or(AGENT_FIELD_INVALID)?;
+                                retained.insert(
+                                    key.to_owned(),
+                                    Value::String(string.trim().to_owned()),
+                                );
+                            }
+                            "tools" => {
+                                let values = match value {
+                                    serde_yaml_ng::Value::String(string) => {
+                                        if string.trim().is_empty() {
+                                            Vec::new()
+                                        } else {
+                                            string
+                                                .split(',')
+                                                .map(|item| Value::String(item.trim().to_owned()))
+                                                .collect()
+                                        }
+                                    }
+                                    serde_yaml_ng::Value::Sequence(values) => values
+                                        .iter()
+                                        .map(|item| {
+                                            item.as_str()
+                                                .map(|item| Value::String(item.trim().to_owned()))
+                                                .ok_or(AGENT_FIELD_INVALID)
+                                        })
+                                        .collect::<Result<Vec<_>, _>>()?,
+                                    _ => return Err(AGENT_FIELD_INVALID),
+                                };
+                                retained.insert("tools".to_owned(), Value::Array(values));
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
                         dropped_fields.push(key.to_owned());
                     }
                 }
@@ -383,6 +483,7 @@ pub(super) fn parse_markdown_agent_file(text: &str) -> Result<ParsedAgentFile, &
                 description: string_field("description")?,
                 prompt: body.trim().to_owned(),
                 dropped_fields,
+                retained,
             })
         }
         None => Ok(ParsedAgentFile {
@@ -390,6 +491,7 @@ pub(super) fn parse_markdown_agent_file(text: &str) -> Result<ParsedAgentFile, &
             description: None,
             prompt: text.trim().to_owned(),
             dropped_fields: Vec::new(),
+            retained: serde_json::Map::new(),
         }),
     }
 }
@@ -409,9 +511,38 @@ pub(super) fn parse_codex_agent_file(text: &str) -> Result<ParsedAgentFile, &'st
         }
     };
     let mut dropped_fields = Vec::new();
+    let mut retained = serde_json::Map::new();
     for key in parsed.keys() {
-        if !matches!(key.as_str(), "name" | "description" | "developer_instructions") {
-            dropped_fields.push(key.clone());
+        if matches!(key.as_str(), "name" | "description" | "developer_instructions") {
+            continue;
+        }
+        match key.as_str() {
+            "model" | "model_reasoning_effort" => {
+                let value = string_field(key)?.ok_or(AGENT_FIELD_INVALID)?;
+                let central_key = if key == "model_reasoning_effort" {
+                    "modelReasoningEffort"
+                } else {
+                    "model"
+                };
+                retained.insert(central_key.to_owned(), Value::String(value));
+            }
+            "features" => {
+                let Some(value) = parsed.get(key) else {
+                    continue;
+                };
+                let Some(object) = value.as_object() else {
+                    dropped_fields.push(key.clone());
+                    continue;
+                };
+                if object.values().all(Value::is_boolean) {
+                    retained.insert("features".to_owned(), value.clone());
+                } else {
+                    // Codex 官方允许 features.network_proxy 表值；本任务不建模，
+                    // 因而含任意非布尔值时整体知情丢弃，而非拒绝整份文件。
+                    dropped_fields.push(key.clone());
+                }
+            }
+            _ => dropped_fields.push(key.clone()),
         }
     }
     Ok(ParsedAgentFile {
@@ -424,6 +555,7 @@ pub(super) fn parse_codex_agent_file(text: &str) -> Result<ParsedAgentFile, &'st
         prompt: string_field("developer_instructions")?
             .ok_or(AGENT_REQUIRED_FIELD_MISSING)?,
         dropped_fields,
+        retained,
     })
 }
 

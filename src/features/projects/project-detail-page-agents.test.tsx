@@ -50,6 +50,7 @@ describe("ProjectDetailPage Agents", () => {
         prompt: "检查项目。",
         enabled: true,
         globalAssignments: [],
+        toolSettings: { claude: null, codex: null },
         rowVersion: 5,
       },
     });

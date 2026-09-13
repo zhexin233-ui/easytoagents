@@ -54,6 +54,17 @@ pub fn set_agent_enabled(
 
 #[tauri::command(async)]
 #[specta::specta]
+pub fn set_agent_tool_settings(
+    state: State<'_, AppState>,
+    input: agents::SetAgentToolSettingsInput,
+) -> Result<agents::AgentDto, AppError> {
+    with_db(&state, |database| {
+        agents::set_agent_tool_settings(database, &input)
+    })
+}
+
+#[tauri::command(async)]
+#[specta::specta]
 pub fn delete_agent(
     state: State<'_, AppState>,
     input: agents::VersionedAgentInput,

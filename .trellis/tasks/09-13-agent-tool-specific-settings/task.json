@@ -1,0 +1,28 @@
+{
+  "id": "agent-tool-specific-settings",
+  "name": "agent-tool-specific-settings",
+  "title": "Agents 中央列表支持按工具特有字段配置",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "full-stack",
+  "package": null,
+  "priority": "P2",
+  "creator": "yang",
+  "assignee": "yang",
+  "createdAt": "2026-09-13",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "description": "为中央 Agent 增加按工具的白名单覆盖层（首期 Claude model/color/tools、Codex model/model_reasoning_effort/features），投影合并、导入保留、前端可编辑"
+  }
+}

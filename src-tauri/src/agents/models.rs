@@ -1,6 +1,9 @@
 //! Agents 的 RPC DTO 与中央定义校验。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use specta::Type;
 
 use crate::{
@@ -10,6 +13,79 @@ use crate::{
 
 const MAX_DESCRIPTION_BYTES: usize = 1000;
 const MAX_PROMPT_BYTES: usize = 65536;
+const MAX_SETTINGS_BYTES: usize = 16 * 1024;
+
+/// Claude frontmatter 的首期工具特有设置白名单。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClaudeAgentSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<ClaudeAgentColor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+}
+
+/// Claude 官方允许的 agent 颜色。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeAgentColor {
+    Red,
+    Blue,
+    Green,
+    Yellow,
+    Purple,
+    Orange,
+    Pink,
+    Cyan,
+}
+
+/// Codex agent 的首期工具特有设置白名单。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodexAgentSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_reasoning_effort: Option<CodexReasoningEffort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub features: Option<BTreeMap<String, bool>>,
+}
+
+/// Codex 自定义 agent 支持的 reasoning effort。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum CodexReasoningEffort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+    Ultra,
+}
+
+/// Agent 的工具特有覆盖层。缺省工具或 null 表示没有覆盖。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentToolSettingsDto {
+    pub claude: Option<ClaudeAgentSettings>,
+    pub codex: Option<CodexAgentSettings>,
+}
+
+/// 校验并规范化后的持久化覆盖层。值使用 DTO 的 camelCase 键，投影层再
+/// 映射到对应工具的原生键名。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ValidatedToolSettings {
+    pub(crate) tool: Tool,
+    pub(crate) value: Value,
+}
+
+impl ValidatedToolSettings {
+    pub(crate) fn value(&self) -> &Value {
+        &self.value
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +130,16 @@ pub struct AgentDto {
     pub prompt: String,
     pub enabled: bool,
     pub global_assignments: Vec<Tool>,
+    pub tool_settings: AgentToolSettingsDto,
+    pub row_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAgentToolSettingsInput {
+    pub agent_id: String,
+    pub tool: Tool,
+    pub settings: Option<Value>,
     pub row_version: u32,
 }
 
@@ -173,6 +259,10 @@ pub struct AgentImportCandidateDto {
     pub prompt: String,
     /// 将被交集投影丢弃的工具特有 frontmatter / TOML 键名（知情丢弃）。
     pub dropped_fields: Vec<String>,
+    /// 将按工具白名单保留并写入覆盖层的字段名。
+    pub retained_fields: Vec<String>,
+    /// 候选确认时写入该工具覆盖层的规范化 JSON。
+    pub tool_settings: Option<Value>,
     pub importable: bool,
     /// `AGENT_FRONTMATTER_INVALID` / `AGENT_REQUIRED_FIELD_MISSING` /
     /// `AGENT_NAME_INVALID` / `AGENT_NAME_CONFLICT`。
@@ -195,7 +285,14 @@ pub struct AgentImportPreviewDto {
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmAgentImportInput {
     pub tool: Tool,
-    pub agents: Vec<CreateAgentInput>,
+    pub agents: Vec<ConfirmAgentImportAgent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmAgentImportAgent {
+    pub definition: CreateAgentInput,
+    pub tool_settings: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -236,4 +333,268 @@ pub(crate) fn validate_agent_definition(
         prompt: prompt.to_owned(),
         enabled,
     })
+}
+
+const AGENT_TOOL_SETTINGS_UNSUPPORTED: &str = "AGENT_TOOL_SETTINGS_UNSUPPORTED";
+const AGENT_FIELD_INVALID: &str = "AGENT_FIELD_INVALID";
+
+fn invalid_tool_settings() -> AppError {
+    AppError::invalid_input("settings", AGENT_FIELD_INVALID)
+}
+
+fn validate_model(model: Option<String>) -> Result<Option<String>, AppError> {
+    let Some(model) = model else {
+        return Ok(None);
+    };
+    let trimmed = model.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 128
+        || trimmed.contains('\0')
+        || trimmed.chars().any(|character| character.is_whitespace())
+    {
+        return Err(invalid_tool_settings());
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+fn valid_tool_item(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && value.len() <= 128
+        && chars.all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(
+                    character,
+                    '_' | ':' | '*' | '(' | ')' | '.' | '/' | '-' | ' '
+                )
+        })
+}
+
+fn normalize_tools(tools: Option<Vec<String>>) -> Result<Option<Vec<String>>, AppError> {
+    let Some(tools) = tools else {
+        return Ok(None);
+    };
+    if tools.len() > 64 {
+        return Err(invalid_tool_settings());
+    }
+    let mut normalized = Vec::with_capacity(tools.len());
+    for tool in tools {
+        let tool = tool.trim().to_owned();
+        if !valid_tool_item(&tool) {
+            return Err(invalid_tool_settings());
+        }
+        if !normalized.contains(&tool) {
+            normalized.push(tool);
+        }
+    }
+    if normalized.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(normalized))
+    }
+}
+
+fn valid_feature_key(key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    key.split('.').all(|part| {
+        let mut chars = part.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        first.is_ascii_lowercase()
+            && chars.all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+            })
+    })
+}
+
+fn normalize_features(
+    features: Option<BTreeMap<String, bool>>,
+) -> Result<Option<BTreeMap<String, bool>>, AppError> {
+    let Some(features) = features else {
+        return Ok(None);
+    };
+    if features.is_empty() {
+        return Ok(None);
+    }
+    if features.len() > 64 || features.keys().any(|key| !valid_feature_key(key)) {
+        return Err(invalid_tool_settings());
+    }
+    Ok(Some(features))
+}
+
+fn enforce_settings_size(value: &Value) -> Result<(), AppError> {
+    let size = serde_json::to_vec(value)
+        .map_err(|_| invalid_tool_settings())?
+        .len();
+    if size > MAX_SETTINGS_BYTES {
+        return Err(invalid_tool_settings());
+    }
+    Ok(())
+}
+
+/// 校验并规范化工具特有设置。
+///
+/// `None` 表示空对象（没有任何覆盖），调用方应删除数据库行。未知工具和
+/// 未知字段均 fail-closed，不把原生配置自由透传进中央库。
+pub(crate) fn validate_agent_tool_settings(
+    tool: Tool,
+    value: &Value,
+) -> Result<Option<ValidatedToolSettings>, AppError> {
+    if !matches!(tool, Tool::Claude | Tool::Codex) {
+        return Err(AppError::invalid_input(
+            "tool",
+            AGENT_TOOL_SETTINGS_UNSUPPORTED,
+        ));
+    }
+    if !value.is_object() {
+        return Err(invalid_tool_settings());
+    }
+    match tool {
+        Tool::Claude => {
+            let settings: ClaudeAgentSettings =
+                serde_json::from_value(value.clone()).map_err(|_| invalid_tool_settings())?;
+            let settings = ClaudeAgentSettings {
+                model: validate_model(settings.model)?,
+                color: settings.color,
+                tools: normalize_tools(settings.tools)?,
+            };
+            let normalized = serde_json::to_value(settings).map_err(|_| invalid_tool_settings())?;
+            enforce_settings_size(&normalized)?;
+            if normalized
+                .as_object()
+                .map(|object| object.is_empty())
+                .unwrap_or(false)
+            {
+                Ok(None)
+            } else {
+                Ok(Some(ValidatedToolSettings {
+                    tool,
+                    value: normalized,
+                }))
+            }
+        }
+        Tool::Codex => {
+            let settings: CodexAgentSettings =
+                serde_json::from_value(value.clone()).map_err(|_| invalid_tool_settings())?;
+            let settings = CodexAgentSettings {
+                model: validate_model(settings.model)?,
+                model_reasoning_effort: settings.model_reasoning_effort,
+                features: normalize_features(settings.features)?,
+            };
+            let normalized = serde_json::to_value(settings).map_err(|_| invalid_tool_settings())?;
+            enforce_settings_size(&normalized)?;
+            if normalized
+                .as_object()
+                .map(|object| object.is_empty())
+                .unwrap_or(false)
+            {
+                Ok(None)
+            } else {
+                Ok(Some(ValidatedToolSettings {
+                    tool,
+                    value: normalized,
+                }))
+            }
+        }
+        Tool::Cursor | Tool::Zcode | Tool::Opencode => {
+            unreachable!("unsupported tools returned above")
+        }
+    }
+}
+
+pub(crate) fn tool_settings_dto(
+    settings: &BTreeMap<Tool, Value>,
+) -> Result<AgentToolSettingsDto, AppError> {
+    let claude = settings
+        .get(&Tool::Claude)
+        .map(|value| {
+            let decoded: ClaudeAgentSettings = serde_json::from_value(value.clone())
+                .map_err(|_| AppError::internal("数据库中的 Claude Agent 覆盖层无法解析"))?;
+            Ok(
+                if decoded.model.is_none() && decoded.color.is_none() && decoded.tools.is_none() {
+                    None
+                } else {
+                    Some(decoded)
+                },
+            )
+        })
+        .transpose()?
+        .flatten();
+    let codex = settings
+        .get(&Tool::Codex)
+        .map(|value| {
+            let decoded: CodexAgentSettings = serde_json::from_value(value.clone())
+                .map_err(|_| AppError::internal("数据库中的 Codex Agent 覆盖层无法解析"))?;
+            Ok(
+                if decoded.model.is_none()
+                    && decoded.model_reasoning_effort.is_none()
+                    && decoded.features.is_none()
+                {
+                    None
+                } else {
+                    Some(decoded)
+                },
+            )
+        })
+        .transpose()?
+        .flatten();
+    Ok(AgentToolSettingsDto { claude, codex })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{tool_settings_dto, validate_agent_tool_settings, AgentToolSettingsDto};
+    use crate::domain::Tool;
+
+    #[test]
+    fn tool_settings_are_strictly_validated_and_normalized() {
+        let value = serde_json::json!({
+            "model": " sonnet ",
+            "color": "cyan",
+            "tools": ["Read", "Read", "Bash"],
+        });
+        let normalized = validate_agent_tool_settings(Tool::Claude, &value)
+            .unwrap()
+            .unwrap();
+        assert_eq!(normalized.value["model"], "sonnet");
+        assert_eq!(
+            normalized.value["tools"],
+            serde_json::json!(["Read", "Bash"])
+        );
+        assert!(
+            validate_agent_tool_settings(Tool::Claude, &serde_json::json!({"unknown": true}))
+                .is_err()
+        );
+        assert!(
+            validate_agent_tool_settings(Tool::Claude, &serde_json::json!({"color": 3})).is_err()
+        );
+        assert!(validate_agent_tool_settings(
+            Tool::Codex,
+            &serde_json::json!({
+                "features": {"Bad-Key": true}
+            })
+        )
+        .is_err());
+        assert!(validate_agent_tool_settings(Tool::Cursor, &serde_json::json!({})).is_err());
+        assert!(
+            validate_agent_tool_settings(Tool::Claude, &serde_json::json!({}))
+                .unwrap()
+                .is_none()
+        );
+        let empty = AgentToolSettingsDto::default();
+        assert!(empty.claude.is_none() && empty.codex.is_none());
+
+        let mut persisted_empty = BTreeMap::new();
+        persisted_empty.insert(Tool::Claude, serde_json::json!({}));
+        let dto = tool_settings_dto(&persisted_empty).unwrap();
+        assert!(dto.claude.is_none());
+    }
 }

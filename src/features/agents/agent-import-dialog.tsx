@@ -141,10 +141,13 @@ export function AgentImportDialog({
               confirm.mutate({
                 tool,
                 agents: selected.map((candidate) => ({
-                  name: candidate.name,
-                  description: candidate.description,
-                  prompt: candidate.prompt,
-                  enabled: true,
+                  definition: {
+                    name: candidate.name,
+                    description: candidate.description,
+                    prompt: candidate.prompt,
+                    enabled: true,
+                  },
+                  toolSettings: candidate.toolSettings,
                 })),
               });
             }}
@@ -220,6 +223,11 @@ function AgentImportCandidateCard({
       {candidate.droppedFields.length > 0 ? (
         <p className="text-warning mt-2 text-xs">
           将丢弃工具特有字段：{candidate.droppedFields.join("、")}
+        </p>
+      ) : null}
+      {candidate.retainedFields.length > 0 ? (
+        <p className="text-success mt-2 text-xs">
+          将保留工具特有字段：{candidate.retainedFields.join("、")}
         </p>
       ) : null}
       {!importable && candidate.diagnosticCode ? (

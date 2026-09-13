@@ -592,7 +592,7 @@ mod tests {
 
         let version =
             crate::commands::with_db(&state, |database| database.schema_version()).unwrap();
-        assert_eq!(version, 22);
+        assert_eq!(version, 23);
         assert_eq!(state.redactor_read().redact_text("safe"), "safe");
         drop(state.lock_write_operations());
         let redacted = crate::commands::with_db_and_redactor(&state, |database, redactor| {
@@ -603,7 +603,7 @@ mod tests {
             ))
         })
         .unwrap();
-        assert_eq!(redacted.0, 22);
+        assert_eq!(redacted.0, 23);
         assert_ne!(redacted.1, "poison-secret");
     }
 
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(state.paths(), &paths);
         assert_eq!(
             state.database().lock().unwrap().schema_version().unwrap(),
-            22
+            23
         );
         assert_eq!(state.redactor().read().unwrap().redact_text("safe"), "safe");
     }

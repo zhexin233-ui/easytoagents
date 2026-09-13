@@ -154,6 +154,12 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<agents::VersionedAgentInput>()
         .typ::<agents::DeleteAgentResultDto>()
         .typ::<agents::AgentDto>()
+        .typ::<agents::ClaudeAgentColor>()
+        .typ::<agents::ClaudeAgentSettings>()
+        .typ::<agents::CodexReasoningEffort>()
+        .typ::<agents::CodexAgentSettings>()
+        .typ::<agents::AgentToolSettingsDto>()
+        .typ::<agents::SetAgentToolSettingsInput>()
         .typ::<agents::SetGlobalAgentAssignmentInput>()
         .typ::<agents::SetProjectAgentAssignmentInput>()
         .typ::<agents::AgentProjectDto>()
@@ -169,6 +175,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<agents::AgentImportPreviewDto>()
         .typ::<agents::DiscoverAgentImportInput>()
         .typ::<agents::ConfirmAgentImportInput>()
+        .typ::<agents::ConfirmAgentImportAgent>()
         .typ::<agents::AgentImportResultDto>()
         .typ::<projects::ProjectPathStatus>()
         .typ::<projects::GitRepositoryStatus>()
@@ -295,6 +302,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::agents::create_agent,
             commands::agents::update_agent,
             commands::agents::set_agent_enabled,
+            commands::agents::set_agent_tool_settings,
             commands::agents::delete_agent,
             commands::agents::set_global_agent_assignment,
             commands::agents::set_project_agent_assignment,

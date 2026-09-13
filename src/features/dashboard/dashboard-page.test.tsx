@@ -185,6 +185,7 @@ describe("DashboardPage", () => {
           prompt: "审阅当前变更。",
           enabled: true,
           globalAssignments: ["claude"],
+          toolSettings: { claude: null, codex: null },
           rowVersion: 1,
         },
         {
@@ -194,6 +195,7 @@ describe("DashboardPage", () => {
           prompt: "不再使用。",
           enabled: false,
           globalAssignments: ["claude", "zcode"],
+          toolSettings: { claude: null, codex: null },
           rowVersion: 1,
         },
         {
@@ -203,6 +205,7 @@ describe("DashboardPage", () => {
           prompt: "审阅 ZCode 变更。",
           enabled: true,
           globalAssignments: ["zcode"],
+          toolSettings: { claude: null, codex: null },
           rowVersion: 1,
         },
       ],

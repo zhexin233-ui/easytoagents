@@ -412,7 +412,7 @@ let database = Database::open(&paths)?;
 - `snapshot_is_referenced(connection, snapshot_id, database_path) -> bool`
 - `count_blocking_native_resources(tx, project_id, database_path) -> u32`
   counts `disabled` + `conflict` for that project.
-- Compiled schema version is `21` (`src-tauri/src/app/mod.rs` assertion).
+- Compiled schema version is `23` (`src-tauri/src/app/mod.rs` assertion).
 
 ### 3. Contracts
 

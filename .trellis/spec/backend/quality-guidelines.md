@@ -1821,3 +1821,84 @@ let relocated = if let [event, _identity, matcher] = parts.as_slice() {
   tool-call/subagent/compaction categories, only tool-supported events rendered);
   `HookAssignmentPickerDialog` assigns a central hook into a group and shows
   cross-event switch warnings. Project hooks tab adds an event `<select>`.
+
+## Scenario: Agent central intent and allowlisted tool settings
+
+### 1. Scope / Trigger
+
+- Trigger: Agent CRUD, import, global/project assignment, tool-specific settings,
+  native projection, or Agent Preview/Apply.
+
+### 2. Signatures
+
+- `set_agent_tool_settings(agent_id, tool, settings|null, row_version) -> AgentDto`
+  validates the payload, performs an `agents.row_version` CAS, and returns the
+  refreshed DTO.
+- SQLite `agent_tool_settings(agent_id, tool, settings_json, ...)` uses primary key
+  `(agent_id, tool)`, foreign-key cascade, and only allows `claude`/`codex`.
+- `AgentDto.toolSettings` is the typed overlay; import candidates expose
+  `retainedFields`, `toolSettings`, and `droppedFields`.
+
+### 3. Contracts
+
+- The central Agent keeps only `name`, `description`, `prompt`, and `enabled`.
+  The initial allowlist is Claude `model`/`color`/`tools` and Codex
+  `model`/`model_reasoning_effort`/`features`.
+- Settings are explicit schemas, normalized before persistence, and capped at 16 KiB;
+  raw frontmatter/TOML maps are never passed through. Empty settings clear the row.
+- Claude merges settings into YAML frontmatter; `tools` renders as one `", "`-joined
+  line. Codex merges scalar keys and renders boolean features as `[features]`.
+- Changing or clearing settings increments the central Agent row version, invalidating
+  persisted previews. Existing four-field projections remain byte-for-byte unchanged
+  when no overlay is present.
+- Cursor, OpenCode, and ZCode reject settings with `AGENT_TOOL_SETTINGS_UNSUPPORTED`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Unknown key, wrong type, invalid enum, model/tool/feature name, or oversized payload | `INVALID_INPUT` with `AGENT_FIELD_INVALID`; no DB write |
+| Cursor/OpenCode/ZCode settings request | `INVALID_INPUT` with `AGENT_TOOL_SETTINGS_UNSUPPORTED` |
+| Stale `row_version` | `CONFLICT`; overlay and Agent row remain unchanged |
+| Import allowlist field has an invalid type/value | Candidate is non-importable with `AGENT_FIELD_INVALID` |
+| Codex `features` contains a non-boolean nested value | Whole `features` key is listed in `droppedFields` |
+| Empty object/list after normalization | Overlay row is removed; projection omits the key |
+
+### 5. Good / Base / Bad Cases
+
+- Good: set Claude `color: cyan` and Codex `model_reasoning_effort: high`, review
+  and Apply an Update preview, then clear both overlays and Apply back to the
+  original intersection-only bytes.
+- Base: importing `color` or flat boolean Codex `features` reports retained fields;
+  unsupported native fields remain explicitly dropped.
+- Bad: promote `model` to a central field, accept unknown keys, silently coerce
+  invalid values, or free-form copy native frontmatter/TOML into the overlay.
+
+### 6. Tests Required
+
+- Migration v22→v23: preserve Agents, enforce JSON/tool CHECKs, cascade deletes, and
+  reopen idempotently.
+- Service: validation/normalization, unsupported-tool diagnostics, CAS conflicts,
+  DTO round-trip, import retention/dropping, projection goldens, and deterministic
+  repeated rendering.
+- E2E: Claude and Codex settings → persisted Preview(Update) → Apply → native fields;
+  clear settings → Preview(Update) → Apply → intersection-only bytes; also cover
+  drift/readopt/disable/restore.
+- Cross-layer: regenerate/check bindings, frontend form payload/validation/badge and
+  import presentation tests, full Rust/TypeScript quality gates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Do not persist or render an arbitrary native map.
+database.execute("INSERT INTO agents(extra_json) ...", [raw_frontmatter])?;
+```
+
+#### Correct
+
+```rust
+let normalized = validate_agent_tool_settings(tool, &input.settings)?;
+repository::upsert_tool_settings(database, agent_id, tool, normalized, row_version)?;
+```

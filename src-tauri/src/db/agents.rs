@@ -3,7 +3,10 @@
 //! Agent 是整文件目标（WholeDocument），不使用 managed_items 基线；
 //! 受管目标按「一个受管文件 = 一行 managed_targets」登记。
 
+use std::collections::BTreeMap;
+
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use serde_json::Value;
 
 use crate::{
     db::{
@@ -228,6 +231,174 @@ pub fn global_assignments_for_agent(
             AppError::database(&path, "decode_agent_global_tools").with_source(error)
         })?;
     Ok(assignments)
+}
+
+/// 返回单个 Agent 的全部工具覆盖层。数据库内容已经由迁移的 JSON CHECK
+/// 约束保证为对象，但读取仍需显式解析，损坏数据不得静默降级为空设置。
+pub fn tool_settings_for_agent(
+    database: &Database,
+    agent_id: &str,
+) -> Result<BTreeMap<Tool, Value>, AppError> {
+    EntityId::parse(agent_id)?;
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached(
+            "SELECT tool, settings_json FROM agent_tool_settings
+             WHERE agent_id = ?1 ORDER BY tool",
+        )
+        .map_err(|error| {
+            AppError::database(&path, "prepare_agent_tool_settings").with_source(error)
+        })?;
+    let rows = statement
+        .query_map([agent_id], |row| {
+            let tool = column_tool(row, 0)?;
+            let json = row.get::<_, String>(1)?;
+            let value =
+                serde_json::from_str::<Value>(&json).map_err(|_| rusqlite::Error::InvalidQuery)?;
+            if !value.is_object() {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            Ok((tool, value))
+        })
+        .map_err(|error| {
+            AppError::database(&path, "query_agent_tool_settings").with_source(error)
+        })?;
+    rows.collect::<Result<BTreeMap<_, _>, _>>()
+        .map_err(|error| AppError::database(&path, "decode_agent_tool_settings").with_source(error))
+}
+
+/// 列表接口一次获取所有 Agent 的覆盖层，避免在 DTO map 中逐 id 查询。
+pub fn tool_settings_for_all_agents(
+    database: &Database,
+) -> Result<BTreeMap<String, BTreeMap<Tool, Value>>, AppError> {
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached(
+            "SELECT agent_id, tool, settings_json FROM agent_tool_settings
+             ORDER BY agent_id, tool",
+        )
+        .map_err(|error| {
+            AppError::database(&path, "prepare_all_agent_tool_settings").with_source(error)
+        })?;
+    let rows = statement
+        .query_map([], |row| {
+            let agent_id = row.get::<_, String>(0)?;
+            let tool = column_tool(row, 1)?;
+            let json = row.get::<_, String>(2)?;
+            let value =
+                serde_json::from_str::<Value>(&json).map_err(|_| rusqlite::Error::InvalidQuery)?;
+            if !value.is_object() {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            Ok((agent_id, tool, value))
+        })
+        .map_err(|error| {
+            AppError::database(&path, "query_all_agent_tool_settings").with_source(error)
+        })?;
+    let mut grouped = BTreeMap::new();
+    for row in rows {
+        let (agent_id, tool, value) = row.map_err(|error| {
+            AppError::database(&path, "decode_all_agent_tool_settings").with_source(error)
+        })?;
+        grouped
+            .entry(agent_id)
+            .or_insert_with(BTreeMap::new)
+            .insert(tool, value);
+    }
+    Ok(grouped)
+}
+
+pub fn upsert_tool_settings(
+    database: &mut Database,
+    agent_id: &str,
+    tool: Tool,
+    settings_json: &str,
+    expected_row_version: u32,
+) -> Result<AgentRecord, AppError> {
+    EntityId::parse(agent_id)?;
+    let path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| {
+            AppError::database(&path, "begin_upsert_agent_tool_settings").with_source(error)
+        })?;
+    verify_row_version(
+        &transaction,
+        "agents",
+        agent_id,
+        expected_row_version,
+        "agent",
+        &path,
+    )?;
+    transaction
+        .execute(
+            "INSERT INTO agent_tool_settings(agent_id, tool, settings_json)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(agent_id, tool) DO UPDATE SET
+               settings_json = excluded.settings_json,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            params![agent_id, tool.as_str(), settings_json],
+        )
+        .map_err(|error| map_agent_write_error(error, &path, "upsert_agent_tool_settings"))?;
+    touch_versioned_row(
+        &transaction,
+        "agents",
+        agent_id,
+        expected_row_version,
+        &path,
+    )?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&path, "commit_upsert_agent_tool_settings").with_source(error)
+    })?;
+    get_agent(database, agent_id)
+}
+
+pub fn delete_tool_settings(
+    database: &mut Database,
+    agent_id: &str,
+    tool: Tool,
+    expected_row_version: u32,
+) -> Result<AgentRecord, AppError> {
+    EntityId::parse(agent_id)?;
+    let path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| {
+            AppError::database(&path, "begin_delete_agent_tool_settings").with_source(error)
+        })?;
+    verify_row_version(
+        &transaction,
+        "agents",
+        agent_id,
+        expected_row_version,
+        "agent",
+        &path,
+    )?;
+    let changed = transaction
+        .execute(
+            "DELETE FROM agent_tool_settings WHERE agent_id = ?1 AND tool = ?2",
+            params![agent_id, tool.as_str()],
+        )
+        .map_err(|error| {
+            AppError::database(&path, "delete_agent_tool_settings").with_source(error)
+        })?;
+    if changed == 1 {
+        touch_versioned_row(
+            &transaction,
+            "agents",
+            agent_id,
+            expected_row_version,
+            &path,
+        )?;
+    }
+    transaction.commit().map_err(|error| {
+        AppError::database(&path, "commit_delete_agent_tool_settings").with_source(error)
+    })?;
+    get_agent(database, agent_id)
 }
 
 /// Agent 分配行只允许支持 Agents 的工具；写入侧由服务层门禁，读取侧同样

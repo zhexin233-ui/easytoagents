@@ -1,7 +1,8 @@
 //! Agents 领域服务、原生投影与持久化 Preview/Apply 编排。
 //!
 //! 各工具原生合同（2026-09-12 官方文档核验，见任务 09-12-add-agents-management）：
-//! - Claude / Cursor / ZCode：Markdown + YAML frontmatter（`name`、`description`）；
+//! - Claude：Markdown + YAML frontmatter（`name`、`description`，以及白名单覆盖层）；
+//! - Cursor / ZCode：Markdown + YAML frontmatter（`name`、`description`）；
 //! - OpenCode：Markdown + YAML frontmatter（`description` 必填，名称取文件名；
 //!   投影固定写 `mode: subagent`，避免中央子代理被当作主代理）；
 //! - Codex：TOML（`name`、`description`、`developer_instructions`）。
@@ -21,10 +22,11 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    models::validate_agent_definition, AgentDto, AgentProjectDto, AgentProjectOptionDto,
-    AgentProjectOptionsInput, AgentToolTargetStatusDto, ApplyAgentPreviewInput, CreateAgentInput,
-    DeleteAgentResultDto, PreviewAgentSyncInput, ReadoptAgentTargetInput,
-    ReadoptAgentTargetResultDto, SetGlobalAgentAssignmentInput, SetProjectAgentAssignmentInput,
+    models::{tool_settings_dto, validate_agent_definition, validate_agent_tool_settings},
+    AgentDto, AgentProjectDto, AgentProjectOptionDto, AgentProjectOptionsInput,
+    AgentToolTargetStatusDto, ApplyAgentPreviewInput, CreateAgentInput, DeleteAgentResultDto,
+    PreviewAgentSyncInput, ReadoptAgentTargetInput, ReadoptAgentTargetResultDto,
+    SetAgentToolSettingsInput, SetGlobalAgentAssignmentInput, SetProjectAgentAssignmentInput,
     UpdateAgentInput, VersionedAgentInput,
 };
 use crate::{

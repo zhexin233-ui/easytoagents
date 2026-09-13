@@ -7,10 +7,11 @@ mod tests {
     use super::{
         apply_agent_preview, create_agent, delete_agent, get_agent, list_agent_project_options,
         list_global_agent_target_statuses, preview_agent_sync, readopt_agent_target,
-        set_agent_enabled, set_global_agent_assignment, set_project_agent_assignment, update_agent,
+        set_agent_enabled, set_agent_tool_settings, set_global_agent_assignment,
+        set_project_agent_assignment, update_agent,
         ApplyAgentPreviewInput, CreateAgentInput, PreviewAgentSyncInput, ReadoptAgentTargetInput,
         SetGlobalAgentAssignmentInput, SetProjectAgentAssignmentInput, UpdateAgentInput,
-        VersionedAgentInput,
+        SetAgentToolSettingsInput, VersionedAgentInput,
     };
     use crate::{
         adapters::{ExplicitEnvironment, ToolAvailability},
@@ -346,6 +347,100 @@ mod tests {
         assert_eq!(plan_again.targets[0].change_kind, ChangeKind::Unchanged);
         let plan_again = fixture.preview_global(Tool::Opencode);
         assert_eq!(plan_again.targets[0].change_kind, ChangeKind::Unchanged);
+    }
+
+    #[test]
+    fn tool_specific_settings_validate_project_into_projections_and_use_agent_cas() {
+        let mut fixture = Fixture::new();
+        let agent = fixture.create("settings-agent");
+        let updated = set_agent_tool_settings(
+            &mut fixture.database,
+            &SetAgentToolSettingsInput {
+                agent_id: agent.id.clone(),
+                tool: Tool::Claude,
+                settings: Some(serde_json::json!({
+                    "model": " inherit ",
+                    "color": "cyan",
+                    "tools": ["Read", "Read", "Bash"],
+                })),
+                row_version: agent.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.tool_settings.claude.as_ref().unwrap().model.as_deref(), Some("inherit"));
+        assert_eq!(
+            updated.tool_settings.claude.as_ref().unwrap().tools.as_deref(),
+            Some(["Read".to_owned(), "Bash".to_owned()].as_slice())
+        );
+        assert_eq!(updated.row_version, agent.row_version + 1);
+
+        fixture.assign_global(&updated, Tool::Claude);
+        let plan = fixture.preview_global(Tool::Claude);
+        fixture.apply_global(&plan, Tool::Claude);
+        let text = file_text(&fixture.claude_agents_dir().join("settings-agent.md"));
+        assert!(text.contains("color: cyan"));
+        assert!(text.contains("model: inherit"));
+        assert!(text.contains("tools: Read, Bash"));
+
+        let codex = get_agent(&fixture.database, &agent.id).unwrap();
+        let codex = set_agent_tool_settings(
+            &mut fixture.database,
+            &SetAgentToolSettingsInput {
+                agent_id: agent.id.clone(),
+                tool: Tool::Codex,
+                settings: Some(serde_json::json!({
+                    "model": "gpt-5.6-terra",
+                    "modelReasoningEffort": "xhigh",
+                    "features": {"multi_agent": true, "hooks": false},
+                })),
+                row_version: codex.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(codex.tool_settings.codex.as_ref().unwrap().model.as_deref(), Some("gpt-5.6-terra"));
+        fixture.assign_global(&codex, Tool::Codex);
+        let plan = fixture.preview_global(Tool::Codex);
+        fixture.apply_global(&plan, Tool::Codex);
+        let text = file_text(&fixture.codex_agents_dir().join("settings-agent.toml"));
+        assert!(text.contains("model = \"gpt-5.6-terra\""));
+        assert!(text.contains("model_reasoning_effort = \"xhigh\""));
+        assert!(text.contains("[features]"), "Codex settings projection: {text}");
+
+        let stale = set_agent_tool_settings(
+            &mut fixture.database,
+            &SetAgentToolSettingsInput {
+                agent_id: agent.id.clone(),
+                tool: Tool::Claude,
+                settings: None,
+                row_version: updated.row_version,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(stale.code(), ErrorCode::Conflict);
+    }
+
+    #[test]
+    fn unsupported_or_invalid_tool_specific_settings_fail_closed() {
+        let mut fixture = Fixture::new();
+        let agent = fixture.create("settings-validation");
+        for (tool, settings) in [
+            (Tool::Cursor, serde_json::json!({"model": "x"})),
+            (Tool::Claude, serde_json::json!({"color": 3})),
+            (Tool::Codex, serde_json::json!({"features": {"Bad-Key": true}})),
+        ] {
+            let row_version = fixture.current(&agent.id).row_version;
+            let error = set_agent_tool_settings(
+                &mut fixture.database,
+                &SetAgentToolSettingsInput {
+                    agent_id: agent.id.clone(),
+                    tool,
+                    settings: Some(settings),
+                    row_version,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), ErrorCode::InvalidInput);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -752,7 +847,8 @@ mod tests {
         use crate::{
             agents::{
                 confirm_agent_import, discover_agent_import, AgentImportCandidateDto,
-                ConfirmAgentImportInput, CreateAgentInput, DiscoverAgentImportInput,
+                ClaudeAgentColor, ConfirmAgentImportAgent, ConfirmAgentImportInput,
+                CreateAgentInput, DiscoverAgentImportInput,
             },
             error::ErrorCode,
         };
@@ -802,7 +898,8 @@ mod tests {
             assert_eq!(reviewer.name, "code-reviewer");
             assert_eq!(reviewer.description, "评审");
             assert_eq!(reviewer.prompt, "正文第一行");
-            assert_eq!(reviewer.dropped_fields, vec!["model", "tools"]);
+            assert!(reviewer.dropped_fields.is_empty());
+            assert_eq!(reviewer.retained_fields, vec!["model", "tools"]);
 
             let fallback = &candidates[1];
             assert!(!fallback.importable);
@@ -810,6 +907,24 @@ mod tests {
             assert_eq!(
                 fallback.diagnostic_code.as_deref(),
                 Some("AGENT_REQUIRED_FIELD_MISSING")
+            );
+        }
+
+        #[test]
+        fn discover_rejects_invalid_retained_tool_settings() {
+            let mut fixture = Fixture::new();
+            write_agent(
+                &fixture,
+                "invalid-color.md",
+                "---\nname: invalid-color\ndescription: 描述\ncolor: 3\n---\n\n正文\n",
+            );
+
+            let candidates = discover(&mut fixture);
+            assert_eq!(candidates.len(), 1);
+            assert!(!candidates[0].importable);
+            assert_eq!(
+                candidates[0].diagnostic_code.as_deref(),
+                Some("AGENT_FIELD_INVALID")
             );
         }
 
@@ -924,7 +1039,7 @@ mod tests {
             fs::create_dir_all(&directory).unwrap();
             fs::write(
                 directory.join("complete.toml"),
-                "name = \"codex-agent\"\ndescription = \"描述\"\ndeveloper_instructions = \"\"\"\n多行正文\n\"\"\"\nmodel = \"gpt-5\"\n",
+                "name = \"codex-agent\"\ndescription = \"描述\"\ndeveloper_instructions = \"\"\"\n多行正文\n\"\"\"\nmodel = \"gpt-5\"\nmodel_reasoning_effort = \"xhigh\"\n",
             )
             .unwrap();
             fs::write(
@@ -946,7 +1061,11 @@ mod tests {
                 .unwrap();
             assert!(complete.importable);
             assert_eq!(complete.prompt, "多行正文");
-            assert_eq!(complete.dropped_fields, vec!["model"]);
+            assert!(complete.dropped_fields.is_empty());
+            assert_eq!(
+                complete.retained_fields,
+                vec!["model", "model_reasoning_effort"]
+            );
             // developer_instructions 缺失：解析即失败，候选名保留文件名去扩展名。
             let missing = candidates
                 .iter()
@@ -989,11 +1108,14 @@ mod tests {
                 &fixture.environment,
                 &ConfirmAgentImportInput {
                     tool: Tool::Claude,
-                    agents: vec![CreateAgentInput {
-                        name: candidate.name.clone(),
-                        description: candidate.description.clone(),
-                        prompt: candidate.prompt.clone(),
-                        enabled: true,
+                    agents: vec![ConfirmAgentImportAgent {
+                        definition: CreateAgentInput {
+                            name: candidate.name.clone(),
+                            description: candidate.description.clone(),
+                            prompt: candidate.prompt.clone(),
+                            enabled: true,
+                        },
+                        tool_settings: None,
                     }],
                 },
             )
@@ -1017,16 +1139,58 @@ mod tests {
                 &fixture.environment,
                 &ConfirmAgentImportInput {
                     tool: Tool::Claude,
-                    agents: vec![CreateAgentInput {
-                        name: "code-reviewer".to_owned(),
-                        description: candidate.description.clone(),
-                        prompt: candidate.prompt.clone(),
-                        enabled: true,
+                    agents: vec![ConfirmAgentImportAgent {
+                        definition: CreateAgentInput {
+                            name: "code-reviewer".to_owned(),
+                            description: candidate.description.clone(),
+                            prompt: candidate.prompt.clone(),
+                            enabled: true,
+                        },
+                        tool_settings: None,
                     }],
                 },
             )
             .unwrap_err();
             assert_eq!(error.code(), ErrorCode::Conflict);
+        }
+
+        #[test]
+        fn confirm_import_persists_retained_tool_settings() {
+            let mut fixture = Fixture::new();
+            write_agent(
+                &fixture,
+                "configured.md",
+                "---\nname: configured\ndescription: 已配置\ncolor: cyan\ntools: [Read, Read]\nhooks:\n  stop: true\n---\n\n正文\n",
+            );
+            let candidates = discover(&mut fixture);
+            assert_eq!(candidates.len(), 1);
+            let candidate = &candidates[0];
+            assert!(candidate.importable);
+            assert_eq!(candidate.retained_fields, vec!["color", "tools"]);
+            assert_eq!(candidate.dropped_fields, vec!["hooks"]);
+
+            confirm_agent_import(
+                &mut fixture.database,
+                &fixture.environment,
+                &ConfirmAgentImportInput {
+                    tool: Tool::Claude,
+                    agents: vec![ConfirmAgentImportAgent {
+                        definition: CreateAgentInput {
+                            name: candidate.name.clone(),
+                            description: candidate.description.clone(),
+                            prompt: candidate.prompt.clone(),
+                            enabled: true,
+                        },
+                        tool_settings: candidate.tool_settings.clone(),
+                    }],
+                },
+            )
+            .unwrap();
+
+            let agents = crate::agents::list_agents(&fixture.database).unwrap();
+            let settings = agents[0].tool_settings.claude.as_ref().unwrap();
+            assert_eq!(settings.color, Some(ClaudeAgentColor::Cyan));
+            assert_eq!(settings.tools.as_deref(), Some(["Read".to_owned()].as_slice()));
         }
     }
 }

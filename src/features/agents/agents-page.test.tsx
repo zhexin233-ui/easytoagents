@@ -19,6 +19,7 @@ const agent: AgentDto = {
   prompt: "审阅当前变更。",
   enabled: true,
   globalAssignments: [],
+  toolSettings: { claude: null, codex: null },
   rowVersion: 3,
 };
 
@@ -118,6 +119,8 @@ describe("AgentsPage", () => {
             description: "撰写说明",
             prompt: "请撰写说明。",
             droppedFields: ["model", "tools"],
+            retainedFields: ["color"],
+            toolSettings: { color: "cyan" },
             importable: true,
             diagnosticCode: null,
             reason: null,
@@ -150,6 +153,102 @@ describe("AgentsPage", () => {
     expect(commands.createAgent).not.toHaveBeenCalled();
   });
 
+  it("工具特有设置校验失败时阻止保存", async () => {
+    renderAgents();
+    fireEvent.click(await screen.findByRole("button", { name: "新增 Agent" }));
+    const dialog = screen.getByRole("dialog", { name: "新增 Agent" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), {
+      target: { value: "valid-agent" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("描述"), {
+      target: { value: "描述" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("系统提示正文"), {
+      target: { value: "正文" },
+    });
+    fireEvent.click(within(dialog).getByText("工具特有设置"));
+    fireEvent.change(
+      within(dialog).getByRole("combobox", { name: "Claude 模型别名" }),
+      { target: { value: "custom" } },
+    );
+    fireEvent.change(within(dialog).getByLabelText("Claude 自定义模型"), {
+      target: { value: "invalid model" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "保存中央意图" }),
+    );
+
+    expect(
+      within(dialog).getByText(
+        "模型名必须非空、不能包含空白或 NUL，且不超过 128 字节。",
+      ),
+    ).toBeVisible();
+    expect(commands.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("编辑工具特有设置时发送规范化的覆盖层负载", async () => {
+    vi.mocked(commands.updateAgent).mockResolvedValue({
+      status: "ok",
+      data: { ...agent, rowVersion: 4 },
+    });
+    vi.mocked(commands.setAgentToolSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        ...agent,
+        rowVersion: 5,
+        toolSettings: {
+          claude: {
+            model: "claude-opus-5",
+            color: "cyan",
+            tools: ["Read", "Bash"],
+          },
+          codex: null,
+        },
+      },
+    });
+
+    renderAgents();
+    fireEvent.click(
+      await screen.findByRole("button", { name: `编辑 ${agent.name}` }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "编辑 Agent" });
+    fireEvent.click(within(dialog).getByText("工具特有设置"));
+    fireEvent.change(
+      within(dialog).getByRole("combobox", { name: "Claude 模型别名" }),
+      {
+        target: { value: "custom" },
+      },
+    );
+    fireEvent.change(within(dialog).getByLabelText("Claude 自定义模型"), {
+      target: { value: "claude-opus-5" },
+    });
+    fireEvent.change(
+      within(dialog).getByRole("combobox", { name: "Claude Agent 颜色" }),
+      {
+        target: { value: "cyan" },
+      },
+    );
+    fireEvent.change(within(dialog).getByLabelText("Claude Agent 工具列表"), {
+      target: { value: "Read, Read, Bash" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "保存中央意图" }),
+    );
+
+    await waitFor(() =>
+      expect(commands.setAgentToolSettings).toHaveBeenCalledWith({
+        agentId: agent.id,
+        tool: "claude",
+        settings: {
+          model: "claude-opus-5",
+          color: "cyan",
+          tools: ["Read", "Bash"],
+        },
+        rowVersion: 4,
+      }),
+    );
+  });
+
   it("全局分配发送精确 Agent 与行版本", async () => {
     renderAgents();
     fireEvent.click(
@@ -163,6 +262,25 @@ describe("AgentsPage", () => {
         rowVersion: agent.rowVersion,
       }),
     );
+  });
+
+  it("列表徽标显示有工具特有设置的工具数量", async () => {
+    vi.mocked(commands.listAgents).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          ...agent,
+          toolSettings: {
+            claude: { color: "cyan" },
+            codex: null,
+          },
+        },
+      ],
+    });
+
+    renderAgents();
+
+    expect(await screen.findByText("1 个工具有特有设置")).toBeVisible();
   });
 
   it("全局状态可展开文件明细，预览后只通过显式 Apply 写入", async () => {
@@ -270,6 +388,7 @@ describe("AgentsPage", () => {
     expect(
       within(dialog).getByText("将丢弃工具特有字段：model、tools"),
     ).toBeVisible();
+    expect(within(dialog).getByText("将保留工具特有字段：color")).toBeVisible();
     fireEvent.click(
       within(dialog).getByRole("checkbox", { name: "导入 writer" }),
     );
@@ -281,10 +400,13 @@ describe("AgentsPage", () => {
         tool: "claude",
         agents: [
           {
-            name: "writer",
-            description: "撰写说明",
-            prompt: "请撰写说明。",
-            enabled: true,
+            definition: {
+              name: "writer",
+              description: "撰写说明",
+              prompt: "请撰写说明。",
+              enabled: true,
+            },
+            toolSettings: { color: "cyan" },
           },
         ],
       }),
