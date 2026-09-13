@@ -15,6 +15,7 @@ use super::service::{
 use super::{
     set_agent_tool_settings, AgentImportCandidateDto, AgentImportPreviewDto, AgentImportResultDto,
     ConfirmAgentImportInput, DiscoverAgentImportInput, SetAgentToolSettingsInput,
+    MAX_AGENT_FILE_BYTES,
 };
 use crate::{
     adapters::{agent_file_extension, ExplicitEnvironment, PolicyState},
@@ -22,9 +23,6 @@ use crate::{
     domain::{AgentName, Tool},
     error::AppError,
 };
-
-/// 单个 agent 源文件的大小上限（与 hooks 脚本接管同一量级）。
-const MAX_AGENT_FILE_BYTES: u64 = 512 * 1024;
 
 pub fn discover_agent_import(
     database: &mut Database,

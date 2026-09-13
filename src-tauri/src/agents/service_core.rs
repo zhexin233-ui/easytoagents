@@ -602,12 +602,21 @@ fn prepare_agents_sync(
     // 目标顺序按名称稳定排序，保证预览目标列表确定。
     desired.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let existing_rows = repository::list_agent_managed_targets(
+    let mut existing_rows = repository::list_agent_managed_targets(
         database,
         input.tool,
         scope,
         project.as_ref().map(|project| project.id.as_str()),
     )?;
+
+    // 项目原生观测会为 Agent 目录登记一行空 baseline 的目录级身份行；它
+    // 不是一个受管文件，既不能触发“空集仍建运行”，也不能进入删除候选。
+    // 只有由目录 descriptor 派生后路径完全一致的行，才是本目录内合法的
+    // `<name>.<ext>` 文件目标。全局目录不会产生这种身份行，但复用同一守卫
+    // 可避免把异常路径带入同步编排。
+    existing_rows.retain(|row| {
+        agent_file_descriptor(&directory_descriptor, &row.target_path, input.tool).is_ok()
+    });
     if desired.is_empty() && existing_rows.is_empty() {
         return Ok(PreparedAgentsSync {
             scope,

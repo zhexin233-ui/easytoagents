@@ -127,6 +127,7 @@ pub enum ProjectNativeEntryType {
     Directory,
     Symlink,
     HookEntry,
+    AgentFile,
 }
 
 impl ProjectNativeEntryType {
@@ -136,6 +137,7 @@ impl ProjectNativeEntryType {
             "directory" => Some(Self::Directory),
             "symlink" => Some(Self::Symlink),
             "hook_entry" => Some(Self::HookEntry),
+            "agent_file" => Some(Self::AgentFile),
             _ => None,
         }
     }
@@ -146,6 +148,7 @@ impl ProjectNativeEntryType {
             Self::Directory => "directory",
             Self::Symlink => "symlink",
             Self::HookEntry => "hook_entry",
+            Self::AgentFile => "agent_file",
         }
     }
 }

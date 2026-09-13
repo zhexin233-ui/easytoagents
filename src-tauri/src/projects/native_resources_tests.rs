@@ -1184,6 +1184,23 @@ mod tests {
         .unwrap()
     }
 
+    fn list_native_agents(
+        fixture: &mut Fixture,
+        project_id: &str,
+        tool: Tool,
+    ) -> Vec<ProjectNativeResourceDto> {
+        list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project_id.to_owned(),
+                tool,
+                artifact_kind: ArtifactKind::Agent,
+            },
+        )
+        .unwrap()
+    }
+
     #[test]
     fn claude_project_hooks_are_listed_read_only() {
         let mut fixture = Fixture::new();
@@ -1494,5 +1511,403 @@ mod tests {
         assert!(items[0].safe_summary.get("command").is_none());
         let serialized = serde_json::to_string(&items[0]).unwrap();
         assert!(!serialized.contains(secret), "脱敏条目不得泄漏命令原文");
+    }
+
+    // ---------------------------------------------------------------------------
+    // 项目级 Agents 只读观测
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn claude_project_agent_files_are_listed_read_only() {
+        let mut fixture = Fixture::new();
+        let bytes = "---\nname: code-reviewer\ndescription: 检查项目代码质量\n---\n\n只作为文件正文存在，不应进入 DTO。\n";
+        let project = fixture.register_project_with(|root| {
+            let directory = root.join(".claude/agents");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("code-reviewer.md"), bytes.as_bytes()).unwrap();
+            fs::write(directory.join("notes.txt"), b"ignore").unwrap();
+            fs::write(directory.join(".hidden.md"), b"ignore").unwrap();
+            fs::create_dir_all(directory.join("nested.md")).unwrap();
+            fs::write(directory.join("nested.md/child.md"), b"ignore").unwrap();
+        });
+        let items = list_native_agents(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 1, "只应识别顶层 .md 普通文件");
+        let item = &items[0];
+        assert_eq!(item.entry_type, ProjectNativeEntryType::AgentFile);
+        assert_eq!(item.state, ProjectNativeResourceState::Active);
+        assert!(!item.can_disable);
+        assert!(!item.can_restore);
+        assert_eq!(item.display_name, "code-reviewer");
+        assert_eq!(item.safe_summary["kind"], "agent");
+        assert_eq!(item.safe_summary["name"], "code-reviewer");
+        assert_eq!(item.safe_summary["description"], "检查项目代码质量");
+        assert_eq!(item.safe_summary["fileName"], "code-reviewer.md");
+        assert!(!serde_json::to_string(item)
+            .unwrap()
+            .contains("只作为文件正文存在"));
+        let identity = repository::find_project_target_identity(
+            &fixture.database,
+            &project.id,
+            Tool::Claude,
+            ArtifactKind::Agent,
+            fixture
+                .home
+                .join("projects/native/.claude/agents")
+                .to_string_lossy()
+                .as_ref(),
+        )
+        .unwrap()
+        .expect("Agent 原生登记应创建目录级身份行");
+        assert!(identity.full_hash.is_none());
+        assert!(identity.managed_hash.is_none());
+        assert_eq!(
+            fs::read(
+                fixture
+                    .home
+                    .join("projects/native/.claude/agents/code-reviewer.md")
+            )
+            .unwrap(),
+            bytes.as_bytes()
+        );
+    }
+
+    #[test]
+    fn codex_cursor_opencode_agent_files_are_listed() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".codex/agents")).unwrap();
+            fs::write(
+                root.join(".codex/agents/codex-reviewer.toml"),
+                "name = \"codex-reviewer\"\ndescription = \"检查 Codex 项目\"\ndeveloper_instructions = \"只读正文\"\n",
+            )
+            .unwrap();
+            fs::create_dir_all(root.join(".cursor/agents")).unwrap();
+            fs::write(
+                root.join(".cursor/agents/cursor-reviewer.md"),
+                "---\nname: cursor-reviewer\ndescription: 检查 Cursor 项目\n---\n\n正文\n",
+            )
+            .unwrap();
+            fs::create_dir_all(root.join(".opencode/agents")).unwrap();
+            fs::write(
+                root.join(".opencode/agents/opencode-reviewer.md"),
+                "---\ndescription: 检查 OpenCode 项目\nmode: subagent\n---\n\n正文\n",
+            )
+            .unwrap();
+            fs::create_dir_all(root.join(".zcode/agents")).unwrap();
+            fs::write(root.join(".zcode/agents/zcode-reviewer.md"), b"ignore").unwrap();
+        });
+        for (tool, name, extension) in [
+            (Tool::Codex, "codex-reviewer", "toml"),
+            (Tool::Cursor, "cursor-reviewer", "md"),
+            (Tool::Opencode, "opencode-reviewer", "md"),
+        ] {
+            let items = list_native_agents(&mut fixture, &project.id, tool);
+            assert_eq!(items.len(), 1, "{tool:?} 应只列出一个 Agent 文件");
+            assert_eq!(items[0].display_name, name);
+            assert_eq!(items[0].entry_type, ProjectNativeEntryType::AgentFile);
+            assert_eq!(
+                items[0].safe_summary["fileName"],
+                format!("{name}.{extension}")
+            );
+            assert!(!items[0].can_disable && !items[0].can_restore);
+        }
+        assert!(list_native_agents(&mut fixture, &project.id, Tool::Zcode).is_empty());
+    }
+
+    #[test]
+    fn removed_agent_file_becomes_missing() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            let directory = root.join(".claude/agents");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(
+                directory.join("first.md"),
+                "---\nname: first\n---\n正文\n",
+            )
+            .unwrap();
+            fs::write(
+                directory.join("second.md"),
+                "---\nname: second\n---\n正文\n",
+            )
+            .unwrap();
+        });
+        assert!(list_native_agents(&mut fixture, &project.id, Tool::Claude)
+            .iter()
+            .all(|item| item.state == ProjectNativeResourceState::Active));
+        fs::remove_file(fixture.home.join("projects/native/.claude/agents/first.md")).unwrap();
+        let items = list_native_agents(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 2);
+        let missing = items.iter().find(|item| item.display_name == "first").unwrap();
+        assert_eq!(missing.state, ProjectNativeResourceState::Missing);
+        assert!(missing.safe_summary.get("description").is_none());
+        assert!(items
+            .iter()
+            .find(|item| item.display_name == "second")
+            .is_some_and(|item| item.state == ProjectNativeResourceState::Active));
+        fs::remove_dir_all(fixture.home.join("projects/native/.claude/agents")).unwrap();
+        assert!(list_native_agents(&mut fixture, &project.id, Tool::Claude)
+            .iter()
+            .all(|item| item.state == ProjectNativeResourceState::Missing));
+    }
+
+    #[test]
+    fn agent_directory_with_symlinked_ancestor_is_not_observed() {
+        let mut fixture = Fixture::new();
+        let outside_directory = fixture.home.join("outside/.claude/agents");
+        fs::create_dir_all(&outside_directory).unwrap();
+        fs::write(
+            outside_directory.join("escaped.md"),
+            "---\nname: escaped\ndescription: 项目外文件\n---\n正文\n".as_bytes(),
+        )
+        .unwrap();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".claude/agents")).unwrap();
+        });
+        let project_claude = fixture.home.join("projects/native/.claude");
+        fs::remove_dir_all(&project_claude).unwrap();
+        symlink(fixture.home.join("outside/.claude"), &project_claude).unwrap();
+
+        assert!(list_native_agents(&mut fixture, &project.id, Tool::Claude).is_empty());
+    }
+
+    #[test]
+    fn centrally_applied_agent_file_is_hidden_from_native_list() {
+        let mut fixture = Fixture::new();
+        let native_bytes = "---\nname: local-helper\ndescription: 本地保留文件\n---\n\n本地正文\n";
+        let project = fixture.register_project_with(|root| {
+            let directory = root.join(".claude/agents");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("local-helper.md"), native_bytes.as_bytes()).unwrap();
+        });
+        let agent = crate::agents::create_agent(
+            &mut fixture.database,
+            &crate::agents::CreateAgentInput {
+                name: "central-reviewer".to_owned(),
+                description: "中央审查器".to_owned(),
+                prompt: "请审查代码。".to_owned(),
+                enabled: true,
+            },
+        )
+        .unwrap();
+        crate::agents::set_project_agent_assignment(
+            &mut fixture.database,
+            &crate::agents::SetProjectAgentAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Claude,
+                agent_id: agent.id.clone(),
+                assigned: true,
+                agent_row_version: agent.row_version,
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap();
+        let mut redactor = crate::security::SecretRedactor::default();
+        let plan = crate::agents::preview_agent_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &crate::agents::PreviewAgentSyncInput {
+                tool: Tool::Claude,
+                project_id: Some(project.id.clone()),
+                exclude_from_git: false,
+            },
+        )
+        .unwrap();
+        crate::agents::apply_agent_preview(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &crate::agents::ApplyAgentPreviewInput {
+                preview_id: plan.preview_id,
+                tool: Tool::Claude,
+                project_id: Some(project.id.clone()),
+            },
+        )
+        .unwrap();
+        let items = list_native_agents(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 1, "中央已应用文件应隐藏，本地文件仍保留");
+        assert_eq!(items[0].display_name, "local-helper");
+        assert!(fixture
+            .home
+            .join("projects/native/.claude/agents/central-reviewer.md")
+            .is_file());
+        assert_eq!(
+            fs::read(fixture.home.join("projects/native/.claude/agents/local-helper.md"))
+                .unwrap(),
+            native_bytes.as_bytes()
+        );
+    }
+
+    #[test]
+    fn agent_file_action_preview_is_rejected() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            let directory = root.join(".claude/agents");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(
+                directory.join("readonly.md"),
+                "---\nname: readonly\n---\n正文\n",
+            )
+            .unwrap();
+        });
+        let item = list_native_agents(&mut fixture, &project.id, Tool::Claude)
+            .into_iter()
+            .next()
+            .unwrap();
+        let mut redactor = crate::security::SecretRedactor::default();
+        let error = preview_project_native_resource_action(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewProjectNativeResourceActionInput {
+                resource_id: item.id,
+                row_version: item.row_version,
+                action: ProjectNativeResourceAction::Disable,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        assert!(error
+            .details()
+            .and_then(|details| details.get("reason"))
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason.contains("Agent 文件暂不支持临时禁用与恢复")));
+    }
+
+    #[test]
+    fn agent_description_with_secret_is_redacted_in_summary() {
+        let mut fixture = Fixture::new();
+        let secret = "sk-agent-fixture-secret-000000";
+        let project = fixture.register_project_with(|root| {
+            let directory = root.join(".claude/agents");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(
+                directory.join("secret.md"),
+                format!(
+                    "---\nname: secret-agent\ndescription: \"Authorization: Bearer {secret}\"\n---\n正文\n"
+                ),
+            )
+            .unwrap();
+        });
+        let items = list_native_agents(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].safe_summary["descriptionRedacted"], true);
+        assert!(items[0].safe_summary.get("description").is_none());
+        assert!(!serde_json::to_string(&items[0]).unwrap().contains(secret));
+    }
+
+    #[test]
+    fn unparseable_agent_files_are_listed_with_diagnostic() {
+        let mut fixture = Fixture::new();
+        let project = fixture.register_project_with(|root| {
+            let directory = root.join(".claude/agents");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("broken.md"), "---\nname: [\n---\n正文\n").unwrap();
+            fs::write(directory.join("binary.md"), [0xff, 0xfe, 0xfd]).unwrap();
+            fs::write(
+                directory.join("large.md"),
+                vec![b'x'; crate::agents::MAX_AGENT_FILE_BYTES as usize + 1],
+            )
+            .unwrap();
+        });
+        let items = list_native_agents(&mut fixture, &project.id, Tool::Claude);
+        assert_eq!(items.len(), 3);
+        let diagnostic = |name: &str| {
+            items
+                .iter()
+                .find(|item| item.display_name == name)
+                .and_then(|item| item.safe_summary.get("parseError"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        assert_eq!(diagnostic("broken"), Some("AGENT_FRONTMATTER_INVALID".to_owned()));
+        assert_eq!(diagnostic("binary"), Some("AGENT_FRONTMATTER_INVALID".to_owned()));
+        assert_eq!(diagnostic("large"), Some("AGENT_FILE_TOO_LARGE".to_owned()));
+    }
+
+    #[test]
+    fn agent_directory_identity_row_never_enters_agents_sync() {
+        let mut fixture = Fixture::new();
+        let agents_dir = fixture.home.join("projects/native/.claude/agents");
+        let agents_bytes = "---\nname: agents\ndescription: 目录同名文件\n---\n正文\n";
+        let helper_bytes = "---\nname: helper\ndescription: 本地助手\n---\n正文\n";
+        let project = fixture.register_project_with(|root| {
+            let directory = root.join(".claude/agents");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("agents.md"), agents_bytes.as_bytes()).unwrap();
+            fs::write(directory.join("helper.md"), helper_bytes.as_bytes()).unwrap();
+        });
+        let identity = repository::find_project_target_identity(
+            &fixture.database,
+            &project.id,
+            Tool::Claude,
+            ArtifactKind::Agent,
+            agents_dir.to_string_lossy().as_ref(),
+        )
+        .unwrap()
+        .expect("应存在目录级 Agent 身份行");
+        assert!(identity.full_hash.is_none() && identity.managed_hash.is_none());
+        let mut redactor = crate::security::SecretRedactor::default();
+        let no_assignment = crate::agents::preview_agent_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &crate::agents::PreviewAgentSyncInput {
+                tool: Tool::Claude,
+                project_id: Some(project.id.clone()),
+                exclude_from_git: false,
+            },
+        )
+        .unwrap();
+        assert!(no_assignment.targets.is_empty());
+
+        let agent = crate::agents::create_agent(
+            &mut fixture.database,
+            &crate::agents::CreateAgentInput {
+                name: "reviewer".to_owned(),
+                description: "中央 Reviewer".to_owned(),
+                prompt: "请检查改动。".to_owned(),
+                enabled: true,
+            },
+        )
+        .unwrap();
+        crate::agents::set_project_agent_assignment(
+            &mut fixture.database,
+            &crate::agents::SetProjectAgentAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Claude,
+                agent_id: agent.id,
+                assigned: true,
+                agent_row_version: agent.row_version,
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap();
+        let assigned = crate::agents::preview_agent_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &crate::agents::PreviewAgentSyncInput {
+                tool: Tool::Claude,
+                project_id: Some(project.id),
+                exclude_from_git: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(assigned.targets.len(), 1);
+        assert_eq!(
+            assigned.targets[0].descriptor.path.as_deref(),
+            agents_dir.join("reviewer.md").to_str()
+        );
+        assert_ne!(assigned.targets[0].change_kind, ChangeKind::Delete);
+        assert_eq!(
+            fs::read(agents_dir.join("agents.md")).unwrap(),
+            agents_bytes.as_bytes()
+        );
+        assert_eq!(
+            fs::read(agents_dir.join("helper.md")).unwrap(),
+            helper_bytes.as_bytes()
+        );
     }
 }

@@ -1,4 +1,4 @@
-//! 项目原生 Skill / MCP 的只读发现、对账与禁用/恢复 Preview。
+//! 项目原生资源的只读发现、对账与 MCP/Skill 禁用/恢复 Preview。
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -17,14 +17,15 @@ use super::{
 };
 use crate::{
     adapters::{
-        canonicalize_project_root, native_mcp_container, projection_value_at, DirectoryEntry,
-        DiscoveryContext, ExplicitEnvironment, ManagedOwnership, ObservedDocument, PolicyState,
-        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter,
+        agent_file_extension, canonicalize_project_root, native_mcp_container, projection_value_at,
+        DirectoryEntry, DiscoveryContext, ExplicitEnvironment, ManagedOwnership, ObservedDocument,
+        PolicyState, TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter,
     },
     app::AppPaths,
     db::{
-        hooks as hooks_repository, mcp as mcp_repository, native_resources as repository,
-        projects as project_repository, skills as skill_repository, Database,
+        agents as agents_repository, hooks as hooks_repository, mcp as mcp_repository,
+        native_resources as repository, projects as project_repository, skills as skill_repository,
+        Database,
     },
     domain::{ArtifactKind, ChangeKind, ProjectRoot, Scope, TargetType, Tool},
     error::AppError,
@@ -34,20 +35,19 @@ use crate::{
     security::{contains_detectable_secret, SecretRedactor},
     skills::library as skill_library,
     sync::{
-        apply_persisted_preview, build_preview_plan, hash_json, load_persisted_preview,
-        persist_preview, scan_target, ApplyFaultInjector, ApplyResult, ApplyTargetInput,
-        DatabaseEntityType, DatabaseRowVersion, ManagedTargetBaseline, NativeResourceActionKind,
-        NativeResourceEntryType, NoApplyFault, PreviewPlan, PreviewTargetRequest,
-        ProjectNativeResourceEvidence, TargetScan,
+        apply_persisted_preview, build_preview_plan, hash_bytes, hash_json,
+        inspect_target_ancestors, load_persisted_preview, persist_preview, scan_target,
+        ApplyFaultInjector, ApplyResult, ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion,
+        ManagedTargetBaseline, NativeResourceActionKind, NativeResourceEntryType, NoApplyFault,
+        PreviewPlan, PreviewTargetRequest, ProjectNativeResourceEvidence, TargetScan,
     },
 };
 
 const SKIPPED_SKILL_NAMES: &[&str] = &[".DS_Store", ".system", ".", ".."];
 
-/// Hook 条目展示索引：`(target_path, external_key) -> 原始条目 JSON`。
-/// 只存在于一次 list 调用的内存中（原生列表本就每次先重新扫描），
-/// 不落库，避免把可能含凭据的命令持久化。
-type HookDisplayIndex = BTreeMap<(String, String), Value>;
+/// 原生条目的内存展示索引：`(target_path, external_key) -> 安全展示 JSON`。
+/// 仅在一次 list 调用中存在，不把原生文件描述或正文持久化到数据库。
+type NativeDisplayIndex = BTreeMap<(String, String), Value>;
 
 struct ObservedNativeItem {
     external_key: String,
@@ -68,20 +68,20 @@ pub fn reconcile_project_native_resources(
         .map(|(summary, _)| summary)
 }
 
-/// 对账并附带 Hook 条目展示索引，供 `list_project_native_resources` 组装
+/// 对账并附带原生条目展示索引，供 `list_project_native_resources` 组装
 /// `display_name` / `safe_summary`。
 fn reconcile_project_native_resources_with_index(
     database: &mut Database,
     environment: &ExplicitEnvironment,
     project_id: &str,
-) -> Result<(ProjectNativeResourceSummaryDto, HookDisplayIndex), AppError> {
+) -> Result<(ProjectNativeResourceSummaryDto, NativeDisplayIndex), AppError> {
     let record = project_repository::get_registered_project(database, project_id)?;
     let project_root = match canonicalize_project_root(Path::new(&record.root_path)) {
         Ok(root) if root.as_str() == record.root_path => root,
         _ => {
             return Ok((
                 ProjectNativeResourceSummaryDto::empty(),
-                HookDisplayIndex::new(),
+                NativeDisplayIndex::new(),
             ))
         }
     };
@@ -105,20 +105,17 @@ fn reconcile_project_native_resources_with_index(
     transaction.commit().map_err(|error| {
         AppError::database(&database_path, "commit_reconcile_native_resources").with_source(error)
     })?;
-    let mut hook_display = HookDisplayIndex::new();
+    let mut display_entries = NativeDisplayIndex::new();
     for observation in &observations {
-        if observation.artifact_kind != ArtifactKind::Hook {
-            continue;
-        }
-        for (external_key, entry) in &observation.hook_entries {
-            hook_display.insert(
+        for (external_key, entry) in &observation.display_entries {
+            display_entries.insert(
                 (observation.target_path.clone(), external_key.clone()),
                 entry.clone(),
             );
         }
     }
     let summary = summarize_project(database, &record.id)?;
-    Ok((summary, hook_display))
+    Ok((summary, display_entries))
 }
 
 /// 当前对账后的项目原生资源汇总，不触碰原生文件也不写库。
@@ -134,7 +131,7 @@ pub fn list_project_native_resources(
     environment: &ExplicitEnvironment,
     input: &ProjectNativeResourceQueryInput,
 ) -> Result<Vec<ProjectNativeResourceDto>, AppError> {
-    let (_, hook_display) =
+    let (_, display_entries) =
         reconcile_project_native_resources_with_index(database, environment, &input.project_id)?;
     let records = repository::list_for_project(
         database,
@@ -147,12 +144,9 @@ pub fn list_project_native_resources(
         if should_hide_centralized(&record, database)? {
             continue;
         }
-        let hook_entry = if record.entry_type == ProjectNativeEntryType::HookEntry.as_str() {
-            hook_display.get(&(record.target_path.clone(), record.external_key.clone()))
-        } else {
-            None
-        };
-        dtos.push(to_dto(&record, hook_entry)?);
+        let display_entry =
+            display_entries.get(&(record.target_path.clone(), record.external_key.clone()));
+        dtos.push(to_dto(&record, display_entry)?);
     }
     Ok(dtos)
 }
@@ -235,6 +229,14 @@ pub(crate) fn apply_project_native_resource_preview_with_fault(
         .clone()
         .ok_or_else(|| AppError::invalid_input("previewId", "该预览不是项目原生资源动作"))?;
     let record = repository::get_by_id(database, &evidence.resource_id)?;
+    if record.artifact_kind == ArtifactKind::Agent.as_str()
+        || record.entry_type == ProjectNativeEntryType::AgentFile.as_str()
+    {
+        return Err(AppError::invalid_input(
+            "artifactKind",
+            "Agent 文件暂不支持临时禁用与恢复",
+        ));
+    }
     validate_action_matrix(
         parse_state(&record.state)?,
         evidence_action(evidence.action),
@@ -298,7 +300,10 @@ pub(super) fn supported_project_descriptors(
                 && target.path.is_some()
                 && matches!(
                     target.artifact_kind,
-                    ArtifactKind::Mcp | ArtifactKind::Skill | ArtifactKind::Hook
+                    ArtifactKind::Mcp
+                        | ArtifactKind::Skill
+                        | ArtifactKind::Hook
+                        | ArtifactKind::Agent
                 )
         }));
     }
@@ -310,8 +315,8 @@ struct DescriptorObservation {
     artifact_kind: ArtifactKind,
     target_path: String,
     items: Vec<ObservedNativeItem>,
-    /// 仅 Hook 观测填充：外部键 -> 原始条目 JSON，用于组装展示信息。
-    hook_entries: BTreeMap<String, Value>,
+    /// Hook / Agent 观测填充：外部键 -> 安全展示 JSON，用于组装 DTO。
+    display_entries: BTreeMap<String, Value>,
 }
 
 /// 只读观测一个描述符；返回 `None` 表示该目标不参与对账（无路径、能力未证明或扫描不可用）。
@@ -336,30 +341,30 @@ fn observe_descriptor(
     )?
     .map(|identity| identity.target_id)
     .unwrap_or_default();
-    let Some(observed) = observe_items(database, descriptor, &target_id)? else {
+    let Some(observed) = observe_items(database, project_id, descriptor, &target_id)? else {
         return Ok(None);
     };
-    let hook_entries = observed.hook_entries;
+    let display_entries = observed.display_entries;
     Ok(Some(DescriptorObservation {
         tool: descriptor.tool,
         artifact_kind: descriptor.artifact_kind,
         target_path: target_path.to_owned(),
         items: observed.items,
-        hook_entries,
+        display_entries,
     }))
 }
 
-/// 一次只读观测的产物：通用条目登记数据，以及 Hook 专用的原始条目展示索引。
+/// 一次只读观测的产物：通用条目登记数据，以及 Hook / Agent 的安全展示索引。
 struct ObservedItems {
     items: Vec<ObservedNativeItem>,
-    hook_entries: BTreeMap<String, Value>,
+    display_entries: BTreeMap<String, Value>,
 }
 
 impl ObservedItems {
     fn plain(items: Vec<ObservedNativeItem>) -> Self {
         Self {
             items,
-            hook_entries: BTreeMap::new(),
+            display_entries: BTreeMap::new(),
         }
     }
 }
@@ -423,6 +428,7 @@ fn reconcile_observation(
 
 fn observe_items(
     database: &Database,
+    project_id: &str,
     descriptor: &TargetDescriptor,
     target_id: &str,
 ) -> Result<Option<ObservedItems>, AppError> {
@@ -431,9 +437,9 @@ fn observe_items(
         ArtifactKind::Mcp => observe_mcp_items(database, adapter, descriptor, target_id),
         ArtifactKind::Skill => observe_skill_items(database, adapter, descriptor, target_id),
         ArtifactKind::Hook => observe_hook_items(database, adapter, descriptor, target_id),
-        // Prompt/Provider/Agent 不参与项目原生资源逐条观测
-        //（agents 的目录内非受管文件按 PRD 非目标处理）。
-        ArtifactKind::Prompt | ArtifactKind::Provider | ArtifactKind::Agent => Ok(None),
+        ArtifactKind::Agent => observe_agent_items(database, project_id, descriptor),
+        // Prompt/Provider 不参与项目原生资源逐条观测。
+        ArtifactKind::Prompt | ArtifactKind::Provider => Ok(None),
     }
 }
 
@@ -567,8 +573,177 @@ fn observe_hook_items(
     }
     Ok(Some(ObservedItems {
         items,
-        hook_entries: entries,
+        display_entries: entries,
     }))
+}
+
+/// Agent 目录只读观测：目录 descriptor 不能直接交给 `scan_target`，因此这里
+/// 仅扫描目录直属的、扩展名匹配的普通文件（包括解析为普通文件的符号链接）。
+/// 目录/文件读取失败时返回 `None`，让本轮保持已有数据库状态，不把部分扫描
+/// 误当成完整观测。
+fn observe_agent_items(
+    database: &Database,
+    project_id: &str,
+    descriptor: &TargetDescriptor,
+) -> Result<Option<ObservedItems>, AppError> {
+    let Some(directory_path) = descriptor.path.as_deref() else {
+        return Ok(None);
+    };
+    let directory = Path::new(directory_path);
+    if let Some(failure) = inspect_target_ancestors(directory) {
+        return Ok(if matches!(failure, TargetScan::Missing) {
+            Some(ObservedItems::plain(Vec::new()))
+        } else {
+            None
+        });
+    }
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Ok(None);
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Some(ObservedItems::plain(Vec::new())));
+        }
+        Err(_) => return Ok(None),
+    }
+
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Some(ObservedItems::plain(Vec::new())));
+        }
+        Err(_) => return Ok(None),
+    };
+    let suffix = format!(".{}", agent_file_extension(descriptor.tool));
+    let mut candidates = BTreeMap::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return Ok(None),
+        };
+        let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(stem) = file_name.strip_suffix(&suffix) else {
+            continue;
+        };
+        if stem.is_empty() || stem.starts_with('.') {
+            continue;
+        }
+        candidates.insert(file_name, entry.path());
+    }
+
+    let centrally_owned = agents_repository::list_agent_managed_targets(
+        database,
+        descriptor.tool,
+        Scope::Project,
+        Some(project_id),
+    )?
+    .into_iter()
+    .filter(|row| row.baseline_full_hash.is_some() || row.baseline_managed_hash.is_some())
+    .map(|row| row.target_path)
+    .collect::<BTreeSet<_>>();
+
+    let mut items = Vec::new();
+    let mut display_entries = BTreeMap::new();
+    for (file_name, path) in candidates {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Ok(None),
+        };
+        let ordinary_file = if metadata.file_type().is_symlink() {
+            match fs::metadata(&path) {
+                Ok(target) => target.is_file(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(_) => return Ok(None),
+            }
+        } else {
+            metadata.is_file()
+        };
+        if !ordinary_file {
+            continue;
+        }
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(None),
+        };
+        let stem = file_name
+            .strip_suffix(&suffix)
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or(file_name.as_str());
+        let (_display_name, summary) =
+            agent_display(file_name.as_str(), stem, descriptor.tool, &bytes);
+        let target_path = path.to_string_lossy().into_owned();
+        let item_hash = hash_bytes(&bytes);
+        items.push(ObservedNativeItem {
+            external_key: file_name.clone(),
+            entry_type: ProjectNativeEntryType::AgentFile,
+            item_hash,
+            centrally_owned: centrally_owned.contains(&target_path),
+        });
+        display_entries.insert(file_name, summary);
+    }
+    Ok(Some(ObservedItems {
+        items,
+        display_entries,
+    }))
+}
+
+/// 组装 Agent 安全展示信息。只保留 name、description（必要时脱敏/截断）、
+/// fileName 与稳定解析诊断，不把 prompt/developer_instructions 放进 DTO。
+fn agent_display(file_name: &str, stem: &str, tool: Tool, bytes: &[u8]) -> (String, Value) {
+    let mut summary = json!({
+        "kind": "agent",
+        "name": stem,
+        "fileName": file_name,
+    });
+    if bytes.len() > crate::agents::MAX_AGENT_FILE_BYTES as usize {
+        summary["parseError"] = json!(crate::agents::AGENT_FILE_TOO_LARGE);
+        return (stem.to_owned(), summary);
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        summary["parseError"] = json!(crate::agents::AGENT_FRONTMATTER_INVALID);
+        return (stem.to_owned(), summary);
+    };
+    let parsed = if tool == Tool::Codex {
+        crate::agents::parse_codex_agent_file(text)
+    } else {
+        crate::agents::parse_markdown_agent_file(text, tool)
+    };
+    let parsed = match parsed {
+        Ok(parsed) => parsed,
+        // Parser diagnostics are stable &'static strings owned by the agents
+        // module; no source text is copied into the summary.
+        Err(code) => {
+            summary["parseError"] = json!(code);
+            return (stem.to_owned(), summary);
+        }
+    };
+    let display_name = parsed
+        .name
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| stem.to_owned());
+    summary["name"] = json!(display_name);
+    if let Some(description) = parsed.description {
+        if contains_detectable_secret("description", &description) {
+            summary["descriptionRedacted"] = json!(true);
+        } else {
+            summary["description"] = json!(truncate_description(&description));
+        }
+    }
+    (display_name, summary)
+}
+
+fn truncate_description(description: &str) -> String {
+    let mut chars = description.chars();
+    let truncated = chars.by_ref().take(200).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}…")
+    } else {
+        truncated
+    }
 }
 
 struct PreparedNativeAction {
@@ -585,6 +760,16 @@ fn prepare_native_action(
     let record = repository::get_by_id(database, &input.resource_id)?;
     if record.row_version != i64::from(input.row_version) {
         return Err(AppError::conflict("rowVersion", "原生资源已被其他操作更新"));
+    }
+    // Agent 文件仅用于只读观测；即使记录状态异常，也不能让动作入口
+    // 通过状态矩阵后再尝试构造写入投影。
+    if record.artifact_kind == ArtifactKind::Agent.as_str()
+        || record.entry_type == ProjectNativeEntryType::AgentFile.as_str()
+    {
+        return Err(AppError::invalid_input(
+            "artifactKind",
+            "Agent 文件暂不支持临时禁用与恢复",
+        ));
     }
     let state = parse_state(&record.state)?;
     validate_action_matrix(state, input.action)?;
@@ -790,8 +975,11 @@ fn disable_evidence_details(
             let _ = descriptor;
             Ok((None, None, None))
         }
-        // Hook 永远不会生成动作证据：native_ownership 已在此前 fail closed。
+        // Hook / Agent 永远不会生成动作证据：native_ownership 已在此前 fail closed。
         ProjectNativeEntryType::HookEntry => Err(AppError::internal("Hook 条目不支持生成禁用证据")),
+        ProjectNativeEntryType::AgentFile => {
+            Err(AppError::internal("Agent 文件不支持生成禁用证据"))
+        }
     }
 }
 
@@ -831,7 +1019,9 @@ fn restore_desired_projection(
                         AppError::conflict("snapshot", "符号链接快照缺少链接目标")
                     })?),
                 },
-                ProjectNativeEntryType::McpEntry | ProjectNativeEntryType::HookEntry => {
+                ProjectNativeEntryType::McpEntry
+                | ProjectNativeEntryType::HookEntry
+                | ProjectNativeEntryType::AgentFile => {
                     return Err(AppError::internal("MCP/Hook 条目不应走 Skill 目录恢复投影"));
                 }
             };
@@ -845,8 +1035,9 @@ fn restore_desired_projection(
             );
             Ok(Value::Object(root))
         }
-        // Hook 永远不会进入恢复流程：native_ownership 已在此前 fail closed。
+        // Hook / Agent 永远不会进入恢复流程：native_ownership 已在此前 fail closed。
         ProjectNativeEntryType::HookEntry => Err(AppError::internal("Hook 条目不支持恢复投影")),
+        ProjectNativeEntryType::AgentFile => Err(AppError::internal("Agent 文件不支持恢复投影")),
     }
 }
 
@@ -919,9 +1110,12 @@ fn item_hash_from_scan(
                 .ok_or_else(|| AppError::conflict("projectNativeResource", "Skill 入口已不存在"))?;
             Ok(skill_entry_item_hash(&child, entry_type, value))
         }
-        // Hook 永远不会走到禁用证据：native_ownership 已在此前 fail closed。
+        // Hook / Agent 永远不会走到禁用证据：native_ownership 已在此前 fail closed。
         ProjectNativeEntryType::HookEntry => {
             Err(AppError::internal("Hook 条目不支持禁用 hash 采集"))
+        }
+        ProjectNativeEntryType::AgentFile => {
+            Err(AppError::internal("Agent 文件不支持禁用 hash 采集"))
         }
     }
 }
@@ -969,9 +1163,12 @@ fn validate_live_occupancy(
                     .with_source(error)),
                 }
             }
-            // Hook 永远不会走到占用校验：native_ownership 已在此前 fail closed。
+            // Hook / Agent 永远不会走到占用校验：native_ownership 已在此前 fail closed。
             ProjectNativeEntryType::HookEntry => {
                 Err(AppError::internal("Hook 条目不支持动作占用校验"))
+            }
+            ProjectNativeEntryType::AgentFile => {
+                Err(AppError::internal("Agent 文件不支持动作占用校验"))
             }
         },
     }
@@ -1033,15 +1230,19 @@ fn native_ownership(
             vec![external_key.to_owned()],
         )),
         // Hooks 条目是匿名数组元素，现有 ownership 无法定位单条，
-        // 临时禁用/恢复不支持；Agent 为整文件目标且不在项目原生资源范围内，
-        // 与 Provider 一样 fail closed。
+        // 临时禁用/恢复不支持。
         ArtifactKind::Hook => Err(AppError::invalid_input(
             "artifactKind",
             "Hooks 暂不支持临时禁用与恢复",
         )),
-        ArtifactKind::Prompt | ArtifactKind::Provider | ArtifactKind::Agent => Err(
-            AppError::invalid_input("artifactKind", "该资源类型暂不支持临时禁用与恢复"),
-        ),
+        ArtifactKind::Agent => Err(AppError::invalid_input(
+            "artifactKind",
+            "Agent 文件暂不支持临时禁用与恢复",
+        )),
+        ArtifactKind::Prompt | ArtifactKind::Provider => Err(AppError::invalid_input(
+            "artifactKind",
+            "该资源类型暂不支持临时禁用与恢复",
+        )),
     }
 }
 
@@ -1086,6 +1287,18 @@ fn should_hide_centralized(
             }
             None => false,
         },
+        "agent" => {
+            let tool = parse_tool(&record.tool)?;
+            let file_path = Path::new(&record.target_path).join(&record.external_key);
+            repository::find_project_target_identity(
+                database,
+                &record.project_id,
+                tool,
+                ArtifactKind::Agent,
+                &file_path.to_string_lossy(),
+            )?
+            .is_some_and(|identity| identity.full_hash.is_some() || identity.managed_hash.is_some())
+        }
         _ => false,
     };
     // 禁用快照代表另一份待恢复的原生内容，不能因中央资源占用路径而隐藏。
@@ -1118,7 +1331,7 @@ fn summarize_project(
 
 fn to_dto(
     record: &repository::NativeResourceRecord,
-    hook_entry: Option<&Value>,
+    display_entry: Option<&Value>,
 ) -> Result<ProjectNativeResourceDto, AppError> {
     let tool = parse_tool(&record.tool)?;
     let artifact_kind = parse_artifact(&record.artifact_kind)?;
@@ -1139,14 +1352,18 @@ fn to_dto(
         ProjectNativeResourceState::Active => {}
     }
     let is_hook = entry_type == ProjectNativeEntryType::HookEntry;
+    let is_agent = entry_type == ProjectNativeEntryType::AgentFile;
     let (display_name, safe_summary) = if is_hook {
-        hook_display(record.external_key.as_str(), hook_entry)
+        hook_display(record.external_key.as_str(), display_entry)
+    } else if is_agent {
+        agent_display_from_record(record, display_entry)
     } else {
         (
             record.external_key.clone(),
             safe_summary(artifact_kind, entry_type),
         )
     };
+    let read_only = is_hook || is_agent;
     Ok(ProjectNativeResourceDto {
         id: record.id.clone(),
         project_id: record.project_id.clone(),
@@ -1159,13 +1376,39 @@ fn to_dto(
         row_version: u32::try_from(record.row_version).map_err(|error| {
             AppError::invalid_input("rowVersion", "原生资源版本超出范围").with_source(error)
         })?,
-        // Hook 条目是匿名数组元素，无法按条目定位改写，禁用/恢复不支持。
-        can_disable: state == ProjectNativeResourceState::Active && !is_hook,
-        can_restore: state == ProjectNativeResourceState::Disabled && !is_hook,
+        // Hook 是匿名数组条目，Agent 是整文件目标；两者均为只读观测。
+        can_disable: state == ProjectNativeResourceState::Active && !read_only,
+        can_restore: state == ProjectNativeResourceState::Disabled && !read_only,
         diagnostic_codes,
         safe_summary,
         disabled_at: record.disabled_at.clone(),
     })
+}
+
+fn agent_display_from_record(
+    record: &repository::NativeResourceRecord,
+    display_entry: Option<&Value>,
+) -> (String, Value) {
+    let fallback = record
+        .external_key
+        .strip_suffix(".md")
+        .or_else(|| record.external_key.strip_suffix(".toml"))
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or(record.external_key.as_str())
+        .to_owned();
+    let Some(summary) = display_entry else {
+        return (
+            fallback,
+            json!({ "kind": "agent", "fileName": record.external_key }),
+        );
+    };
+    let display_name = summary
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&fallback)
+        .to_owned();
+    (display_name, summary.clone())
 }
 
 /// Hook 条目展示信息：外部键 `<原生事件>|<matcher>|<哈希前 16 位>` 解析出
@@ -1205,12 +1448,8 @@ fn safe_summary(artifact_kind: ArtifactKind, entry_type: ProjectNativeEntryType)
     match artifact_kind {
         ArtifactKind::Mcp => json!({ "kind": "mcp" }),
         ArtifactKind::Skill => json!({ "entryType": entry_type.as_str() }),
-        ArtifactKind::Prompt
-        | ArtifactKind::Hook
-        | ArtifactKind::Provider
-        | ArtifactKind::Agent => {
-            json!({})
-        }
+        ArtifactKind::Agent => json!({ "kind": "agent" }),
+        ArtifactKind::Prompt | ArtifactKind::Hook | ArtifactKind::Provider => json!({}),
     }
 }
 
@@ -1228,6 +1467,7 @@ fn parse_artifact(value: &str) -> Result<ArtifactKind, AppError> {
         "mcp" => Ok(ArtifactKind::Mcp),
         "skill" => Ok(ArtifactKind::Skill),
         "hook" => Ok(ArtifactKind::Hook),
+        "agent" => Ok(ArtifactKind::Agent),
         "prompt" => Ok(ArtifactKind::Prompt),
         "provider" => Ok(ArtifactKind::Provider),
         _ => Err(AppError::invalid_input("artifactKind", "资源类型无效")),
@@ -1248,8 +1488,11 @@ fn evidence_entry_type(
         ProjectNativeEntryType::McpEntry => Ok(NativeResourceEntryType::McpEntry),
         ProjectNativeEntryType::Directory => Ok(NativeResourceEntryType::Directory),
         ProjectNativeEntryType::Symlink => Ok(NativeResourceEntryType::Symlink),
-        // Hook 永远不会生成动作证据：native_ownership 已在此前 fail closed。
+        // Hook / Agent 永远不会生成动作证据：native_ownership 已在此前 fail closed。
         ProjectNativeEntryType::HookEntry => Err(AppError::internal("Hook 条目不支持生成动作证据")),
+        ProjectNativeEntryType::AgentFile => {
+            Err(AppError::internal("Agent 文件不支持生成动作证据"))
+        }
     }
 }
 
@@ -1292,10 +1535,10 @@ fn skill_entry_item_hash(
         Ok(inspection) => match entry_type {
             ProjectNativeEntryType::Directory => inspection.content_hash,
             ProjectNativeEntryType::Symlink => inspection.fingerprint,
-            // 仅 Skill 观测会走到这里；Mcp/Hook 臂不可达。
-            ProjectNativeEntryType::McpEntry | ProjectNativeEntryType::HookEntry => {
-                hash_json(fallback)
-            }
+            // 仅 Skill 观测会走到这里；Mcp/Hook/Agent 臂不可达。
+            ProjectNativeEntryType::McpEntry
+            | ProjectNativeEntryType::HookEntry
+            | ProjectNativeEntryType::AgentFile => hash_json(fallback),
         },
         Err(_) => hash_json(fallback),
     }

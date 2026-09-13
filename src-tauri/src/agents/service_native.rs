@@ -87,7 +87,7 @@ pub(super) fn agent_directory_descriptor(
 
 /// 由既有受管目标行还原文件级 descriptor；target_path 必须位于该工具的
 /// agents 目录内（与 `for_agent_file` 的派生结果一致），否则拒绝。
-pub(super) fn agent_file_descriptor(
+pub(crate) fn agent_file_descriptor(
     directory_descriptor: &TargetDescriptor,
     target_path: &str,
     tool: Tool,
@@ -485,15 +485,15 @@ fn empty_projection(tool: Tool) -> Value {
 // ---------------------------------------------------------------------------
 
 /// 导入候选解析失败的稳定诊断码。
-pub(super) const AGENT_FRONTMATTER_INVALID: &str = "AGENT_FRONTMATTER_INVALID";
-pub(super) const AGENT_REQUIRED_FIELD_MISSING: &str = "AGENT_REQUIRED_FIELD_MISSING";
-pub(super) const AGENT_NAME_INVALID: &str = "AGENT_NAME_INVALID";
-pub(super) const AGENT_FIELD_INVALID: &str = "AGENT_FIELD_INVALID";
-pub(super) const AGENT_NAME_CONFLICT: &str = "AGENT_NAME_CONFLICT";
-pub(super) const AGENT_FILE_TOO_LARGE: &str = "AGENT_FILE_TOO_LARGE";
+pub(crate) const AGENT_FRONTMATTER_INVALID: &str = "AGENT_FRONTMATTER_INVALID";
+pub(crate) const AGENT_REQUIRED_FIELD_MISSING: &str = "AGENT_REQUIRED_FIELD_MISSING";
+pub(crate) const AGENT_NAME_INVALID: &str = "AGENT_NAME_INVALID";
+pub(crate) const AGENT_FIELD_INVALID: &str = "AGENT_FIELD_INVALID";
+pub(crate) const AGENT_NAME_CONFLICT: &str = "AGENT_NAME_CONFLICT";
+pub(crate) const AGENT_FILE_TOO_LARGE: &str = "AGENT_FILE_TOO_LARGE";
 
 /// 单个原生 agent 文件的解析结果。
-pub(super) struct ParsedAgentFile {
+pub(crate) struct ParsedAgentFile {
     /// frontmatter / TOML 中的 name；None = 缺省（Markdown 系回退文件名）。
     pub name: Option<String>,
     pub description: Option<String>,
@@ -508,7 +508,7 @@ pub(super) struct ParsedAgentFile {
 /// 按 `---` 分隔 frontmatter，serde_yaml_ng 解析为 Mapping；name 缺省取
 /// 文件名去扩展名。frontmatter 缺失不算解析失败（交给必填字段校验），
 /// YAML 无法解析才算。
-pub(super) fn parse_markdown_agent_file(
+pub(crate) fn parse_markdown_agent_file(
     text: &str,
     tool: Tool,
 ) -> Result<ParsedAgentFile, &'static str> {
@@ -601,7 +601,7 @@ pub(super) fn parse_markdown_agent_file(
 
 /// Codex TOML agent 文件解析：name / description / developer_instructions
 /// 必填；其余键为 dropped_fields。
-pub(super) fn parse_codex_agent_file(text: &str) -> Result<ParsedAgentFile, &'static str> {
+pub(crate) fn parse_codex_agent_file(text: &str) -> Result<ParsedAgentFile, &'static str> {
     let parsed: BTreeMap<String, Value> =
         toml_edit::de::from_str(text).map_err(|_| AGENT_FRONTMATTER_INVALID)?;
     let string_field = |key: &str| -> Result<Option<String>, &'static str> {

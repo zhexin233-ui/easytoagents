@@ -210,7 +210,7 @@ pub fn scan_target(
     }))
 }
 
-fn inspect_target_ancestors(path: &Path) -> Option<TargetScan> {
+pub(crate) fn inspect_target_ancestors(path: &Path) -> Option<TargetScan> {
     if !path.is_absolute()
         || path == Path::new("/")
         || path.components().any(|component| {
