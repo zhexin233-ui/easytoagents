@@ -1644,3 +1644,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 64: Agents 工具特有字段配置
+
+**Date**: 2026-09-13
+**Task**: Agents 工具特有字段配置
+**Branch**: `main`
+
+### Summary
+
+完成 Claude/Codex 工具特有字段配置：新增数据库覆盖层、校验与导入、原生投影、Agents 页面表单、E2E 与文档；全量质量门通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `330fff5` | (see git log) |
+
+### Status
+
+[OK] **Completed**
