@@ -1688,3 +1688,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 66: 修复渠道切换冲突恢复
+
+**Date**: 2026-09-14
+**Task**: 修复渠道切换冲突恢复
+**Branch**: `main`
+
+### Summary
+
+为 Provider 冲突弹窗接入基线只读接管与重新预览流程；直接应用模式自动应用新 Preview，预览确认模式保留最终确认；补齐 Rust、Specta 绑定、React 测试并更新质量规范。全量 pnpm check 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `82b6ec8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
