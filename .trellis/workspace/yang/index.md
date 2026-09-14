@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 66
+- **Total Sessions**: 67
 - **Last Active**: 2026-09-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1711 | Active |
+| `journal-1.md` | ~1754 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -28,7 +28,8 @@
 
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
-|---|------|-------|---------|--------|
+| --- | ------ | ------- | --------- | -------- |
+| 67 | 2026-09-14 | Pi 工具支持（Provider/Prompt/MCP/Skills） | `194ca40`, `bc1e7c4` | `main` |
 | 66 | 2026-09-14 | 修复渠道切换冲突恢复 | `82b6ec8` | `main` |
 | 65 | 2026-09-13 | 项目级 Agent 原生资源支持 | `b9c8adb`, `29ff07d`, `f1b3a4e` | `main` |
 | 64 | 2026-09-13 | Agents 工具特有字段配置 | `330fff5` | `main` |

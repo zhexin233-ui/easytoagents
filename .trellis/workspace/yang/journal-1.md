@@ -5,8 +5,6 @@
 
 ---
 
-
-
 ## Session 1: 完成 AI 配置桌面端 Phase 0-8
 
 **Date**: 2026-08-25
@@ -20,7 +18,7 @@
 ### Git Commits
 
 | Hash | Message |
-|------|---------|
+| ------ | --------- |
 | `28302af` | (see git log) |
 | `769632e` | (see git log) |
 | `7f1ccab` | (see git log) |
@@ -36,7 +34,6 @@
 
 [OK] **Completed**
 
-
 ## Session 2: 完成 Trellis 规范与配置接管改进
 
 **Date**: 2026-08-25
@@ -50,7 +47,7 @@
 ### Git Commits
 
 | Hash | Message |
-|------|---------|
+| ------ | --------- |
 | `1e938ba` | (see git log) |
 | `539b89f` | (see git log) |
 | `46de613` | (see git log) |
@@ -59,7 +56,6 @@
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 3: 修复 MCP 与 Skills 初始化状态
 
@@ -80,7 +76,6 @@
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 4: 修复 MCP 全局预览并补齐原生导入
 
@@ -111,7 +106,6 @@
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 5: 新增与编辑表单弹窗化
 
@@ -149,7 +143,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 - 按用户授权推送 main 到 origin，完成后核对远程与本地一致。
 
-
 ## Session 6: 修复 Codex MCP 导入兼容性与凭据误判
 
 **Date**: 2026-08-26
@@ -184,7 +177,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 - 已获用户推送授权；真实桌面应用尚未重新打包，未对真实原生配置执行确认导入或 Apply。
 
-
 ## Session 7: 全局 Skills 检测导入修复
 
 **Date**: 2026-08-26
@@ -216,7 +208,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 [OK] **Completed**
 
-
 ## Session 8: 修复全局 Skills 首次分配与同步状态
 
 **Date**: 2026-08-27
@@ -236,7 +227,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 9: 中央列表三列布局与官方平台图标
 
@@ -258,7 +248,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 [OK] **Completed**
 
-
 ## Session 10: 持久化中央列表布局选择
 
 **Date**: 2026-08-28
@@ -278,7 +267,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 11: 集中管理项目 MCP 与 Skill
 
@@ -300,7 +288,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 [OK] **Completed**
 
-
 ## Session 12: 升级 Trellis 至 0.6.15
 
 **Date**: 2026-08-28
@@ -320,7 +307,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 13: 项目详情平台图标切换
 
@@ -342,7 +328,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 [OK] **Completed**
 
-
 ## Session 14: 美化 GitHub 项目展示
 
 **Date**: 2026-08-28
@@ -362,7 +347,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 15: 重构应用外壳布局：顶栏工具入口 + 侧边栏项目导航
 
@@ -384,7 +368,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 [OK] **Completed**
 
-
 ## Session 16: 前端新增暗色与亮色主题模式
 
 **Date**: 2026-08-29
@@ -405,7 +388,6 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 17: Skills 本地目录导入改为按钮加弹窗
 
@@ -548,7 +530,6 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 [OK] **Completed**
 
-
 ## Session 18: 修复 Codex Skills 同步目标路径错指 .agents/skills
 
 **Date**: 2026-08-30
@@ -569,7 +550,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 19: 私有快照批量删除与选中删除
 
@@ -592,7 +572,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 [OK] **Completed**
 
-
 ## Session 20: 项目目标初始未纳管状态中性化
 
 **Date**: 2026-08-30
@@ -614,7 +593,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 [OK] **Completed**
 
-
 ## Session 21: 提示词模块：全局/项目级硬拷贝分配与统一收纳
 
 **Date**: 2026-08-30
@@ -634,7 +612,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 22: 提示词页中央列表改版与项目级隐藏全局生效档案
 
@@ -656,7 +633,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 [OK] **Completed**
 
-
 ## Session 23: 提示词档案工具无关化并按 Skills 范式每工具图标启用
 
 **Date**: 2026-08-30
@@ -676,7 +652,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 24: 美化 GitHub 仓库展示
 
@@ -698,7 +673,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 [OK] **Completed**
 
-
 ## Session 25: 完成 Cursor IDE 支持
 
 **Date**: 2026-09-01
@@ -718,7 +692,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 26: 完成全局 Skills 显式接管
 
@@ -740,7 +713,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 [OK] **Completed**
 
-
 ## Session 27: 全局同步三秒通知
 
 **Date**: 2026-09-01
@@ -760,7 +732,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 28: 提示词 MCP Skills 操作按钮图标化
 
@@ -782,7 +753,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 [OK] **Completed**
 
-
 ## Session 29: 统一中央页面操作通知
 
 **Date**: 2026-09-02
@@ -803,7 +773,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 [OK] **Completed**
 
-
 ## Session 30: 中央 Skill 内容变更后同步更改
 
 **Date**: 2026-09-03
@@ -823,7 +792,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 31: 管理项目级 Skill、MCP 与提示词
 
@@ -860,7 +828,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 - 如需原生禁用也跳过预览弹窗，需先改 PRD R4
 
-
 ## Session 32: 设置新增启用的工具配置（enabled tools 显示过滤）
 
 **Date**: 2026-09-04
@@ -880,7 +847,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 33: 直接应用模式隐藏全局同步手动按钮
 
@@ -914,7 +880,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 - 在运行中的应用里实测直接模式全流程反馈。
 
-
 ## Session 34: 新增 ZCode 工具全套支持（Provider/Prompt/MCP/Skills）
 
 **Date**: 2026-09-05
@@ -934,7 +899,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 35: 新增 Hooks 全局级与项目级管理
 
@@ -971,7 +935,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 - 真机 smoke：四工具实机 hooks 写入与运行验证；后续可评估 ZCode process 型与 Cursor prompt 型 hook 的接入
 
-
 ## Session 36: 导入 Hook 接管脚本到中央目录
 
 **Date**: 2026-09-05
@@ -1007,7 +970,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 - 真机 smoke 验证四工具对中央脚本路径的执行；如需『移动』语义（删除原脚本）可另立任务评估安全边界
 
-
 ## Session 37: 修复 hooks 导入接管漏判 /usr/bin/env 间接层命令
 
 **Date**: 2026-09-05
@@ -1040,7 +1002,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 ### Next Steps
 
 - 提醒：已按旧逻辑导入为直存的 hook（如 deny_dotenv）需删除后重新导入即可接管
-
 
 ## Session 38: Hook 事件移到分配维度并按工具事件分组管理
 
@@ -1076,7 +1037,6 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 - 已知限制：同 (tool, hook) 双事件并存需复制中央记录（managed item 身份模型改造后可支持）
 
-
 ## Session 39: Hooks 工具事件分组页签改为图标按钮
 
 **Date**: 2026-09-06
@@ -1096,7 +1056,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 40: Hook 项目追加对齐全局事件分组视图
 
@@ -1122,7 +1081,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 - 如需分组内直接切换事件（同 Hook 换组）可在选择器中扩展确认切换流
 
-
 ## Session 41: Cursor 全局与项目级提示词支持
 
 **Date**: 2026-09-06
@@ -1142,7 +1100,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 42: 修复项目级提示词直接应用
 
@@ -1164,7 +1121,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 [OK] **Completed**
 
-
 ## Session 43: 移除项目级提示词功能
 
 **Date**: 2026-09-07
@@ -1184,7 +1140,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 44: 完成 OpenCode 支持接入
 
@@ -1206,7 +1161,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 [OK] **Completed**
 
-
 ## Session 45: 发布 macOS ARM64 0.1.0
 
 **Date**: 2026-09-08
@@ -1226,7 +1180,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 46: 完成 GitHub Skill 目录导入
 
@@ -1248,7 +1201,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 [OK] **Completed**
 
-
 ## Session 47: 新增侧栏项目移除入口
 
 **Date**: 2026-09-09
@@ -1268,7 +1220,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 48: 修复 OpenCode 项目 Hooks 误导入口
 
@@ -1290,7 +1241,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 [OK] **Completed**
 
-
 ## Session 49: 修复前端审阅缺陷
 
 **Date**: 2026-09-10
@@ -1310,7 +1260,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 50: 修复后端审阅缺陷
 
@@ -1332,7 +1281,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 [OK] **Completed**
 
-
 ## Session 51: 工程配置与依赖整理
 
 **Date**: 2026-09-10
@@ -1352,7 +1300,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 52: Tauri 命令异步化与后台探测
 
@@ -1374,7 +1321,6 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 [OK] **Completed**
 
-
 ## Session 53: 后端性能优化
 
 **Date**: 2026-09-11
@@ -1394,7 +1340,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 54: 后端健壮性与可诊断性
 
@@ -1416,7 +1361,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 [OK] **Completed**
 
-
 ## Session 55: 前端测试基建
 
 **Date**: 2026-09-11
@@ -1437,7 +1381,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 [OK] **Completed**
 
-
 ## Session 56: 完成 P2 后端去重与大文件拆分
 
 **Date**: 2026-09-11
@@ -1457,7 +1400,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 57: 执行 P2 前端去重与页面拆分
 
@@ -1480,7 +1422,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 [OK] **Completed**
 
-
 ## Session 58: 父任务集成审查收尾与归档
 
 **Date**: 2026-09-11
@@ -1500,7 +1441,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 59: 修复 Claude/Codex 渠道缺陷并新增官方账号登录渠道
 
@@ -1523,7 +1463,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 [OK] **Completed**
 
-
 ## Session 60: 修复渠道导入孤儿基线冲突与工具页签状态残留
 
 **Date**: 2026-09-12
@@ -1537,7 +1476,7 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Git Commits
 
 | Hash | Message |
-|------|---------|
+| ------ | --------- |
 | `c2c2a83` | (see git log) |
 | `eb902d6` | (see git log) |
 | `2f10cc4` | (see git log) |
@@ -1545,7 +1484,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 61: 收尾归档：项目级 Hooks 只读纳入项目原生资源（09-12-fix-project-native-hooks-empty）
 
@@ -1566,7 +1504,7 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Git Commits
 
 | Hash | Message |
-|------|---------|
+| ------ | --------- |
 | `e6a8f15` | (see git log) |
 | `7424291` | (see git log) |
 | `3df5f63` | (see git log) |
@@ -1583,7 +1521,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 - implement.md 4.4 手动验收仍待用户在 GUI 中登记 picslicer 确认 Claude/Codex/Cursor Hooks 视图展示（不阻塞归档）
 
-
 ## Session 62: UI macOS 风格优化落地与验收修复
 
 **Date**: 2026-09-12
@@ -1597,7 +1534,7 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Git Commits
 
 | Hash | Message |
-|------|---------|
+| ------ | --------- |
 | `556a562` | (see git log) |
 | `afd84a2` | (see git log) |
 | `27a4b03` | (see git log) |
@@ -1624,7 +1561,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 - 推送 main；后续如需回退侧栏材质，revert f3c30d0 并还原 aside 类名
 
-
 ## Session 63: Agents 子代理全局与项目级管理
 
 **Date**: 2026-09-12
@@ -1644,7 +1580,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 64: Agents 工具特有字段配置
 
@@ -1666,7 +1601,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 [OK] **Completed**
 
-
 ## Session 65: 项目级 Agent 原生资源支持
 
 **Date**: 2026-09-13
@@ -1680,7 +1614,7 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Git Commits
 
 | Hash | Message |
-|------|---------|
+| ------ | --------- |
 | `b9c8adb` | (see git log) |
 | `29ff07d` | (see git log) |
 | `f1b3a4e` | (see git log) |
@@ -1688,7 +1622,6 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
-
 
 ## Session 66: 修复渠道切换冲突恢复
 
@@ -1709,3 +1642,45 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+## Session 67: Pi 工具支持（Provider/Prompt/MCP/Skills）
+
+**Date**: 2026-09-14
+**Task**: Pi 工具支持（Provider/Prompt/MCP/Skills）
+**Branch**: `main`
+
+### Summary
+
+新增第六个受支持工具 Pi：迁移 0025、Adapter 六 descriptor、服务/fail-closed 接线、跨层 E2E 与隔离 smoke；Hooks/Agents 永久关闭。
+
+### Main Changes
+
+- 新增 0025_pi_tool_support.sql：放宽 6 张 MCP/Skills 表、managed_targets（限定 provider|prompt|mcp|skill）、provider_profiles 与 profile_import_previews，并新增 is_active_pi 与部分唯一索引
+- adapters/pi 六 descriptor + 安装/适配器只读探针，PI_CODING_AGENT_DIR 不可映射时全部 fail closed
+- 仓储与服务接线：is_active_pi 生效位、models.json 条目级合并、mcpServers 投影（不写 type）、项目 trust 与链接自检诊断
+- sync 层新增通用 PreviewTargetRequest.hard_block，AGENTS.override.md 与 MCP 同名遮蔽改为硬阻断
+- Hooks/Agents 在领域层、服务层、数据库层同时拒绝（PI_HOOKS_UNSUPPORTED / PI_AGENTS_UNSUPPORTED）
+- 前端 bindings/tool-metadata/启用顺序/Pi MCP 诊断安装指引；官方品牌资产与 README、adding-tool-adapter.md 同步
+- 新增 spec/backend/pi-adapter-guidelines.md 并登记 index
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `194ca40` | (see git log) |
+| `bc1e7c4` | (see git log) |
+
+### Testing
+
+- [OK] cargo test 全绿（lib 411 / E2E 3 / smoke 1）、cargo fmt --check、cargo clippy -D warnings
+- [OK] pnpm typecheck、pnpm test --run（38 files / 331 tests）、pnpm bindings:check、git diff --check 全绿
+- [OK] pnpm format:check 与 lint 仅剩未跟踪 .pi/ 产物导致的既存基线失败
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 若要自动化真实 pi loader 发现受管链接与 AGENTS.md，需要在不消耗模型额度的前提下定方案
+- 决定 .pi/ 是否纳入 .gitignore，以让全量 pnpm check 变绿
