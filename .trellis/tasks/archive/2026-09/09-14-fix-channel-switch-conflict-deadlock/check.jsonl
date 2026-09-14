@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核验 Provider readopt 不写原生文件且不绕过持久化 Preview/Apply 安全门禁"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"核验错误码、路径不匹配与不可读目标的稳定失败行为"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验 direct/preview 两种模式、阻塞按钮、关闭与错误反馈的完整测试矩阵"}
+{"file":".trellis/tasks/09-14-fix-channel-switch-conflict-deadlock/research/root-cause.md","reason":"核验实现是否真正闭合已定位的渠道切换冲突链路"}

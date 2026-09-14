@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Provider Preview/Apply、显式环境、安全扫描、持久化预览与 readopt 事务合同"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"新增 Provider readopt RPC 的稳定错误分类与 fail-closed 约束"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"直接应用例外、阻塞预览、对话框可访问性与前端测试规范"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"useSyncPreviewFlow 的 mutation、续跑与查询失效约定"}
+{"file":".trellis/tasks/09-14-fix-channel-switch-conflict-deadlock/research/root-cause.md","reason":"已确认根因、精确代码锚点和可复用 readopt 先例"}
