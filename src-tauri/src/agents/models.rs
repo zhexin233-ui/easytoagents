@@ -502,7 +502,7 @@ pub(crate) fn validate_agent_tool_settings(
                 }))
             }
         }
-        Tool::Cursor | Tool::Zcode | Tool::Opencode => {
+        Tool::Cursor | Tool::Zcode | Tool::Opencode | Tool::Pi => {
             unreachable!("unsupported tools returned above")
         }
     }

@@ -67,6 +67,7 @@ mod tests {
             ToolAvailabilityState::Unsupported,
             ToolAvailabilityState::Installed,
             ToolAvailabilityState::Unavailable,
+            ToolAvailabilityState::Installed,
         ]);
         assert_eq!(
             availability[crate::domain::Tool::Claude],
@@ -80,6 +81,75 @@ mod tests {
             availability.get(crate::domain::Tool::Opencode),
             ToolAvailabilityState::Unavailable
         );
+        assert_eq!(
+            availability.get(crate::domain::Tool::Pi),
+            ToolAvailabilityState::Installed
+        );
+    }
+
+    /// 精确锁定六个注册集合的成员：Pi 进入 Provider/MCP/Skill（全局能力与
+    /// 适配器就绪门禁在 descriptor 层收敛），但**不进入** Hooks 与 Agents。
+    #[test]
+    fn tool_registry_sets_lock_pi_capability_boundaries() {
+        use crate::adapters::{
+            agent_file_extension, global_root_for, native_mcp_container, ASSIGNABLE_AGENT_TOOLS,
+            ASSIGNABLE_HOOK_TOOLS, ASSIGNABLE_MCP_TOOLS, ASSIGNABLE_SKILL_TOOLS, PROFILE_TOOLS,
+            PROJECT_AGENT_TOOLS,
+        };
+
+        assert_eq!(PROFILE_TOOLS, Tool::ALL);
+        assert_eq!(ASSIGNABLE_MCP_TOOLS, Tool::ALL);
+        assert_eq!(ASSIGNABLE_SKILL_TOOLS, Tool::ALL);
+        assert_eq!(PROFILE_TOOLS.len(), 6);
+        assert_eq!(ASSIGNABLE_MCP_TOOLS.len(), 6);
+        assert_eq!(ASSIGNABLE_SKILL_TOOLS.len(), 6);
+        assert!(PROFILE_TOOLS.contains(&Tool::Pi));
+        assert!(ASSIGNABLE_MCP_TOOLS.contains(&Tool::Pi));
+        assert!(ASSIGNABLE_SKILL_TOOLS.contains(&Tool::Pi));
+
+        assert_eq!(
+            ASSIGNABLE_HOOK_TOOLS,
+            [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode]
+        );
+        assert_eq!(
+            ASSIGNABLE_AGENT_TOOLS,
+            [
+                Tool::Claude,
+                Tool::Codex,
+                Tool::Cursor,
+                Tool::Zcode,
+                Tool::Opencode
+            ]
+        );
+        assert_eq!(
+            PROJECT_AGENT_TOOLS,
+            [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Opencode]
+        );
+        assert!(!ASSIGNABLE_HOOK_TOOLS.contains(&Tool::Pi));
+        assert!(!ASSIGNABLE_AGENT_TOOLS.contains(&Tool::Pi));
+        assert!(!PROJECT_AGENT_TOOLS.contains(&Tool::Pi));
+
+        // 穷举注册点显式处理 Pi；Agent 分支仅为完整性（服务层已拒）。
+        assert_eq!(agent_file_extension(Tool::Pi), "md");
+        assert_eq!(native_mcp_container(Tool::Pi), &["mcpServers"]);
+
+        let temporary = tempdir().unwrap();
+        let home = fs::canonicalize(temporary.path()).unwrap();
+        let environment = environment(&home, None, None);
+        for artifact_kind in [
+            ArtifactKind::Provider,
+            ArtifactKind::Prompt,
+            ArtifactKind::Mcp,
+            ArtifactKind::Skill,
+            ArtifactKind::Hook,
+            ArtifactKind::Agent,
+        ] {
+            assert_eq!(
+                global_root_for(&environment, Tool::Pi, artifact_kind),
+                environment.pi_agent_dir().to_path_buf(),
+                "Pi 的全局 allowed_root 只能是显式映射的 pi_agent_dir"
+            );
+        }
     }
 
     #[test]
@@ -120,8 +190,8 @@ mod tests {
 
     #[test]
     fn agent_descriptors_follow_each_tool_contract() {
-        // 五工具 Agent descriptor 矩阵（官方子代理目录合同，2026-09-12 核验）：
-        // 全局五工具目录齐备；项目级仅 ZCode 不支持且无路径。
+        // Agents 矩阵（官方子代理目录合同，2026-09-12 核验；Pi 2026-09-14 核验无合同）：
+        // 全局五工具目录齐备（Pi 不进入）；项目级仅 ZCode 不支持且无路径。
         let temporary = tempdir().unwrap();
         let home = fs::canonicalize(temporary.path()).unwrap();
         let project = home.join("project");
@@ -143,6 +213,8 @@ mod tests {
                 Tool::Cursor => environment.home().join(".cursor/agents"),
                 Tool::Zcode => environment.home().join(".zcode/agents"),
                 Tool::Opencode => environment.opencode_config_dir().join("agents"),
+                // Pi 无 Agents 合同，不进入本矩阵。
+                Tool::Pi => unreachable!("Pi 不在 Agents 矩阵内"),
             }
         };
         let expected_allowed_root = |tool: Tool, environment: &ExplicitEnvironment| {
@@ -152,10 +224,12 @@ mod tests {
                 Tool::Cursor => environment.home().join(".cursor"),
                 Tool::Zcode => environment.home().join(".zcode"),
                 Tool::Opencode => environment.opencode_config_dir().to_path_buf(),
+                // Pi 无 Agents 合同，不进入本矩阵。
+                Tool::Pi => unreachable!("Pi 不在 Agents 矩阵内"),
             }
         };
 
-        for tool in Tool::ALL {
+        for tool in crate::adapters::ASSIGNABLE_AGENT_TOOLS {
             let targets = tool.adapter().discover(&context).unwrap();
             let global = targets
                 .iter()
@@ -229,6 +303,7 @@ mod tests {
                     std::path::PathBuf::from(project.as_str()).join(".opencode/agents")
                 }
                 Tool::Zcode => unreachable!("ZCode 项目级已 continue"),
+                Tool::Pi => unreachable!("Pi 不在 Agents 矩阵内"),
             };
             assert_eq!(
                 project_descriptor.path.as_deref(),
@@ -246,8 +321,7 @@ mod tests {
                 let codex_mcp = targets
                     .iter()
                     .find(|target| {
-                        target.artifact_kind == ArtifactKind::Mcp
-                            && target.scope == Scope::Project
+                        target.artifact_kind == ArtifactKind::Mcp && target.scope == Scope::Project
                     })
                     .unwrap();
                 assert_eq!(project_descriptor.trust, codex_mcp.trust);

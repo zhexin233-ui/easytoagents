@@ -506,43 +506,42 @@ where
     S: FnMut(&Database, Tool, &TargetDescriptor) -> Result<Option<AvailableTargetStatus>, AppError>,
 {
     let _artifact_kind = A::KIND;
-    tools
-        .into_iter()
-        .map(|tool| {
-            let descriptor = descriptor_for(tool)?;
-            let target_path = descriptor.path.clone();
-            let persisted = if target_path.is_some() {
-                status_for(database, tool, &descriptor)?
-            } else {
-                None
-            };
-            let (status, diagnostic_code) =
-                if descriptor.capability.state != crate::adapters::CapabilityState::Supported {
-                    (
-                        SyncStatus::Failed,
-                        descriptor.capability.diagnostic_code.clone(),
-                    )
-                } else if descriptor.policy != crate::adapters::PolicyState::Allowed {
-                    let diagnostic_code = match descriptor.policy {
-                        crate::adapters::PolicyState::Blocked => "CLAUDE_POLICY_BLOCKED",
-                        crate::adapters::PolicyState::Unknown => super::ERROR_CLAUDE_POLICY_UNKNOWN,
-                        crate::adapters::PolicyState::Allowed => {
-                            return Err(AppError::internal("allowed 策略不应进入阻断分支"))
-                        }
-                    };
-                    (SyncStatus::PolicyBlocked, Some(diagnostic_code.to_owned()))
-                } else {
-                    persisted.unwrap_or((SyncStatus::Missing, None))
+    let mut statuses = Vec::new();
+    for tool in tools {
+        let descriptor = descriptor_for(tool)?;
+        let target_path = descriptor.path.clone();
+        let persisted = if target_path.is_some() {
+            status_for(database, tool, &descriptor)?
+        } else {
+            None
+        };
+        let (status, diagnostic_code) =
+            if descriptor.capability.state != crate::adapters::CapabilityState::Supported {
+                (
+                    SyncStatus::Failed,
+                    descriptor.capability.diagnostic_code.clone(),
+                )
+            } else if descriptor.policy != crate::adapters::PolicyState::Allowed {
+                let diagnostic_code = match descriptor.policy {
+                    crate::adapters::PolicyState::Blocked => "CLAUDE_POLICY_BLOCKED",
+                    crate::adapters::PolicyState::Unknown => super::ERROR_CLAUDE_POLICY_UNKNOWN,
+                    crate::adapters::PolicyState::Allowed => {
+                        return Err(AppError::internal("allowed 策略不应进入阻断分支"))
+                    }
                 };
-            Ok(crate::domain::ManagedTargetStatusDto {
-                tool,
-                project_id: None,
-                target_path,
-                status,
-                diagnostic_code,
-            })
-        })
-        .collect()
+                (SyncStatus::PolicyBlocked, Some(diagnostic_code.to_owned()))
+            } else {
+                persisted.unwrap_or((SyncStatus::Missing, None))
+            };
+        statuses.push(crate::domain::ManagedTargetStatusDto {
+            tool,
+            project_id: None,
+            target_path,
+            status,
+            diagnostic_code,
+        });
+    }
+    Ok(statuses)
 }
 
 pub(crate) fn project_dto<P: ManagedProjectRecord>(

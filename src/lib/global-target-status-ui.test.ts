@@ -46,3 +46,29 @@ describe("Agents 目标诊断状态", () => {
     });
   });
 });
+
+describe("Pi MCP 适配器诊断状态", () => {
+  it("适配器缺失时给出安装指引并阻止预览", () => {
+    const result = globalTargetStatusPresentation(
+      "failed",
+      "PI_MCP_ADAPTER_MISSING",
+    );
+    expect(result.label).toBe("未安装 Pi MCP 适配器");
+    expect(result.description).toContain("pi install npm:pi-mcp-adapter");
+    expect(result.tone).toBe("blocked");
+    expect(result.previewBlocked).toBe(true);
+  });
+
+  it("适配器未加载与版本过低各自有独立文案", () => {
+    expect(
+      globalTargetStatusPresentation("failed", "PI_MCP_ADAPTER_NOT_LOADED")
+        .label,
+    ).toBe("Pi MCP 适配器未加载");
+    expect(
+      globalTargetStatusPresentation(
+        "failed",
+        "PI_MCP_ADAPTER_VERSION_UNSUPPORTED",
+      ).description,
+    ).toContain("2.33.0");
+  });
+});

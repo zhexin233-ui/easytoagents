@@ -257,6 +257,7 @@ pub fn preview_mcp_sync_with_probes(
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
                 hook_initial_adopt: false,
+                hard_block: target.hard_block,
             }]
         })
         .unwrap_or_default();
@@ -482,6 +483,8 @@ struct PreparedMcpTarget {
     allowed_root: PathBuf,
     managed_items: Vec<ManagedItemApply>,
     remove_managed_item_ids: Vec<String>,
+    /// Pi 专用：全局受管条目被该项目共享文件同名遮蔽时提供的硬阻断诊断码。
+    hard_block: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -620,6 +623,30 @@ fn prepare_mcp_sync(
         .map(|(root, path)| inspect_path(root, Path::new(path)))
         .transpose()?;
     let allowed_root = descriptor_allowed_root(&descriptor)?;
+    // Pi：项目作用域下，本项目实际受管的 MCP 名称（项目自有 + 全局继承）若在
+    // `<root>/.mcp.json` 或用户手写的 `<root>/.pi/mcp.json` 中已有同名条目，
+    // 则本次写入在该项目下不可信（同名含义冲突），必须硬阻断而不是静默写入。
+    // 只读检测，不返回任何条目内容。
+    let hard_block = if input.tool == Tool::Pi && scope == Scope::Project {
+        match project_root.as_ref() {
+            None => None,
+            Some(root) => {
+                let managed_names = desired_records
+                    .iter()
+                    .chain(inherited_records.iter())
+                    .map(|record| record.name.clone())
+                    .collect::<Vec<_>>();
+                crate::adapters::pi::detect_mcp_shadowing(
+                    Path::new(root.as_str()),
+                    &managed_names,
+                    Scope::Global,
+                )
+                .map(|shadowing| shadowing.source.diagnostic_code().to_owned())
+            }
+        }
+    } else {
+        None
+    };
     Ok(PreparedMcpSync {
         scope,
         project,
@@ -636,6 +663,7 @@ fn prepare_mcp_sync(
             allowed_root,
             managed_items,
             remove_managed_item_ids,
+            hard_block,
         }),
     })
 }
@@ -808,6 +836,34 @@ fn native_mcp_item(tool: Tool, value: &ValidatedMcpConfiguration) -> Result<Valu
                 object.insert("headers".to_owned(), string_map_value(&value.headers)?);
             }
             object.insert("enabled".to_owned(), Value::Bool(value.enabled));
+        }
+        // Pi MCP 投影：`mcpServers` 条目级；适配器靠字段存在性推断传输，
+        // 因此**不写 `type`**；停用映射为 `disabled: true`。未受管字段
+        // （oauth/socket/directTools/lifecycle/bearerToken* 等）来自 `extra`，
+        // 已在上方克隆进 object，零求值、零丢弃。
+        (Tool::Pi, McpTransport::Stdio) => {
+            object.insert("command".to_owned(), Value::String(stdio_command(value)?));
+            if !value.args.is_empty() {
+                object.insert(
+                    "args".to_owned(),
+                    Value::Array(value.args.iter().cloned().map(Value::String).collect()),
+                );
+            }
+            if !value.env.is_empty() {
+                object.insert("env".to_owned(), string_map_value(&value.env)?);
+            }
+            if !value.enabled {
+                object.insert("disabled".to_owned(), Value::Bool(true));
+            }
+        }
+        (Tool::Pi, McpTransport::StreamableHttp) => {
+            object.insert("url".to_owned(), Value::String(http_url(value)?));
+            if !value.headers.is_empty() {
+                object.insert("headers".to_owned(), string_map_value(&value.headers)?);
+            }
+            if !value.enabled {
+                object.insert("disabled".to_owned(), Value::Bool(true));
+            }
         }
     }
     Ok(Value::Object(object))

@@ -24,6 +24,7 @@ pub mod claude;
 pub mod codex;
 pub mod cursor;
 pub mod opencode;
+pub mod pi;
 pub mod zcode;
 
 pub use claude::CLAUDE_RESERVED_ENV_KEYS;

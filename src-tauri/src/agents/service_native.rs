@@ -196,8 +196,7 @@ pub(super) fn adopt_initial_agent_baseline(
     }
     let database_path = database.path().to_string_lossy().into_owned();
     let projection = serde_json::to_string(&observed.managed_projection).map_err(|error| {
-        AppError::database(&database_path, "serialize_initial_agent_baseline")
-            .with_source(error)
+        AppError::database(&database_path, "serialize_initial_agent_baseline").with_source(error)
     })?;
     let expected_row_version = safe_row_version(baseline.target_row_version)?;
     let updated = crate::db::sync::update_managed_target_baseline(
@@ -266,8 +265,10 @@ pub(super) fn agent_observed_matches_central(
     observed: &crate::sync::ObservedTarget,
 ) -> bool {
     match (tool, observed.document()) {
-        (Tool::Claude | Tool::Cursor | Tool::Zcode | Tool::Opencode,
-         crate::adapters::ObservedDocument::Markdown(text)) => {
+        (
+            Tool::Claude | Tool::Cursor | Tool::Zcode | Tool::Opencode,
+            crate::adapters::ObservedDocument::Markdown(text),
+        ) => {
             let Ok(parsed) = parse_markdown_agent_file(text, tool) else {
                 return false;
             };
@@ -282,10 +283,9 @@ pub(super) fn agent_observed_matches_central(
             if tool != Tool::Claude {
                 return settings.is_none();
             }
-            let Ok(normalized) = validate_agent_tool_settings(
-                Tool::Claude,
-                &Value::Object(parsed.retained),
-            ) else {
+            let Ok(normalized) =
+                validate_agent_tool_settings(Tool::Claude, &Value::Object(parsed.retained))
+            else {
                 return false;
             };
             normalized.map(|value| value.value) == settings.cloned()
@@ -446,10 +446,7 @@ pub(super) fn build_agent_projection(
                 if let Some(model) = settings.get("model").and_then(Value::as_str) {
                     object.insert("model".to_owned(), Value::String(model.to_owned()));
                 }
-                if let Some(effort) = settings
-                    .get("modelReasoningEffort")
-                    .and_then(Value::as_str)
-                {
+                if let Some(effort) = settings.get("modelReasoningEffort").and_then(Value::as_str) {
                     object.insert(
                         "model_reasoning_effort".to_owned(),
                         Value::String(effort.to_owned()),
@@ -461,6 +458,12 @@ pub(super) fn build_agent_projection(
             }
             Ok(Value::Object(object))
         }
+        // Pi 无官方 Agents 合同，服务入口先返回 `PI_AGENTS_UNSUPPORTED`；此处
+        // 显式列出并 fail closed，不得回落到任一既有工具的渲染分支。
+        Tool::Pi => Err(AppError::invalid_input(
+            "tool",
+            crate::adapters::pi::PI_AGENTS_UNSUPPORTED,
+        )),
     }
 }
 
@@ -538,7 +541,8 @@ pub(crate) fn parse_markdown_agent_file(
                         continue;
                     }
                     if tool == Tool::Claude && matches!(key, "model" | "color" | "tools") {
-                        let Some(value) = mapping.get(serde_yaml_ng::Value::String(key.to_owned())) else {
+                        let Some(value) = mapping.get(serde_yaml_ng::Value::String(key.to_owned()))
+                        else {
                             continue;
                         };
                         match key {
@@ -616,7 +620,10 @@ pub(crate) fn parse_codex_agent_file(text: &str) -> Result<ParsedAgentFile, &'st
     let mut dropped_fields = Vec::new();
     let mut retained = serde_json::Map::new();
     for key in parsed.keys() {
-        if matches!(key.as_str(), "name" | "description" | "developer_instructions") {
+        if matches!(
+            key.as_str(),
+            "name" | "description" | "developer_instructions"
+        ) {
             continue;
         }
         match key.as_str() {
@@ -649,14 +656,9 @@ pub(crate) fn parse_codex_agent_file(text: &str) -> Result<ParsedAgentFile, &'st
         }
     }
     Ok(ParsedAgentFile {
-        name: Some(
-            string_field("name")?.ok_or(AGENT_REQUIRED_FIELD_MISSING)?,
-        ),
-        description: Some(
-            string_field("description")?.ok_or(AGENT_REQUIRED_FIELD_MISSING)?,
-        ),
-        prompt: string_field("developer_instructions")?
-            .ok_or(AGENT_REQUIRED_FIELD_MISSING)?,
+        name: Some(string_field("name")?.ok_or(AGENT_REQUIRED_FIELD_MISSING)?),
+        description: Some(string_field("description")?.ok_or(AGENT_REQUIRED_FIELD_MISSING)?),
+        prompt: string_field("developer_instructions")?.ok_or(AGENT_REQUIRED_FIELD_MISSING)?,
         dropped_fields,
         retained,
     })

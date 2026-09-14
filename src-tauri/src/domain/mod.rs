@@ -52,17 +52,19 @@ string_enum! {
         Cursor => "cursor",
         Zcode => "zcode",
         Opencode => "opencode",
+        Pi => "pi",
     }
 }
 
 impl Tool {
     /// 所有受支持工具的稳定注册顺序。
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Claude,
         Self::Codex,
         Self::Cursor,
         Self::Zcode,
         Self::Opencode,
+        Self::Pi,
     ];
 
     /// 返回工具的唯一 Adapter 实例。
@@ -242,6 +244,9 @@ impl HookEvent {
             // command-only model represented by this enum. Keep the capability
             // explicitly unsupported instead of guessing a native mapping.
             Tool::Opencode => false,
+            // Pi exposes lifecycle events only through its TypeScript extension
+            // API; there is no declarative hook file, so every event fails closed.
+            Tool::Pi => false,
         }
     }
 
@@ -260,7 +265,7 @@ impl HookEvent {
                 Self::Stop => "stop",
                 _ => self.as_str(),
             },
-            Tool::Opencode => self.as_str(),
+            Tool::Opencode | Tool::Pi => self.as_str(),
             _ => self.as_str(),
         }
     }
@@ -277,16 +282,30 @@ pub struct HookEventSupport {
 pub fn tool_capabilities() -> Vec<ToolCapabilities> {
     Tool::ALL
         .into_iter()
-        .map(|tool| ToolCapabilities {
-            tool,
-            provider: !matches!(tool, Tool::Cursor),
-            prompt_global: true,
-            mcp: true,
-            skills: true,
-            hooks: !matches!(tool, Tool::Opencode),
-            agents: true,
-            project_agents: !matches!(tool, Tool::Zcode),
-            agent_tool_settings: matches!(tool, Tool::Claude | Tool::Codex),
+        .map(|tool| {
+            // 逐工具显式列出，禁止 `_` 兜底：新增工具必须主动声明能力，
+            // 否则编译失败而不是静默继承某个变体。
+            let (provider, hooks, agents, project_agents, agent_tool_settings) = match tool {
+                Tool::Claude => (true, true, true, true, true),
+                Tool::Codex => (true, true, true, true, true),
+                Tool::Cursor => (false, true, true, true, false),
+                Tool::Zcode => (true, true, true, false, false),
+                Tool::Opencode => (true, false, true, true, false),
+                // Pi 核心不含声明式 Hooks，也无官方子代理目录/schema；
+                // Provider / Prompt（全局）、MCP（适配器就绪时）与 Skills 支持。
+                Tool::Pi => (true, false, false, false, false),
+            };
+            ToolCapabilities {
+                tool,
+                provider,
+                prompt_global: true,
+                mcp: true,
+                skills: true,
+                hooks,
+                agents,
+                project_agents,
+                agent_tool_settings,
+            }
         })
         .collect()
 }
@@ -744,7 +763,7 @@ mod tests {
     fn stable_enums_serialize_to_contract_values() {
         assert_eq!(
             Tool::ALL.map(Tool::as_str),
-            ["claude", "codex", "cursor", "zcode", "opencode"]
+            ["claude", "codex", "cursor", "zcode", "opencode", "pi"]
         );
         let values = [
             serde_json::to_value(Tool::Claude).unwrap(),
@@ -752,6 +771,7 @@ mod tests {
             serde_json::to_value(Tool::Cursor).unwrap(),
             serde_json::to_value(Tool::Zcode).unwrap(),
             serde_json::to_value(Tool::Opencode).unwrap(),
+            serde_json::to_value(Tool::Pi).unwrap(),
             serde_json::to_value(Scope::Global).unwrap(),
             serde_json::to_value(Scope::Project).unwrap(),
             serde_json::to_value(ArtifactKind::Provider).unwrap(),
@@ -819,6 +839,7 @@ mod tests {
             "cursor",
             "zcode",
             "opencode",
+            "pi",
             "global",
             "project",
             "provider",
@@ -947,10 +968,14 @@ mod tests {
 
     #[test]
     fn tool_capabilities_cover_agents_per_tool_contract() {
-        // 2026-09-12 官方核验：五工具全局 Agents 均支持（ZCode 为 Beta）；
-        // 项目级仅 ZCode 明示不支持。
+        // 2026-09-12 官方核验：既有五工具全局 Agents 均支持（ZCode 为 Beta）；
+        // 项目级仅 ZCode 明示不支持。2026-09-14 Pi 核验：Pi 无官方 Agents
+        // 合同（无目录/schema），全局与项目均为 false。
         assert_eq!(tool_capabilities().len(), Tool::ALL.len());
         for capability in tool_capabilities() {
+            if capability.tool == Tool::Pi {
+                continue;
+            }
             assert!(
                 capability.agents,
                 "{:?} 全局 Agents 必须支持",
@@ -963,6 +988,12 @@ mod tests {
                 capability.tool
             );
         }
+        let pi = tool_capabilities()
+            .into_iter()
+            .find(|capability| capability.tool == Tool::Pi)
+            .expect("Pi 能力行必须存在");
+        assert!(pi.provider && pi.prompt_global && pi.mcp && pi.skills);
+        assert!(!pi.hooks && !pi.agents && !pi.project_agents && !pi.agent_tool_settings);
         let _ = ToolCapabilities {
             tool: Tool::Claude,
             provider: true,
@@ -974,6 +1005,25 @@ mod tests {
             project_agents: true,
             agent_tool_settings: true,
         };
+    }
+
+    #[test]
+    fn pi_tool_serialization_round_trips() {
+        assert_eq!(Tool::Pi.as_str(), "pi");
+        assert_eq!(Tool::from_stable_str("pi"), Some(Tool::Pi));
+        assert_eq!(serde_json::to_value(Tool::Pi).unwrap(), json_value("pi"));
+        assert_eq!(
+            serde_json::from_value::<Tool>(json_value("pi")).unwrap(),
+            Tool::Pi
+        );
+        // Pi 不支持任何 Hook 事件（无声明式 hook 文件）。
+        assert!(HookEvent::ALL
+            .into_iter()
+            .all(|event| !event.supported_for_tool(Tool::Pi)));
+    }
+
+    fn json_value(value: &str) -> serde_json::Value {
+        serde_json::Value::String(value.to_owned())
     }
 
     #[test]

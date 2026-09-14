@@ -68,6 +68,7 @@ describe("tool metadata", () => {
       "cursor",
       "zcode",
       "opencode",
+      "pi",
     ]);
     expect(PROFILE_TOOLS).toEqual([
       "claude",
@@ -75,6 +76,7 @@ describe("tool metadata", () => {
       "cursor",
       "zcode",
       "opencode",
+      "pi",
     ]);
     expect(MCP_TOOLS).toEqual([
       "claude",
@@ -82,6 +84,7 @@ describe("tool metadata", () => {
       "cursor",
       "zcode",
       "opencode",
+      "pi",
     ]);
     expect(SKILL_TOOLS).toEqual([
       "claude",
@@ -89,6 +92,7 @@ describe("tool metadata", () => {
       "cursor",
       "zcode",
       "opencode",
+      "pi",
     ]);
     expect(AGENT_TOOLS).toEqual([
       "claude",
@@ -139,6 +143,21 @@ describe("tool metadata", () => {
     expect(toolMetadata("opencode").icon).toMatch(
       /opencode-icon\.svg|svg\+xml/,
     );
+    expect(toolMetadata("pi")).toMatchObject({
+      label: "Pi",
+      profileRoute: "/pi",
+      capabilities: {
+        provider: true,
+        promptGlobal: true,
+        mcp: true,
+        skills: true,
+        hooks: false,
+        agents: false,
+        projectAgents: false,
+        agentToolSettings: false,
+      },
+    });
+    expect(toolMetadata("pi").icon).toMatch(/pi-icon\.svg|svg\+xml/);
 
     expect(opencodeIconSource).toContain(
       '<svg width="300" height="300" viewBox="0 0 300 300"',

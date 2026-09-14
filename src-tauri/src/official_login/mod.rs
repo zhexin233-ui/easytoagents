@@ -102,7 +102,7 @@ fn command_spec(tool: Tool) -> Result<LoginCommandSpec, AppError> {
             status_args: &["login", "status"],
             manual_command: "codex login",
         }),
-        Tool::Cursor | Tool::Zcode | Tool::Opencode => {
+        Tool::Cursor | Tool::Zcode | Tool::Opencode | Tool::Pi => {
             Err(AppError::invalid_input("tool", "该工具不支持官方账号登录"))
         }
     }
@@ -115,6 +115,9 @@ fn executable_name(tool: Tool) -> &'static str {
         Tool::Cursor => "agent",
         Tool::Zcode => "zcode",
         Tool::Opencode => "opencode",
+        // Pi 官方登录（`/login`）是交互式 TUI，无非交互合同；此分支仅为
+        // 穷举完整性，实际入口已在 `command_spec` fail closed。
+        Tool::Pi => "pi",
     }
 }
 
@@ -478,7 +481,7 @@ fn probe_status(
     match tool {
         Tool::Claude => parse_claude_status(&stdout, &stderr, output.status.success(), redactor),
         Tool::Codex => parse_codex_status(&stdout, &stderr, output.status.success(), redactor),
-        Tool::Cursor | Tool::Zcode | Tool::Opencode => ProbedStatus::default(),
+        Tool::Cursor | Tool::Zcode | Tool::Opencode | Tool::Pi => ProbedStatus::default(),
     }
 }
 

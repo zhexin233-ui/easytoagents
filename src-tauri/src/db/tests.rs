@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn github_skill_source_migration_accepts_only_normalized_source_shape() {
         let (_temporary, _paths, database) = open_isolated_database();
-        assert_eq!(database.schema_version().unwrap(), 24);
+        assert_eq!(database.schema_version().unwrap(), 25);
         database
             .connection()
             .execute(
@@ -110,7 +110,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 24);
+        assert_eq!(database.schema_version().unwrap(), 25);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -723,7 +723,7 @@ mod tests {
         }
         for (iteration, _) in (0..2).enumerate() {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             // 只有第一次打开有待执行迁移，才产生启动备份。
             assert_eq!(database.startup_backup().is_some(), iteration == 0);
             let (name, previews): (String, i64) = database.connection().query_row(
@@ -759,7 +759,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -814,7 +814,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 24);
+        assert_eq!(database.schema_version().unwrap(), 25);
         let kinds = database
             .connection()
             .prepare_cached("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1056,7 +1056,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 24);
+        assert_eq!(database.schema_version().unwrap(), 25);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1204,7 +1204,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 24);
+        assert_eq!(reopened.schema_version().unwrap(), 25);
         assert_eq!(
             reopened
                 .connection()
@@ -1264,7 +1264,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1329,7 +1329,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1417,7 +1417,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1571,7 +1571,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1688,7 +1688,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1768,7 +1768,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            24
+            25
         );
         for (tool, artifact, accepted) in [
             ("opencode", "provider", true),
@@ -1813,7 +1813,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 24);
+        assert_eq!(database.schema_version().unwrap(), 25);
         let connection = database.connection();
         connection
             .execute(
@@ -1869,7 +1869,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 24);
+        assert_eq!(reopened.schema_version().unwrap(), 25);
         assert_eq!(
             reopened
                 .connection()
@@ -1880,6 +1880,318 @@ mod tests {
                 )
                 .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn pi_tool_support_migration_opens_only_supported_artifacts() {
+        const MCP_ID: &str = "00000000-0000-4000-8000-000000000281";
+        const SKILL_ID: &str = "00000000-0000-4000-8000-000000000282";
+        const MCP_PROJECT_ID: &str = "00000000-0000-4000-8000-000000000294";
+        const SKILL_PROJECT_ID: &str = "00000000-0000-4000-8000-000000000295";
+        const PROMPT_ID: &str = "00000000-0000-4000-8000-000000000283";
+        const PI_PROMPT_ID: &str = "00000000-0000-4000-8000-000000000284";
+        const PI_PROMPT_TWO_ID: &str = "00000000-0000-4000-8000-000000000285";
+        const PROJECT_ID: &str = "00000000-0000-4000-8000-000000000286";
+        let temporary = tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap();
+        let paths = AppPaths::from_data_root(root.join("v24-pi-data")).unwrap();
+        paths.initialize().unwrap();
+        super::prepare_database_file(paths.database()).unwrap();
+        {
+            let connection = Connection::open(paths.database()).unwrap();
+            super::configure_connection(&connection, paths.database()).unwrap();
+            connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))").unwrap();
+            for migration in &super::MIGRATIONS[..24] {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            // v24 既有数据：升级后必须原样保留。
+            insert_mcp(&connection, MCP_ID, "Pi 之前的 MCP");
+            insert_skill(&connection, SKILL_ID, "pi 之前的 skill");
+            connection
+                .execute(
+                    "INSERT INTO prompt_profiles(id, tool, name, body, is_active_opencode) VALUES (?1, 'central', '既有提示词', '', 1)",
+                    [PROMPT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO projects(id, display_name, root_path) VALUES (?1, 'Pi 项目', '/fixture/pi-project')",
+                    [PROJECT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES ('00000000-0000-4000-8000-000000000287', 'opencode', 'provider', 'global', '/fixture/opencode/models.json')",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&paths).unwrap();
+        assert_eq!(database.schema_version().unwrap(), 25);
+        let connection = database.connection();
+
+        // 旧行与旧工具的生效位保持不变。
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT is_active_opencode FROM prompt_profiles WHERE id = ?1",
+                    [PROMPT_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_targets WHERE tool = 'opencode'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+
+        // 同一连接上的新值插入：六张 MCP/Skills 表全部放行 'pi'。
+        connection
+            .execute(
+                "INSERT INTO mcp_global_assignments(tool, mcp_id) VALUES ('pi', ?1)",
+                [MCP_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO skill_global_assignments(tool, skill_id) VALUES ('pi', ?1)",
+                [SKILL_ID],
+            )
+            .unwrap();
+        // 项目分配使用另一组条目：同一 tool+条目 在全局分配后会被
+        // trg_*_project_assignment_reject_global 触发器等拒绝（继承语义）。
+        insert_mcp(connection, MCP_PROJECT_ID, "Pi 项目 MCP");
+        insert_skill(connection, SKILL_PROJECT_ID, "pi 项目 skill");
+        connection
+            .execute(
+                "INSERT INTO mcp_project_assignments(project_id, tool, mcp_id) VALUES (?1, 'pi', ?2)",
+                params![PROJECT_ID, MCP_PROJECT_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO skill_project_assignments(project_id, tool, skill_id) VALUES (?1, 'pi', ?2)",
+                params![PROJECT_ID, SKILL_PROJECT_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO mcp_import_previews(id, tool, target_path, observed_full_hash, context_json, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000288', 'pi', '/fixture/pi/mcp.json', ?1, '{}', '{}')",
+                ["a".repeat(64)],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO skill_import_previews(id, tool, context_json, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000289', 'pi', '{}', '{}')",
+                [],
+            )
+            .unwrap();
+
+        // Provider / Prompt 导入预览放行 'pi'。
+        connection
+            .execute(
+                "INSERT INTO provider_profiles(id, tool, name) VALUES ('00000000-0000-4000-8000-000000000290', 'pi', 'Pi Provider')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO profile_import_previews(id, tool, artifact_kind, target_path, observed_full_hash, suggested_name, redacted_preview_json) VALUES ('00000000-0000-4000-8000-000000000291', 'pi', 'prompt', '/fixture/pi/AGENTS.md', ?1, 'Pi', '{}')",
+                ["b".repeat(64)],
+            )
+            .unwrap();
+
+        // managed_targets：Pi 只允许 provider/prompt/mcp/skill。
+        for (artifact_kind, suffix) in [
+            ("provider", "provider"),
+            ("prompt", "prompt"),
+            ("mcp", "mcp"),
+            ("skill", "skill"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'pi', ?2, 'global', ?3)",
+                    params![
+                        uuid::Uuid::new_v4().to_string(),
+                        artifact_kind,
+                        format!("/fixture/pi/{suffix}")
+                    ],
+                )
+                .unwrap();
+        }
+        for artifact_kind in ["hook", "agent"] {
+            assert!(
+                connection
+                    .execute(
+                        "INSERT INTO managed_targets(id, tool, artifact_kind, scope, target_path) VALUES (?1, 'pi', ?2, 'global', ?3)",
+                        params![
+                            uuid::Uuid::new_v4().to_string(),
+                            artifact_kind,
+                            format!("/fixture/pi/{artifact_kind}")
+                        ],
+                    )
+                    .is_err(),
+                "pi/{artifact_kind} 必须被 managed_targets CHECK 拒绝"
+            );
+        }
+
+        // Hooks / Agents 表继续拒绝 'pi'。
+        assert!(connection
+            .execute(
+                "INSERT INTO hook_global_assignments(tool, hook_id, event) VALUES ('pi', '00000000-0000-4000-8000-000000000292', 'pre_tool_use')",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "INSERT INTO agent_global_assignments(tool, agent_id) VALUES ('pi', '00000000-0000-4000-8000-000000000293')",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "INSERT INTO agent_tool_settings(agent_id, tool, settings_json) VALUES ('00000000-0000-4000-8000-000000000293', 'pi', '{}')",
+                [],
+            )
+            .is_err());
+
+        // prompt_profiles：Pi 至多一份生效，且不影响其它工具的标志位。
+        connection
+            .execute(
+                "INSERT INTO prompt_profiles(id, tool, name, body, is_active_pi) VALUES (?1, 'central', 'Pi 生效提示词', '', 1)",
+                [PI_PROMPT_ID],
+            )
+            .unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO prompt_profiles(id, tool, name, body, is_active_pi) VALUES (?1, 'central', 'Pi 第二份生效', '', 1)",
+                [PI_PROMPT_TWO_ID],
+            )
+            .is_err());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM prompt_profiles WHERE is_active_opencode = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+
+        // 索引、外键与完整性。
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'uq_prompt_profiles_one_active_pi'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+
+        // 重开与重复打开保持幂等，新列可读回。
+        drop(database);
+        let reopened = Database::open(&paths).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 25);
+        assert_eq!(
+            reopened
+                .connection()
+                .query_row(
+                    "SELECT is_active_pi FROM prompt_profiles WHERE id = ?1",
+                    [PI_PROMPT_ID],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        drop(reopened);
+        let third = Database::open(&paths).unwrap();
+        assert_eq!(third.schema_version().unwrap(), 25);
+    }
+
+    #[test]
+    fn pi_tool_support_migration_rejects_a_missing_exact_anchor() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let path = std::path::Path::new("/fixture/pi-anchor.sqlite3");
+        connection.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)").unwrap();
+        for migration in &super::MIGRATIONS[..24] {
+            connection.execute_batch(migration.sql).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations(version, name) VALUES (?1, ?2)",
+                    params![migration.version, migration.name],
+                )
+                .unwrap();
+        }
+        // 破坏 managed_targets 的 ZCode 作用域尾锚点：0025 必须中止且不推进版本。
+        connection
+            .execute_batch(
+                "PRAGMA writable_schema = ON;
+                 UPDATE sqlite_master SET sql = replace(sql, 'OR scope = ''global''))', 'OR scope = ''project''))')
+                 WHERE type = 'table' AND name = 'managed_targets';
+                 PRAGMA writable_schema = OFF;",
+            )
+            .unwrap();
+        assert!(super::run_migrations(&mut connection, path).is_err());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            24
+        );
+        // 修复锚点后重跑：迁移成功且仅推进一次。
+        connection
+            .execute_batch(
+                "PRAGMA writable_schema = ON;
+                 UPDATE sqlite_master SET sql = replace(sql, 'OR scope = ''project''))', 'OR scope = ''global''))')
+                 WHERE type = 'table' AND name = 'managed_targets';
+                 PRAGMA writable_schema = OFF;",
+            )
+            .unwrap();
+        super::run_migrations(&mut connection, path).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            25
         );
     }
 
@@ -1912,7 +2224,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2061,7 +2373,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2173,7 +2485,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2349,7 +2661,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2481,7 +2793,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
             type PreservedRow = (
                 String,
@@ -2683,7 +2995,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 24);
+        assert_eq!(database.schema_version().unwrap(), 25);
         let connection = database.connection();
         type PreservedRow = (
             String,
@@ -2769,7 +3081,7 @@ mod tests {
         drop(database);
 
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 24);
+        assert_eq!(reopened.schema_version().unwrap(), 25);
         let (count, agent_type): (i64, String) = reopened
             .connection()
             .query_row(
@@ -2893,7 +3205,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 24);
+            assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
 
             // 旧行保留：hook、分配与受管目标在 writable_schema 改写后逐字保留。
@@ -3141,7 +3453,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 24);
+        assert_eq!(database.schema_version().unwrap(), 25);
         let record: (String, String) = database
             .connection()
             .query_row(
@@ -3208,6 +3520,6 @@ mod tests {
             assert_eq!(remaining, 0);
         }
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 24);
+        assert_eq!(reopened.schema_version().unwrap(), 25);
     }
 }

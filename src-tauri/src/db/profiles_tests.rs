@@ -96,6 +96,7 @@ mod tests {
                 is_active_zcode: false,
                 is_active_cursor: false,
                 is_active_opencode: false,
+                is_active_pi: false,
                 imported_from_path: None,
             },
         )
@@ -111,6 +112,7 @@ mod tests {
                 is_active_zcode: false,
                 is_active_cursor: false,
                 is_active_opencode: false,
+                is_active_pi: false,
                 imported_from_path: None,
             },
         )
@@ -210,6 +212,7 @@ mod tests {
                 is_active_zcode: false,
                 is_active_cursor: false,
                 is_active_opencode: false,
+                is_active_pi: false,
                 imported_from_path: None,
             },
         )
@@ -241,5 +244,112 @@ mod tests {
             crate::error::ErrorCode::Conflict
         );
         delete_prompt_profile(&mut database, &prompt.id, updated_prompt.row_version).unwrap();
+    }
+
+    #[test]
+    fn pi_prompt_activation_uses_is_active_pi_and_stays_tool_scoped() {
+        let (_temporary, mut database) = database();
+        let first = insert_prompt_profile(
+            &mut database,
+            &NewPromptProfileRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "Pi 提示词一".to_owned(),
+                body: "第一份".to_owned(),
+                is_active_claude: false,
+                is_active_codex: false,
+                is_active_zcode: false,
+                is_active_cursor: false,
+                is_active_opencode: false,
+                is_active_pi: false,
+                imported_from_path: None,
+            },
+        )
+        .unwrap();
+        let second = insert_prompt_profile(
+            &mut database,
+            &NewPromptProfileRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "Pi 提示词二".to_owned(),
+                body: "第二份".to_owned(),
+                is_active_claude: false,
+                is_active_codex: false,
+                is_active_zcode: false,
+                is_active_cursor: false,
+                is_active_opencode: false,
+                is_active_pi: false,
+                imported_from_path: None,
+            },
+        )
+        .unwrap();
+
+        let activated = set_global_prompt_assignment(
+            &mut database,
+            Tool::Pi,
+            &first.id,
+            true,
+            first.row_version,
+        )
+        .unwrap();
+        assert!(activated.is_active_pi);
+        // Pi 的启用不得污染其它工具的标志位（CASE 查询也不得回落到 codex）。
+        assert!(!activated.is_active_codex);
+        assert!(super::find_active_prompt_profile(&database, Tool::Codex)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            super::find_active_prompt_profile(&database, Tool::Pi)
+                .unwrap()
+                .unwrap()
+                .id,
+            first.id
+        );
+
+        // 同一工具至多一份生效：启用第二份会替换第一份。
+        let replaced = set_global_prompt_assignment(
+            &mut database,
+            Tool::Pi,
+            &second.id,
+            true,
+            second.row_version,
+        )
+        .unwrap();
+        assert!(replaced.is_active_pi);
+        let prompts = list_prompt_profiles(&database).unwrap();
+        assert!(prompts
+            .iter()
+            .any(|item| item.id == first.id && !item.is_active_pi));
+        assert!(prompts
+            .iter()
+            .any(|item| item.id == second.id && item.is_active_pi));
+        assert_eq!(
+            super::find_active_prompt_profile(&database, Tool::Pi)
+                .unwrap()
+                .unwrap()
+                .id,
+            second.id
+        );
+
+        let disabled = set_global_prompt_assignment(
+            &mut database,
+            Tool::Pi,
+            &second.id,
+            false,
+            replaced.row_version,
+        )
+        .unwrap();
+        assert!(!disabled.is_active_pi);
+        assert!(super::find_active_prompt_profile(&database, Tool::Pi)
+            .unwrap()
+            .is_none());
+        // 停用是幂等的，且不影响其它工具。
+        let again = set_global_prompt_assignment(
+            &mut database,
+            Tool::Pi,
+            &second.id,
+            false,
+            disabled.row_version,
+        )
+        .unwrap();
+        assert!(!again.is_active_pi);
     }
 }

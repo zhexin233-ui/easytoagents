@@ -111,6 +111,9 @@ fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKin
             SourceKind::OpencodeGlobal,
             environment.opencode_config_dir().join("skills"),
         )],
+        // Pi Skills 导入来源（`<pi_agent_dir>/skills` 与项目 `.pi/skills`）
+        // 在阶段 2/4 接入；在此之前显式返回空集合。
+        Tool::Pi => Vec::new(),
     }
 }
 

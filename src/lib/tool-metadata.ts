@@ -4,6 +4,7 @@ import codexIconUrl from "@/assets/brand/codex-icon-light.png";
 import cursorIconUrl from "@/assets/brand/cursor-icon.svg";
 import zcodeIconUrl from "@/assets/brand/zcode-icon.svg";
 import opencodeIconUrl from "@/assets/brand/opencode-icon.svg";
+import piIconUrl from "@/assets/brand/pi-icon.svg";
 
 export interface ToolMetadata {
   id: Tool;
@@ -76,6 +77,13 @@ export const TOOL_METADATA = {
     icon: opencodeIconUrl,
     profileRoute: "/opencode",
     capabilities: capabilitiesFor("opencode"),
+  },
+  pi: {
+    id: "pi",
+    label: "Pi",
+    icon: piIconUrl,
+    profileRoute: "/pi",
+    capabilities: capabilitiesFor("pi"),
   },
 } as const satisfies Record<Tool, ToolMetadata>;
 

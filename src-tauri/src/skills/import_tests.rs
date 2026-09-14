@@ -425,6 +425,7 @@ mod tests {
                 Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
                 Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
                 Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
+                Tool::Pi => unreachable!("Pi Skills 导入在后续阶段接入"),
             };
             fixture.skill(&compat.join(".system/builtin"), "builtin");
             fs::create_dir_all(&source).unwrap();
@@ -463,6 +464,7 @@ mod tests {
                     Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
                     Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
                     Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
+                    Tool::Pi => unreachable!("Pi Skills 导入在后续阶段接入"),
                 };
                 let actual = fixture.root.join("external");
                 fixture.skill(&actual.join("one"), "one");

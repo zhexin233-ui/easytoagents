@@ -47,6 +47,11 @@ pub struct ReleaseToolProbeInput {
     opencode_config_path: Option<PathBuf>,
     opencode_config_content: Option<String>,
     opencode_disabled: bool,
+    /// 显式注入的 `PI_CODING_AGENT_DIR`（可映射时）。无法映射时留 `None`
+    /// 并由探针置 `PI_AGENT_DIR_OVERRIDE_UNMAPPED`。
+    pi_agent_dir: Option<PathBuf>,
+    /// 显式注入的 `PI_MCP_CONFIG_MODE=exclusive`（只读策略输入）。
+    pi_mcp_exclusive_mode: bool,
     search_path: OsString,
     timeout: Duration,
     claude_managed_settings_path: PathBuf,
@@ -79,6 +84,8 @@ impl ReleaseToolProbeInput {
             opencode_config_path: None,
             opencode_config_content: None,
             opencode_disabled: false,
+            pi_agent_dir: None,
+            pi_mcp_exclusive_mode: false,
             search_path,
             timeout: DEFAULT_TOOL_PROBE_TIMEOUT,
             claude_managed_settings_path: PathBuf::from(CLAUDE_MANAGED_SETTINGS_PATH),
@@ -105,6 +112,20 @@ impl ReleaseToolProbeInput {
 
     pub fn with_opencode_disabled(mut self, disabled: bool) -> Self {
         self.opencode_disabled = disabled;
+        self
+    }
+
+    /// 显式注入 `PI_CODING_AGENT_DIR`。调用方（`lib.rs` setup）只传递原始
+    /// 环境值；展开与安全映射在 `ExplicitEnvironment::with_pi_agent_dir` 内完成。
+    pub fn with_pi_agent_dir(mut self, path: Option<PathBuf>) -> Self {
+        self.pi_agent_dir = path;
+        self
+    }
+
+    /// 显式注入 `PI_MCP_CONFIG_MODE=exclusive`。调用方（`lib.rs` setup）只传递
+    /// 已解释的环境事实，adapter 永不读进程环境。
+    pub fn with_pi_mcp_exclusive_mode(mut self, exclusive: bool) -> Self {
+        self.pi_mcp_exclusive_mode = exclusive;
         self
     }
 
@@ -169,6 +190,7 @@ pub struct ReleaseToolProbeResult {
     pub cursor: ToolProbeOutcome,
     pub zcode: ToolProbeOutcome,
     pub opencode: ToolProbeOutcome,
+    pub pi: ToolProbeOutcome,
 }
 
 pub fn probe_release_environment(
@@ -180,20 +202,22 @@ pub fn probe_release_environment(
         input.codex_home.clone(),
         ToolAvailability::all_unavailable(),
     )?;
-    // 五个探测互不依赖，各自持有独立的进程组与超时；并行执行让总耗时
-    // 取决于最慢的一个而不是五者之和（单个工具挂住 3 秒也不再拖累其它工具）。
-    let (claude, codex, cursor, zcode, opencode) = std::thread::scope(|scope| {
+    // 六个探测互不依赖，各自持有独立的进程组与超时；并行执行让总耗时
+    // 取决于最慢的一个而不是六者之和（单个工具挂住 3 秒也不再拖累其它工具）。
+    let (claude, codex, cursor, zcode, opencode, pi) = std::thread::scope(|scope| {
         let claude = scope.spawn(|| probe_tool(ToolBinary::Claude, &path_environment, input));
         let codex = scope.spawn(|| probe_tool(ToolBinary::Codex, &path_environment, input));
         let cursor = scope.spawn(|| probe_cursor(&path_environment, input));
         let zcode = scope.spawn(|| probe_zcode(&path_environment, input));
         let opencode = scope.spawn(|| probe_tool(ToolBinary::Opencode, &path_environment, input));
+        let pi = scope.spawn(|| probe_tool(ToolBinary::Pi, &path_environment, input));
         (
             join_probe(claude),
             join_probe(codex),
             join_probe(cursor),
             join_probe(zcode),
             join_probe(opencode),
+            join_probe(pi),
         )
     });
     let availability = ToolAvailability::from_states([
@@ -202,6 +226,7 @@ pub fn probe_release_environment(
         cursor.state,
         zcode.state,
         opencode.state,
+        pi.state,
     ]);
     let mut environment = ExplicitEnvironment::new(
         path_environment.home(),
@@ -218,6 +243,15 @@ pub fn probe_release_environment(
     environment = environment
         .with_opencode_config_content(input.opencode_config_content.clone())
         .with_opencode_disabled(input.opencode_disabled);
+    // 不可映射的 `PI_CODING_AGENT_DIR` 不得静默退回默认值：置 unmapped 标记，
+    // 使 Pi 的全部 descriptor 在 adapter 层 unsupported。
+    if let Some(path) = input.pi_agent_dir.as_ref() {
+        environment = match environment.clone().with_pi_agent_dir(path.clone()) {
+            Ok(next) => next,
+            Err(_) => environment.with_pi_agent_dir_unmapped(),
+        };
+    }
+    environment = environment.with_pi_mcp_exclusive_mode(input.pi_mcp_exclusive_mode);
 
     if let Some(version) = claude.version.as_deref() {
         environment = environment.with_claude_installation_version(version)?;
@@ -250,12 +284,16 @@ pub fn probe_release_environment(
     if let Some(version) = opencode.version.as_deref() {
         environment = environment.with_opencode_installation_version(version)?;
     }
+    if let Some(version) = pi.version.as_deref() {
+        environment = environment.with_pi_installation_version(version)?;
+    }
     for (tool, outcome) in [
         (Tool::Claude, &claude),
         (Tool::Codex, &codex),
         (Tool::Cursor, &cursor),
         (Tool::Zcode, &zcode),
         (Tool::Opencode, &opencode),
+        (Tool::Pi, &pi),
     ] {
         if let Some(diagnostic) = outcome.diagnostic {
             environment = environment.with_installation_probe_diagnostic(tool, diagnostic);
@@ -269,6 +307,7 @@ pub fn probe_release_environment(
         cursor,
         zcode,
         opencode,
+        pi,
     })
 }
 
@@ -285,6 +324,7 @@ enum ToolBinary {
     Codex,
     CursorAgent,
     Opencode,
+    Pi,
 }
 
 impl ToolBinary {
@@ -294,6 +334,7 @@ impl ToolBinary {
             Self::Codex => "codex",
             Self::CursorAgent => "agent",
             Self::Opencode => "opencode",
+            Self::Pi => "pi",
         }
     }
 
@@ -318,9 +359,14 @@ impl ToolBinary {
                 .or_else(|| output.strip_prefix("agent "))
                 .unwrap_or(output),
             Self::Opencode => output.strip_prefix("opencode ").unwrap_or(output),
+            // Pi 只有 CLI，官方未承诺 `--version` 输出前缀；采用与 OpenCode
+            // 相同的宽容解析（前缀可选 + semver 校验）。
+            Self::Pi => output.strip_prefix("pi ").unwrap_or(output),
         };
         match self {
-            Self::Claude | Self::Codex | Self::Opencode => valid_semantic_version(version),
+            Self::Claude | Self::Codex | Self::Opencode | Self::Pi => {
+                valid_semantic_version(version)
+            }
             Self::CursorAgent => valid_cursor_version(version),
         }
         .then(|| version.to_owned())

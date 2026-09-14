@@ -19,3 +19,8 @@ redraw, optimize, recolor, or replace them with runtime CDN resources.
   rounded-square canvas as the other icons). ZCode has not published an
   official press-kit asset to bundle; replace it if an official asset with a
   permissive license becomes available.
+- `pi-icon.svg`: official Pi Press Kit square Badge,
+  `https://pi.dev/favicon.svg` (press kit: `https://pi.dev/press-kit`), retrieved
+  2026-09-14 and copied unchanged. MIT licensed (Earendil Inc. / Mario Zechner).
+  SHA-256:
+  `a5624bc3b8cac94de75f6f13701eca2ad3ef67bbeba286c4af3f398806f0858a`.

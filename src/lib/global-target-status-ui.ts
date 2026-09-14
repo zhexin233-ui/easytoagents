@@ -55,6 +55,38 @@ const agentDiagnosticPresentations: Record<
   },
 };
 
+/// Pi 的 MCP 由第三方 `pi-mcp-adapter` 提供；适配器未就绪时写入必然无效，
+/// 因此状态文案必须同时给出安装/启用指引（design §9）。
+const piMcpDiagnosticPresentations: Record<
+  string,
+  Pick<GlobalTargetStatusPresentation, "label" | "description" | "tone">
+> = {
+  PI_MCP_ADAPTER_MISSING: {
+    label: "未安装 Pi MCP 适配器",
+    description:
+      "Pi 自身不含内置 MCP；请先安装并加载 pi-mcp-adapter：pi install npm:pi-mcp-adapter，再用 pi config 确认扩展已启用。",
+    tone: "blocked",
+  },
+  PI_MCP_ADAPTER_NOT_LOADED: {
+    label: "Pi MCP 适配器未加载",
+    description:
+      "已声明 pi-mcp-adapter，但被 pi config 过滤或项目未受信任而未加载；请用 pi config 启用其扩展后重新检测。",
+    tone: "blocked",
+  },
+  PI_MCP_ADAPTER_VERSION_UNSUPPORTED: {
+    label: "Pi MCP 适配器版本过低",
+    description:
+      "受支持的核验基线为 2.33.0；请升级适配器后重新检测：pi install npm:pi-mcp-adapter。",
+    tone: "blocked",
+  },
+  PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED: {
+    label: "Pi MCP 处于 exclusive 模式",
+    description:
+      "PI_MCP_CONFIG_MODE=exclusive 时适配器忽略项目 .pi/mcp.json；请改用全局 MCP 或以非 exclusive 模式运行 Pi。",
+    tone: "blocked",
+  },
+};
+
 const globalPreviewBlockingStatuses = new Set<SyncStatus>([
   "failed",
   "policy_blocked",
@@ -73,6 +105,12 @@ export function globalTargetStatusPresentation(
     : undefined;
   if (agentDiagnostic) {
     return { ...agentDiagnostic, previewBlocked };
+  }
+  const piMcpDiagnostic = diagnosticCode
+    ? piMcpDiagnosticPresentations[diagnosticCode]
+    : undefined;
+  if (piMcpDiagnostic) {
+    return { ...piMcpDiagnostic, previewBlocked };
   }
   if (
     diagnosticCode === "SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED" &&

@@ -40,6 +40,7 @@ const TOOL_LOGIN_NOTE: Record<Tool, string> = {
   cursor: "",
   zcode: "",
   opencode: "",
+  pi: "",
 };
 
 /** 已登录时再次发起登录会覆盖或清除当前凭据；先让用户确认。 */
@@ -50,6 +51,7 @@ const START_LOGIN_CONFIRM: Record<Tool, string> = {
   cursor: "",
   zcode: "",
   opencode: "",
+  pi: "",
 };
 
 function loginStateText(status: OfficialLoginStatusDto): string {

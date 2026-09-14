@@ -430,6 +430,35 @@ impl StoredProviderConfig {
                 "tool",
                 "CURSOR_PROVIDER_UNSUPPORTED",
             )),
+            // Pi Provider：`models.json` 的 `providers.<id>` 条目。除公共字段外
+            // 只保留 `extra_provider_fields`（headers、modelOverrides、name 等
+            // 未知/未受管字段原样保留）；Pi 没有其他工具的专属选项。
+            Tool::Pi => {
+                reject_official_login(auth_kind)?;
+                if options.credential_env_key.is_some()
+                    || !options.extra_env.is_empty()
+                    || options.wire_api.is_some()
+                    || options.zcode_kind.is_some()
+                    || options.opencode_npm.is_some()
+                    || options.opencode_api.is_some()
+                {
+                    return Err(AppError::invalid_input(
+                        "providerOptions",
+                        "Pi Provider 不支持其他工具的专属选项",
+                    ));
+                }
+                Ok(Self {
+                    auth_kind: Some(auth_kind),
+                    credential_env_key: None,
+                    extra_env: BTreeMap::new(),
+                    provider_id: Some(provider_id.to_owned()),
+                    wire_api: None,
+                    zcode_kind: None,
+                    opencode_npm: None,
+                    opencode_api: None,
+                    extra_provider_fields,
+                })
+            }
             Tool::Opencode => {
                 reject_official_login(auth_kind)?;
                 if options.credential_env_key.is_some()

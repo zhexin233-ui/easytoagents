@@ -110,6 +110,14 @@ pub fn hook_event_supported(tool: Tool, event: HookEvent) -> Result<(), AppError
 }
 
 fn ensure_hooks_supported(tool: Tool) -> Result<(), AppError> {
+    if tool == Tool::Pi {
+        // Pi 无声明式 hook 文件（事件是 TS 扩展 API）→ 任何 Hook 入口都返回
+        // 稳定诊断码，不得回落到「该工具不支持 Hooks」的泛化文案。
+        return Err(AppError::invalid_input(
+            "capability",
+            crate::adapters::pi::PI_HOOKS_UNSUPPORTED,
+        ));
+    }
     if tool == Tool::Opencode {
         return Err(AppError::invalid_input(
             "capability",
@@ -236,8 +244,13 @@ pub fn list_global_hook_target_statuses(
         ASSIGNABLE_HOOK_TOOLS,
         |tool| hook_target_descriptor(environment, tool, None),
         |database, tool, descriptor| {
-            load_target_status(database, tool, None, descriptor.path.as_deref().unwrap_or_default())
-                .map(|status| status.map(|status| (status, None)))
+            load_target_status(
+                database,
+                tool,
+                None,
+                descriptor.path.as_deref().unwrap_or_default(),
+            )
+            .map(|status| status.map(|status| (status, None)))
         },
     )
     .map(|statuses| {
@@ -284,6 +297,7 @@ pub fn preview_hook_sync(
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
                 hook_initial_adopt: target.hook_initial_adopt,
+                hard_block: None,
             }]
         })
         .unwrap_or_default();
@@ -379,13 +393,7 @@ pub fn readopt_hook_target(
     let scan = scan_target(input.tool.adapter(), &descriptor, &ownership);
     let outcome = crate::sync::managed::readopt_with_scan::<
         crate::sync::managed::HookManagedArtifact,
-    >(
-        database,
-        &baseline,
-        &existing_items,
-        &scan,
-        &descriptor,
-    )?;
+    >(database, &baseline, &existing_items, &scan, &descriptor)?;
     Ok(ReadoptHookTargetResultDto {
         target_path: outcome.target_path,
         updated_item_count: outcome.updated_item_count,
@@ -647,17 +655,16 @@ fn prepare_hooks_sync(
         assessment.status == SyncStatus::ExternalOwnedChange && !hook_initial_adopt;
     let (managed_items, remove_managed_item_ids) =
         build_managed_item_changes(input.tool, &desired_records, &existing_items)?;
-    let row_versions = crate::sync::managed::collect_row_versions::<
-        crate::sync::managed::HookManagedArtifact,
-    >(
-        database.connection(),
-        &database.path().to_string_lossy(),
-        project
-            .as_ref()
-            .map(|project| (project.id.as_str(), project.row_version)),
-        desired_records.iter().chain(inherited_records.iter()),
-        &existing_items,
-    )?;
+    let row_versions =
+        crate::sync::managed::collect_row_versions::<crate::sync::managed::HookManagedArtifact>(
+            database.connection(),
+            &database.path().to_string_lossy(),
+            project
+                .as_ref()
+                .map(|project| (project.id.as_str(), project.row_version)),
+            desired_records.iter().chain(inherited_records.iter()),
+            &existing_items,
+        )?;
     let git = project_root
         .as_ref()
         .zip(descriptor.path.as_deref())
@@ -694,12 +701,7 @@ pub(super) fn hook_target_descriptor(
     tool: Tool,
     project_root: Option<&ProjectRoot>,
 ) -> Result<TargetDescriptor, AppError> {
-    if tool == Tool::Opencode {
-        return Err(AppError::invalid_input(
-            "capability",
-            "OPENCODE_HOOKS_UNSUPPORTED",
-        ));
-    }
+    ensure_hooks_supported(tool)?;
     let context = DiscoveryContext {
         environment,
         project_root,
@@ -725,7 +727,9 @@ pub(crate) fn native_selector_root(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::Claude | Tool::Codex | Tool::Zcode => &["hooks"],
         Tool::Cursor => &["version", "hooks"],
-        Tool::Opencode => &[],
+        // Pi 无声明式 hook 文件；服务入口返回 `PI_HOOKS_UNSUPPORTED`，此处
+        // 显式列出空根，不得回落到任一既有工具的选择器。
+        Tool::Opencode | Tool::Pi => &[],
     }
 }
 
@@ -734,7 +738,7 @@ pub(crate) fn events_root(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::Claude | Tool::Codex | Tool::Cursor => &["hooks"],
         Tool::Zcode => &["hooks", "events"],
-        Tool::Opencode => &[],
+        Tool::Opencode | Tool::Pi => &[],
     }
 }
 
@@ -766,6 +770,12 @@ pub(super) fn build_desired_projection(
             return Err(AppError::invalid_input(
                 "capability",
                 "OPENCODE_HOOKS_UNSUPPORTED",
+            ))
+        }
+        Tool::Pi => {
+            return Err(AppError::invalid_input(
+                "capability",
+                crate::adapters::pi::PI_HOOKS_UNSUPPORTED,
             ))
         }
     };

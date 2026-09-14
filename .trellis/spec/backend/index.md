@@ -23,6 +23,7 @@ structured tracing pipeline and private rolling log files.
 | [Native MCP Import](./mcp-import-guidelines.md) | Explicit selection, format compatibility, credential classification and atomic adoption | Current |
 | [全局 Skills 导入](./skill-import-guidelines.md) | 显式来源、入口链接、内置排除、批量复制与首次状态合同 | Current |
 | [OpenCode Adapter](./opencode-adapter-guidelines.md) | Explicit JSON/JSONC boundaries, Provider/MCP/Skills contracts, and unsupported Hooks | Current |
+| [Pi Adapter](./pi-adapter-guidelines.md) | Pi 六 descriptor 写入面、`pi-mcp-adapter` 前置门禁、项目 trust/遮蔽硬阻断与永久 fail-closed 的 Hooks/Agents | Current |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | Current |
 | [Release Workflow](./release-workflow-guidelines.md) | Manual ARM64 DMG release contracts, validation, permissions, and retry safety | Current |
 

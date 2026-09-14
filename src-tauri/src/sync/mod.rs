@@ -31,7 +31,7 @@ use crate::{
         TargetTrustState, ToolAdapter,
     },
     db::Database,
-    domain::{ChangeKind, Scope, SyncStatus, TargetType},
+    domain::{ArtifactKind, ChangeKind, Scope, SyncStatus, TargetType, Tool},
     error::{AppError, ErrorCode},
     git::GitPathStatus,
     security::SecretRedactor,
@@ -394,14 +394,14 @@ pub fn assess_drift(
             return assessment(
                 SyncStatus::Untrusted,
                 false,
-                vec!["CODEX_PROJECT_UNTRUSTED".to_owned()],
+                vec![trust_diagnostic(target, true)],
             );
         }
         TargetTrustState::Unknown => {
             return assessment(
                 SyncStatus::Untrusted,
                 false,
-                vec![ERROR_CODEX_TRUST_UNKNOWN.to_owned()],
+                vec![trust_diagnostic(target, false)],
             );
         }
         TargetTrustState::NotRequired | TargetTrustState::Trusted => {}
@@ -567,6 +567,10 @@ pub struct PreviewTargetRequest {
     /// 而不是把空受管键误判为外部改写。子树已有内容时由服务保持 false，
     /// 维持 Conflict 以便用户先导入或显式重新接管。
     pub hook_initial_adopt: bool,
+    /// 服务层证明「本次写入必然无效」时提供的硬阻断诊断码（如 Pi 的
+    /// `PI_PROMPT_OVERRIDE_DETECTED`、MCP 同名遮蔽）；置位后预览固定为
+    /// Conflict，Apply 拒绝消费。服务必须已经只读验证过该条件。
+    pub hard_block: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
@@ -676,7 +680,7 @@ pub fn build_preview_plan(
             &request.scan,
             &desired_projection,
         );
-        let (mut change_kind, error_code) =
+        let (mut change_kind, mut error_code) =
             if !assessment.can_merge && !takeover_allows_merge && !native_allows_merge {
                 (
                     ChangeKind::Conflict,
@@ -706,13 +710,41 @@ pub fn build_preview_plan(
             warning_codes.push(WARNING_PROJECT_NATIVE_RESOURCE_CONFIRMATION.to_owned());
         }
         match request.descriptor.prompt_override {
-            PromptOverrideState::Present => {
-                warning_codes.push(WARNING_CODEX_PROMPT_OVERRIDE.to_owned());
-            }
-            PromptOverrideState::Unknown => {
-                warning_codes.push(WARNING_CODEX_PROMPT_OVERRIDE_UNKNOWN.to_owned());
+            PromptOverrideState::Present | PromptOverrideState::Unknown => {
+                if request.descriptor.tool == Tool::Pi {
+                    // Pi：`AGENTS.override.md` 存在（或无法安全判定）时对
+                    // `AGENTS.md` 的写入必然不生效，属硬阻断而非 warning。
+                    warning_codes.push(crate::adapters::pi::PI_PROMPT_OVERRIDE_DETECTED.to_owned());
+                } else if request.descriptor.prompt_override == PromptOverrideState::Present {
+                    warning_codes.push(WARNING_CODEX_PROMPT_OVERRIDE.to_owned());
+                } else {
+                    warning_codes.push(WARNING_CODEX_PROMPT_OVERRIDE_UNKNOWN.to_owned());
+                }
             }
             PromptOverrideState::NotApplicable | PromptOverrideState::NotPresent => {}
+        }
+        // Pi 全局提示词的回退文件场景：用户依赖 `CLAUDE.md`/`AGENTS.MD`，
+        // 我们的写入会反向遮蔽它，必须显式提示而不是静默接管。
+        if request.descriptor.tool == Tool::Pi
+            && request.descriptor.artifact_kind == ArtifactKind::Prompt
+            && prompt_fallback_present(&request.descriptor)
+        {
+            warning_codes.push(crate::adapters::pi::PI_PROMPT_FALLBACK_PRESENT.to_owned());
+        }
+        // 服务层已经只读证明「本次写入必然无效」时固定为硬阻断。
+        if let Some(code) = request.hard_block.as_deref() {
+            change_kind = ChangeKind::Conflict;
+            error_code = Some(ErrorCode::Conflict);
+            warning_codes.push(code.to_owned());
+        } else if request.descriptor.tool == Tool::Pi
+            && request.descriptor.artifact_kind == ArtifactKind::Prompt
+            && matches!(
+                request.descriptor.prompt_override,
+                PromptOverrideState::Present | PromptOverrideState::Unknown
+            )
+        {
+            change_kind = ChangeKind::Conflict;
+            error_code = Some(ErrorCode::Conflict);
         }
         if let Some(git) = &request.git {
             if git.tracked {
@@ -868,6 +900,39 @@ fn record_row_version(
         ));
     }
     Ok(())
+}
+
+/// Pi 全局提示词的回退文件场景：`<pi_agent_dir>/AGENTS.md` 不存在但用户存在
+/// `CLAUDE.md`/`CLAUDE.MD`/`AGENTS.MD` 时，写入 `AGENTS.md` 会反向遮蔽用户
+/// 原本依赖的回退文件。只读探测；无法解析目标路径时不伪造诊断。
+fn prompt_fallback_present(descriptor: &TargetDescriptor) -> bool {
+    if descriptor.tool != Tool::Pi || descriptor.artifact_kind != ArtifactKind::Prompt {
+        return false;
+    }
+    let Some(agent_dir) = descriptor
+        .path
+        .as_deref()
+        .and_then(|path| Path::new(path).parent())
+    else {
+        return false;
+    };
+    crate::adapters::pi::prompt_fallback_present(agent_dir)
+}
+
+/// 项目信任阻断的稳定诊断码：Pi 的项目 Skills 沿用同一门禁，但使用自己的
+/// 诊断码（`PI_PROJECT_SKILLS_*`），不得回落到 Codex 文案。
+fn trust_diagnostic(target: &TargetDescriptor, untrusted: bool) -> String {
+    if target.tool == Tool::Pi {
+        if untrusted {
+            crate::adapters::pi::PI_PROJECT_SKILLS_UNTRUSTED.to_owned()
+        } else {
+            crate::adapters::pi::PI_PROJECT_SKILLS_TRUST_UNKNOWN.to_owned()
+        }
+    } else if untrusted {
+        "CODEX_PROJECT_UNTRUSTED".to_owned()
+    } else {
+        ERROR_CODEX_TRUST_UNKNOWN.to_owned()
+    }
 }
 
 fn error_code_for_status(status: SyncStatus) -> ErrorCode {

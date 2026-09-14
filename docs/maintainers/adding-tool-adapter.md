@@ -152,14 +152,15 @@ git diff --check
 
 ## 9. Pi、ZCode 与 OpenCode 示例
 
-Pi 当前只作为待调研候选，不代表已知路径；ZCode 已于 2026-09-05 依据本机核验
-与官方 zcode-configuration-guide 完成证据核验并正式接入（迁移 `0013`）：
+Pi 已于 2026-09-14 依据官方 URL 与本机 Pi 0.85.1 + pi-mcp-adapter 2.33.0 复核后
+正式接入（迁移 `0025`）；ZCode 已于 2026-09-05 依据本机核验与官方
+zcode-configuration-guide 完成证据核验并正式接入（迁移 `0013`）：
 
-| 工具     | Provider  | Prompt/Rules（全局） | MCP                       | Skills    | Hooks       | 下一步                                                                                                                                                                    |
-| -------- | --------- | -------------------- | ------------------------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pi       | Unknown   | Unknown              | Unknown                   | Unknown   | Unknown     | 找到官方配置与安装文档，建立版本化 fixture                                                                                                                                |
-| ZCode    | Supported | Supported（仅全局）  | Supported                 | Supported | Supported   | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键                    |
-| OpenCode | Supported | Supported（仅全局）  | Supported（local/remote） | Supported | Unsupported | 已接入：PATH `opencode --version` 探针；Provider/MCP 使用官方 JSON/JSONC `provider`/`mcp` 根，Skills 使用全局 config/skills 与项目 `.opencode/skills`；不接管 `auth.json` |
+| 工具     | Provider  | Prompt/Rules（全局） | MCP                       | Skills    | Hooks       | 下一步                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------- | --------- | -------------------- | ------------------------- | --------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pi       | Supported | Supported（仅全局）  | Supported（依赖适配器）   | Supported | Unsupported | 已接入：`pi --version` PATH 探针；Pi agent 目录（`PI_CODING_AGENT_DIR`，默认 `~/.pi/agent`）下 `models.json` 的 `providers.<id>` 条目级合并、`AGENTS.md` 全局提示词、`skills/` 与项目 `.pi/skills` 受管子链接；MCP 只在第三方 `pi-mcp-adapter` 就绪时接管 `mcp.json` 的 `mcpServers`。Hooks/Agents 永久 fail closed（`PI_HOOKS_UNSUPPORTED` / `PI_AGENTS_UNSUPPORTED`）。项目 `.mcp.json`、`~/.agents/*` 等共享文件只做只读冲突检测，永不读写。 |
+| ZCode    | Supported | Supported（仅全局）  | Supported                 | Supported | Supported   | 已接入：desktop bundle（`dev.zcode.app`）探针；`~/.zcode/v2/config.json` 的 provider 条目只接管 name/kind/options/enabled；MCP 为 `mcp.servers` 嵌套键                                                                                                                                                                                                                                                                                          |
+| OpenCode | Supported | Supported（仅全局）  | Supported（local/remote） | Supported | Unsupported | 已接入：PATH `opencode --version` 探针；Provider/MCP 使用官方 JSON/JSONC `provider`/`mcp` 根，Skills 使用全局 config/skills 与项目 `.opencode/skills`；不接管 `auth.json`                                                                                                                                                                                                                                                                       |
 
 Cursor 的全局 Prompt/Rules 已于 2026-09-06 依据官方证据接入（历史迁移 `0017`
 曾扩展过项目作用域，现行 v18 已清理该历史状态）：当前只使用全局
@@ -174,13 +175,13 @@ Hooks 已作为第五类 artifact 接入四工具，统一事件模型见 `domai
 （canonical PascalCase；Cursor 原生键为 camelCase，由
 `HookEvent::native_key` 映射）。证据来源与合同：
 
-| 工具        | 全局                                     | 项目                           | 事件集              | 备注                                                                                                                                              |
-| ----------- | ---------------------------------------- | ------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | `~/.claude/settings.json` 的 `hooks` 键  | `<root>/.claude/settings.json` | 10                  | 与 Provider 共享文件，选择器隔离；https://code.claude.com/docs/en/hooks                                                                           |
-| Codex       | `~/.codex/hooks.json`                    | `<root>/.codex/hooks.json`     | 11                  | 独立文件；官方要求每层只用一种表示，不管理 config.toml 内联 `[hooks]`；信任审查由 CLI `/hooks` 完成；https://developers.openai.com/codex/hooks.md |
-| Cursor      | `~/.cursor/hooks.json`                   | `<root>/.cursor/hooks.json`    | 9（camelCase 映射） | 接管 `version` + `hooks` 两个顶层键；matcher 属于条目；https://cursor.com/docs/agent/hooks                                                        |
-| ZCode       | `~/.zcode/cli/config.json` 的 `hooks` 键 | `<root>/.zcode/config.json`    | 7                   | 恒写 `hooks.enabled: true`（配置文件 hooks 必须 enabled 才运行）；事件嵌套在 `events` 键；官方 zcode-configuration-guide                          |
-| OpenCode    | 不接入（插件返回 hooks object）          | 不接入                         | —                   | 插件回调不是当前 command-only 合同；直接 RPC、分配、导入和写入均 fail closed，诊断码 `OPENCODE_HOOKS_UNSUPPORTED`                                 |
+| 工具        | 全局                                     | 项目                           | 事件集              | 备注                                                                                                                                                |
+| ----------- | ---------------------------------------- | ------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `~/.claude/settings.json` 的 `hooks` 键  | `<root>/.claude/settings.json` | 10                  | 与 Provider 共享文件，选择器隔离；<https://code.claude.com/docs/en/hooks>                                                                           |
+| Codex       | `~/.codex/hooks.json`                    | `<root>/.codex/hooks.json`     | 11                  | 独立文件；官方要求每层只用一种表示，不管理 config.toml 内联 `[hooks]`；信任审查由 CLI `/hooks` 完成；<https://developers.openai.com/codex/hooks.md> |
+| Cursor      | `~/.cursor/hooks.json`                   | `<root>/.cursor/hooks.json`    | 9（camelCase 映射） | 接管 `version` + `hooks` 两个顶层键；matcher 属于条目；<https://cursor.com/docs/agent/hooks>                                                        |
+| ZCode       | `~/.zcode/cli/config.json` 的 `hooks` 键 | `<root>/.zcode/config.json`    | 7                   | 恒写 `hooks.enabled: true`（配置文件 hooks 必须 enabled 才运行）；事件嵌套在 `events` 键；官方 zcode-configuration-guide                            |
+| OpenCode    | 不接入（插件返回 hooks object）          | 不接入                         | —                   | 插件回调不是当前 command-only 合同；直接 RPC、分配、导入和写入均 fail closed，诊断码 `OPENCODE_HOOKS_UNSUPPORTED`                                   |
 
 不在统一事件模型内的工具特有事件（Cursor 的 `beforeShellExecution` 等、
 Claude 的 `PostToolUseFailure`、ZCode 的 `process` 型、Cursor 的 `prompt` 型）

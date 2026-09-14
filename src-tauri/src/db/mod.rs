@@ -159,6 +159,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "project_native_agent_files",
         sql: include_str!("migrations/0024_project_native_agent_files.sql"),
     },
+    Migration {
+        version: 25,
+        name: "pi_tool_support",
+        sql: include_str!("migrations/0025_pi_tool_support.sql"),
+    },
 ];
 
 pub(crate) struct Migration {

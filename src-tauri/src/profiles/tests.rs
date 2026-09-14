@@ -13,9 +13,8 @@ mod tests {
         readopt_provider_target, set_active_provider_profile, set_global_prompt_assignment,
         update_prompt_profile, update_provider_profile, CopyProviderProfileInput, PromptProfileDto,
         PromptProfileInput, ProviderAuthKind, ProviderOptionsInput, ProviderProfileInput,
-        ReadoptProviderTargetInput,
-        SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
-        CLAUDE_MODEL_KEY,
+        ReadoptProviderTargetInput, SetGlobalPromptAssignmentInput, UpdatePromptProfileInput,
+        UpdateProviderProfileInput, CLAUDE_MODEL_KEY,
     };
     use crate::{
         adapters::{
@@ -490,7 +489,10 @@ mod tests {
         .unwrap();
         let target = conflicted.targets.first().expect("Provider 预览应包含目标");
         assert_eq!(target.change_kind, crate::domain::ChangeKind::Conflict);
-        assert_eq!(target.status, crate::domain::SyncStatus::ExternalOwnedChange);
+        assert_eq!(
+            target.status,
+            crate::domain::SyncStatus::ExternalOwnedChange
+        );
         assert!(target.readopt_available);
         let old_preview_id = conflicted.preview_id.clone();
 
@@ -547,7 +549,10 @@ mod tests {
         )
         .unwrap();
         assert_ne!(recovered.preview_id, old_preview_id);
-        assert_eq!(recovered.targets[0].status, crate::domain::SyncStatus::InSync);
+        assert_eq!(
+            recovered.targets[0].status,
+            crate::domain::SyncStatus::InSync
+        );
         assert_eq!(
             recovered.targets[0].change_kind,
             crate::domain::ChangeKind::Update
@@ -565,7 +570,10 @@ mod tests {
         )
         .unwrap();
         let native: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
-        assert_eq!(native["env"]["ANTHROPIC_API_KEY"], "fixture-provider-secret");
+        assert_eq!(
+            native["env"]["ANTHROPIC_API_KEY"],
+            "fixture-provider-secret"
+        );
         assert_eq!(native["env"]["UNRELATED_ENV"], "keep");
     }
 
@@ -1127,7 +1135,10 @@ mod tests {
         assert_eq!(preview.default_model, "claude-relay");
         assert_eq!(
             preview.skipped_env_keys,
-            vec!["ANTHROPIC_CUSTOM_HEADERS".to_owned(), "SOME_FLAG".to_owned()]
+            vec![
+                "ANTHROPIC_CUSTOM_HEADERS".to_owned(),
+                "SOME_FLAG".to_owned()
+            ]
         );
         let serialized = serde_json::to_string(&preview).unwrap();
         assert!(!serialized.contains(secret));
@@ -1187,9 +1198,12 @@ mod tests {
                 default_model: String::new(),
                 options: ProviderOptionsInput {
                     auth_kind: ProviderAuthKind::OfficialLogin,
-                    extra_env: [("CLAUDE_CODE_MAX_OUTPUT_TOKENS".to_owned(), "64000".to_owned())]
-                        .into_iter()
-                        .collect(),
+                    extra_env: [(
+                        "CLAUDE_CODE_MAX_OUTPUT_TOKENS".to_owned(),
+                        "64000".to_owned(),
+                    )]
+                    .into_iter()
+                    .collect(),
                     ..ProviderOptionsInput::default()
                 },
                 activate: true,
@@ -1276,7 +1290,10 @@ mod tests {
         )
         .unwrap();
         let restored: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
-        assert_eq!(restored["env"]["ANTHROPIC_BASE_URL"], "https://relay.example.com");
+        assert_eq!(
+            restored["env"]["ANTHROPIC_BASE_URL"],
+            "https://relay.example.com"
+        );
         assert_eq!(restored["env"]["ANTHROPIC_AUTH_TOKEN"], secret);
         assert_eq!(restored["env"]["ANTHROPIC_MODEL"], "claude-relay");
         assert_eq!(restored["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "32000");
@@ -1443,7 +1460,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(codex_official.options.provider_id.as_deref(), Some("openai"));
+        assert_eq!(
+            codex_official.options.provider_id.as_deref(),
+            Some("openai")
+        );
         assert_eq!(codex_official.default_model, "");
         let copy_error = copy_provider_profile(
             &mut fixture.database,
@@ -1972,6 +1992,7 @@ base_url = "https://external.example.com/v1"
             ToolAvailability::from_states([
                 ToolAvailabilityState::Unavailable,
                 ToolAvailabilityState::Unsupported,
+                ToolAvailabilityState::Unavailable,
                 ToolAvailabilityState::Unavailable,
                 ToolAvailabilityState::Unavailable,
                 ToolAvailabilityState::Unavailable,

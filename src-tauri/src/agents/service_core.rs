@@ -4,6 +4,7 @@
 
 pub fn list_agents(database: &Database) -> Result<Vec<AgentDto>, AppError> {
     // 列表只发三条 SQL（记录、全部全局分配、全部工具覆盖），逐条组装不再回库。
+    // Pi 不进入任何 Agents 入口（见 `unsupported_agent_tool`）。
     let mut assignments = repository::global_assignments_for_all_agents(database)?;
     let mut tool_settings = repository::tool_settings_for_all_agents(database)?;
     repository::list_agents(database)?
@@ -104,12 +105,26 @@ pub fn agent_scope_supported(tool: Tool, scope: Scope) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 不支持 Agents 的工具：Pi 返回稳定诊断码 `PI_AGENTS_UNSUPPORTED`（AC1 要求
+/// 领域层、服务层与数据库层同时拒绝）；其余工具保持既有泛化文案。
+fn unsupported_agent_tool(tool: crate::domain::Tool, scope: crate::domain::Scope) -> AppError {
+    if tool == crate::domain::Tool::Pi {
+        return AppError::invalid_input("capability", crate::adapters::pi::PI_AGENTS_UNSUPPORTED);
+    }
+    match scope {
+        crate::domain::Scope::Global => AppError::invalid_input("tool", "该工具不支持 Agents 管理"),
+        crate::domain::Scope::Project => {
+            AppError::invalid_input("tool", "该工具不支持项目级 Agents")
+        }
+    }
+}
+
 pub fn set_global_agent_assignment(
     database: &mut Database,
     input: &SetGlobalAgentAssignmentInput,
 ) -> Result<AgentDto, AppError> {
     if !ASSIGNABLE_AGENT_TOOLS.contains(&input.tool) {
-        return Err(AppError::invalid_input("tool", "该工具不支持 Agents 管理"));
+        return Err(unsupported_agent_tool(input.tool, Scope::Global));
     }
     let record = repository::set_global_assignment(
         database,
@@ -127,7 +142,7 @@ pub fn set_project_agent_assignment(
 ) -> Result<AgentDto, AppError> {
     agent_scope_supported(input.tool, Scope::Project)?;
     if !PROJECT_AGENT_TOOLS.contains(&input.tool) {
-        return Err(AppError::invalid_input("tool", "该工具不支持项目级 Agents"));
+        return Err(unsupported_agent_tool(input.tool, Scope::Project));
     }
     let record = repository::set_project_assignment(
         database,
@@ -368,6 +383,7 @@ pub fn preview_agent_sync(
             skill_takeover_entries: Vec::new(),
             project_native_action: None,
             hook_initial_adopt: false,
+            hard_block: None,
         })
         .collect();
     let plan = build_preview_plan(scope, project_id, requests, redactor)?;

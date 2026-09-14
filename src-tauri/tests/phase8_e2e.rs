@@ -30,8 +30,9 @@ use easytoagents_lib::{
     overview::{dashboard_summary, snapshot_restore_context},
     profiles::{
         apply_profile_preview, confirm_prompt_import, create_prompt_profile,
-        discover_prompt_import, preview_prompt_sync, set_global_prompt_assignment,
-        ConfirmImportInput, PromptProfileInput, SetGlobalPromptAssignmentInput,
+        create_provider_profile, discover_prompt_import, preview_prompt_sync,
+        preview_provider_sync, set_global_prompt_assignment, ConfirmImportInput,
+        PromptProfileInput, ProviderProfileInput, SetGlobalPromptAssignmentInput,
     },
     projects::{register_project, RegisterProjectInput},
     security::SecretRedactor,
@@ -338,6 +339,7 @@ unknown = "preserve"
                 Tool::Cursor => self.cursor_home.clone(),
                 Tool::Zcode => self.home.join(".zcode"),
                 Tool::Opencode => self.environment.opencode_config_dir().to_path_buf(),
+                Tool::Pi => self.environment.pi_agent_dir().to_path_buf(),
             }
         };
         self.restore_case(&result.run_id, &target_path, allowed_root)
@@ -397,6 +399,7 @@ unknown = "preserve"
                 Tool::Cursor => self.cursor_home.clone(),
                 Tool::Zcode => self.home.join(".zcode"),
                 Tool::Opencode => self.environment.opencode_config_dir().to_path_buf(),
+                Tool::Pi => self.environment.pi_agent_dir().to_path_buf(),
             }
         };
         self.restore_case(
@@ -1609,4 +1612,589 @@ fn collect_entries(root: &Path, path: &Path, files: &mut Vec<(PathBuf, PathBuf)>
             ));
         }
     }
+}
+
+/// Pi 专用 fixture：显式映射 `PI_CODING_AGENT_DIR`（不读进程环境），并让
+/// `pi-mcp-adapter` 处于「已声明 + 已安装 + 版本满足」的就绪状态。
+struct PiFixture {
+    _temporary: TempDir,
+    root: PathBuf,
+    pi_agent_dir: PathBuf,
+    project: PathBuf,
+    paths: AppPaths,
+    database: Database,
+    environment: ExplicitEnvironment,
+    project_id: String,
+    write_operations: Mutex<()>,
+    redactor: SecretRedactor,
+    user_mcp_evidence: VerifiedClaudeUserMcpEvidence,
+    policy_evidence: VerifiedClaudeCustomizationPolicyEvidence,
+}
+
+fn write_adapter_package(pi_agent_dir: &Path, version: &str) {
+    let package_dir = pi_agent_dir.join("npm/node_modules/pi-mcp-adapter");
+    fs::create_dir_all(&package_dir).expect("创建适配器安装目录失败");
+    fs::write(
+        package_dir.join("package.json"),
+        format!("{{\"name\":\"pi-mcp-adapter\",\"version\":\"{version}\"}}\n"),
+    )
+    .expect("写入适配器 package.json 失败");
+}
+
+impl PiFixture {
+    fn new() -> Self {
+        let temporary = tempfile::tempdir().expect("创建 Pi fixture 失败");
+        let root = fs::canonicalize(temporary.path()).expect("规范化 Pi fixture 失败");
+        let home = root.join("home");
+        let pi_agent_dir = root.join("pi-agent");
+        let claude_config = root.join("claude-config");
+        let project = root.join("project");
+        for directory in [&home, &pi_agent_dir, &claude_config, &project] {
+            fs::create_dir(directory).expect("创建 Pi fixture 目录失败");
+        }
+        fs::create_dir_all(project.join(".pi/skills")).expect("创建项目 Skills 目录失败");
+        // 适配器声明 + 安装 + 版本（3.33.0 > 最低 2.33.0）。
+        fs::write(
+            pi_agent_dir.join("settings.json"),
+            br#"{"packages":["npm:pi-mcp-adapter"]}
+"#,
+        )
+        .expect("写入 Pi settings.json 失败");
+        write_adapter_package(&pi_agent_dir, "2.33.0");
+        let claude_user_mcp = home.join(".claude.json");
+        fs::write(
+            &claude_user_mcp,
+            br#"{"mcpServers":{}}
+"#,
+        )
+        .expect("写入 Claude 用户 MCP fixture 失败");
+        fs::write(claude_config.join("CLAUDE.md"), "# Pi fixture\n")
+            .expect("写入 fixture 提示词失败");
+
+        let environment = ExplicitEnvironment::new(
+            &home,
+            Some(claude_config.clone()),
+            Some(home.join(".codex")),
+            ToolAvailability::all_installed(),
+        )
+        .expect("创建 Pi 隔离环境失败")
+        .with_pi_agent_dir(pi_agent_dir.clone())
+        .expect("绑定 PI_CODING_AGENT_DIR 失败");
+        let user_mcp_evidence =
+            VerifiedClaudeUserMcpEvidence::new(CLAUDE_VERSION, &claude_config, &claude_user_mcp)
+                .expect("创建 Claude MCP 证据失败");
+        let policy_evidence =
+            VerifiedClaudeCustomizationPolicyEvidence::from_effective_setting(CLAUDE_VERSION, None)
+                .expect("创建 Claude policy 证据失败");
+        let paths = AppPaths::from_data_root(root.join("app-data")).expect("创建应用数据根失败");
+        let mut database = Database::open(&paths).expect("打开 Pi 隔离数据库失败");
+        let project_dto = register_project(
+            &mut database,
+            &environment,
+            &RegisterProjectInput {
+                display_name: "Pi 隔离项目".to_owned(),
+                root_path: project.to_string_lossy().into_owned(),
+            },
+        )
+        .expect("登记 Pi 项目失败");
+        Self {
+            _temporary: temporary,
+            root,
+            pi_agent_dir,
+            project,
+            paths,
+            database,
+            environment,
+            project_id: project_dto.id,
+            write_operations: Mutex::new(()),
+            redactor: SecretRedactor::default(),
+            user_mcp_evidence,
+            policy_evidence,
+        }
+    }
+
+    fn adapter_package_json(&self) -> PathBuf {
+        self.pi_agent_dir
+            .join("npm/node_modules/pi-mcp-adapter/package.json")
+    }
+}
+
+#[test]
+fn pi_chain_covers_provider_prompt_mcp_drift_restore_and_fail_closed() {
+    let mut fixture = PiFixture::new();
+
+    // ---- Provider：新增 → 启用 → Preview → Apply ----
+    let provider_secret = "phase8-pi-provider-secret";
+    let provider = create_provider_profile(
+        &mut fixture.database,
+        &mut fixture.redactor,
+        ProviderProfileInput {
+            tool: Tool::Pi,
+            name: "Pi 渠道".to_owned(),
+            api_base_url: "https://pi.example.com/v1".to_owned(),
+            api_key: provider_secret.to_owned(),
+            default_model: "pi-model-one".to_owned(),
+            options: Default::default(),
+            activate: true,
+        },
+    )
+    .expect("创建 Pi Provider 失败");
+    assert_eq!(provider.tool, Tool::Pi);
+
+    // 原生文件既有非受管 provider 与未知顶层字段：Apply 必须只做条目级局部合并。
+    let models_path = fixture.pi_agent_dir.join("models.json");
+    let original_models = br#"{
+  "unknownTop": {"preserve": true},
+  "providers": {"other": {"baseUrl": "https://other.example.com/v1"}}
+}
+"#
+    .to_vec();
+    fs::write(&models_path, &original_models).expect("写入初始 models.json 失败");
+
+    let provider_plan = preview_provider_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        Tool::Pi,
+    )
+    .expect("Pi Provider 预览失败");
+    assert_eq!(provider_plan.targets[0].change_kind, ChangeKind::Update);
+    apply_profile_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &provider_plan.preview_id,
+        Tool::Pi,
+        ArtifactKind::Provider,
+    )
+    .expect("Pi Provider 应用失败");
+
+    let models: Value =
+        serde_json::from_str(&fs::read_to_string(&models_path).expect("读取 models.json 失败"))
+            .expect("解析 models.json 失败");
+    let provider_id = provider
+        .options
+        .provider_id
+        .clone()
+        .expect("Pi provider 必须有稳定 id");
+    let entry = &models["providers"][&provider_id];
+    assert_eq!(entry["baseUrl"], json!("https://pi.example.com/v1"));
+    assert_eq!(entry["apiKey"], json!(provider_secret));
+    assert_eq!(entry["models"], json!([{"id": "pi-model-one"}]));
+    assert_eq!(models["unknownTop"], json!({"preserve": true}));
+    assert_eq!(
+        models["providers"]["other"]["baseUrl"],
+        json!("https://other.example.com/v1")
+    );
+
+    // ---- Prompt：分配 → Preview → Apply → override 硬阻断 ----
+    let prompt = create_prompt_profile(
+        &mut fixture.database,
+        PromptProfileInput {
+            name: "Pi 提示词".to_owned(),
+            body: REPLACEMENT_PROMPT.to_owned(),
+        },
+    )
+    .expect("创建 Pi 提示词失败");
+    set_global_prompt_assignment(
+        &mut fixture.database,
+        &SetGlobalPromptAssignmentInput {
+            tool: Tool::Pi,
+            prompt_profile_id: prompt.id.clone(),
+            assigned: true,
+            row_version: prompt.row_version,
+        },
+    )
+    .expect("启用 Pi 提示词失败");
+    let prompt_plan = preview_prompt_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &fixture.redactor,
+        Tool::Pi,
+    )
+    .expect("Pi 提示词预览失败");
+    apply_profile_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &prompt_plan.preview_id,
+        Tool::Pi,
+        ArtifactKind::Prompt,
+    )
+    .expect("Pi 提示词应用失败");
+    let agents_md = fixture.pi_agent_dir.join("AGENTS.md");
+    assert_eq!(
+        fs::read_to_string(&agents_md).expect("读取 AGENTS.md 失败"),
+        REPLACEMENT_PROMPT
+    );
+
+    // `AGENTS.override.md` 存在时写入必然不生效 → 预览固定为 Conflict 且带诊断码。
+    let override_path = fixture.pi_agent_dir.join("AGENTS.override.md");
+    fs::write(&override_path, "# override\n").expect("写入 AGENTS.override.md 失败");
+    let blocked_plan = preview_prompt_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &fixture.redactor,
+        Tool::Pi,
+    )
+    .expect("Pi 提示词预览（override）失败");
+    let blocked_target = &blocked_plan.targets[0];
+    assert_eq!(blocked_target.change_kind, ChangeKind::Conflict);
+    assert!(blocked_target
+        .warning_codes
+        .iter()
+        .any(|code| code == "PI_PROMPT_OVERRIDE_DETECTED"));
+    assert!(apply_profile_preview(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &blocked_plan.preview_id,
+        Tool::Pi,
+        ArtifactKind::Prompt,
+    )
+    .is_err());
+    fs::remove_file(&override_path).expect("删除 AGENTS.override.md 失败");
+
+    // ---- MCP：全局 Import/Apply（不写 type）→ 项目遮蔽硬阻断 ----
+    let mcp = create_mcp_server(
+        &mut fixture.database,
+        &mut fixture.redactor,
+        &McpServerInput {
+            name: "pi-mcp".to_owned(),
+            transport: McpTransport::Stdio,
+            command: Some("pi-mcp-command".to_owned()),
+            url: None,
+            args: vec!["--flag".to_owned()],
+            env: BTreeMap::from([("PI_MCP_ENV".to_owned(), "1".to_owned())]),
+            headers: BTreeMap::new(),
+            extra: json!({"directTools": ["search"]}),
+            enabled: true,
+        },
+    )
+    .expect("创建 Pi MCP 失败");
+    set_global_mcp_assignment(
+        &mut fixture.database,
+        &fixture.redactor,
+        &SetGlobalMcpAssignmentInput {
+            tool: Tool::Pi,
+            mcp_id: mcp.id.clone(),
+            assigned: true,
+            row_version: mcp.row_version,
+        },
+    )
+    .expect("Pi MCP 全局分配失败");
+    let mcp_plan = preview_mcp_sync_with_probes(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewMcpSyncInput {
+            tool: Tool::Pi,
+            project_id: None,
+            exclude_from_git: false,
+        },
+        &fixture.user_mcp_evidence,
+        &fixture.policy_evidence,
+    )
+    .expect("Pi 全局 MCP 预览失败");
+    apply_mcp_preview_with_probes(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &ApplyMcpPreviewInput {
+            preview_id: mcp_plan.preview_id.clone(),
+            tool: Tool::Pi,
+            project_id: None,
+        },
+        &fixture.user_mcp_evidence,
+        &fixture.policy_evidence,
+    )
+    .expect("Pi 全局 MCP 应用失败");
+    let global_mcp: Value = serde_json::from_str(
+        &fs::read_to_string(fixture.pi_agent_dir.join("mcp.json")).expect("读取 mcp.json 失败"),
+    )
+    .expect("解析 mcp.json 失败");
+    let global_entry = &global_mcp["mcpServers"]["pi-mcp"];
+    assert!(global_entry.get("type").is_none(), "Pi 不写 type");
+    assert_eq!(global_entry["command"], json!("pi-mcp-command"));
+    assert_eq!(global_entry["args"], json!(["--flag"]));
+    assert_eq!(global_entry["env"], json!({"PI_MCP_ENV": "1"}));
+    assert_eq!(global_entry["directTools"], json!(["search"]));
+
+    // 项目自有条目被项目共享文件同名遮蔽 → 项目预览硬阻断且零写入。
+    let project_mcp = create_mcp_server(
+        &mut fixture.database,
+        &mut fixture.redactor,
+        &McpServerInput {
+            name: "pi-mcp-project".to_owned(),
+            transport: McpTransport::StreamableHttp,
+            command: None,
+            args: Vec::new(),
+            url: Some("https://pi-project.example.com/rpc".to_owned()),
+            headers: BTreeMap::new(),
+            env: BTreeMap::new(),
+            extra: json!({}),
+            enabled: true,
+        },
+    )
+    .expect("创建 Pi 项目 MCP 失败");
+    let (mcp_row_version, project_row_version) =
+        fixture.database.with_connection_for_tests(|conn| {
+            let mcp_row_version: i64 = conn
+                .query_row(
+                    "SELECT row_version FROM mcp_servers WHERE id = ?1",
+                    [&project_mcp.id],
+                    |row| row.get(0),
+                )
+                .expect("读取 MCP row_version 失败");
+            let project_row_version: i64 = conn
+                .query_row(
+                    "SELECT row_version FROM projects WHERE id = ?1",
+                    [&fixture.project_id],
+                    |row| row.get(0),
+                )
+                .expect("读取项目 row_version 失败");
+            (mcp_row_version as u32, project_row_version as u32)
+        });
+    set_project_mcp_assignment(
+        &mut fixture.database,
+        &fixture.redactor,
+        &SetProjectMcpAssignmentInput {
+            tool: Tool::Pi,
+            project_id: fixture.project_id.clone(),
+            mcp_id: project_mcp.id.clone(),
+            assigned: true,
+            mcp_row_version,
+            project_row_version,
+        },
+    )
+    .expect("Pi MCP 项目分配失败");
+    fs::write(
+        fixture.project.join(".mcp.json"),
+        br#"{"mcpServers":{"pi-mcp-project":{"command":"shadow"}}}
+"#,
+    )
+    .expect("写入项目共享 MCP fixture 失败");
+    let shadowed_plan = preview_mcp_sync_with_probes(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewMcpSyncInput {
+            tool: Tool::Pi,
+            project_id: Some(fixture.project_id.clone()),
+            exclude_from_git: false,
+        },
+        &fixture.user_mcp_evidence,
+        &fixture.policy_evidence,
+    )
+    .expect("Pi 项目 MCP 预览失败");
+    let shadowed = shadowed_plan
+        .targets
+        .iter()
+        .find(|target| target.descriptor.scope == easytoagents_lib::domain::Scope::Project)
+        .expect("项目目标必须出现在预览中");
+    assert_eq!(shadowed.change_kind, ChangeKind::Conflict);
+    assert!(shadowed
+        .warning_codes
+        .iter()
+        .any(|code| code == "PI_MCP_SHADOWED_BY_PROJECT_SHARED"));
+    assert!(
+        !fixture.project.join(".pi/mcp.json").exists(),
+        "硬阻断的预览不得写入项目 MCP 文件"
+    );
+
+    // ---- 适配器缺失 → descriptor unsupported 且零外部写入 ----
+    fs::remove_file(fixture.adapter_package_json()).expect("移除适配器安装目录失败");
+    let missing = preview_provider_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        Tool::Pi,
+    )
+    .expect("Provider 预览仍应可用");
+    assert_eq!(missing.targets[0].change_kind, ChangeKind::Unchanged);
+    let mcp_unsupported = preview_mcp_sync_with_probes(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &PreviewMcpSyncInput {
+            tool: Tool::Pi,
+            project_id: None,
+            exclude_from_git: false,
+        },
+        &fixture.user_mcp_evidence,
+        &fixture.policy_evidence,
+    );
+    assert!(
+        mcp_unsupported.is_err(),
+        "适配器缺失时全局 MCP 必须 fail closed"
+    );
+
+    // ---- Hooks / Agents fail closed ----
+    let hook_error = easytoagents_lib::hooks::set_global_hook_assignment(
+        &mut fixture.database,
+        &easytoagents_lib::hooks::SetGlobalHookAssignmentInput {
+            tool: Tool::Pi,
+            hook_id: "00000000-0000-4000-8000-0000000009a1".to_owned(),
+            event: easytoagents_lib::domain::HookEvent::PreToolUse,
+            assigned: true,
+            row_version: 1,
+        },
+    )
+    .expect_err("Pi Hooks 必须 fail closed");
+    assert_eq!(hook_error.code(), ErrorCode::InvalidInput);
+    assert!(format!("{hook_error:?}").contains("PI_HOOKS_UNSUPPORTED"));
+
+    let agent_error = set_global_agent_assignment(
+        &mut fixture.database,
+        &SetGlobalAgentAssignmentInput {
+            tool: Tool::Pi,
+            agent_id: "00000000-0000-4000-8000-0000000009a2".to_owned(),
+            assigned: true,
+            row_version: 1,
+        },
+    )
+    .expect_err("Pi Agents 必须 fail closed");
+    assert_eq!(agent_error.code(), ErrorCode::InvalidInput);
+    assert!(format!("{agent_error:?}").contains("PI_AGENTS_UNSUPPORTED"));
+
+    // ---- 项目 Skills 未受信任 → 禁止 Apply ----
+    let skill_source = fixture.root.join("sources/pi-fixture-skill");
+    fs::create_dir_all(&skill_source).expect("创建 Pi Skill 来源目录失败");
+    fs::write(
+        skill_source.join("SKILL.md"),
+        "---\nname: pi-fixture-skill\ndescription: Pi fixture\n---\n\n# Pi Skill\n",
+    )
+    .expect("写入 Pi Skill fixture 失败");
+    let skill = import_skill(
+        &mut fixture.database,
+        &fixture.paths,
+        &ImportSkillInput {
+            source_path: skill_source.to_string_lossy().into_owned(),
+        },
+    )
+    .expect("导入 Pi fixture Skill 失败");
+    let (skill_row_version, skill_project_row_version) =
+        fixture.database.with_connection_for_tests(|conn| {
+            let skill_row_version: i64 = conn
+                .query_row(
+                    "SELECT row_version FROM skills WHERE id = ?1",
+                    [&skill.id],
+                    |row| row.get(0),
+                )
+                .expect("读取 Skill row_version 失败");
+            let project_row_version: i64 = conn
+                .query_row(
+                    "SELECT row_version FROM projects WHERE id = ?1",
+                    [&fixture.project_id],
+                    |row| row.get(0),
+                )
+                .expect("读取项目 row_version 失败");
+            (skill_row_version as u32, project_row_version as u32)
+        });
+    set_project_skill_assignment(
+        &mut fixture.database,
+        &fixture.paths,
+        &SetProjectSkillAssignmentInput {
+            tool: Tool::Pi,
+            project_id: fixture.project_id.clone(),
+            skill_id: skill.id.clone(),
+            assigned: true,
+            skill_row_version,
+            project_row_version: skill_project_row_version,
+        },
+    )
+    .expect("Pi 项目 Skill 分配失败");
+    let trust_preview = preview_skill_sync_with_policy_probe(
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &fixture.redactor,
+        &PreviewSkillSyncInput {
+            tool: Tool::Pi,
+            project_id: Some(fixture.project_id.clone()),
+            exclude_from_git: false,
+        },
+        &fixture.policy_evidence,
+    )
+    .expect("Pi 项目 Skills 预览应返回可解释的冲突状态");
+    let trust_target = &trust_preview.targets[0];
+    // 默认 `defaultProjectTrust = ask` 属静态不可判定 → Unknown，Apply 前阻断。
+    assert_eq!(trust_target.change_kind, ChangeKind::Conflict);
+    assert!(trust_target
+        .warning_codes
+        .iter()
+        .any(|code| code == "PI_PROJECT_SKILLS_TRUST_UNKNOWN"));
+    assert!(apply_skill_preview_with_policy_probe(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &fixture.redactor,
+        &ApplySkillPreviewInput {
+            preview_id: trust_preview.preview_id.clone(),
+            tool: Tool::Pi,
+            project_id: Some(fixture.project_id.clone()),
+        },
+        &fixture.policy_evidence,
+    )
+    .is_err());
+    assert!(
+        !fixture.project.join(".pi/skills/pi-fixture-skill").exists(),
+        "未受信任项目不得写入受管 Skill 链接"
+    );
+
+    // ---- 漂移 → Restore ----
+    fs::write(&models_path, "{\"providers\":{}}\n").expect("写入漂移 models.json 失败");
+    let drifted = preview_provider_sync(
+        &mut fixture.database,
+        &fixture.environment,
+        &mut fixture.redactor,
+        Tool::Pi,
+    )
+    .expect("漂移后 Provider 预览失败");
+    assert_eq!(
+        drifted.targets[0].change_kind,
+        ChangeKind::Conflict,
+        "外部改写受管内容必须成为 Conflict"
+    );
+    let snapshots = list_snapshots(&fixture.database).expect("列出快照失败");
+    let provider_snapshot = snapshots
+        .iter()
+        .find(|snapshot| snapshot.target_path == models_path.to_string_lossy())
+        .expect("Provider Apply 必须留下快照");
+    let context = snapshot_restore_context(
+        &fixture.database,
+        &fixture.environment,
+        &provider_snapshot.snapshot_id,
+    )
+    .expect("推导 Provider 恢复根失败");
+    let restore = preview_restore(
+        &mut fixture.database,
+        &fixture.paths,
+        &provider_snapshot.snapshot_id,
+        &context.allowed_root,
+    )
+    .expect("Restore 预览失败");
+    restore_snapshot(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &restore.preview_id,
+        &context.allowed_root,
+        None,
+    )
+    .expect("Restore 失败");
+    assert_eq!(
+        fs::read(&models_path).expect("读取恢复后 models.json 失败"),
+        original_models,
+        "Restore 必须逐字节回到 Apply 前的原生文件"
+    );
 }

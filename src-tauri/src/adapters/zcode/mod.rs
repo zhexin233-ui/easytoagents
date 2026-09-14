@@ -447,6 +447,7 @@ mod tests {
                 ToolAvailabilityState::Installed,
                 ToolAvailabilityState::Unavailable,
                 ToolAvailabilityState::Installed,
+                ToolAvailabilityState::Installed,
             ]),
         )
         .unwrap();

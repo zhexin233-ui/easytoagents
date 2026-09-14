@@ -415,6 +415,7 @@ fn build_prepared_skill_preview(
                 skill_takeover_entries,
                 project_native_action: None,
                 hook_initial_adopt: false,
+                hard_block: target.hard_block,
             }]
         })
         .unwrap_or_default();
@@ -639,6 +640,8 @@ struct PreparedSkillTarget {
     allowed_root: PathBuf,
     managed_items: Vec<ManagedItemApply>,
     remove_managed_item_ids: Vec<String>,
+    /// Pi 专用：受管子链接断链/逃逸时提供的硬阻断诊断码。
+    hard_block: Option<String>,
 }
 
 fn prepare_skill_sync(
@@ -775,6 +778,27 @@ fn prepare_skill_sync_in_connection(
         .map(|(root, path)| inspect_path(root, Path::new(path)))
         .transpose()?;
     let allowed_root = descriptor_allowed_root(&descriptor)?;
+    // Pi 对受管子链接的断链静默忽略（无官方诊断），写入前必须自行自检：
+    // 断链或解析结果逃逸 `allowed_root` 时硬阻断，不静默重建。
+    let hard_block = if input.tool == Tool::Pi {
+        descriptor.path.as_deref().and_then(|path| {
+            let directory = Path::new(path);
+            let managed_names = desired_records
+                .iter()
+                .chain(inherited_records.iter())
+                .map(|record| record.name.clone())
+                .chain(existing_items.iter().map(|item| item.external_key.clone()))
+                .collect::<Vec<_>>();
+            crate::adapters::pi::managed_children_symlink_diagnostic(
+                directory,
+                &managed_names,
+                &allowed_root,
+            )
+            .map(str::to_owned)
+        })
+    } else {
+        None
+    };
     Ok(PreparedSkillSync {
         scope,
         project,
@@ -789,6 +813,7 @@ fn prepare_skill_sync_in_connection(
             allowed_root,
             managed_items,
             remove_managed_item_ids,
+            hard_block,
         }),
     })
 }

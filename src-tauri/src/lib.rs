@@ -380,6 +380,16 @@ pub fn run() {
                 .with_opencode_config_path(environment_path("OPENCODE_CONFIG"))
                 .with_opencode_config_content(std::env::var("OPENCODE_CONFIG_CONTENT").ok())
                 .with_opencode_disabled(std::env::var("OPENCODE_DISABLE").is_ok());
+            // Pi 的 agent dir 变量名来自 `piConfig.name`；本任务只支持 vanilla Pi，
+            // 即固定的 `PI_CODING_AGENT_DIR`。原始值在这里读取一次：展开与安全
+            // 映射在探针内部完成，adapter 永不读进程环境。
+            probe_input = probe_input.with_pi_agent_dir(environment_path("PI_CODING_AGENT_DIR"));
+            // `PI_MCP_CONFIG_MODE=exclusive` 时适配器只读 `<pi_agent_dir>/mcp.json`，
+            // 项目 `.pi/mcp.json` 被忽略；adapter 只消费已解释的布尔事实。
+            probe_input = probe_input.with_pi_mcp_exclusive_mode(
+                std::env::var("PI_MCP_CONFIG_MODE")
+                    .is_ok_and(|value| value.trim().eq_ignore_ascii_case("exclusive")),
+            );
             // 数据库与窗口先就绪；工具探测（最多五个 3 秒超时的子进程）放到
             // 阻塞线程池并行执行，完成后用事件通知前端刷新依赖环境的查询。
             let probe = app::EnvironmentProbeConfig {

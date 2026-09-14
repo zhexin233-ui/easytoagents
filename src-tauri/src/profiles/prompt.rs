@@ -22,6 +22,7 @@ pub fn create_prompt_profile(
             is_active_zcode: false,
             is_active_cursor: false,
             is_active_opencode: false,
+            is_active_pi: false,
             imported_from_path: None,
         },
     )?)
@@ -171,6 +172,7 @@ pub fn confirm_prompt_import(
             is_active_zcode: preview.tool == Tool::Zcode,
             is_active_cursor: preview.tool == Tool::Cursor,
             is_active_opencode: preview.tool == Tool::Opencode,
+            is_active_pi: preview.tool == Tool::Pi,
             imported_from_path: Some(preview.target_path.clone()),
         },
         &ImportedBaselineRecord {

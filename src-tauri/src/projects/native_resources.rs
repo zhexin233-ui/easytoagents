@@ -858,6 +858,7 @@ fn prepare_native_action(
         skill_takeover_entries: Vec::new(),
         project_native_action: Some(evidence),
         hook_initial_adopt: false,
+        hard_block: None,
     };
     Ok(PreparedNativeAction {
         project_id: record.project_id,
@@ -1545,7 +1546,7 @@ fn skill_entry_item_hash(
 }
 
 /// MCP 条目在原生文件中的容器路径；ZCode 是官方定义的嵌套键 `mcp.servers`。
-fn tool_adapters() -> [&'static dyn ToolAdapter; 5] {
+fn tool_adapters() -> [&'static dyn ToolAdapter; 6] {
     Tool::ALL.map(|tool| tool.adapter())
 }
 

@@ -29,6 +29,7 @@ const ENABLED_TOOL_ORDER = [
   "cursor",
   "zcode",
   "opencode",
+  "pi",
 ] as const satisfies readonly Tool[];
 
 interface SettingsDialogProps {

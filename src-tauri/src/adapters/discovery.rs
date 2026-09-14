@@ -1,22 +1,35 @@
 /// Provider/Prompt 页面与引导服务有正式文件合同的工具；Cursor Provider 仍不
 /// 支持，但 Prompt 已按官方规则文件合同接入（任务 09-06-cursor-prompt-support）。
 /// MCP 与 Skills 的可分配工具集合。
-pub const PROFILE_TOOLS: [Tool; 5] = Tool::ALL;
-pub const ASSIGNABLE_MCP_TOOLS: [Tool; 5] = Tool::ALL;
-pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 5] = Tool::ALL;
+/// Pi 的 Provider/Prompt 仅全局支持，但工具本身仍进入 `PROFILE_TOOLS`；
+/// 其 MCP 目标由 descriptor 能力（适配器就绪）收敛，不缩小共享集合。
+pub const PROFILE_TOOLS: [Tool; 6] = Tool::ALL;
+pub const ASSIGNABLE_MCP_TOOLS: [Tool; 6] = Tool::ALL;
+pub const ASSIGNABLE_SKILL_TOOLS: [Tool; 6] = Tool::ALL;
 /// Hooks 的可分配工具集合（四工具均有官方 hooks 合同，证据见任务 09-05-add-hooks-management）。
+/// Pi 无声明式 hook 文件，不进入该集合。
 pub const ASSIGNABLE_HOOK_TOOLS: [Tool; 4] = [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Zcode];
 /// Agents 的全局可分配工具集合（五工具均有官方子代理目录合同，证据日期 2026-09-12；
-/// ZCode 为官方 Beta）。
-pub const ASSIGNABLE_AGENT_TOOLS: [Tool; 5] = Tool::ALL;
+/// ZCode 为官方 Beta）。Pi 无官方 Agents 目录/schema，不进入该集合。
+pub const ASSIGNABLE_AGENT_TOOLS: [Tool; 5] = [
+    Tool::Claude,
+    Tool::Codex,
+    Tool::Cursor,
+    Tool::Zcode,
+    Tool::Opencode,
+];
 /// Agents 的项目级可分配工具集合（ZCode 官方明示不支持项目级子代理）。
 pub const PROJECT_AGENT_TOOLS: [Tool; 4] =
     [Tool::Claude, Tool::Codex, Tool::Cursor, Tool::Opencode];
 
 /// Agent 受管文件在目标工具下的扩展名：Codex 为 TOML，其余工具为 Markdown。
+///
+/// `Tool::Pi` 分支不会到达服务层：Pi 无官方 Agents 合同，服务入口会先返回
+/// `PI_AGENTS_UNSUPPORTED`。此处显式列出仅为穷举完整性，不得靠 `_` 兜底。
 pub fn agent_file_extension(tool: Tool) -> &'static str {
     match tool {
         Tool::Codex => "toml",
+        Tool::Pi => "md",
         Tool::Claude | Tool::Cursor | Tool::Zcode | Tool::Opencode => "md",
     }
 }
@@ -297,20 +310,14 @@ impl TargetDescriptor {
         extension: &str,
     ) -> Result<TargetDescriptor, AppError> {
         // 名称来自数据库中的受管记录；出现路径分隔符即视为非法输入，fail closed。
-        if name.is_empty()
-            || name.contains(['/', '\\', '\0'])
-            || name.starts_with('.')
-        {
+        if name.is_empty() || name.contains(['/', '\\', '\0']) || name.starts_with('.') {
             return Err(AppError::invalid_input(
                 "name",
                 "Agent 名称不能用于构造目标文件名",
             ));
         }
         if extension.is_empty() || extension.contains(['/', '\\', '\0', '.']) {
-            return Err(AppError::invalid_input(
-                "extension",
-                "Agent 文件扩展名非法",
-            ));
+            return Err(AppError::invalid_input("extension", "Agent 文件扩展名非法"));
         }
         let directory = self.path.as_deref().ok_or_else(|| {
             AppError::invalid_input("targetPath", "Agent 目录目标缺少路径（该组合不受支持）")
@@ -338,10 +345,10 @@ impl ToolAvailabilityState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToolAvailability([ToolAvailabilityState; 5]);
+pub struct ToolAvailability([ToolAvailabilityState; 6]);
 
 impl ToolAvailability {
-    pub const fn from_states(states: [ToolAvailabilityState; 5]) -> Self {
+    pub const fn from_states(states: [ToolAvailabilityState; 6]) -> Self {
         Self(states)
     }
 
@@ -365,6 +372,7 @@ const fn tool_index(tool: Tool) -> usize {
         Tool::Cursor => 2,
         Tool::Zcode => 3,
         Tool::Opencode => 4,
+        Tool::Pi => 5,
     }
 }
 
@@ -386,6 +394,7 @@ static CODEX_ADAPTER: codex::CodexAdapter = codex::CodexAdapter;
 static CURSOR_ADAPTER: cursor::CursorAdapter = cursor::CursorAdapter;
 static ZCODE_ADAPTER: zcode::ZcodeAdapter = zcode::ZcodeAdapter;
 static OPENCODE_ADAPTER: opencode::OpencodeAdapter = opencode::OpencodeAdapter;
+static PI_ADAPTER: pi::PiAdapter = pi::PiAdapter;
 
 pub fn adapter_for(tool: Tool) -> &'static dyn ToolAdapter {
     match tool {
@@ -394,6 +403,7 @@ pub fn adapter_for(tool: Tool) -> &'static dyn ToolAdapter {
         Tool::Cursor => &CURSOR_ADAPTER,
         Tool::Zcode => &ZCODE_ADAPTER,
         Tool::Opencode => &OPENCODE_ADAPTER,
+        Tool::Pi => &PI_ADAPTER,
     }
 }
 
@@ -413,6 +423,9 @@ pub(crate) fn native_mcp_container(tool: Tool) -> &'static [&'static str] {
         Tool::Codex => &["mcp_servers"],
         Tool::Zcode => &["mcp", "servers"],
         Tool::Opencode => &["mcp"],
+        // Pi 通过 pi-mcp-adapter 读取 Pi 自有 `mcp.json`；容器名与 Claude/Cursor
+        // 相同但不共享文件（各自独立路径）。适配器未就绪时 descriptor 无路径。
+        Tool::Pi => &["mcpServers"],
     }
 }
 
@@ -438,6 +451,9 @@ pub(crate) fn global_root_for(
             environment.opencode_config_file_root()
         }
         (Tool::Opencode, _) => environment.opencode_config_dir().to_path_buf(),
+        // Pi 的唯一全局写入根是显式映射的 `<pi_agent_dir>`；绝不能回退到
+        // `~/.pi` 或 `HOME`。Pi 的 Project 目标由 `project_root` 收敛。
+        (Tool::Pi, _) => environment.pi_agent_dir().to_path_buf(),
     }
 }
 
@@ -458,7 +474,9 @@ pub(crate) fn populate_descriptor_allowed_roots(
                 .ok_or_else(|| {
                     AppError::invalid_input("projectRoot", "项目目标缺少 project_root")
                 })?,
-            Scope::Global => global_root_for(environment, descriptor.tool, descriptor.artifact_kind),
+            Scope::Global => {
+                global_root_for(environment, descriptor.tool, descriptor.artifact_kind)
+            }
         };
         descriptor.allowed_root = Some(path_text(&root)?);
     }
@@ -500,11 +518,11 @@ pub(crate) fn find_descriptor(
 
 impl ToolAvailability {
     pub const fn all_installed() -> Self {
-        Self([ToolAvailabilityState::Installed; 5])
+        Self([ToolAvailabilityState::Installed; 6])
     }
 
     pub const fn all_unavailable() -> Self {
-        Self([ToolAvailabilityState::Unavailable; 5])
+        Self([ToolAvailabilityState::Unavailable; 6])
     }
 }
 
@@ -518,8 +536,16 @@ pub struct ExplicitEnvironment {
     opencode_config_path: Option<PathBuf>,
     opencode_config_content: Option<String>,
     opencode_disabled: bool,
+    /// Pi agent dir（`PI_CODING_AGENT_DIR`，默认 `<home>/.pi/agent`）。
+    pi_agent_dir: PathBuf,
+    /// 存在 `PI_CODING_AGENT_DIR` 但无法安全映射到绝对路径（相对路径或 rebrand）。
+    /// 为真时 Pi 的全部 descriptor 必须 fail closed（不得静默回退默认值）。
+    pi_agent_dir_unmapped: bool,
+    /// `PI_MCP_CONFIG_MODE=exclusive`：适配器只读 `<pi_agent_dir>/mcp.json`，
+    /// 项目 `.pi/mcp.json` 被忽略，因此 Pi 项目 MCP descriptor 必须 unsupported。
+    pi_mcp_exclusive_mode: bool,
     uses_default_claude_config_dir: bool,
-    installation_versions: [Option<String>; 5],
+    installation_versions: [Option<String>; 6],
     claude_provider_policy: PolicyState,
     availability: ToolAvailability,
     /// 安装探针给出的稳定诊断码（例如 PATH 中有被跳过的不安全条目），供状态 DTO 透出。
@@ -545,6 +571,7 @@ impl ExplicitEnvironment {
         let codex_home = normalize_config_root(&requested_codex_home, "codexHome")?;
         let opencode_config_dir =
             normalize_config_root(&requested_opencode_config_dir, "opencodeConfigDir")?;
+        let pi_agent_dir = normalize_config_root(&home.join(".pi/agent"), "piAgentDir")?;
 
         Ok(Self {
             home,
@@ -554,8 +581,11 @@ impl ExplicitEnvironment {
             opencode_config_path: None,
             opencode_config_content: None,
             opencode_disabled: false,
+            pi_agent_dir,
+            pi_agent_dir_unmapped: false,
+            pi_mcp_exclusive_mode: false,
             uses_default_claude_config_dir,
-            installation_versions: [None, None, None, None, None],
+            installation_versions: [None, None, None, None, None, None],
             claude_provider_policy: PolicyState::Unknown,
             availability,
             installation_probe_diagnostics: Vec::new(),
@@ -595,6 +625,7 @@ impl ExplicitEnvironment {
                 Tool::Cursor => "Cursor 安装版本不能为空",
                 Tool::Zcode => "ZCode 安装版本不能为空",
                 Tool::Opencode => "OpenCode 安装版本不能为空",
+                Tool::Pi => "Pi 安装版本不能为空",
             };
             return Err(AppError::invalid_input("installationVersion", message));
         }
@@ -643,6 +674,48 @@ impl ExplicitEnvironment {
         version: impl Into<String>,
     ) -> Result<Self, AppError> {
         self.with_installation_version(Tool::Opencode, version)
+    }
+
+    /// 显式映射 `PI_CODING_AGENT_DIR`。按 Pi 自身规则展开（`~` → home、
+    /// `~/x` → home/x、绝对路径原样），相对路径无法安全重现（适配器用自身进程
+    /// cwd 解析）时返回错误，由调用方转为 `PI_AGENT_DIR_OVERRIDE_UNMAPPED`，
+    /// **不得**静默回退到默认值。
+    pub fn with_pi_agent_dir(mut self, path: impl Into<PathBuf>) -> Result<Self, AppError> {
+        let path = expand_pi_agent_dir(&path.into(), &self.home)?;
+        self.pi_agent_dir = normalize_config_root(&path, "piAgentDir")?;
+        self.pi_agent_dir_unmapped = false;
+        Ok(self)
+    }
+
+    /// 记录「存在 `PI_CODING_AGENT_DIR` 但不可映射」，供 descriptor 全部 fail closed。
+    pub fn with_pi_agent_dir_unmapped(mut self) -> Self {
+        self.pi_agent_dir_unmapped = true;
+        self
+    }
+
+    pub fn pi_agent_dir(&self) -> &Path {
+        &self.pi_agent_dir
+    }
+
+    pub fn pi_agent_dir_unmapped(&self) -> bool {
+        self.pi_agent_dir_unmapped
+    }
+
+    /// 显式注入 `PI_MCP_CONFIG_MODE=exclusive`（只读探测，不写回）。
+    pub fn with_pi_mcp_exclusive_mode(mut self, exclusive: bool) -> Self {
+        self.pi_mcp_exclusive_mode = exclusive;
+        self
+    }
+
+    pub fn pi_mcp_exclusive_mode(&self) -> bool {
+        self.pi_mcp_exclusive_mode
+    }
+
+    pub fn with_pi_installation_version(
+        self,
+        version: impl Into<String>,
+    ) -> Result<Self, AppError> {
+        self.with_installation_version(Tool::Pi, version)
     }
 
     pub fn with_opencode_config_path(mut self, path: impl Into<PathBuf>) -> Result<Self, AppError> {
@@ -748,6 +821,10 @@ impl ExplicitEnvironment {
 
     pub fn opencode_installation_version(&self) -> Option<&str> {
         self.installation_version(Tool::Opencode)
+    }
+
+    pub fn pi_installation_version(&self) -> Option<&str> {
+        self.installation_version(Tool::Pi)
     }
 
     pub fn installation_version(&self, tool: Tool) -> Option<&str> {
@@ -914,6 +991,29 @@ fn normalize_target_path(path: &Path, field: &'static str) -> Result<PathBuf, Ap
         .parent()
         .ok_or_else(|| AppError::invalid_input(field, "目标路径缺少父目录"))?;
     Ok(normalize_config_root(parent, field)?.join(file_name))
+}
+
+/// 按 Pi 自身规则展开 `PI_CODING_AGENT_DIR`（`pi-mcp-adapter/agent-dir.ts:11-25`）。
+///
+/// `~` → home；`~/x` → `home/x`；绝对路径原样保留；相对路径返回错误
+/// （适配器以自身进程 cwd 解析，EasyToAgents 无法可靠重现）。
+fn expand_pi_agent_dir(raw: &Path, home: &Path) -> Result<PathBuf, AppError> {
+    let raw_text = raw
+        .to_str()
+        .ok_or_else(|| AppError::invalid_input("piAgentDir", "PI_CODING_AGENT_DIR 必须是 UTF-8"))?;
+    if raw_text == "~" {
+        return Ok(home.to_path_buf());
+    }
+    if let Some(rest) = raw_text.strip_prefix("~/") {
+        return Ok(home.join(rest));
+    }
+    if !raw.is_absolute() {
+        return Err(AppError::invalid_input(
+            "piAgentDir",
+            "PI_CODING_AGENT_DIR 相对路径无法安全映射",
+        ));
+    }
+    Ok(raw.to_path_buf())
 }
 
 fn validate_absolute_normal_path(path: &Path, field: &'static str) -> Result<(), AppError> {

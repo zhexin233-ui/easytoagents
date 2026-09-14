@@ -559,7 +559,9 @@ fn parse_native_item(
         let args = take_optional(&mut object, "args", redactor)?.unwrap_or_default();
         let headers = take_optional(
             &mut object,
-            if matches!(tool, Tool::Claude | Tool::Cursor) {
+            // Pi 与 Claude/Cursor 一致使用 `headers`（适配器不写 `type`，
+            // HTTP 与 stdio 靠 `url`/`command` 字段存在性区分）。
+            if matches!(tool, Tool::Claude | Tool::Cursor | Tool::Pi) {
                 "headers"
             } else {
                 "http_headers"

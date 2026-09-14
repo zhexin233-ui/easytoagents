@@ -1041,6 +1041,7 @@ mod tests {
                 Tool::Claude => unreachable!(),
                 Tool::Zcode => unreachable!(),
                 Tool::Opencode => unreachable!(),
+                Tool::Pi => unreachable!("Pi 项目原生资源在后续阶段接入"),
             };
             let project = fixture.register_project_with(|root| {
                 write_skill(&root.join(relative), "native-dir", "platform-bytes");
@@ -1335,8 +1336,16 @@ mod tests {
         )
         .unwrap();
         let items = list_native_hooks(&mut fixture, &project.id, Tool::Claude);
-        assert_eq!(items.len(), 5, "missing 行保留在列表中（2 active + 3 missing）");
-        for gone in ["PreToolUse · Task", "SessionStart · clear", "SessionStart · compact"] {
+        assert_eq!(
+            items.len(),
+            5,
+            "missing 行保留在列表中（2 active + 3 missing）"
+        );
+        for gone in [
+            "PreToolUse · Task",
+            "SessionStart · clear",
+            "SessionStart · compact",
+        ] {
             let missing = items
                 .iter()
                 .find(|item| item.display_name == gone)
@@ -1434,8 +1443,9 @@ mod tests {
         )
         .unwrap();
         // 身份行共用：中央同步的 managed_items 必须挂在登记时建的同一 target 上。
-        let managed = hooks_repository::list_managed_hook_items(&fixture.database, &identity.target_id)
-            .unwrap();
+        let managed =
+            hooks_repository::list_managed_hook_items(&fixture.database, &identity.target_id)
+                .unwrap();
         assert_eq!(managed.len(), 1, "中央条目应复用登记时建立的目标身份行");
 
         // 中央条目不展示为项目原生资源。
@@ -1620,11 +1630,7 @@ mod tests {
         let project = fixture.register_project_with(|root| {
             let directory = root.join(".claude/agents");
             fs::create_dir_all(&directory).unwrap();
-            fs::write(
-                directory.join("first.md"),
-                "---\nname: first\n---\n正文\n",
-            )
-            .unwrap();
+            fs::write(directory.join("first.md"), "---\nname: first\n---\n正文\n").unwrap();
             fs::write(
                 directory.join("second.md"),
                 "---\nname: second\n---\n正文\n",
@@ -1637,7 +1643,10 @@ mod tests {
         fs::remove_file(fixture.home.join("projects/native/.claude/agents/first.md")).unwrap();
         let items = list_native_agents(&mut fixture, &project.id, Tool::Claude);
         assert_eq!(items.len(), 2);
-        let missing = items.iter().find(|item| item.display_name == "first").unwrap();
+        let missing = items
+            .iter()
+            .find(|item| item.display_name == "first")
+            .unwrap();
         assert_eq!(missing.state, ProjectNativeResourceState::Missing);
         assert!(missing.safe_summary.get("description").is_none());
         assert!(items
@@ -1733,8 +1742,12 @@ mod tests {
             .join("projects/native/.claude/agents/central-reviewer.md")
             .is_file());
         assert_eq!(
-            fs::read(fixture.home.join("projects/native/.claude/agents/local-helper.md"))
-                .unwrap(),
+            fs::read(
+                fixture
+                    .home
+                    .join("projects/native/.claude/agents/local-helper.md")
+            )
+            .unwrap(),
             native_bytes.as_bytes()
         );
     }
@@ -1821,8 +1834,14 @@ mod tests {
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         };
-        assert_eq!(diagnostic("broken"), Some("AGENT_FRONTMATTER_INVALID".to_owned()));
-        assert_eq!(diagnostic("binary"), Some("AGENT_FRONTMATTER_INVALID".to_owned()));
+        assert_eq!(
+            diagnostic("broken"),
+            Some("AGENT_FRONTMATTER_INVALID".to_owned())
+        );
+        assert_eq!(
+            diagnostic("binary"),
+            Some("AGENT_FRONTMATTER_INVALID".to_owned())
+        );
         assert_eq!(diagnostic("large"), Some("AGENT_FILE_TOO_LARGE".to_owned()));
     }
 

@@ -588,6 +588,7 @@ mod tests {
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
+                hard_block: None,
             }],
             &SecretRedactor::default(),
         )
@@ -634,6 +635,7 @@ mod tests {
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
+                hard_block: None,
             }],
             &SecretRedactor::default(),
         )
@@ -692,6 +694,7 @@ mod tests {
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
+                hard_block: None,
             }],
             &SecretRedactor::default(),
         )
@@ -778,6 +781,7 @@ mod tests {
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
+                hard_block: None,
             }],
             &redactor,
         )
@@ -892,6 +896,7 @@ mod tests {
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
+                hard_block: None,
             }],
             &SecretRedactor::default(),
         )

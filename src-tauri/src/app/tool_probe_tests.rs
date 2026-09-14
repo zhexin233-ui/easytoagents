@@ -54,6 +54,61 @@ mod tests {
             super::ToolBinary::CursorAgent.parse_version(b"Cursor Agent 1.preview", b""),
             None
         );
+        // Pi 只有 CLI，官方未承诺 `--version` 前缀；宽容解析接受带/不带 `pi ` 的 semver。
+        assert_eq!(
+            super::ToolBinary::Pi.parse_version(b"0.85.1", b""),
+            Some("0.85.1".to_owned())
+        );
+        assert_eq!(
+            super::ToolBinary::Pi.parse_version(b"pi 0.85.1", b""),
+            Some("0.85.1".to_owned())
+        );
+        assert_eq!(super::ToolBinary::Pi.parse_version(b"0.85", b""), None);
+        assert_eq!(
+            super::ToolBinary::Pi.parse_version(b"0.85.1", b"unexpected"),
+            None
+        );
+    }
+
+    #[test]
+    fn release_probe_covers_pi_installation_and_agent_dir_mapping() {
+        let _process_fixture = isolate_process_fixture();
+        let fixture = Fixture::new();
+        fixture.write_tool("pi", "printf '0.85.1'");
+
+        // 可映射的绝对覆盖：探针安装状态与显式 agent dir 都被注入显式环境。
+        let agent_dir = fixture.home.join("custom-pi-agent");
+        fs::create_dir_all(&agent_dir).unwrap();
+        let result =
+            probe_release_environment(&fixture.input().with_pi_agent_dir(Some(agent_dir.clone())))
+                .unwrap();
+        assert_eq!(result.pi.state, ToolAvailabilityState::Installed);
+        assert_eq!(result.pi.version.as_deref(), Some("0.85.1"));
+        assert_eq!(result.environment.pi_agent_dir(), agent_dir);
+        assert!(!result.environment.pi_agent_dir_unmapped());
+
+        // 相对路径无法可靠重现 → 不得静默退回默认值，必须置 unmapped 标记。
+        let unmapped = probe_release_environment(
+            &fixture
+                .input()
+                .with_pi_agent_dir(Some(PathBuf::from("relative/agent"))),
+        )
+        .unwrap();
+        assert!(unmapped.environment.pi_agent_dir_unmapped());
+        assert_eq!(unmapped.pi.state, ToolAvailabilityState::Installed);
+
+        // `~/x` 按 Pi 自身规则展开到 home。
+        let expanded = probe_release_environment(
+            &fixture
+                .input()
+                .with_pi_agent_dir(Some(PathBuf::from("~/tilde-pi-agent"))),
+        )
+        .unwrap();
+        assert_eq!(
+            expanded.environment.pi_agent_dir(),
+            fixture.home.join("tilde-pi-agent")
+        );
+        assert!(!expanded.environment.pi_agent_dir_unmapped());
     }
 
     struct Fixture {
@@ -143,6 +198,8 @@ mod tests {
                 opencode_config_path: None,
                 opencode_config_content: None,
                 opencode_disabled: false,
+                pi_agent_dir: None,
+                pi_mcp_exclusive_mode: false,
                 search_path: self.bin.clone().into_os_string(),
                 timeout: Duration::from_secs(3),
                 claude_managed_settings_path: self.policy.clone(),

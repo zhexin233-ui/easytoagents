@@ -292,6 +292,7 @@ fn persist_prepared_preview(
             skill_takeover_entries: Vec::new(),
             project_native_action: None,
             hook_initial_adopt: false,
+            hard_block: None,
         }],
         redactor,
     )?;

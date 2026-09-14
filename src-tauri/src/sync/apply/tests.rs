@@ -295,6 +295,7 @@ mod tests {
             exclude_from_git,
             skill_takeover_entries: Vec::new(),
             project_native_action: None,
+            hard_block: None,
         }
     }
 
@@ -1112,6 +1113,7 @@ mod tests {
                 exclude_from_git: false,
                 skill_takeover_entries: Vec::new(),
                 project_native_action: None,
+                hard_block: None,
             }],
         );
         let mut apply_input = input(descriptor, json!({}), &fixture.targets);
@@ -2284,6 +2286,7 @@ mod tests {
             exclude_from_git: false,
             skill_takeover_entries: Vec::new(),
             project_native_action: None,
+            hard_block: None,
         }
     }
 
@@ -2575,6 +2578,7 @@ mod tests {
                     exclude_from_git: false,
                     skill_takeover_entries: vec![takeover.clone()],
                     project_native_action: None,
+                    hard_block: None,
                 }],
                 &SecretRedactor::default(),
             )
@@ -2823,6 +2827,7 @@ mod tests {
             exclude_from_git: true,
             skill_takeover_entries: Vec::new(),
             project_native_action: None,
+            hard_block: None,
         };
         let second_preview = persist_requests(
             &mut fixture.database,

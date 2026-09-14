@@ -1049,6 +1049,8 @@ enabled = true
             Tool::Cursor => fixture.home.join(".cursor/mcp.json"),
             Tool::Zcode => fixture.home.join(".zcode/cli/config.json"),
             Tool::Opencode => fixture.home.join(".config/opencode/opencode.json"),
+            // Pi MCP 导入/会话投影在阶段 2/4 接入；本 helper 当前不被 Pi 调用。
+            Tool::Pi => unreachable!("Pi MCP 测试在后续阶段接入"),
         };
         let mut document =
             super::native_container(tool)
@@ -1068,6 +1070,7 @@ enabled = true
             Tool::Cursor => serde_json::to_string_pretty(&document).unwrap(),
             Tool::Zcode => serde_json::to_string_pretty(&document).unwrap(),
             Tool::Opencode => serde_json::to_string_pretty(&document).unwrap(),
+            Tool::Pi => serde_json::to_string_pretty(&document).unwrap(),
         };
         fs::write(&path, text).unwrap();
         path
@@ -1232,6 +1235,8 @@ enabled = true
                 Tool::Cursor => serde_json::from_str(&contents).unwrap(),
                 Tool::Zcode => serde_json::from_str(&contents).unwrap(),
                 Tool::Opencode => serde_json::from_str(&contents).unwrap(),
+                // 本用例的 `for tool in [...]` 不含 Pi；仅为穷举完整性。
+                Tool::Pi => serde_json::from_str(&contents).unwrap(),
             };
             assert_eq!(
                 super::service_projection_get(&after, super::native_container(tool))["disabled"],

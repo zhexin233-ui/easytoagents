@@ -1,9 +1,4 @@
-
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    sync::Mutex,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
 
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};
@@ -11,14 +6,13 @@ use uuid::Uuid;
 
 use super::models::{
     optional_text, validate_prompt_fields, validate_provider_fields, ClaudeCredentialEnvKey,
-    ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto,
-    PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, ProviderAuthKind,
-    ProviderFieldsInput, ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto,
-    ProviderProfileInput, ReadoptProviderTargetInput, ReadoptProviderTargetResultDto,
-    SecretUpdate, SetGlobalPromptAssignmentInput, StoredProviderConfig, ToolProfileStatusDto,
-    UpdatePromptProfileInput, UpdateProviderProfileInput,
-    VersionedProfileInput, CODEX_BEARER_TOKEN_WARNING, CODEX_OPENAI_PROVIDER_ID,
-    NEW_SESSION_NOTICE,
+    ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto, PromptImportPreviewDto,
+    PromptProfileDto, PromptProfileInput, ProviderAuthKind, ProviderFieldsInput,
+    ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput,
+    ReadoptProviderTargetInput, ReadoptProviderTargetResultDto, SecretUpdate,
+    SetGlobalPromptAssignmentInput, StoredProviderConfig, ToolProfileStatusDto,
+    UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
+    CODEX_BEARER_TOKEN_WARNING, CODEX_OPENAI_PROVIDER_ID, NEW_SESSION_NOTICE,
 };
 use crate::{
     adapters::{
@@ -79,8 +73,7 @@ pub fn create_provider_profile(
     })?;
     let id = Uuid::new_v4().to_string();
     // Codex 官方登录固定使用内置 openai provider；其余渠道用稳定的生成 id。
-    let provider_id = if input.tool == Tool::Codex && auth_kind == ProviderAuthKind::OfficialLogin
-    {
+    let provider_id = if input.tool == Tool::Codex && auth_kind == ProviderAuthKind::OfficialLogin {
         CODEX_OPENAI_PROVIDER_ID.to_owned()
     } else {
         generated_codex_provider_id(&id)
@@ -142,6 +135,10 @@ pub fn update_provider_profile(
         Tool::Cursor => return Err(cursor_unsupported(ArtifactKind::Provider)),
         Tool::Opencode => current_config.provider_id.clone().ok_or_else(|| {
             AppError::invalid_input("providerOptions", "OpenCode Provider 缺少稳定 provider id")
+        })?,
+        // Pi 的 provider id 是 `models.json` 的条目 key，创建后固定不变。
+        Tool::Pi => current_config.provider_id.clone().ok_or_else(|| {
+            AppError::invalid_input("providerOptions", "Pi Provider 缺少稳定 provider id")
         })?,
     };
     let config = StoredProviderConfig::from_input(

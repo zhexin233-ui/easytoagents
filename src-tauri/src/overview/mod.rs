@@ -180,24 +180,25 @@ fn tool_summary(database: &Database, tool: Tool) -> Result<DashboardToolSummaryD
                 AppError::database(&database_path, "read_dashboard_provider").with_source(error)
             })?
     };
-    let active_prompt_name = match tool {
-        Tool::Claude | Tool::Codex | Tool::Zcode | Tool::Cursor | Tool::Opencode => database
-            .connection()
-            .query_row(
-                "SELECT name FROM prompt_profiles
-                 WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
-                             WHEN ?1 = 'zcode' THEN is_active_zcode
-                             WHEN ?1 = 'cursor' THEN is_active_cursor
-                             WHEN ?1 = 'opencode' THEN is_active_opencode
-                             ELSE is_active_codex END) = 1",
-                [tool.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| {
-                AppError::database(&database_path, "read_dashboard_prompt").with_source(error)
-            })?,
-    };
+    // 每工具的生效提示词列由迁移 0025 补齐（Pi 走 is_active_pi），此处统一走
+    // 同一 CASE 查询；未知工具不会落到 ELSE 分支上。
+    let active_prompt_name = database
+        .connection()
+        .query_row(
+            "SELECT name FROM prompt_profiles
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
+                         WHEN ?1 = 'zcode' THEN is_active_zcode
+                         WHEN ?1 = 'cursor' THEN is_active_cursor
+                         WHEN ?1 = 'opencode' THEN is_active_opencode
+                         WHEN ?1 = 'pi' THEN is_active_pi
+                         ELSE is_active_codex END) = 1",
+            [tool.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(&database_path, "read_dashboard_prompt").with_source(error)
+        })?;
     let global_mcp_count = database
         .connection()
         .query_row(

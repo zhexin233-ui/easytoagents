@@ -164,6 +164,9 @@ fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError
     if record.is_active_opencode {
         global_tools.push(Tool::Opencode);
     }
+    if record.is_active_pi {
+        global_tools.push(Tool::Pi);
+    }
     Ok(PromptProfileDto {
         id: record.id.clone(),
         name: record.name.clone(),

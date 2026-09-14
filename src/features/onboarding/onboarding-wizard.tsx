@@ -53,6 +53,7 @@ interface Choices {
   cursor: { provider: boolean; prompt: boolean; skip: boolean };
   zcode: { provider: boolean; prompt: boolean; skip: boolean };
   opencode: { provider: boolean; prompt: boolean; skip: boolean };
+  pi: { provider: boolean; prompt: boolean; skip: boolean };
 }
 
 interface WizardPreview {
@@ -67,6 +68,7 @@ const emptyChoices: Choices = {
   cursor: { provider: false, prompt: false, skip: false },
   zcode: { provider: false, prompt: false, skip: false },
   opencode: { provider: false, prompt: false, skip: false },
+  pi: { provider: false, prompt: false, skip: false },
 };
 
 export function OnboardingWizard({
@@ -192,6 +194,15 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
           errors: [],
         },
         opencode: {
+          availability: "unsupported",
+          installationVersion: null,
+          provider: null,
+          prompt: null,
+          providerManaged: false,
+          promptManaged: false,
+          errors: [],
+        },
+        pi: {
           availability: "unsupported",
           installationVersion: null,
           provider: null,
@@ -658,6 +669,7 @@ function readChoices(): Choices {
       cursor: readToolChoice(parsed.cursor),
       zcode: readToolChoice(parsed.zcode),
       opencode: readToolChoice(parsed.opencode),
+      pi: readToolChoice(parsed.pi),
     };
   } catch {
     return emptyChoices;
