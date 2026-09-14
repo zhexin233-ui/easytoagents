@@ -1,11 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import { commands, type Tool } from "@/bindings/commands";
+import {
+  commands,
+  type ReadoptProviderTargetResultDto,
+  type Tool,
+} from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/use-notify";
 import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
 import { ProviderPanel } from "@/features/tool-profiles/provider-panel";
 import {
@@ -40,27 +45,50 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   const statusQuery = useQuery(toolProfileStatusQueryOptions(tool));
   const settingsQuery = useQuery(appSettingsQueryOptions());
   const directApply = settingsQuery.data?.applyMode === "direct";
-  const { openPreview, requestPreview, applyMutation, closePreview } =
-    useSyncPreviewFlow({
-      artifactKind: "provider",
-      directApply,
-      preview: (previewTool) => commands.previewProviderSync(previewTool),
-      apply: ({ previewId, tool: previewTool }) =>
-        commands.applyProfilePreview({
-          previewId,
-          tool: previewTool,
-          artifactKind: "provider",
-        }),
-      invalidate: async () => {
-        await queryClient.invalidateQueries({ queryKey: profileKeys.all });
-      },
-      messages: {
-        previewFailed: "生成渠道预览失败。",
-        applyFailed: "应用渠道预览失败。",
-        applied: (result) =>
-          `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`,
-      },
-    });
+  const { notify } = useNotify();
+  const {
+    openPreview,
+    requestPreview,
+    applyMutation,
+    readoptMutation,
+    closePreview,
+  } = useSyncPreviewFlow<ReadoptProviderTargetResultDto>({
+    artifactKind: "provider",
+    directApply,
+    preview: (previewTool) => commands.previewProviderSync(previewTool),
+    apply: ({ previewId, tool: previewTool }) =>
+      commands.applyProfilePreview({
+        previewId,
+        tool: previewTool,
+        artifactKind: "provider",
+      }),
+    invalidate: async () => {
+      await queryClient.invalidateQueries({ queryKey: profileKeys.all });
+    },
+    readopt: (previewTool, targetPath) => {
+      if (!targetPath) {
+        throw new Error("重新接管 Provider 目标缺少路径。");
+      }
+      return commands.readoptProviderTarget({
+        tool: previewTool,
+        targetPath,
+      });
+    },
+    messages: {
+      previewFailed: "生成渠道预览失败。",
+      applyFailed: "应用渠道预览失败。",
+      readoptFailed: "重新接管渠道目标失败。",
+      applied: (result) =>
+        `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`,
+    },
+    onReadopted: (_result, previewTool) => {
+      notify({
+        kind: "success",
+        message: "已以当前内容重新接管渠道目标；正在重新生成预览。",
+      });
+      requestPreview(previewTool, directApply);
+    },
+  });
 
   const metadata = toolMetadata(tool);
   const title = metadata.label;
@@ -208,6 +236,15 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
           tool={openPreview?.tool ?? tool}
           artifactKind="provider"
           applying={applyMutation.isPending}
+          readopting={readoptMutation.isPending}
+          onReadopt={(targetPath) => {
+            if (openPreview) {
+              readoptMutation.mutate({
+                tool: openPreview.tool,
+                targetPath,
+              });
+            }
+          }}
           onClose={closePreview}
           onApply={() => {
             if (openPreview) {

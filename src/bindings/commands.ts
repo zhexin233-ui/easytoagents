@@ -308,6 +308,14 @@ async previewProviderSync(tool: Tool) : Promise<Result<PreviewPlan, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async readoptProviderTarget(input: ReadoptProviderTargetInput) : Promise<Result<ReadoptProviderTargetResultDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("readopt_provider_target", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewPromptSync(tool: Tool) : Promise<Result<PreviewPlan, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_prompt_sync", { tool }) };
@@ -887,8 +895,8 @@ async confirmAgentImport(input: ConfirmAgentImportInput) : Promise<Result<AgentI
 
 /** user-defined constants **/
 
-export const TOOL_CAPABILITIES = [{"agentToolSettings":true,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"claude"},{"agentToolSettings":true,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"codex"},{"agentToolSettings":false,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":false,"skills":true,"tool":"cursor"},{"agentToolSettings":false,"agents":true,"hooks":true,"mcp":true,"projectAgents":false,"promptGlobal":true,"provider":true,"skills":true,"tool":"zcode"},{"agentToolSettings":false,"agents":true,"hooks":false,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"opencode"}] as const;
 export const HOOK_EVENT_SUPPORT = [{"event":"SessionStart","tool":"claude"},{"event":"SessionEnd","tool":"claude"},{"event":"UserPromptSubmit","tool":"claude"},{"event":"PreToolUse","tool":"claude"},{"event":"PermissionRequest","tool":"claude"},{"event":"PostToolUse","tool":"claude"},{"event":"SubagentStop","tool":"claude"},{"event":"PreCompact","tool":"claude"},{"event":"Stop","tool":"claude"},{"event":"Notification","tool":"claude"},{"event":"SessionStart","tool":"codex"},{"event":"SessionEnd","tool":"codex"},{"event":"UserPromptSubmit","tool":"codex"},{"event":"PreToolUse","tool":"codex"},{"event":"PermissionRequest","tool":"codex"},{"event":"PostToolUse","tool":"codex"},{"event":"SubagentStart","tool":"codex"},{"event":"SubagentStop","tool":"codex"},{"event":"PreCompact","tool":"codex"},{"event":"PostCompact","tool":"codex"},{"event":"Stop","tool":"codex"},{"event":"SessionStart","tool":"cursor"},{"event":"SessionEnd","tool":"cursor"},{"event":"PreToolUse","tool":"cursor"},{"event":"PostToolUse","tool":"cursor"},{"event":"PostToolUseFailure","tool":"cursor"},{"event":"SubagentStart","tool":"cursor"},{"event":"SubagentStop","tool":"cursor"},{"event":"PreCompact","tool":"cursor"},{"event":"Stop","tool":"cursor"},{"event":"SessionStart","tool":"zcode"},{"event":"UserPromptSubmit","tool":"zcode"},{"event":"PreToolUse","tool":"zcode"},{"event":"PermissionRequest","tool":"zcode"},{"event":"PostToolUse","tool":"zcode"},{"event":"PostToolUseFailure","tool":"zcode"},{"event":"Stop","tool":"zcode"}] as const;
+export const TOOL_CAPABILITIES = [{"agentToolSettings":true,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"claude"},{"agentToolSettings":true,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"codex"},{"agentToolSettings":false,"agents":true,"hooks":true,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":false,"skills":true,"tool":"cursor"},{"agentToolSettings":false,"agents":true,"hooks":true,"mcp":true,"projectAgents":false,"promptGlobal":true,"provider":true,"skills":true,"tool":"zcode"},{"agentToolSettings":false,"agents":true,"hooks":false,"mcp":true,"projectAgents":true,"promptGlobal":true,"provider":true,"skills":true,"tool":"opencode"}] as const;
 
 /** user-defined types **/
 
@@ -1168,6 +1176,12 @@ export type ReadoptHookTargetInput = { tool: Tool; projectId: string | null }
 export type ReadoptHookTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
 export type ReadoptMcpTargetInput = { tool: Tool; projectId: string | null }
 export type ReadoptMcpTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
+/**
+ * 以当前原生 Provider 内容重新接管目标基线；该操作只更新应用数据库，
+ * 不会直接写入原生配置文件。
+ */
+export type ReadoptProviderTargetInput = { tool: Tool; targetPath: string }
+export type ReadoptProviderTargetResultDto = { targetPath: string }
 export type RecentSyncRunDto = { id: string; kind: SyncRunKind; status: SyncRunStatus; scope: Scope; projectId: string | null; startedAt: string; finishedAt: string | null; errorCode: ErrorCode | null }
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
 export type RegisterProjectInput = { displayName: string; rootPath: string }

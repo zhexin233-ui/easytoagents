@@ -10,9 +10,10 @@ mod tests {
         copy_provider_profile, create_prompt_profile, create_provider_profile,
         discover_prompt_import, discover_provider_import, get_tool_profile_status,
         list_provider_profiles, preview_prompt_sync, preview_provider_sync,
-        set_active_provider_profile, set_global_prompt_assignment, update_prompt_profile,
-        update_provider_profile, CopyProviderProfileInput, PromptProfileDto, PromptProfileInput,
-        ProviderAuthKind, ProviderOptionsInput, ProviderProfileInput,
+        readopt_provider_target, set_active_provider_profile, set_global_prompt_assignment,
+        update_prompt_profile, update_provider_profile, CopyProviderProfileInput, PromptProfileDto,
+        PromptProfileInput, ProviderAuthKind, ProviderOptionsInput, ProviderProfileInput,
+        ReadoptProviderTargetInput,
         SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
         CLAUDE_MODEL_KEY,
     };
@@ -433,6 +434,218 @@ mod tests {
         assert_eq!(written["permissions"]["allow"][0], "Read");
         assert_eq!(written["plugins"]["fixture"], true);
         assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn provider_external_drift_can_readopt_then_requires_a_new_preview() {
+        let mut fixture = fixture();
+        let settings = fixture.home.join(".claude/settings.json");
+        fs::write(
+            &settings,
+            r#"{
+  "env": {"UNRELATED_ENV": "keep"},
+  "permissions": {"allow": ["Read"]}
+}
+"#,
+        )
+        .unwrap();
+        let write_operations = Mutex::new(());
+        let mut redactor = SecretRedactor::default();
+        let profile = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            provider(Tool::Claude, "第一渠道", "fixture-provider-secret", true),
+        )
+        .unwrap();
+        let first_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &first_preview.preview_id,
+            Tool::Claude,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+
+        // 外部改写受管字段后，预览必须阻止 Apply，同时明确提供 readopt。
+        let externally_changed = fs::read_to_string(&settings)
+            .unwrap()
+            .replace("fixture-provider-secret", "external-provider-secret");
+        fs::write(&settings, &externally_changed).unwrap();
+        let conflicted = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        let target = conflicted.targets.first().expect("Provider 预览应包含目标");
+        assert_eq!(target.change_kind, crate::domain::ChangeKind::Conflict);
+        assert_eq!(target.status, crate::domain::SyncStatus::ExternalOwnedChange);
+        assert!(target.readopt_available);
+        let old_preview_id = conflicted.preview_id.clone();
+
+        let central_before = list_provider_profiles(&fixture.database, Tool::Claude).unwrap();
+        let native_before_readopt = fs::read(&settings).unwrap();
+        let path_error = readopt_provider_target(
+            &mut fixture.database,
+            &fixture.environment,
+            &ReadoptProviderTargetInput {
+                tool: Tool::Claude,
+                target_path: "/wrong/settings.json".to_owned(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(path_error.code(), crate::error::ErrorCode::InvalidInput);
+        assert_eq!(fs::read(&settings).unwrap(), native_before_readopt);
+
+        let readopt = readopt_provider_target(
+            &mut fixture.database,
+            &fixture.environment,
+            &ReadoptProviderTargetInput {
+                tool: Tool::Claude,
+                target_path: settings.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(readopt.target_path, settings.to_string_lossy());
+        // readopt 只刷新应用基线，不写原生文件或中央渠道 row_version。
+        assert_eq!(fs::read(&settings).unwrap(), native_before_readopt);
+        let central_after = list_provider_profiles(&fixture.database, Tool::Claude).unwrap();
+        assert_eq!(central_after[0].row_version, central_before[0].row_version);
+        assert_eq!(central_after[0].id, profile.id);
+
+        // 旧冲突 Preview 永远不可消费；恢复只能使用 readopt 后生成的新 Preview。
+        let old_apply = apply_profile_preview(
+            &write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &old_preview_id,
+            Tool::Claude,
+            ArtifactKind::Provider,
+        )
+        .unwrap_err();
+        assert_eq!(old_apply.code(), crate::error::ErrorCode::Conflict);
+        assert_eq!(fs::read(&settings).unwrap(), native_before_readopt);
+
+        let recovered = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        assert_ne!(recovered.preview_id, old_preview_id);
+        assert_eq!(recovered.targets[0].status, crate::domain::SyncStatus::InSync);
+        assert_eq!(
+            recovered.targets[0].change_kind,
+            crate::domain::ChangeKind::Update
+        );
+        assert!(!recovered.targets[0].readopt_available);
+        apply_profile_preview(
+            &write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &recovered.preview_id,
+            Tool::Claude,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let native: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(native["env"]["ANTHROPIC_API_KEY"], "fixture-provider-secret");
+        assert_eq!(native["env"]["UNRELATED_ENV"], "keep");
+    }
+
+    #[test]
+    fn provider_readopt_rejects_unreadable_target_without_changing_baseline() {
+        let mut fixture = fixture();
+        let settings = fixture.home.join(".claude/settings.json");
+        let mut redactor = SecretRedactor::default();
+        let _profile = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            provider(Tool::Claude, "渠道", "fixture-provider-secret", true),
+        )
+        .unwrap();
+        let first_preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Claude,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &first_preview.preview_id,
+            Tool::Claude,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+
+        let baseline_before = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT baseline_full_hash, baseline_managed_hash
+                 FROM managed_targets
+                 WHERE tool = 'claude' AND artifact_kind = 'provider'
+                   AND scope = 'global' AND project_id IS NULL",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .unwrap();
+        fs::write(&settings, b"{not-json").unwrap();
+        let error = readopt_provider_target(
+            &mut fixture.database,
+            &fixture.environment,
+            &ReadoptProviderTargetInput {
+                tool: Tool::Claude,
+                target_path: settings.to_string_lossy().into_owned(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), crate::error::ErrorCode::Conflict);
+        assert_eq!(fs::read(&settings).unwrap(), b"{not-json");
+        let baseline_after = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT baseline_full_hash, baseline_managed_hash
+                 FROM managed_targets
+                 WHERE tool = 'claude' AND artifact_kind = 'provider'
+                   AND scope = 'global' AND project_id IS NULL",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(baseline_after, baseline_before);
     }
 
     #[test]

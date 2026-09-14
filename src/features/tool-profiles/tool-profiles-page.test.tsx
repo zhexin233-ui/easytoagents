@@ -1062,6 +1062,237 @@ describe("ToolProfilesPage", () => {
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
+  it("直接应用模式下重新接管会刷新预览并自动 Apply 新预览", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+    });
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewProviderSync).mockReset();
+    const conflictPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000410",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "conflict" as const,
+          status: "external_owned_change" as const,
+          readoptAvailable: true,
+          errorCode: "CONFLICT" as const,
+        },
+      ],
+    };
+    const recoveredPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000411",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "update" as const,
+          status: "in_sync" as const,
+          readoptAvailable: false,
+          errorCode: null,
+        },
+      ],
+    };
+    vi.mocked(commands.previewProviderSync)
+      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
+      .mockResolvedValueOnce({ status: "ok", data: recoveredPreview });
+    vi.mocked(commands.readoptProviderTarget).mockResolvedValue({
+      status: "ok",
+      data: { targetPath: baseTarget.descriptor.path ?? "" },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+
+    fireEvent.click(
+      await within(section).findByRole("button", {
+        name: "直接应用渠道同步",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "确认原生配置变更",
+    });
+    const readopt = within(dialog).getByRole("button", {
+      name: /以当前内容重新接管/,
+    });
+    expect(readopt).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "应用这份预览" }),
+    ).toBeDisabled();
+
+    fireEvent.click(readopt);
+    await waitFor(() =>
+      expect(commands.readoptProviderTarget).toHaveBeenCalledWith({
+        tool: "claude",
+        targetPath: baseTarget.descriptor.path,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: recoveredPreview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
+      }),
+    );
+    expect(commands.applyProfilePreview).not.toHaveBeenCalledWith({
+      previewId: conflictPreview.previewId,
+      tool: "claude",
+      artifactKind: "provider",
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+    expect(commands.previewProviderSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("预览确认模式下重新接管只生成新预览并保留最终确认", async () => {
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewProviderSync).mockReset();
+    const conflictPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000420",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "conflict" as const,
+          status: "external_owned_change" as const,
+          readoptAvailable: true,
+          errorCode: "CONFLICT" as const,
+        },
+      ],
+    };
+    const recoveredPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000421",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "update" as const,
+          status: "in_sync" as const,
+          readoptAvailable: false,
+          errorCode: null,
+        },
+      ],
+    };
+    vi.mocked(commands.previewProviderSync)
+      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
+      .mockResolvedValueOnce({ status: "ok", data: recoveredPreview });
+    vi.mocked(commands.readoptProviderTarget).mockResolvedValue({
+      status: "ok",
+      data: { targetPath: baseTarget.descriptor.path ?? "" },
+    });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "预览渠道同步" }),
+    );
+    const firstDialog = await screen.findByRole("dialog", {
+      name: "确认原生配置变更",
+    });
+    fireEvent.click(
+      within(firstDialog).getByRole("button", {
+        name: /以当前内容重新接管/,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewProviderSync).toHaveBeenCalledTimes(2),
+    );
+    const secondDialog = await screen.findByRole("dialog", {
+      name: "确认原生配置变更",
+    });
+    expect(secondDialog).toBeVisible();
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(secondDialog).getByRole("button", { name: "应用这份预览" }),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: recoveredPreview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
+      }),
+    );
+  });
+
+  it("重新接管失败时保留冲突弹窗并允许重试或取消", async () => {
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewProviderSync).mockReset();
+    const conflictPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000430",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "conflict" as const,
+          status: "external_owned_change" as const,
+          readoptAvailable: true,
+          errorCode: "CONFLICT" as const,
+        },
+      ],
+    };
+    const recoveredPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000431",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "update" as const,
+          status: "in_sync" as const,
+          readoptAvailable: false,
+          errorCode: null,
+        },
+      ],
+    };
+    vi.mocked(commands.previewProviderSync)
+      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
+      .mockResolvedValueOnce({ status: "ok", data: recoveredPreview });
+    vi.mocked(commands.readoptProviderTarget)
+      .mockRejectedValueOnce(new Error("fixture readopt failure"))
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { targetPath: baseTarget.descriptor.path ?? "" },
+      });
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "预览渠道同步" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "确认原生配置变更",
+    });
+    const readopt = () =>
+      within(dialog).getByRole("button", { name: /以当前内容重新接管/ });
+
+    fireEvent.click(readopt());
+    await waitFor(() =>
+      expect(commands.readoptProviderTarget).toHaveBeenCalledTimes(1),
+    );
+    expect(await screen.findByText("fixture readopt failure")).toBeVisible();
+    expect(
+      screen.getByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    expect(commands.previewProviderSync).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(readopt());
+    await waitFor(() =>
+      expect(commands.readoptProviderTarget).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(commands.previewProviderSync).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(
+      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("直接应用模式下切换生效渠道自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",

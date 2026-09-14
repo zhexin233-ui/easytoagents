@@ -752,15 +752,16 @@ notify({ kind: "success", message: "已应用" });
 
 - Trigger: any change to `ChangePreviewDialog` readopt props, the preview plan
   `baselineMismatchedItems` / `readoptAvailable` fields, or page-level
-  `readoptMcpTarget` wiring.
+  `readoptMcpTarget` / `readoptProviderTarget` wiring.
 
 ### 2. Signatures
 
 - `ChangePreviewDialog` takes optional `readopting: boolean` and
-  `onReadopt: () => void`; the button renders only when the target has
+  `onReadopt(targetPath: string) => void`; the button renders only when the target has
   `readoptAvailable && onReadopt` and sits inside the errorCode block.
-- Pages pass the plan identity to `commands.readoptMcpTarget({ tool,
-  projectId })`.
+- MCP pages pass their tool/project identity to
+  `commands.readoptMcpTarget({ tool, projectId })`; the Provider profile page passes
+  the exact descriptor path to `commands.readoptProviderTarget({ tool, targetPath })`.
 
 ### 3. Contracts
 
@@ -773,8 +774,12 @@ notify({ kind: "success", message: "已应用" });
   the preview mutation lives in the child components.
 - Central-page readopt success notifies after invalidation and before preview
   regeneration; later failures notify error. Project detail keeps local feedback.
-- Skills/Provider/Prompt plans never set `readoptAvailable`; do not wire the
-  handler there until the backend supports those ownership kinds.
+- Provider readopt follows the same close → invalidate → regenerate sequence. It keeps
+  the original `directApply` value: a newly safe Preview auto-applies only in direct
+  mode; preview-confirm mode opens the new dialog and waits for the user. A failed
+  readopt leaves the blocking dialog available for retry or cancel.
+- Skills and Prompt plans still never set `readoptAvailable`; do not expose a readopt
+  button for those ownership kinds until their backends support it.
 
 ---
 

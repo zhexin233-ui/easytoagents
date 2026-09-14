@@ -11,8 +11,9 @@ use crate::{
         self, ApplyProfilePreviewInput, ConfirmImportInput, CopyProviderProfileInput,
         DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto, PromptProfileInput,
         ProviderImportPreviewDto, ProviderProfileDto, ProviderProfileInput,
-        SetGlobalPromptAssignmentInput, ToolProfileStatusDto, UpdatePromptProfileInput,
-        UpdateProviderProfileInput, VersionedProfileInput,
+        ReadoptProviderTargetInput, ReadoptProviderTargetResultDto, SetGlobalPromptAssignmentInput,
+        ToolProfileStatusDto, UpdatePromptProfileInput, UpdateProviderProfileInput,
+        VersionedProfileInput,
     },
     sync::{ApplyResult, PreviewPlan},
 };
@@ -195,6 +196,19 @@ pub fn preview_provider_sync(
 ) -> Result<PreviewPlan, AppError> {
     with_db_and_redactor(&state, |database, redactor| {
         profiles::preview_provider_sync(database, &*state.environment()?, redactor, tool)
+    })
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn readopt_provider_target(
+    state: State<'_, AppState>,
+    input: ReadoptProviderTargetInput,
+) -> Result<ReadoptProviderTargetResultDto, AppError> {
+    with_db(&state, |database| {
+        // 与 Apply 互斥：接管期间不允许在途 Apply 同时改写目标或基线。
+        let _write_guard = state.lock_write_operations();
+        profiles::readopt_provider_target(database, &*state.environment()?, &input)
     })
 }
 

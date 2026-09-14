@@ -14,8 +14,9 @@ use super::models::{
     ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto,
     PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, ProviderAuthKind,
     ProviderFieldsInput, ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto,
-    ProviderProfileInput, SecretUpdate, SetGlobalPromptAssignmentInput, StoredProviderConfig,
-    ToolProfileStatusDto, UpdatePromptProfileInput, UpdateProviderProfileInput,
+    ProviderProfileInput, ReadoptProviderTargetInput, ReadoptProviderTargetResultDto,
+    SecretUpdate, SetGlobalPromptAssignmentInput, StoredProviderConfig, ToolProfileStatusDto,
+    UpdatePromptProfileInput, UpdateProviderProfileInput,
     VersionedProfileInput, CODEX_BEARER_TOKEN_WARNING, CODEX_OPENAI_PROVIDER_ID,
     NEW_SESSION_NOTICE,
 };

@@ -466,6 +466,9 @@ apply_persisted_preview(
 - Native synchronization is a separate two-step contract:
   `preview_{provider,prompt}_sync(tool) -> PreviewPlan`, then
   `apply_profile_preview(ApplyProfilePreviewInput) -> ApplyResult`.
+- Provider conflict recovery adds a typed baseline-only command:
+  `readopt_provider_target(ReadoptProviderTargetInput { tool, target_path }) ->
+  ReadoptProviderTargetResultDto { target_path }`.
 
 ### 3. Contracts
 
@@ -475,6 +478,15 @@ apply_persisted_preview(
 - Provider and Prompt CRUD change only SQLite central intent. Native discovery is
   read-only, stores a redacted import preview, and rescans the full hash before a
   confirmation atomically adopts the profile and baseline.
+- Provider readopt resolves the descriptor from the explicit environment and requires
+  `target_path` to exactly equal the canonical descriptor path. It scans with the same
+  Provider codec ownership as Preview, then updates only the target's full/managed
+  hashes in one SQLite `IMMEDIATE` transaction. `Observed` refreshes hashes, `Missing`
+  clears them, and parse/permission/type/path-safety failures return a recoverable
+  conflict. It never writes the native file, central profile rows, or a Preview.
+- A successful Provider readopt does not make the old conflict Preview consumable. The
+  caller must invalidate affected queries and persist a fresh Preview; Apply continues
+  to enforce Preview status, target identity, hashes, and every bound row version.
 - Claude Provider ownership always includes the four reserved env keys
   (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
   `ANTHROPIC_MODEL`) plus the union of previous and desired profile-declared env
@@ -541,6 +553,9 @@ apply_persisted_preview(
 | Claude host evidence unknown, malformed, or present | policy-blocked preview; zero external writes |
 | Import target hash changes before confirmation | `STALE_PREVIEW`; preserve target |
 | Native target changes after sync preview | `STALE_PREVIEW`/conflict; preserve target |
+| Provider readopt path is empty, cross-tool, or no longer canonical | `INVALID_INPUT`; no baseline change |
+| Provider readopt target is malformed, unreadable, unsafe, or type-changed | recoverable `CONFLICT`; native target and baseline are preserved |
+| Apply receives the pre-readopt conflict Preview | `CONFLICT`/`STALE_PREVIEW`; no native write |
 
 ### 5. Good/Base/Bad Cases
 
@@ -549,6 +564,9 @@ apply_persisted_preview(
   Phase 3 engine while unrelated native fields remain byte/semantically intact.
 - Base: CRUD changes only SQLite central intent and returns a masked DTO; native
   files are unchanged until a separate preview is consumed.
+- Good recovery: readopt an externally changed, readable Provider target, verify the
+  native bytes and central row version are unchanged, then apply only a newly persisted
+  Preview.
 - Bad: a stale activation, host-managed Claude setting, reserved Codex provider,
   credential-bearing URL, secret extension value, or changed import target fails
   closed without an external write.
@@ -566,6 +584,9 @@ apply_persisted_preview(
   cleanup.
 - Search serialized import previews, sync previews, RPC DTOs, `sync_items`, and journals
   for every fixture key/token/header; expected matches are zero.
+- Provider drift tests must cover exact-path validation, unreadable/parse failure with
+  unchanged baseline, old Preview rejection, a new Preview ID after readopt, and the
+  complete readopt → Preview → Apply chain without secret-bearing output.
 - Regenerate and check Specta bindings whenever a profile command or DTO changes.
 
 ### 7. Wrong vs Correct
@@ -584,6 +605,23 @@ fs::write(target, serde_json::to_vec(&profile)?)?;
 let profile = update_provider_profile(database, input)?;
 let preview = preview_provider_sync(database, context, tool)?;
 let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind::Provider)?;
+```
+
+For conflict recovery, do not write the native target from the readopt handler:
+
+#### Wrong
+
+```rust
+readopt_provider_target(input)?;
+fs::write(input.target_path, desired_json)?; // readopt is not Apply
+```
+
+#### Correct
+
+```rust
+readopt_provider_target(database, environment, &input)?;
+let fresh = preview_provider_sync(database, environment, &mut redactor, input.tool)?;
+apply_profile_preview(/* exact fresh.preview_id and identity */)?;
 ```
 
 ### Scenario: Global-only Prompt profiles

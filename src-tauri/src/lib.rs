@@ -243,6 +243,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::profiles::discover_prompt_import,
             commands::profiles::confirm_prompt_import,
             commands::profiles::preview_provider_sync,
+            commands::profiles::readopt_provider_target,
             commands::profiles::preview_prompt_sync,
             commands::profiles::apply_profile_preview,
             commands::official_login::get_official_login_status,

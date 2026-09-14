@@ -243,6 +243,21 @@ pub struct ApplyProfilePreviewInput {
     pub artifact_kind: ArtifactKind,
 }
 
+/// 以当前原生 Provider 内容重新接管目标基线；该操作只更新应用数据库，
+/// 不会直接写入原生配置文件。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadoptProviderTargetInput {
+    pub tool: Tool,
+    pub target_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadoptProviderTargetResultDto {
+    pub target_path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolProfileStatusDto {

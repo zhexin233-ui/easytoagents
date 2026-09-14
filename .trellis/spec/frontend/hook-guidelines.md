@@ -76,7 +76,9 @@ The hook always creates a persisted preview first. A non-empty, conflict-free
 plan may auto-apply only when `directApply && autoApply`; empty plans notify and
 never call Apply; conflicts and errors remain in the review dialog. Apply closes
 the dialog, awaits the supplied invalidation, and then notifies. `readopt` is
-optional and must invalidate before regenerating a preview. Project-native
+optional and must invalidate before regenerating a preview. Provider and MCP pages
+pass the exact target identity (Provider path or MCP tool/project), and the success
+callback must request a fresh Preview with the original `directApply` value. Project-native
 disable/restore keeps its dedicated resource mutation because its request is
 keyed by `ProjectNativeResourceDto` rather than a `Tool`; it follows the same
 no-implicit-write and post-Apply invalidation contract.
