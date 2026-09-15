@@ -1684,3 +1684,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 - 若要自动化真实 pi loader 发现受管链接与 AGENTS.md，需要在不消耗模型额度的前提下定方案
 - 决定 .pi/ 是否纳入 .gitignore，以让全量 pnpm check 变绿
+
+
+## Session 68: 修复 Pi MCP 探测与容器别名
+
+**Date**: 2026-09-15
+**Task**: 修复 Pi MCP 探测与容器别名
+**Branch**: `main`
+
+### Summary
+
+修复 Pi MCP 全局 Ready 被项目过滤覆盖的问题，统一 mcpServers/mcp-servers 的观测、导入、写回与恢复语义，补齐跨层回归测试和规范文档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de60d35` | (see git log) |
+
+### Status
+
+[OK] **Completed**
