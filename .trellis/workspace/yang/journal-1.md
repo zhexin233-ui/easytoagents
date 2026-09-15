@@ -1726,3 +1726,35 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 70: 修复 Pi 渠道导入：多 provider 检测与 models 元数据保真
+
+**Date**: 2026-09-15
+**Task**: 修复 Pi 渠道导入：多 provider 检测与 models 元数据保真
+**Branch**: `main`
+
+### Summary
+
+根因（实测复现）：PiAdapter::discover 只取 settings.json 的 defaultProvider 条目，其余 provider 静默丢失；且 extra_provider_fields 排除 models，Apply 时 providers/<id>/models 整段被 [{id:默认模型}] 覆盖，contextWindow/cost/thinkingLevelMap 等逐模型元数据全丢。
+
+实现：ProviderCodec::discover 改为返回候选列表（Pi 枚举全部 providers，非法条目降级为 invalid 候选并给稳定原因码 PI_PROVIDER_{ENTRY,ID,FIELDS}_INVALID）；models 渲染改为按模型 id 合并（原条目逐字段保留，仅在默认模型缺失时追加）；新增 merge_import_baseline 钩子（默认替换，Pi 取 providers 并集）；新表 provider_import_previews（迁移 0026，context_json 只存候选身份证据），导入改为多候选批量原子接管（单个 IMMEDIATE 事务，含写锁后重扫原生文件）；导入守卫从「该工具无任何档案」收敛为逐 provider_id 去重，支持增量导入；同步意图（provider_sync_intent）对 Pi 取全部中央渠道并集，避免只写生效档案导致未生效渠道被删空；ProviderProfileDto 增加只读 Pi 摘要（apiFormat + models，不含凭据）。
+
+前端：新增 ProviderImportDialog（候选勾选 + 逐候选名称 + 状态/原因/模型摘要），渠道面板改为对话框导入并只读展示 API 格式与模型数量，首次接管引导批量导入全部可导入候选（空候选不再视为待接管）。
+
+验证：pnpm check EXIT=0（431 Rust 单测 + 全部 E2E + 342 前端测试 + clippy -D warnings + fmt + bindings:check）。新增 Pi 全链路用例覆盖 AC1–AC7：两候选枚举、无 defaultProvider 仍全列、批量导入后 models 元数据与 api 逐字段保留且未受管 provider 逐字节不变、增量导入与基线并集、重复导入冲突、不完整条目只作废自身；db 用例覆盖迁移 0026 与批量接管单事务回滚。
+
+已同步 spec：pi-adapter-guidelines.md 新增「Pi Provider 多条目枚举、models 保真与批量接管」场景，并修正 database-guidelines.md 中已删除的 reject_existing_profiles 描述与 quality-guidelines.md 的 Provider 接管两步合同签名。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `992de1e` | (see git log) |
+| `2c8e3e1` | (see git log) |
+| `3e22558` | (see git log) |
+| `842f7af` | (see git log) |
+
+### Status
+
+[OK] **Completed**
