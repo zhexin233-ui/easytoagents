@@ -5,6 +5,7 @@ include!("prompt.rs");
 include!("service_orchestration.rs");
 include!("sync.rs");
 include!("provider_discovery.rs");
+include!("provider_adopt.rs");
 include!("provider.rs");
 include!("helpers.rs");
 

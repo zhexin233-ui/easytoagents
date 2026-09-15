@@ -8,9 +8,10 @@ use crate::{
     domain::Tool,
     error::AppError,
     profiles::{
-        self, ApplyProfilePreviewInput, ConfirmImportInput, ConfirmProviderImportInput,
-        CopyProviderProfileInput, DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto,
-        PromptProfileInput, ProviderImportPreviewDto, ProviderImportResultDto, ProviderProfileDto,
+        self, AdoptProviderNativeInput, AdoptProviderNativeResultDto, ApplyProfilePreviewInput,
+        ConfirmImportInput, ConfirmProviderImportInput, CopyProviderProfileInput,
+        DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto, PromptProfileInput,
+        ProviderImportPreviewDto, ProviderImportResultDto, ProviderProfileDto,
         ProviderProfileInput, ReadoptProviderTargetInput, ReadoptProviderTargetResultDto,
         SetGlobalPromptAssignmentInput, ToolProfileStatusDto, UpdatePromptProfileInput,
         UpdateProviderProfileInput, VersionedProfileInput,
@@ -163,6 +164,17 @@ pub fn confirm_provider_import(
 ) -> Result<ProviderImportResultDto, AppError> {
     with_db_and_redactor(&state, |database, redactor| {
         profiles::confirm_provider_import(database, &*state.environment()?, redactor, input)
+    })
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+pub fn adopt_provider_native(
+    state: State<'_, AppState>,
+    input: AdoptProviderNativeInput,
+) -> Result<AdoptProviderNativeResultDto, AppError> {
+    with_db_and_redactor(&state, |database, redactor| {
+        profiles::adopt_provider_native(database, &*state.environment()?, redactor, input)
     })
 }
 

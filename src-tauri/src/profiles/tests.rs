@@ -6,13 +6,15 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        apply_profile_preview, confirm_prompt_import, confirm_provider_import,
+        adopt_provider_native, apply_profile_preview, confirm_prompt_import,
+        confirm_provider_import,
         copy_provider_profile, create_prompt_profile, create_provider_profile,
         discover_prompt_import, discover_provider_import, get_tool_profile_status,
         list_provider_profiles, preview_prompt_sync, preview_provider_sync,
         readopt_provider_target, set_active_provider_profile, set_global_prompt_assignment,
         update_prompt_profile, update_provider_profile, ConfirmProviderImportInput,
-        CopyProviderProfileInput, PromptProfileDto, PromptProfileInput, ProviderAuthKind,
+        AdoptProviderNativeInput, CopyProviderProfileInput, PromptProfileDto,
+        PromptProfileInput, ProviderAuthKind,
         ProviderImportCandidateDto, ProviderImportCandidateStatus, ProviderImportPreviewDto,
         ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput, ReadoptProviderTargetInput,
         SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
@@ -3115,4 +3117,195 @@ tenant = "fixture"
             .iter()
             .all(|candidate| candidate.status == ProviderImportCandidateStatus::Importable));
     }
+
+    /// 手改 models.json 后「按原生内容接管」：档案改按文件内容，且下次 Apply 不再改写文件。
+    #[test]
+    fn pi_provider_adopt_native_takes_the_file_content_as_authority() {
+        let mut fixture = fixture();
+        let agent_dir = fixture.home.join(".pi/agent");
+        let models_path = agent_dir.join("models.json");
+        fs::create_dir_all(&agent_dir).unwrap();
+        let original = r#"{
+  "providers": {
+    "cc": {
+      "baseUrl": "https://cc.example.test/v1",
+      "api": "openai-completions",
+      "apiKey": "fixture-cc",
+      "models": [{ "id": "m1", "contextWindow": 1000 }]
+    }
+  }
+}
+"#;
+        fs::write(&models_path, original).unwrap();
+        fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"defaultProvider":"cc","defaultModel":"cc/m1"}"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        let candidate = single_candidate(&preview);
+        confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&preview),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: candidate.candidate_id.clone(),
+                    name: "CC".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+
+        // 用户手改原生文件：改了一个模型的元数据，并新增一个模型。
+        let edited = original
+            .replace("\"contextWindow\": 1000", "\"contextWindow\": 2000")
+            .replace(
+                r#"{ "id": "m1", "contextWindow": 2000 }"#,
+                r#"{ "id": "m1", "contextWindow": 2000 }, { "id": "m2", "name": "Second" }"#,
+            );
+        fs::write(&models_path, &edited).unwrap();
+
+        // 受管内容被外部修改 → 冲突，且提供「重新接管」入口。
+        let conflicted = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        assert_eq!(
+            conflicted.targets[0].change_kind,
+            crate::domain::ChangeKind::Conflict
+        );
+        assert!(conflicted.targets[0].readopt_available);
+
+        // 按原生内容接管：只接管漂移的渠道，且不写原生文件。
+        let adopted = adopt_provider_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            AdoptProviderNativeInput {
+                tool: Tool::Pi,
+                target_path: models_path.to_str().unwrap().to_owned(),
+                row_versions: conflicted.targets[0].row_versions.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(adopted.adopted, vec!["CC".to_owned()]);
+        assert_eq!(fs::read_to_string(&models_path).unwrap(), edited);
+
+        // 档案内容改为以文件为准（只读摘要里能看到手改后的模型列表）。
+        let profiles = list_provider_profiles(&fixture.database, Tool::Pi).unwrap();
+        assert_eq!(profiles.len(), 1);
+        let summary = profiles[0].pi.as_ref().unwrap();
+        assert_eq!(summary.api_format.as_deref(), Some("openai-completions"));
+        assert_eq!(summary.models.len(), 2);
+        assert_eq!(summary.models[0].id, "m1");
+        assert_eq!(summary.models[1].id, "m2");
+
+        // 接管后重新预览：不再冲突（基线已随档案一起刷新）。
+        let settled = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        assert!(matches!(
+            settled.targets[0].change_kind,
+            crate::domain::ChangeKind::Unchanged | crate::domain::ChangeKind::Warning
+        ));
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &settled.preview_id,
+            Tool::Pi,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        // Apply 不得回写用户手改的原生内容。
+        assert_eq!(fs::read_to_string(&models_path).unwrap(), edited);
+    }
+
+    /// 已漂移但行版本过期时拒绝接管，避免覆盖其他窗口的并发编辑。
+    #[test]
+    fn pi_provider_adopt_native_rejects_a_stale_row_version() {
+        let mut fixture = fixture();
+        let agent_dir = fixture.home.join(".pi/agent");
+        let models_path = agent_dir.join("models.json");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            &models_path,
+            r#"{"providers": {"cc": {"baseUrl": "https://cc.example.test/v1", "apiKey": "fixture-cc", "models": [{"id": "m1"}]}}}"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        let candidate = single_candidate(&preview);
+        confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&preview),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: candidate.candidate_id.clone(),
+                    name: "CC".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        // 手改原生文件造成漂移，并取得预览绑定的行版本。
+        fs::write(
+            &models_path,
+            r#"{"providers": {"cc": {"baseUrl": "https://cc.example.test/v1", "apiKey": "fixture-cc", "models": [{"id": "m1"}, {"id": "m2"}]}}}"#,
+        )
+        .unwrap();
+        let plan = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        let preview_versions = plan.targets[0].row_versions.clone();
+        // 另一个窗口更新了档案：预览绑定的版本已过期。
+        fixture
+            .database
+            .connection_mut()
+            .execute("UPDATE provider_profiles SET row_version = row_version + 1", [])
+            .unwrap();
+
+        let stale = adopt_provider_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            AdoptProviderNativeInput {
+                tool: Tool::Pi,
+                target_path: models_path.to_str().unwrap().to_owned(),
+                row_versions: preview_versions,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(stale.code(), crate::error::ErrorCode::StalePreview);
+    }
+
 }

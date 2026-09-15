@@ -4,6 +4,8 @@
 //! `redacted_preview_json` 只承载前端展示 DTO。确认时重新扫描原生文件并与证据求交，
 //! 保证候选身份来自服务端持久化证据而不是客户端回传或脱敏投影。
 
+use std::collections::BTreeMap;
+
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
 
@@ -217,5 +219,116 @@ pub(crate) fn adopt_imported_providers(
     profiles
         .iter()
         .map(|profile| crate::db::profiles::get_provider_profile(database, &profile.id))
+        .collect()
+}
+
+/// 单个渠道档案的「按原生内容接管」更新；`row_version` 做乐观并发校验。
+pub(crate) struct NativeProviderAdoption {
+    pub id: String,
+    pub row_version: i64,
+    pub api_base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub default_model: Option<String>,
+    pub config_json: String,
+}
+
+/// 把原生 Provider 内容采纳为中央档案权威内容，并同时刷新目标级基线。
+///
+/// 两件事必须在同一个 `IMMEDIATE` 事务里完成：只改档案会把旧基线留在原地，
+/// 只改基线会让下一次 Apply 把用户手改的原生内容改回去。
+/// 基线取全部中央渠道投影的并集（调用方传入），与 Provider 导入的写法一致。
+pub(crate) fn adopt_native_providers(
+    database: &mut Database,
+    tool: Tool,
+    target_path: &str,
+    observed_full_hash: &str,
+    baseline_projection: &Value,
+    adoptions: &[NativeProviderAdoption],
+    expected_versions: &BTreeMap<String, u32>,
+) -> Result<Vec<ProviderProfileRecord>, AppError> {
+    let path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| {
+            AppError::database(&path, "begin_adopt_native_providers").with_source(error)
+        })?;
+    let writer = transaction
+        .query_row(
+            "SELECT id, status FROM sync_runs
+             WHERE status IN ('applying', 'restoring', 'rollback_failed') LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(&path, "check_adopt_native_writer").with_source(error)
+        })?;
+    if let Some((id, status)) = writer {
+        return Err(AppError::write_in_progress(&id, &status));
+    }
+    for adoption in adoptions {
+        // 接管来自用户正在看的预览：必须按预览绑定的行版本做乐观校验，否则
+        // 另一个窗口的档案编辑会被静默覆盖。
+        let expected = expected_versions
+            .get(&adoption.id)
+            .ok_or_else(|| AppError::invalid_input("rowVersions", "接管缺少渠道档案的行版本"))?;
+        let actual = crate::db::sync::load_row_version(
+            &transaction,
+            "provider_profiles",
+            &adoption.id,
+            &path,
+            "verify_adopt_native_row_version",
+        )?;
+        if actual.and_then(|value| u32::try_from(value).ok()) != Some(*expected) {
+            return Err(AppError::stale_preview("adoptProviderNative", &adoption.id));
+        }
+        let updated = transaction
+            .execute(
+                "UPDATE provider_profiles
+                 SET api_base_url = ?2, api_key = ?3, default_model = ?4, config_json = ?5
+                 WHERE id = ?1 AND row_version = ?6",
+                params![
+                    adoption.id,
+                    adoption.api_base_url,
+                    adoption.api_key,
+                    adoption.default_model,
+                    adoption.config_json,
+                    adoption.row_version,
+                ],
+            )
+            .map_err(|error| {
+                map_profile_write_error(error, &path, "adopt_native_provider_profile")
+            })?;
+        if updated != 1 {
+            return Err(AppError::conflict(
+                "rowVersion",
+                "渠道档案已被其他操作更新，请重新生成预览后再接管",
+            ));
+        }
+    }
+    let projection_json = serde_json::to_string(baseline_projection).map_err(|error| {
+        AppError::invalid_input("managedBaseline", "Provider 接管基线无法序列化").with_source(error)
+    })?;
+    let baseline = ImportedBaselineRecord {
+        target_id: uuid::Uuid::new_v4().to_string(),
+        target_path: target_path.to_owned(),
+        full_hash: observed_full_hash.to_owned(),
+        managed_hash: hash_json(baseline_projection),
+        projection_json,
+    };
+    adopt_baseline(
+        &transaction,
+        tool,
+        crate::domain::ArtifactKind::Provider,
+        &baseline,
+        &path,
+    )?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&path, "commit_adopt_native_providers").with_source(error)
+    })?;
+    adoptions
+        .iter()
+        .map(|adoption| crate::db::profiles::get_provider_profile(database, &adoption.id))
         .collect()
 }

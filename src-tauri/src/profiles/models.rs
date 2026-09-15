@@ -264,6 +264,23 @@ pub struct ConfirmProviderImportInput {
     pub items: Vec<ConfirmProviderImportItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptProviderNativeInput {
+    pub tool: Tool,
+    pub target_path: String,
+    /// 用户所看预览绑定的行版本；缺少漂移渠道的条目或已过期都会拒绝。
+    pub row_versions: Vec<crate::sync::DatabaseRowVersion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptProviderNativeResultDto {
+    pub tool: Tool,
+    /// 被采纳的原生渠道显示名；未漂移的渠道不会出现在这里。
+    pub adopted: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderImportResultDto {

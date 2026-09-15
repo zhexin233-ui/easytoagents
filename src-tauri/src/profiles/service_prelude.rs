@@ -5,8 +5,9 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use super::models::{
-    optional_text, validate_prompt_fields, validate_provider_fields, ClaudeCredentialEnvKey,
-    ConfirmImportInput, ConfirmProviderImportInput, CopyProviderProfileInput,
+    optional_text, validate_prompt_fields, validate_provider_fields, AdoptProviderNativeInput,
+    AdoptProviderNativeResultDto, ClaudeCredentialEnvKey, ConfirmImportInput,
+    ConfirmProviderImportInput, CopyProviderProfileInput,
     DeleteProfileResultDto, PiProviderModelDto, PiProviderSummaryDto, PromptImportPreviewDto,
     PromptProfileDto, PromptProfileInput, ProviderAuthKind, ProviderFieldsInput,
     ProviderImportCandidateDto, ProviderImportCandidateStatus, ProviderImportPreviewDto,
@@ -28,7 +29,7 @@ use crate::{
             NewPromptProfileRecord, NewProviderProfileRecord, PromptProfileRecord,
             ProviderProfileRecord,
         },
-        provider_imports::ProviderImportPreviewRecord,
+        provider_imports::{NativeProviderAdoption, ProviderImportPreviewRecord},
         Database,
     },
     domain::{ArtifactKind, ArtifactName, Scope, Tool},
