@@ -19,6 +19,7 @@ import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 import { renderWithProviders } from "@/test/render";
 import {
   makeOfficialLoginStatus,
+  makeProviderImportCandidate,
   makeProviderImportPreview,
   makeProviderProfile,
 } from "@/test/fixtures/dtos";
@@ -216,7 +217,7 @@ beforeEach(() => {
   });
   vi.mocked(commands.discoverProviderImport).mockResolvedValue({
     status: "ok",
-    data: null,
+    data: makeProviderImportPreview({ previewId: null, candidates: [] }),
   });
   vi.mocked(commands.getOfficialLoginStatus).mockImplementation((tool) =>
     Promise.resolve({
@@ -813,8 +814,12 @@ describe("ToolProfilesPage", () => {
     vi.mocked(commands.discoverProviderImport).mockResolvedValue({
       status: "ok",
       data: makeProviderImportPreview({
-        defaultModel: "",
-        skippedEnvKeys: ["ANTHROPIC_CUSTOM_HEADERS", "SOME_FLAG"],
+        candidates: [
+          makeProviderImportCandidate({
+            defaultModel: "",
+            skippedEnvKeys: ["ANTHROPIC_CUSTOM_HEADERS", "SOME_FLAG"],
+          }),
+        ],
       }),
     });
     renderPage();
@@ -822,11 +827,12 @@ describe("ToolProfilesPage", () => {
     fireEvent.click(
       await within(section).findByRole("button", { name: "检测已有配置" }),
     );
+    const dialog = await screen.findByRole("dialog");
     expect(
-      await within(section).findByText("工具默认模型 · 密钥已遮罩保存"),
+      await within(dialog).findByText(/工具默认模型 · 密钥已遮罩保存/),
     ).toBeVisible();
     expect(
-      within(section).getByText(
+      within(dialog).getByText(
         /不纳入管理并保持原样：ANTHROPIC_CUSTOM_HEADERS、SOME_FLAG/,
       ),
     ).toBeVisible();
@@ -843,10 +849,22 @@ describe("ToolProfilesPage", () => {
     ).toBeVisible();
   });
 
-  it("已有中央渠道时说明无法再次接管", async () => {
+  it("已有中央渠道时说明无需再次接管", async () => {
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
       data: [provider],
+    });
+    vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+      status: "ok",
+      data: makeProviderImportPreview({
+        previewId: null,
+        candidates: [
+          makeProviderImportCandidate({
+            status: "already_managed",
+            suggestedName: "Example Provider",
+          }),
+        ],
+      }),
     });
     renderPage();
     const section = sectionByHeading("渠道");
@@ -855,8 +873,9 @@ describe("ToolProfilesPage", () => {
       within(section).getByRole("button", { name: "检测已有配置" }),
     );
     expect(
-      await screen.findByText("已有中央渠道档案，暂不支持再次接管原生渠道。"),
+      await screen.findByText("已有中央渠道档案都不需要再次接管。"),
     ).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("OpenCode 空检测结果解释默认模型与自定义渠道的关联", async () => {
@@ -878,12 +897,16 @@ describe("ToolProfilesPage", () => {
         previewId: "00000000-0000-4000-8000-000000000502",
         tool: "codex",
         targetPath: "/isolated/home/.codex/config.toml",
-        suggestedName: "Codex 官方账号登录",
-        authKind: "official_login",
-        apiBaseUrl: "",
-        apiKeyConfigured: false,
-        defaultModel: "gpt-5.5",
-        redactedProjection: { model: "gpt-5.5" },
+        candidates: [
+          makeProviderImportCandidate({
+            suggestedName: "Codex 官方账号登录",
+            authKind: "official_login",
+            apiBaseUrl: "",
+            apiKeyConfigured: false,
+            defaultModel: "gpt-5.5",
+            redactedProjection: { model: "gpt-5.5" },
+          }),
+        ],
       }),
     });
 
@@ -894,8 +917,9 @@ describe("ToolProfilesPage", () => {
       await within(section).findByRole("button", { name: "检测已有配置" }),
     );
 
+    const dialog = await screen.findByRole("dialog");
     expect(
-      await within(section).findByText("gpt-5.5 · 官方账号登录（不接管凭据）"),
+      await within(dialog).findByText(/gpt-5\.5 · 官方账号登录（不接管凭据）/),
     ).toBeVisible();
   });
 
@@ -1372,11 +1396,12 @@ describe("ToolProfilesPage", () => {
         name: "检测已有配置",
       }),
     );
-    expect(await screen.findByText("发现已有渠道")).toBeVisible();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("导入 Claude 已有渠道")).toBeVisible();
 
     fireEvent.click(screen.getByRole("link", { name: "zcode" }));
     await screen.findByRole("heading", { name: "ZCode", level: 1 });
-    expect(screen.queryByText("发现已有渠道")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     // 切换页签不触发检测；确认导入也只发生在发起检测的工具上。
     expect(commands.discoverProviderImport).toHaveBeenCalledTimes(1);
     expect(commands.confirmProviderImport).not.toHaveBeenCalled();
@@ -1422,5 +1447,152 @@ describe("ToolProfilesPage", () => {
     );
     const zcodeDialog = screen.getByRole("dialog", { name: "新增 ZCode 渠道" });
     expect(within(zcodeDialog).getByLabelText("名称")).toHaveValue("");
+  });
+
+  it("Pi 多 provider 检测列出全部候选并批量导入", async () => {
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
+    vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+      status: "ok",
+      data: makeProviderImportPreview({
+        tool: "pi",
+        targetPath: "/isolated/home/.pi/agent/models.json",
+        candidates: [
+          makeProviderImportCandidate({
+            candidateId: "00000000-0000-4000-8000-000000000801",
+            providerId: "cc",
+            suggestedName: "cc",
+            defaultProvider: true,
+            apiFormat: "openai-completions",
+            modelCount: 1,
+            defaultModel: "deepseek/v4.1-flash",
+          }),
+          makeProviderImportCandidate({
+            candidateId: "00000000-0000-4000-8000-000000000802",
+            providerId: "gemini",
+            suggestedName: "gemini",
+            defaultProvider: false,
+            apiFormat: "openai-completions",
+            modelCount: 1,
+            defaultModel: "gemini-3.8-flash-high",
+          }),
+        ],
+      }),
+    });
+    vi.mocked(commands.confirmProviderImport).mockResolvedValue({
+      status: "ok",
+      data: { tool: "pi", importedCount: 2 },
+    });
+
+    renderPage("pi");
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "检测已有配置" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("导入 cc")).toBeChecked();
+    expect(within(dialog).getByLabelText("导入 gemini")).not.toBeChecked();
+    expect(within(dialog).getByText("默认渠道")).toBeVisible();
+    expect(
+      within(dialog).getAllByText(/API 格式 openai-completions · 1 个模型/),
+    ).toHaveLength(2);
+
+    fireEvent.click(within(dialog).getByLabelText("导入 gemini"));
+    // 每个可导入候选都有自己的名称输入；第二个属于 gemini。
+    const nameInputs = within(dialog).getAllByLabelText("导入名称");
+    fireEvent.change(nameInputs[1]!, {
+      target: { value: "Gemini 渠道" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "确认导入 2 个渠道" }),
+    );
+
+    await waitFor(() =>
+      expect(commands.confirmProviderImport).toHaveBeenCalledWith({
+        previewId: "00000000-0000-4000-8000-000000000701",
+        items: [
+          { candidateId: "00000000-0000-4000-8000-000000000801", name: "cc" },
+          {
+            candidateId: "00000000-0000-4000-8000-000000000802",
+            name: "Gemini 渠道",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("已纳入管理与配置无效的候选不可勾选并显示原因", async () => {
+    vi.mocked(commands.discoverProviderImport).mockResolvedValue({
+      status: "ok",
+      data: makeProviderImportPreview({
+        tool: "pi",
+        targetPath: "/isolated/home/.pi/agent/models.json",
+        previewId: "00000000-0000-4000-8000-000000000811",
+        candidates: [
+          makeProviderImportCandidate({
+            candidateId: "00000000-0000-4000-8000-000000000812",
+            providerId: "cc",
+            suggestedName: "cc",
+            status: "already_managed",
+          }),
+          makeProviderImportCandidate({
+            candidateId: "00000000-0000-4000-8000-000000000813",
+            providerId: "broken",
+            suggestedName: "broken",
+            status: "invalid",
+            reason: "PI_PROVIDER_FIELDS_INVALID",
+          }),
+          makeProviderImportCandidate({
+            candidateId: "00000000-0000-4000-8000-000000000814",
+            providerId: "gemini",
+            suggestedName: "gemini",
+          }),
+        ],
+      }),
+    });
+
+    renderPage("pi");
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "检测已有配置" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("导入 cc")).toBeDisabled();
+    expect(within(dialog).getByLabelText("导入 broken")).toBeDisabled();
+    expect(within(dialog).getByLabelText("导入 gemini")).toBeEnabled();
+    expect(within(dialog).getByText(/已纳入管理/)).toBeVisible();
+    expect(
+      within(dialog).getByText(/配置无效 · 缺少接入地址或 API Key/),
+    ).toBeVisible();
+  });
+
+  it("Pi 渠道卡片只读展示 API 格式与模型摘要", async () => {
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [
+        makeProviderProfile({
+          tool: "pi",
+          name: "cc",
+          defaultModel: "deepseek/v4.1-flash",
+          pi: {
+            apiFormat: "openai-completions",
+            models: [
+              { id: "deepseek/v4.1-flash", name: null },
+              { id: "second-model", name: "Second" },
+            ],
+          },
+        }),
+      ],
+    });
+
+    renderPage("pi");
+    const section = sectionByHeading("渠道");
+    expect(
+      await within(section).findByText(
+        "API 格式 openai-completions · 2 个模型",
+      ),
+    ).toBeVisible();
   });
 });

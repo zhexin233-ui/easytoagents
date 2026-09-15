@@ -12,6 +12,8 @@ import { renderWithProviders } from "@/test/render";
 import {
   makePreviewPlan,
   makePromptProfile,
+  makeProviderImportCandidate,
+  makeProviderImportPreview,
   makeProviderProfile,
   makeTarget,
 } from "@/test/fixtures";
@@ -22,31 +24,44 @@ vi.mock("@/bindings/commands", async (importOriginal) => {
   return { ...actual, commands: mockCommands(actual.commands) };
 });
 
-const importPreview: ProviderImportPreviewDto = {
+const candidateId = "00000000-0000-4000-8000-000000000723";
+
+const importPreview: ProviderImportPreviewDto = makeProviderImportPreview({
   previewId: "00000000-0000-4000-8000-000000000721",
   tool: "claude",
   targetPath: "/isolated/home/.claude/settings.json",
-  suggestedName: "已发现 Claude 渠道",
-  authKind: "api_key",
-  apiBaseUrl: "https://fixture.example.com",
-  apiKeyConfigured: true,
-  defaultModel: "fixture-model",
-  redactedProjection: { env: "[REDACTED]" },
-  skippedEnvKeys: [],
-};
+  candidates: [
+    makeProviderImportCandidate({
+      candidateId,
+      suggestedName: "已发现 Claude 渠道",
+      apiBaseUrl: "https://fixture.example.com",
+      defaultModel: "fixture-model",
+    }),
+  ],
+});
 
-const codexOAuthImportPreview: ProviderImportPreviewDto = {
-  previewId: "00000000-0000-4000-8000-000000000726",
-  tool: "codex",
-  targetPath: "/isolated/home/.codex/config.toml",
-  suggestedName: "Codex 官方账号登录",
-  authKind: "official_login",
-  apiBaseUrl: "",
-  apiKeyConfigured: false,
-  defaultModel: "gpt-5.5",
-  redactedProjection: { model: "gpt-5.5" },
-  skippedEnvKeys: [],
-};
+const noProviderImport: ProviderImportPreviewDto = makeProviderImportPreview({
+  previewId: null,
+  candidates: [],
+});
+
+const codexOAuthImportPreview: ProviderImportPreviewDto =
+  makeProviderImportPreview({
+    previewId: "00000000-0000-4000-8000-000000000726",
+    tool: "codex",
+    targetPath: "/isolated/home/.codex/config.toml",
+    candidates: [
+      makeProviderImportCandidate({
+        candidateId: "00000000-0000-4000-8000-000000000727",
+        suggestedName: "Codex 官方账号登录",
+        authKind: "official_login",
+        apiBaseUrl: "",
+        apiKeyConfigured: false,
+        defaultModel: "gpt-5.5",
+        redactedProjection: { model: "gpt-5.5" },
+      }),
+    ],
+  });
 
 const promptImportPreview: PromptImportPreviewDto = {
   previewId: "00000000-0000-4000-8000-000000000725",
@@ -56,13 +71,19 @@ const promptImportPreview: PromptImportPreviewDto = {
   body: "# fixture prompt",
 };
 
-const piImportPreview: ProviderImportPreviewDto = {
+const piImportPreview: ProviderImportPreviewDto = makeProviderImportPreview({
   ...importPreview,
   previewId: "00000000-0000-4000-8000-000000000729",
   tool: "pi",
   targetPath: "/isolated/home/.pi/agent/models.json",
-  suggestedName: "已发现 Pi 渠道",
-};
+  candidates: [
+    makeProviderImportCandidate({
+      candidateId: "00000000-0000-4000-8000-000000000730",
+      providerId: "cc",
+      suggestedName: "已发现 Pi 渠道",
+    }),
+  ],
+});
 
 const syncPreview: PreviewPlan = makePreviewPlan({
   previewId: "00000000-0000-4000-8000-000000000722",
@@ -170,7 +191,7 @@ describe("OnboardingWizard", () => {
     vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
       Promise.resolve({
         status: "ok",
-        data: tool === "claude" ? importPreview : null,
+        data: tool === "claude" ? importPreview : noProviderImport,
       }),
     );
     vi.mocked(commands.discoverPromptImport).mockResolvedValue({
@@ -191,26 +212,7 @@ describe("OnboardingWizard", () => {
     });
     vi.mocked(commands.confirmProviderImport).mockResolvedValue({
       status: "ok",
-      data: {
-        id: "00000000-0000-4000-8000-000000000724",
-        tool: "claude",
-        name: importPreview.suggestedName,
-        apiBaseUrl: importPreview.apiBaseUrl,
-        apiKeyConfigured: true,
-        defaultModel: importPreview.defaultModel,
-        options: {
-          authKind: "api_key",
-          credentialEnvKey: "ANTHROPIC_API_KEY",
-          extraEnv: {},
-          providerId: null,
-          wireApi: null,
-          zcodeKind: null,
-          opencodeNpm: null,
-          opencodeApi: null,
-        },
-        isActive: true,
-        rowVersion: 1,
-      },
+      data: { tool: "claude", importedCount: 1 },
     });
     vi.mocked(commands.previewProviderSync).mockResolvedValue({
       status: "ok",
@@ -242,7 +244,7 @@ describe("OnboardingWizard", () => {
     expect(await screen.findByText("Claude · Provider")).toBeInTheDocument();
     expect(commands.confirmProviderImport).toHaveBeenCalledWith({
       previewId: importPreview.previewId,
-      name: importPreview.suggestedName,
+      items: [{ candidateId, name: "已发现 Claude 渠道" }],
     });
     expect(commands.previewProviderSync).toHaveBeenCalledWith("claude");
     expect(commands.previewProviderSync).not.toHaveBeenCalledWith("codex");
@@ -262,7 +264,7 @@ describe("OnboardingWizard", () => {
     vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
       Promise.resolve({
         status: "ok",
-        data: tool === "codex" ? codexOAuthImportPreview : null,
+        data: tool === "codex" ? codexOAuthImportPreview : noProviderImport,
       }),
     );
 
@@ -370,7 +372,7 @@ describe("OnboardingWizard", () => {
               action: "rescan",
             },
           })
-        : Promise.resolve({ status: "ok", data: null }),
+        : Promise.resolve({ status: "ok", data: noProviderImport }),
     );
 
     renderWizard();
@@ -397,7 +399,7 @@ describe("OnboardingWizard", () => {
     );
     vi.mocked(commands.discoverProviderImport).mockResolvedValue({
       status: "ok",
-      data: null,
+      data: noProviderImport,
     });
     vi.mocked(commands.listProviderProfiles).mockImplementation((tool) =>
       Promise.resolve({
@@ -405,26 +407,15 @@ describe("OnboardingWizard", () => {
         data:
           tool === "claude"
             ? [
-                {
+                makeProviderProfile({
                   id: "00000000-0000-4000-8000-000000000724",
                   tool: "claude",
-                  name: importPreview.suggestedName,
-                  apiBaseUrl: importPreview.apiBaseUrl,
+                  name: "已发现 Claude 渠道",
+                  apiBaseUrl: "https://fixture.example.com",
                   apiKeyConfigured: true,
-                  defaultModel: importPreview.defaultModel,
-                  options: {
-                    authKind: "api_key",
-                    credentialEnvKey: "ANTHROPIC_API_KEY",
-                    extraEnv: {},
-                    providerId: null,
-                    wireApi: null,
-                    zcodeKind: null,
-                    opencodeNpm: null,
-                    opencodeApi: null,
-                  },
+                  defaultModel: "fixture-model",
                   isActive: true,
-                  rowVersion: 1,
-                },
+                }),
               ]
             : [],
       }),
@@ -550,7 +541,7 @@ describe("OnboardingWizard", () => {
     vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
       Promise.resolve({
         status: "ok",
-        data: tool === "pi" ? piImportPreview : null,
+        data: tool === "pi" ? piImportPreview : noProviderImport,
       }),
     );
 
@@ -573,7 +564,12 @@ describe("OnboardingWizard", () => {
     expect(await screen.findByText("Pi · Provider")).toBeInTheDocument();
     expect(commands.confirmProviderImport).toHaveBeenCalledWith({
       previewId: piImportPreview.previewId,
-      name: piImportPreview.suggestedName,
+      items: [
+        {
+          candidateId: "00000000-0000-4000-8000-000000000730",
+          name: "已发现 Pi 渠道",
+        },
+      ],
     });
     expect(commands.previewProviderSync).toHaveBeenCalledWith("pi");
   });
@@ -601,10 +597,10 @@ describe("OnboardingWizard", () => {
       Promise.resolve({
         status: "ok",
         data: secondDetectionStarted
-          ? null
+          ? noProviderImport
           : tool === "claude"
             ? importPreview
-            : null,
+            : noProviderImport,
       }),
     );
 
@@ -635,12 +631,12 @@ describe("OnboardingWizard", () => {
       if (secondDetectionStarted) {
         return secondDetectionBlocked.then(() => ({
           status: "ok" as const,
-          data: null,
+          data: noProviderImport,
         }));
       }
       return Promise.resolve({
         status: "ok" as const,
-        data: tool === "claude" ? importPreview : null,
+        data: tool === "claude" ? importPreview : noProviderImport,
       });
     });
 
@@ -664,7 +660,7 @@ describe("OnboardingWizard", () => {
   it("无可导入 Provider 且无 active 档案时显示复选框禁用原因", async () => {
     vi.mocked(commands.discoverProviderImport).mockResolvedValue({
       status: "ok",
-      data: null,
+      data: noProviderImport,
     });
 
     renderWizard();

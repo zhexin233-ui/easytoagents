@@ -15,11 +15,13 @@ import { Field } from "@/components/ui/field";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { OfficialLoginSection } from "@/features/tool-profiles/official-login-section";
+import { ProviderImportDialog } from "@/features/tool-profiles/provider-import-dialog";
 import {
   isOfficialLoginProfile,
   OFFICIAL_LOGIN_TOOLS,
+  piProviderModelsTitle,
+  piProviderSummaryText,
   providerCredentialText,
-  providerImportCredentialText,
   providerModelText,
 } from "@/features/tool-profiles/provider-text";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
@@ -227,38 +229,17 @@ export function ProviderPanel({
       setImportPreview(null);
     },
     onSuccess: (preview) => {
-      setImportPreview(preview);
-      if (!preview) {
-        notify({
-          kind: "success",
-          message: profilesQuery.data?.length
-            ? "已有中央渠道档案，暂不支持再次接管原生渠道。"
-            : tool === "opencode"
-              ? "未检测到可导入渠道。请确认配置中的默认模型（model）引用了自定义 provider，且该渠道包含名称、npm 和 baseURL；内置渠道暂不支持导入。"
-              : "未检测到可导入的已有渠道配置。",
-        });
+      if (preview.previewId) {
+        setImportPreview(preview);
+        return;
       }
-    },
-  });
-  const confirmImportMutation = useMutation({
-    mutationFn: async () => {
-      if (!importPreview) {
-        throw new Error("导入预览已关闭");
-      }
-      return unwrapResult(
-        await commands.confirmProviderImport({
-          previewId: importPreview.previewId,
-          name: importPreview.suggestedName,
-        }),
-      );
-    },
-    onSuccess: async () => {
-      setImportPreview(null);
-      notify({
-        kind: "success",
-        message: "已有渠道已无写入接管，原生文件内容保持不变。",
-      });
-      await refresh();
+      // 没有可导入候选：已纳入管理或原生配置为空。
+      const fallback = profilesQuery.data?.length
+        ? "已有中央渠道档案都不需要再次接管。"
+        : tool === "opencode"
+          ? "未检测到可导入渠道。请确认配置中的默认模型（model）引用了自定义 provider，且该渠道包含名称、npm 和 baseURL；内置渠道暂不支持导入。"
+          : "未检测到可导入的已有渠道配置。";
+      notify({ kind: "success", message: preview.message ?? fallback });
     },
   });
 
@@ -267,7 +248,6 @@ export function ProviderPanel({
     copyMutation.error,
     deleteMutation.error,
     discoverMutation.error,
-    confirmImportMutation.error,
   ]
     .map(profileErrorText)
     .find(Boolean);
@@ -353,6 +333,14 @@ export function ProviderPanel({
                   {providerModelText(profile.defaultModel)} ·{" "}
                   {providerCredentialText(profile)}
                 </p>
+                {piProviderSummaryText(profile.pi) ? (
+                  <p
+                    className="text-muted-foreground mt-1 text-xs"
+                    title={piProviderModelsTitle(profile.pi)}
+                  >
+                    {piProviderSummaryText(profile.pi)}
+                  </p>
+                ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 {!profile.isActive ? (
@@ -402,37 +390,19 @@ export function ProviderPanel({
       </ul>
 
       {importPreview ? (
-        <div
-          className={`mt-5 max-w-full min-w-0 rounded-lg border p-4 ${toneClass("warning")}`}
-        >
-          <p className="font-medium">发现已有渠道</p>
-          <p className="mt-1 text-sm break-all">{importPreview.targetPath}</p>
-          <p className="text-muted-foreground mt-1 text-xs">
-            {providerModelText(importPreview.defaultModel)} ·{" "}
-            {providerImportCredentialText(importPreview)}
-          </p>
-          {importPreview.skippedEnvKeys.length > 0 ? (
-            <p className="mt-2 text-xs">
-              以下 env 疑似凭据或格式不受支持，不纳入管理并保持原样：
-              {importPreview.skippedEnvKeys.join("、")}
-            </p>
-          ) : null}
-          <pre className="bg-card rounded-control mt-3 max-w-full overflow-auto p-3 text-xs">
-            {JSON.stringify(importPreview.redactedProjection, null, 2)}
-          </pre>
-          <div className="mt-3 flex gap-2">
-            <Button size="sm" onClick={() => confirmImportMutation.mutate()}>
-              确认无写入接管
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setImportPreview(null)}
-            >
-              跳过
-            </Button>
-          </div>
-        </div>
+        <ProviderImportDialog
+          tool={tool}
+          preview={importPreview}
+          onClose={() => setImportPreview(null)}
+          onImported={async (result) => {
+            setImportPreview(null);
+            notify({
+              kind: "success",
+              message: `已接管 ${result.importedCount} 个已有渠道，原生文件内容保持不变。`,
+            });
+            await refresh();
+          }}
+        />
       ) : null}
 
       <FormDialog

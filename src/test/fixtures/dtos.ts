@@ -3,6 +3,7 @@ import type {
   McpServerDto,
   OfficialLoginStatusDto,
   ProjectDto,
+  ProviderImportCandidateDto,
   ProviderImportPreviewDto,
   ProviderProfileDto,
   PromptProfileDto,
@@ -79,8 +80,28 @@ export const makeProviderProfile = (
     opencodeNpm: null,
     opencodeApi: null,
   },
+  pi: null,
   isActive: false,
   rowVersion: 1,
+  ...o,
+});
+export const makeProviderImportCandidate = (
+  o: Partial<ProviderImportCandidateDto> = {},
+): ProviderImportCandidateDto => ({
+  candidateId: "00000000-0000-4000-8000-000000000702",
+  providerId: "fixture",
+  suggestedName: "已发现 Claude 渠道",
+  status: "importable",
+  reason: null,
+  authKind: "api_key",
+  defaultProvider: true,
+  apiBaseUrl: "https://fixture.example.com",
+  apiKeyConfigured: true,
+  defaultModel: "fixture-model",
+  apiFormat: null,
+  modelCount: 0,
+  redactedProjection: { env: "[REDACTED]" },
+  skippedEnvKeys: [],
   ...o,
 });
 export const makeProviderImportPreview = (
@@ -89,13 +110,8 @@ export const makeProviderImportPreview = (
   previewId: "00000000-0000-4000-8000-000000000701",
   tool: "claude",
   targetPath: "/isolated/home/.claude/settings.json",
-  suggestedName: "已发现 Claude 渠道",
-  authKind: "api_key",
-  apiBaseUrl: "https://fixture.example.com",
-  apiKeyConfigured: true,
-  defaultModel: "fixture-model",
-  redactedProjection: { env: "[REDACTED]" },
-  skippedEnvKeys: [],
+  candidates: [makeProviderImportCandidate()],
+  message: null,
   ...o,
 });
 export const makeOfficialLoginStatus = (

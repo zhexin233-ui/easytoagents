@@ -22,7 +22,8 @@ import {
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import {
-  providerImportCredentialText,
+  providerCandidateCredentialText,
+  providerCandidateStatusText,
   providerModelText,
 } from "@/features/tool-profiles/provider-text";
 import { dashboardKeys } from "@/lib/dashboard-api";
@@ -274,12 +275,21 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         if (selected.skip || !found) continue;
         const pending = pendingToolConfiguration(tool, found);
         if (selected.provider && pending.provider) {
-          unwrapResult(
-            await commands.confirmProviderImport({
-              previewId: pending.provider.previewId,
-              name: pending.provider.suggestedName,
-            }),
+          const importable = pending.provider.candidates.filter(
+            (candidate) => candidate.status === "importable",
           );
+          if (importable.length > 0 && pending.provider.previewId) {
+            // 首次接管一次性导入全部可导入渠道（Pi 的 models.json 可能有多个）。
+            unwrapResult(
+              await commands.confirmProviderImport({
+                previewId: pending.provider.previewId,
+                items: importable.map((candidate) => ({
+                  candidateId: candidate.candidateId,
+                  name: candidate.suggestedName,
+                })),
+              }),
+            );
+          }
         }
         if (selected.provider && pending.provider) {
           prepared.push({
@@ -512,20 +522,36 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                         <code className="mt-1 block break-all">
                           {pending.provider.targetPath}
                         </code>
-                        <p className="text-muted-foreground mt-1">
-                          {providerModelText(pending.provider.defaultModel)} ·{" "}
-                          {providerImportCredentialText(pending.provider)}
-                        </p>
-                        {pending.provider.skippedEnvKeys.length > 0 ? (
-                          <p className="text-muted-foreground mt-1">
-                            以下 env
-                            疑似凭据或格式不受支持，不纳入管理并保持原样：
-                            {pending.provider.skippedEnvKeys.join("、")}
-                          </p>
-                        ) : null}
+                        {pending.provider.candidates.map((candidate) => (
+                          <div key={candidate.candidateId} className="mt-2">
+                            <p className="font-medium">
+                              {candidate.suggestedName}
+                              <span className="text-muted-foreground font-normal">
+                                {` · ${providerCandidateStatusText[candidate.status]}`}
+                                {candidate.defaultProvider ? " · 默认渠道" : ""}
+                              </span>
+                            </p>
+                            <p className="text-muted-foreground mt-1">
+                              {providerModelText(candidate.defaultModel)} ·{" "}
+                              {providerCandidateCredentialText(candidate)}
+                              {candidate.apiFormat
+                                ? ` · API 格式 ${candidate.apiFormat} · ${candidate.modelCount} 个模型`
+                                : ""}
+                            </p>
+                            {candidate.skippedEnvKeys.length > 0 ? (
+                              <p className="text-muted-foreground mt-1">
+                                以下 env
+                                疑似凭据或格式不受支持，不纳入管理并保持原样：
+                                {candidate.skippedEnvKeys.join("、")}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
                         <pre className="mt-2 max-w-full overflow-auto">
                           {JSON.stringify(
-                            pending.provider.redactedProjection,
+                            pending.provider.candidates.map(
+                              (candidate) => candidate.redactedProjection,
+                            ),
                             null,
                             2,
                           )}
@@ -785,13 +811,32 @@ function updateChoice(
   }));
 }
 
+/**
+ * 只有「至少一个可导入候选 + 服务端签发的预览令牌」才算待接管。
+ *
+ * 检测现在总会返回 DTO（Pi 的 `models.json` 可能有多个 provider），
+ * 「全部已纳入管理」或「没有可导入配置」时仍是空候选。
+ */
+function hasImportableProvider(
+  preview: ProviderImportPreviewDto | null,
+): preview is ProviderImportPreviewDto {
+  return Boolean(
+    preview?.previewId &&
+    preview.candidates.some((candidate) => candidate.status === "importable"),
+  );
+}
+
 function pendingToolConfiguration(
   tool: ProfileTool,
   found: ToolDiscovery,
 ): PendingToolConfiguration {
   const capabilities = toolMetadata(tool).capabilities;
   const provider =
-    capabilities.provider && !found.providerManaged ? found.provider : null;
+    capabilities.provider &&
+    !found.providerManaged &&
+    hasImportableProvider(found.provider)
+      ? found.provider
+      : null;
   const prompt =
     capabilities.promptGlobal && !found.promptManaged ? found.prompt : null;
   const resolved =

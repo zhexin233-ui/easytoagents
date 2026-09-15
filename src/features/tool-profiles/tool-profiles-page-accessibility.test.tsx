@@ -8,7 +8,10 @@ import {
 } from "@/bindings/commands";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 import { renderWithProviders } from "@/test/render";
-import { makeProviderProfile } from "@/test/fixtures/dtos";
+import {
+  makeProviderImportPreview,
+  makeProviderProfile,
+} from "@/test/fixtures/dtos";
 import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
@@ -118,7 +121,7 @@ beforeEach(() => {
   });
   vi.mocked(commands.discoverProviderImport).mockResolvedValue({
     status: "ok",
-    data: null,
+    data: makeProviderImportPreview({ previewId: null, candidates: [] }),
   });
   vi.mocked(commands.previewProviderSync).mockResolvedValue({
     status: "ok",
