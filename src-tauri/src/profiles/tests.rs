@@ -7,16 +7,15 @@ mod tests {
 
     use super::{
         adopt_provider_native, apply_profile_preview, confirm_prompt_import,
-        confirm_provider_import,
-        copy_provider_profile, create_prompt_profile, create_provider_profile,
-        discover_prompt_import, discover_provider_import, get_tool_profile_status,
-        list_provider_profiles, preview_prompt_sync, preview_provider_sync,
-        readopt_provider_target, set_active_provider_profile, set_global_prompt_assignment,
-        update_prompt_profile, update_provider_profile, ConfirmProviderImportInput,
-        AdoptProviderNativeInput, CopyProviderProfileInput, PromptProfileDto,
-        PromptProfileInput, ProviderAuthKind,
-        ProviderImportCandidateDto, ProviderImportCandidateStatus, ProviderImportPreviewDto,
-        ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput, ReadoptProviderTargetInput,
+        confirm_provider_import, copy_provider_profile, create_prompt_profile,
+        create_provider_profile, discover_prompt_import, discover_provider_import,
+        get_tool_profile_status, list_provider_profiles, preview_prompt_sync,
+        preview_provider_sync, readopt_provider_target, set_active_provider_profile,
+        set_global_prompt_assignment, update_prompt_profile, update_provider_profile,
+        AdoptProviderNativeInput, ConfirmProviderImportInput, CopyProviderProfileInput,
+        PromptProfileDto, PromptProfileInput, ProviderAuthKind, ProviderImportCandidateDto,
+        ProviderImportCandidateStatus, ProviderImportPreviewDto, ProviderOptionsInput,
+        ProviderProfileDto, ProviderProfileInput, ReadoptProviderTargetInput,
         SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
         CLAUDE_MODEL_KEY,
     };
@@ -3291,7 +3290,10 @@ tenant = "fixture"
         fixture
             .database
             .connection_mut()
-            .execute("UPDATE provider_profiles SET row_version = row_version + 1", [])
+            .execute(
+                "UPDATE provider_profiles SET row_version = row_version + 1",
+                [],
+            )
             .unwrap();
 
         let stale = adopt_provider_native(
@@ -3307,5 +3309,4 @@ tenant = "fixture"
         .unwrap_err();
         assert_eq!(stale.code(), crate::error::ErrorCode::StalePreview);
     }
-
 }
