@@ -173,23 +173,23 @@
 ### 2. Signatures
 
 - `ProviderCodec::discover(&self, descriptor, managed_projection, full_hash)
-  -> Result<Vec<ProviderCodecDiscovery>, AppError>`。单 provider 工具最多返回一个元素；
+-> Result<Vec<ProviderCodecDiscovery>, AppError>`。单 provider 工具最多返回一个元素；
   Pi 返回 `providers` 下全部条目。
 - `ProviderCodecDiscovery` 携带 `provider_id`、`suggested_name`（回退 provider id）、
   `is_default_provider`、`unimportable_reason`（适配层已判定结构不可证明时的稳定原因码）。
 - `ProviderCodec::merge_import_baseline(&self, existing: Option<&Value>, batch: &Value)
-  -> Result<Value, AppError>`，默认实现为**替换**（单 provider 工具的首次接管语义）；
+-> Result<Value, AppError>`，默认实现为**替换**（单 provider 工具的首次接管语义）；
   Pi 覆写为 `providers` 条目级深合并。
 - `discover_provider_import(database, environment, redactor, tool)
-  -> Result<ProviderImportPreviewDto, AppError>`（非 `Option`；`previewId` 可空）。
+-> Result<ProviderImportPreviewDto, AppError>`（非 `Option`；`previewId` 可空）。
 - `confirm_provider_import(database, environment, redactor,
-  ConfirmProviderImportInput { preview_id, items: Vec<ConfirmProviderImportItem { candidate_id, name }> })
-  -> Result<ProviderImportResultDto, AppError>`。
+ConfirmProviderImportInput { preview_id, items: Vec<ConfirmProviderImportItem { candidate_id, name }> })
+-> Result<ProviderImportResultDto, AppError>`。
 - 迁移 `0026_provider_import_previews.sql`：`id`/`tool`/`target_path`/`observed_full_hash`/
   `context_json`/`redacted_preview_json`/`status`/时间戳 + `(status, created_at)` 索引；
   tool 白名单 `claude|codex|zcode|opencode|pi`（Cursor 无 Provider 合同）。
 - `adopt_provider_native(database, environment, redactor, AdoptProviderNativeInput {
-  tool, target_path, row_versions }) -> AdoptProviderNativeResultDto { tool, adopted }`。
+tool, target_path, row_versions }) -> AdoptProviderNativeResultDto { tool, adopted }`。
 - 生成绑定：`commands.discoverProviderImport(tool)`、
   `commands.confirmProviderImport({ previewId, items })`、
   `commands.adoptProviderNative({ tool, targetPath, rowVersions })`。
@@ -205,7 +205,7 @@
   其他工具保留「该工具尚无中央档案」的首次接管守卫。确认同一 `provider_id` 必须
   `CONFLICT`，不得产生第二份档案。
 - **候选身份**：`context_json` 只保存 `{version, candidates:[{candidateId, providerId,
-  suggestedName}]}`，不含投影或凭据；`providerId` 允许为 `null`（Claude / Codex 官方登录
+suggestedName}]}`，不含投影或凭据；`providerId` 允许为 `null`（Claude / Codex 官方登录
   没有原生 key）。确认时重新扫描原生文件，用 `providerId` 与证据求交，缺失即 `STALE_PREVIEW`。
   前端只回传不透明 `candidateId` 与用户确认的名称。
 - **`models` 按 id 合并**：档案的 `extra_provider_fields` 必须包含 `models` 原数组；渲染时

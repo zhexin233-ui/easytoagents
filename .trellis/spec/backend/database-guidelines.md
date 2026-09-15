@@ -216,7 +216,7 @@ project file.
 - `Database::open(&AppPaths) -> Result<Database, AppError>` applies migration
   0018 in one `IMMEDIATE` transaction, then retries the cleanup queue.
 - `retired_snapshot_cleanup(snapshot_id, run_id, snapshot_path, storage_kind,
-  content_hash, queued_at)` records retired snapshot metadata before source rows
+content_hash, queued_at)` records retired snapshot metadata before source rows
   are deleted.
 - `process_retired_snapshot_cleanup(&Connection, &AppPaths) -> Result<_, _>`
   accepts only queue rows whose path is derived from the private snapshots root.
@@ -246,15 +246,15 @@ project file.
 
 ### 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| Missing or duplicate old CHECK anchor | Migration aborts with a stable migration error |
+| Condition                                            | Result                                             |
+| ---------------------------------------------------- | -------------------------------------------------- |
+| Missing or duplicate old CHECK anchor                | Migration aborts with a stable migration error     |
 | Project Prompt snapshot is referenced by a mixed run | Snapshot/run remain; only retired rows are removed |
-| Queue path escapes the private snapshots root | Queue row remains; no filesystem mutation |
-| Queue path is symlink/special/non-regular | Queue row remains; no filesystem mutation |
-| Queue storage kind is not `payload_file` | Queue row remains for a later retry |
-| Snapshot file is already missing | Queue row is marked complete/removed |
-| Reopen after successful v18 migration | No duplicate rows or deletes; schema remains v18 |
+| Queue path escapes the private snapshots root        | Queue row remains; no filesystem mutation          |
+| Queue path is symlink/special/non-regular            | Queue row remains; no filesystem mutation          |
+| Queue storage kind is not `payload_file`             | Queue row remains for a later retry                |
+| Snapshot file is already missing                     | Queue row is marked complete/removed               |
+| Reopen after successful v18 migration                | No duplicate rows or deletes; schema remains v18   |
 
 ### 5. Good/Base/Bad Cases
 
@@ -348,13 +348,13 @@ remove_regular_payload_if_present(&path)?;
 
 ### 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| Relative, root, broad, symlinked, or special private path | `INVALID_INPUT` or `PERMISSION_DENIED`; create nothing outside the root |
-| Effective WAL/foreign-key PRAGMA differs | stable database error; startup stops |
-| Migration history is renamed, unknown, or out of order | stable migration error; no later migration runs |
-| Global/project MCP, Skill, or Hook assignment duplicates on `INSERT` or `UPDATE` | SQLite trigger conflict plus matching domain conflict |
-| `row_version` decreases | reject; unchanged version is atomically bumped |
+| Condition                                                                        | Result                                                                  |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Relative, root, broad, symlinked, or special private path                        | `INVALID_INPUT` or `PERMISSION_DENIED`; create nothing outside the root |
+| Effective WAL/foreign-key PRAGMA differs                                         | stable database error; startup stops                                    |
+| Migration history is renamed, unknown, or out of order                           | stable migration error; no later migration runs                         |
+| Global/project MCP, Skill, or Hook assignment duplicates on `INSERT` or `UPDATE` | SQLite trigger conflict plus matching domain conflict                   |
+| `row_version` decreases                                                          | reject; unchanged version is atomically bumped                          |
 
 ### 5. Good/Base/Bad Cases
 
@@ -445,14 +445,14 @@ let database = Database::open(&paths)?;
 
 ### 4. Validation & Error Matrix
 
-| Condition | Result |
-| --- | --- |
-| `disabled` row without snapshot | SQLite CHECK abort |
-| Delete snapshot row still referenced | SQLite RESTRICT plus command-level `CONFLICT` |
-| Decrease `row_version` | `ROW_VERSION_MUST_INCREASE` |
-| Project Prompt target or PromptFile entry supplied after v18 | reject/fail closed; no native read or write |
-| Remove project while native `disabled`/`conflict` > 0 | domain `CONFLICT`; transaction rolls back |
-| Reopen after 0018 | idempotent; schema version stays 18 |
+| Condition                                                    | Result                                        |
+| ------------------------------------------------------------ | --------------------------------------------- |
+| `disabled` row without snapshot                              | SQLite CHECK abort                            |
+| Delete snapshot row still referenced                         | SQLite RESTRICT plus command-level `CONFLICT` |
+| Decrease `row_version`                                       | `ROW_VERSION_MUST_INCREASE`                   |
+| Project Prompt target or PromptFile entry supplied after v18 | reject/fail closed; no native read or write   |
+| Remove project while native `disabled`/`conflict` > 0        | domain `CONFLICT`; transaction rolls back     |
+| Reopen after 0018                                            | idempotent; schema version stays 18           |
 
 ### 5. Good/Base/Bad Cases
 

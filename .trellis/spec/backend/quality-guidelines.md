@@ -56,7 +56,7 @@ discovery, observation, ownership, disable/restore, and Apply.
 - Keep managed-selector ownership in `TargetDescriptor`; validate that adapter scans
   and renders cannot escape those roots.
 - Construct every `TargetDescriptor` through `TargetDescriptor::builder(tool,
-  artifact_kind, scope)` directly at the discovery call site. Adapters must not wrap
+artifact_kind, scope)` directly at the discovery call site. Adapters must not wrap
   the builder in a local positional `descriptor(...)` helper (the old ten-argument
   wrappers needed `#[allow(clippy::too_many_arguments)]` and hid which defaults each
   target relied on). Builder defaults are `Json`, `PolicyState::Allowed`,
@@ -160,16 +160,16 @@ discovery, observation, ownership, disable/restore, and Apply.
 
 ### 4. Validation & Error Matrix
 
-| Condition | Preview state |
-| --- | --- |
-| Missing target | `missing`; add may be planned |
-| Malformed document or scalar at a managed intermediate path | `parse_error`; block |
-| Permission denied, target-type change, or unsafe symlink ancestor | distinct blocked state |
-| Only full hash changes | `external_non_owned_change`; deterministic merge allowed |
-| Managed hash changes or hash pair is incomplete | conflict; block |
-| Unknown Claude policy/capability or Codex trust | policy/untrusted/unsupported; block |
-| Cursor Provider, API Key/model, or unverified target | unsupported and pathless; zero native reads/writes |
-| Duplicate target or contradictory row version | `INVALID_INPUT`; persist nothing |
+| Condition                                                         | Preview state                                            |
+| ----------------------------------------------------------------- | -------------------------------------------------------- |
+| Missing target                                                    | `missing`; add may be planned                            |
+| Malformed document or scalar at a managed intermediate path       | `parse_error`; block                                     |
+| Permission denied, target-type change, or unsafe symlink ancestor | distinct blocked state                                   |
+| Only full hash changes                                            | `external_non_owned_change`; deterministic merge allowed |
+| Managed hash changes or hash pair is incomplete                   | conflict; block                                          |
+| Unknown Claude policy/capability or Codex trust                   | policy/untrusted/unsupported; block                      |
+| Cursor Provider, API Key/model, or unverified target              | unsupported and pathless; zero native reads/writes       |
+| Duplicate target or contradictory row version                     | `INVALID_INPUT`; persist nothing                         |
 
 ### 5. Good/Base/Bad Cases
 
@@ -240,14 +240,14 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Resource/item row version exceeds `u32` | Stable invalid-input error; preview is not persisted |
-| Item is absent from an observed projection | Remove only that managed item during readopt |
-| Target is missing or unreadable during readopt | Clear baseline/items or return conflict; never write a native target |
-| Cursor Hook canonical event has no native mapping | Treat the item as absent; no guessed event key |
-| Cursor Provider codec requested | Explicit unsupported error and zero native reads/writes |
-| Sync SQL operation affects an unexpected row count | Preserve the existing database/stale error operation |
+| Condition                                          | Required result                                                      |
+| -------------------------------------------------- | -------------------------------------------------------------------- |
+| Resource/item row version exceeds `u32`            | Stable invalid-input error; preview is not persisted                 |
+| Item is absent from an observed projection         | Remove only that managed item during readopt                         |
+| Target is missing or unreadable during readopt     | Clear baseline/items or return conflict; never write a native target |
+| Cursor Hook canonical event has no native mapping  | Treat the item as absent; no guessed event key                       |
+| Cursor Provider codec requested                    | Explicit unsupported error and zero native reads/writes              |
+| Sync SQL operation affects an unexpected row count | Preserve the existing database/stale error operation                 |
 
 ### 5. Good / Base / Bad Cases
 
@@ -293,14 +293,14 @@ let entries = projection["hooks"][event].as_array()?;
 ### 2. Signatures
 
 - `apply_persisted_preview(&Mutex<()>, &mut Database, &AppPaths, preview_id,
-  &[ApplyTargetInput], &dyn ApplyFaultInjector) -> Result<ApplyResult, AppError>`
+&[ApplyTargetInput], &dyn ApplyFaultInjector) -> Result<ApplyResult, AppError>`
   is the only Phase 3 native-target write entry.
 - `detect_interrupted_run(&Database, &AppPaths) -> Result<Option<InterruptedRunPlan>, AppError>`
   exposes conservative startup recovery state without mutating targets.
 - `preview_restore(&mut Database, &AppPaths, snapshot_id, allowed_root)
-  -> Result<RestorePreview, AppError>` binds current state to a one-shot restore preview.
+-> Result<RestorePreview, AppError>` binds current state to a one-shot restore preview.
 - `restore_snapshot(&Mutex<()>, &mut Database, &AppPaths, restore_preview_id,
-  allowed_root, central_root) -> Result<ApplyResult, AppError>` consumes that preview.
+allowed_root, central_root) -> Result<ApplyResult, AppError>` consumes that preview.
 
 ### 3. Contracts
 
@@ -371,19 +371,19 @@ let entries = projection["hooks"][event].as_array()?;
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Same preview submitted twice or from two processes | At most one claim; loser receives stable conflict |
-| Any identity, row-version, hash, path, ancestor, type, parse, or permission mismatch | Stable stale/parse/type/permission/conflict error and zero external writes |
-| Crash before rename | Keep durable snapshot/journal; never infer that rename occurred |
-| Crash after rename or before/after database finalize | Keep blocking evidence; never guess rollback or overwrite |
-| Temporary path now contains another entry | Report conflict and preserve it |
-| Rollback or restore fails after any mutation | Reverse recovery where proven safe; preserve all evidence and block later writes |
-| Tracked Git path | Warning only; never modify `.gitignore` or the index |
-| Confirmed untracked Git path | Idempotently update only the owned `.git/info/exclude` marker block |
-| Legacy `metadata_only` directory snapshot | List as non-restorable; reject restore before any native write; allow safe metadata-file deletion |
-| `directory_tree` snapshot hash/path/type mismatch | Conflict; preserve snapshot and current target |
-| Directory-tree restore over a central managed link | Create a second snapshot, restore and hash-verify the tree, then mark target externally changed |
+| Condition                                                                            | Required result                                                                                   |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Same preview submitted twice or from two processes                                   | At most one claim; loser receives stable conflict                                                 |
+| Any identity, row-version, hash, path, ancestor, type, parse, or permission mismatch | Stable stale/parse/type/permission/conflict error and zero external writes                        |
+| Crash before rename                                                                  | Keep durable snapshot/journal; never infer that rename occurred                                   |
+| Crash after rename or before/after database finalize                                 | Keep blocking evidence; never guess rollback or overwrite                                         |
+| Temporary path now contains another entry                                            | Report conflict and preserve it                                                                   |
+| Rollback or restore fails after any mutation                                         | Reverse recovery where proven safe; preserve all evidence and block later writes                  |
+| Tracked Git path                                                                     | Warning only; never modify `.gitignore` or the index                                              |
+| Confirmed untracked Git path                                                         | Idempotently update only the owned `.git/info/exclude` marker block                               |
+| Legacy `metadata_only` directory snapshot                                            | List as non-restorable; reject restore before any native write; allow safe metadata-file deletion |
+| `directory_tree` snapshot hash/path/type mismatch                                    | Conflict; preserve snapshot and current target                                                    |
+| Directory-tree restore over a central managed link                                   | Create a second snapshot, restore and hash-verify the tree, then mark target externally changed   |
 
 ### 5. Good/Base/Bad Cases
 
@@ -464,14 +464,14 @@ apply_persisted_preview(
   `discover_*_import(...) -> *ImportPreviewDto`, then a confirmation command.
   Provider confirmation is multi-candidate:
   `confirm_provider_import(ConfirmProviderImportInput { previewId, items }) ->
-  ProviderImportResultDto`; Prompt keeps the single-candidate
+ProviderImportResultDto`; Prompt keeps the single-candidate
   `confirm_prompt_import(ConfirmImportInput) -> PromptProfileDto`.
 - Native synchronization is a separate two-step contract:
   `preview_{provider,prompt}_sync(tool) -> PreviewPlan`, then
   `apply_profile_preview(ApplyProfilePreviewInput) -> ApplyResult`.
 - Provider conflict recovery adds a typed baseline-only command:
   `readopt_provider_target(ReadoptProviderTargetInput { tool, target_path }) ->
-  ReadoptProviderTargetResultDto { target_path }`.
+ReadoptProviderTargetResultDto { target_path }`.
 
 ### 3. Contracts
 
@@ -543,22 +543,22 @@ apply_persisted_preview(
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Stale update/activate/delete `row_version` | `CONFLICT`; transaction rolls back |
-| Case-only duplicate name in the same tool | `CONFLICT` |
-| Cross-tool copy | New UUID/Provider ID; validate target fields/options again; official-login source is `INVALID_INPUT` |
-| URL with credentials, query, fragment, or non-HTTP(S) scheme | `INVALID_INPUT` |
-| `api_key` profile without a key; `official_login` profile with a URL or key | `INVALID_INPUT` |
-| Update that changes `auth_kind` | `INVALID_INPUT`; the stored profile is untouched |
-| Codex reserved Provider ID or wire API outside `responses`/`chat` | reject/ignore built-in; never overwrite |
-| Extra env with reserved key, NUL/newline, or credential-looking non-numeric value | `INVALID_INPUT` |
-| Claude host evidence unknown, malformed, or present | policy-blocked preview; zero external writes |
-| Import target hash changes before confirmation | `STALE_PREVIEW`; preserve target |
-| Native target changes after sync preview | `STALE_PREVIEW`/conflict; preserve target |
-| Provider readopt path is empty, cross-tool, or no longer canonical | `INVALID_INPUT`; no baseline change |
-| Provider readopt target is malformed, unreadable, unsafe, or type-changed | recoverable `CONFLICT`; native target and baseline are preserved |
-| Apply receives the pre-readopt conflict Preview | `CONFLICT`/`STALE_PREVIEW`; no native write |
+| Condition                                                                         | Required result                                                                                      |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Stale update/activate/delete `row_version`                                        | `CONFLICT`; transaction rolls back                                                                   |
+| Case-only duplicate name in the same tool                                         | `CONFLICT`                                                                                           |
+| Cross-tool copy                                                                   | New UUID/Provider ID; validate target fields/options again; official-login source is `INVALID_INPUT` |
+| URL with credentials, query, fragment, or non-HTTP(S) scheme                      | `INVALID_INPUT`                                                                                      |
+| `api_key` profile without a key; `official_login` profile with a URL or key       | `INVALID_INPUT`                                                                                      |
+| Update that changes `auth_kind`                                                   | `INVALID_INPUT`; the stored profile is untouched                                                     |
+| Codex reserved Provider ID or wire API outside `responses`/`chat`                 | reject/ignore built-in; never overwrite                                                              |
+| Extra env with reserved key, NUL/newline, or credential-looking non-numeric value | `INVALID_INPUT`                                                                                      |
+| Claude host evidence unknown, malformed, or present                               | policy-blocked preview; zero external writes                                                         |
+| Import target hash changes before confirmation                                    | `STALE_PREVIEW`; preserve target                                                                     |
+| Native target changes after sync preview                                          | `STALE_PREVIEW`/conflict; preserve target                                                            |
+| Provider readopt path is empty, cross-tool, or no longer canonical                | `INVALID_INPUT`; no baseline change                                                                  |
+| Provider readopt target is malformed, unreadable, unsafe, or type-changed         | recoverable `CONFLICT`; native target and baseline are preserved                                     |
+| Apply receives the pre-readopt conflict Preview                                   | `CONFLICT`/`STALE_PREVIEW`; no native write                                                          |
 
 ### 5. Good/Base/Bad Cases
 
@@ -665,13 +665,13 @@ the shared persisted preview/apply pipeline.
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Project Prompt assignment/preview/apply payload | Type/command boundary rejects it; no native read or write |
-| `projectId` supplied to global Prompt preview/apply | `INVALID_INPUT`; central intent unchanged |
-| Global Prompt target missing or malformed | Structured preview/import error; no project fallback |
-| Project scan encounters Prompt/Rules file | Ignore it; do not create target, baseline, or native-resource row |
-| Global Prompt preview/apply with valid tool and preview ID | Use explicit global root and shared persisted pipeline |
+| Condition                                                  | Required result                                                   |
+| ---------------------------------------------------------- | ----------------------------------------------------------------- |
+| Project Prompt assignment/preview/apply payload            | Type/command boundary rejects it; no native read or write         |
+| `projectId` supplied to global Prompt preview/apply        | `INVALID_INPUT`; central intent unchanged                         |
+| Global Prompt target missing or malformed                  | Structured preview/import error; no project fallback              |
+| Project scan encounters Prompt/Rules file                  | Ignore it; do not create target, baseline, or native-resource row |
+| Global Prompt preview/apply with valid tool and preview ID | Use explicit global root and shared persisted pipeline            |
 
 ### 5. Good/Base/Bad Cases
 
@@ -698,7 +698,12 @@ the shared persisted preview/apply pipeline.
 
 ```ts
 await commands.previewPromptSync({ tool, projectId });
-await commands.applyProfilePreview({ previewId, tool, artifactKind, projectId });
+await commands.applyProfilePreview({
+  previewId,
+  tool,
+  artifactKind,
+  projectId,
+});
 ```
 
 #### Correct
@@ -753,15 +758,15 @@ await commands.applyProfilePreview({
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Case-only duplicate name or stale row version | `CONFLICT`; central intent unchanged |
-| Global item selected again at project scope | Domain and SQLite conflict; no duplicate assignment |
-| External project item has an inherited/desired name | Conflict preview; external item unchanged |
-| Managed item is missing or its item hash changed | `external_owned_change`; rename/delete/apply blocked |
+| Condition                                                | Required result                                       |
+| -------------------------------------------------------- | ----------------------------------------------------- |
+| Case-only duplicate name or stale row version            | `CONFLICT`; central intent unchanged                  |
+| Global item selected again at project scope              | Domain and SQLite conflict; no duplicate assignment   |
+| External project item has an inherited/desired name      | Conflict preview; external item unchanged             |
+| Managed item is missing or its item hash changed         | `external_owned_change`; rename/delete/apply blocked  |
 | Non-default Claude user MCP lacks version-bound evidence | Unsupported/blocked; never guess `$HOME/.claude.json` |
-| Codex project trust is unknown or untrusted | Untrusted preview; zero external writes |
-| Project has only inherited items and no collision | Empty preview target list; no project file creation |
+| Codex project trust is unknown or untrusted              | Untrusted preview; zero external writes               |
+| Project has only inherited items and no collision        | Empty preview target list; no project file creation   |
 
 ### 5. Good/Base/Bad Cases
 
@@ -817,9 +822,9 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 - `prepare_skill_import(&AppPaths, source) -> Result<PreparedSkillImport, AppError>`
   copies into a private staging directory and computes the stable tree hash.
 - `inspect_central_skill(&AppPaths, id, central_path, expected_hash, status,
-  include_content) -> Result<CentralSkillInspection, AppError>` proves central state.
+include_content) -> Result<CentralSkillInspection, AppError>` proves central state.
 - `adopt_skill_content(&mut Database, &AppPaths, &VersionedSkillInput)
-  -> Result<SkillDto, AppError>` re-inspects the current central directory and
+-> Result<SkillDto, AppError>` re-inspects the current central directory and
   CAS-updates `content_hash` / `frontmatter_json` / `status='ready'`.
 - Native synchronization remains two-step:
   `preview_skill_sync(PreviewSkillSyncInput) -> PreviewPlan`, then
@@ -880,18 +885,18 @@ let result = apply_mcp_preview(state, preview.preview_id, input.tool, input.proj
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Unsafe entry/link/hard link/special file/limit breach/source race | Reject import; clean operation staging; source unchanged |
-| Case-only duplicate name or stale row version | `CONFLICT`; central intent unchanged |
-| Central path/type/missing drift | Invalid/missing diagnostic; adopt, content preview, sync, and delete blocked |
-| Unadopted central hash/status drift | `CENTRAL_SKILL_CONTENT_CHANGED`; content preview, sync, and delete blocked |
+| Condition                                                                          | Required result                                                                 |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Unsafe entry/link/hard link/special file/limit breach/source race                  | Reject import; clean operation staging; source unchanged                        |
+| Case-only duplicate name or stale row version                                      | `CONFLICT`; central intent unchanged                                            |
+| Central path/type/missing drift                                                    | Invalid/missing diagnostic; adopt, content preview, sync, and delete blocked    |
+| Unadopted central hash/status drift                                                | `CENTRAL_SKILL_CONTENT_CHANGED`; content preview, sync, and delete blocked      |
 | Explicit adopt of current central files (name/path unchanged, parse ok, no writer) | Ready DTO; hash/frontmatter updated; disk bytes and tool-dir symlinks unchanged |
-| Adopt rename, type/path/missing, stale `row_version`, or active writer | `CONFLICT` / `INVALID_INPUT` / `WRITE_IN_PROGRESS`; no DB write |
-| Assignment or managed-item blocker at delete | Transactional conflict; central directory restored/preserved |
-| Ordinary directory, unknown/external/broken link, or item drift at native target | Conflict; do not overwrite or delete |
-| Claude policy unknown/blocked or Codex project untrusted | Blocked preview/apply; zero native writes |
-| Pure project inheritance without collision | Empty target list; no target row or directory creation |
+| Adopt rename, type/path/missing, stale `row_version`, or active writer             | `CONFLICT` / `INVALID_INPUT` / `WRITE_IN_PROGRESS`; no DB write                 |
+| Assignment or managed-item blocker at delete                                       | Transactional conflict; central directory restored/preserved                    |
+| Ordinary directory, unknown/external/broken link, or item drift at native target   | Conflict; do not overwrite or delete                                            |
+| Claude policy unknown/blocked or Codex project untrusted                           | Blocked preview/apply; zero native writes                                       |
+| Pure project inheritance without collision                                         | Empty target list; no target row or directory creation                          |
 
 ### 5. Good/Base/Bad Cases
 
@@ -1012,17 +1017,17 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Missing, non-directory, permission-denied, symlink-escaped, or case-only duplicate root | Stable path/conflict error; no row or native write |
-| Re-register a soft-removed canonical root | Reactivate the same identity and rescan current native state |
-| Stale project `row_version` | `CONFLICT`; preserve project, assignments, and native targets |
-| Any active Apply/Restore/rollback-recovery run during removal | `WRITE_IN_PROGRESS`; remove nothing |
-| Project has `disabled` or `conflict` native resources during removal | `CONFLICT` (`projectNativeResource`); remove nothing; keep snapshots |
-| Native external same-name entry or managed-item drift | Distinct conflict/drift target status; never reuse cached success |
-| Unknown recent-run kind/status/error value | Fail closed while building the typed dashboard DTO |
-| All tools explicitly skipped in onboarding | Persist completion; create no profile, preview, or native write |
-| Global snapshot under overridden roots or snapshot of removed project | Derive exact matrix root; removed project remains blocked |
+| Condition                                                                               | Required result                                                      |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Missing, non-directory, permission-denied, symlink-escaped, or case-only duplicate root | Stable path/conflict error; no row or native write                   |
+| Re-register a soft-removed canonical root                                               | Reactivate the same identity and rescan current native state         |
+| Stale project `row_version`                                                             | `CONFLICT`; preserve project, assignments, and native targets        |
+| Any active Apply/Restore/rollback-recovery run during removal                           | `WRITE_IN_PROGRESS`; remove nothing                                  |
+| Project has `disabled` or `conflict` native resources during removal                    | `CONFLICT` (`projectNativeResource`); remove nothing; keep snapshots |
+| Native external same-name entry or managed-item drift                                   | Distinct conflict/drift target status; never reuse cached success    |
+| Unknown recent-run kind/status/error value                                              | Fail closed while building the typed dashboard DTO                   |
+| All tools explicitly skipped in onboarding                                              | Persist completion; create no profile, preview, or native write      |
+| Global snapshot under overridden roots or snapshot of removed project                   | Derive exact matrix root; removed project remains blocked            |
 
 ### 5. Good/Base/Bad Cases
 
@@ -1153,22 +1158,22 @@ let context = snapshot_restore_context(database, environment, snapshot_id)?;
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Executable absent from explicit PATH | `unavailable`; target reports tool not installed |
-| Tool exists only under default Volta shim path | Append `HOME/.volta/bin`; validate target; installed only on exact version output |
-| Volta-style symlink shim resolves to shared `volta-shim` | Execute the PATH candidate, not the canonical target, so argv0 remains the requested tool |
-| Unsafe PATH, non-executable, timeout, non-zero exit, or malformed output | `unsupported`; zero native writes |
-| Valid Claude/Codex version output | `installed`; exact parsed version stored once |
-| Valid Cursor Desktop bundle/version | `installed`; do not execute Cursor Agent fallback |
-| Cursor Desktop absent and exact Cursor Agent version output | `installed`; exact parsed version stored once |
-| Cursor bundle symlink, oversized/malformed plist, or malformed agent output without another trustworthy probe | `unsupported`; zero native reads/writes |
-| Claude version/config root differs from evidence | evidence stale; MCP/Skill policy/capability fail closed |
-| Default Claude config root | user MCP remains exact `$HOME/.claude.json` |
-| Non-default Claude root without verified target evidence | unsupported; never guess a user MCP path |
-| Main policy absent and drop-in absent/empty, or valid object omits the setting | allowed evidence bound to version/root |
-| Explicit valid policy `false`/array/`true` | allowed/per-surface blocked according to the validated value |
-| Malformed, unreadable, dynamic, symlinked, or multi-file policy source | unknown; MCP/Skills block |
+| Condition                                                                                                     | Required result                                                                           |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Executable absent from explicit PATH                                                                          | `unavailable`; target reports tool not installed                                          |
+| Tool exists only under default Volta shim path                                                                | Append `HOME/.volta/bin`; validate target; installed only on exact version output         |
+| Volta-style symlink shim resolves to shared `volta-shim`                                                      | Execute the PATH candidate, not the canonical target, so argv0 remains the requested tool |
+| Unsafe PATH, non-executable, timeout, non-zero exit, or malformed output                                      | `unsupported`; zero native writes                                                         |
+| Valid Claude/Codex version output                                                                             | `installed`; exact parsed version stored once                                             |
+| Valid Cursor Desktop bundle/version                                                                           | `installed`; do not execute Cursor Agent fallback                                         |
+| Cursor Desktop absent and exact Cursor Agent version output                                                   | `installed`; exact parsed version stored once                                             |
+| Cursor bundle symlink, oversized/malformed plist, or malformed agent output without another trustworthy probe | `unsupported`; zero native reads/writes                                                   |
+| Claude version/config root differs from evidence                                                              | evidence stale; MCP/Skill policy/capability fail closed                                   |
+| Default Claude config root                                                                                    | user MCP remains exact `$HOME/.claude.json`                                               |
+| Non-default Claude root without verified target evidence                                                      | unsupported; never guess a user MCP path                                                  |
+| Main policy absent and drop-in absent/empty, or valid object omits the setting                                | allowed evidence bound to version/root                                                    |
+| Explicit valid policy `false`/array/`true`                                                                    | allowed/per-surface blocked according to the validated value                              |
+| Malformed, unreadable, dynamic, symlinked, or multi-file policy source                                        | unknown; MCP/Skills block                                                                 |
 
 ### 5. Good/Base/Bad Cases
 
@@ -1240,12 +1245,12 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 - Commands `get_official_login_status`, `start_official_login`, and
   `cancel_official_login` are `#[tauri::command(async)]` and return
   `OfficialLoginStatusDto { supported, phase, loggedIn, authMethod, account,
-  diagnostic, loginUrl, manualCommand }`. `loginUrl` is the first `https://` address
+diagnostic, loginUrl, manualCommand }`. `loginUrl` is the first `https://` address
   the CLI printed (public PKCE parameters only) and is set only while running.
 - `OfficialLoginRegistry::cancel_all()` runs from the Tauri `RunEvent::Exit` handler
   and from `Drop`, so no login child outlives the app.
 - `app::tool_probe::{resolve_executable, apply_tool_process_environment,
-  run_command_bounded, terminate_process_group}` are the shared subprocess primitives;
+run_command_bounded, terminate_process_group}` are the shared subprocess primitives;
   do not duplicate PATH resolution or process-group handling.
 
 ### 3. Contracts
@@ -1277,14 +1282,14 @@ app.manage(AppState::initialize_with_environment(paths, probe.environment)?);
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| CLI not on the safe PATH | `start` is `NOT_FOUND`; `status` reports `supported: false` |
-| CLI lacks the login subcommand | `supported: false` with manual command; no retry loop |
-| Login already running | `CONFLICT`; existing session untouched |
-| Cancel without a running session | `Ok(false)`; no signal sent |
-| Login child exceeds timeout | process group killed; phase `timed_out` |
-| Login child exits non-zero | phase `failed`; redacted stderr tail in `diagnostic` |
+| Condition                        | Required result                                             |
+| -------------------------------- | ----------------------------------------------------------- |
+| CLI not on the safe PATH         | `start` is `NOT_FOUND`; `status` reports `supported: false` |
+| CLI lacks the login subcommand   | `supported: false` with manual command; no retry loop       |
+| Login already running            | `CONFLICT`; existing session untouched                      |
+| Cancel without a running session | `Ok(false)`; no signal sent                                 |
+| Login child exceeds timeout      | process group killed; phase `timed_out`                     |
+| Login child exits non-zero       | phase `failed`; redacted stderr tail in `diagnostic`        |
 
 ### 5. Good/Base/Bad Cases
 
@@ -1360,12 +1365,12 @@ let status = state.official_logins().status(&context, &redactor, Tool::Codex)?;
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Command needs `ExplicitEnvironment` before the first probe finished | `ENVIRONMENT_PROBING` (recoverable); frontend keeps the query pending |
-| Probe fails (no safe PATH, panic in a probe thread) | environment stays `None`; event payload `false`; refresh remains available |
-| `refresh_environment` without probe config (test `AppState::initialize`) | `INVALID_INPUT`; no panic |
-| New command written as plain `#[tauri::command] pub fn` | `every_command_runs_off_the_main_thread` fails |
+| Condition                                                                | Required result                                                            |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Command needs `ExplicitEnvironment` before the first probe finished      | `ENVIRONMENT_PROBING` (recoverable); frontend keeps the query pending      |
+| Probe fails (no safe PATH, panic in a probe thread)                      | environment stays `None`; event payload `false`; refresh remains available |
+| `refresh_environment` without probe config (test `AppState::initialize`) | `INVALID_INPUT`; no panic                                                  |
+| New command written as plain `#[tauri::command] pub fn`                  | `every_command_runs_off_the_main_thread` fails                             |
 
 ### 5. Tests Required
 
@@ -1433,7 +1438,7 @@ let status = state.official_logins().status(&context, &redactor, Tool::Codex)?;
 ### 2. Signatures
 
 - `delete_snapshots(write_operations: &Mutex<()>, database: &mut Database,
-  paths: &AppPaths, input: &DeleteSnapshotsInput) -> Result<DeleteSnapshotsResultDto, AppError>`
+paths: &AppPaths, input: &DeleteSnapshotsInput) -> Result<DeleteSnapshotsResultDto, AppError>`
   lives in `sync/apply.rs` next to `list_snapshots`; re-exported via
   `sync/mod.rs`; command wrapper in `commands/overview.rs` delegates through
   `commands::with_db` and passes `state.write_operations()` exactly like
@@ -1563,7 +1568,7 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
   `{ entryType }` for Skill, for `hook_entry`
   `{ kind: "hook", event, matcher?, timeout?, command | commandRedacted: true }`,
   and for `agent_file` `{ kind: "agent", name?, description |
-  descriptionRedacted: true, fileName, parseError? }`. Hook and Agent display data
+descriptionRedacted: true, fileName, parseError? }`. Hook and Agent display data
   comes from the in-memory scan index keyed by `(target_path, external_key)`; raw
   command, description, and prompt text are never persisted. Agent summaries never
   carry prompt or developer instructions, and all native summaries remain free of
@@ -1664,23 +1669,23 @@ remove_files_and_dequeue(database, &plan)?;         // failures stay queued for 
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
-| Preview input includes path, hash, selector, or raw config | Reject at type boundary; only `resourceId` + `rowVersion` + `action` |
-| `active` + `restore`, or `disabled` + `disable` | `INVALID_INPUT` |
-| `missing` or `conflict` + any action | `CONFLICT` |
-| Central-owned or central-drift item presented as native disable | `NOT_FOUND` / `CONFLICT`; no native write |
-| `hook_entry` resource action preview | `INVALID_INPUT` ("Hooks 暂不支持临时禁用与恢复"); `canDisable`/`canRestore` always false |
-| Hook command contains a detectable secret | `safeSummary.command` omitted; `commandRedacted: true` only |
-| `agent_file` resource action preview | `INVALID_INPUT` ("Agent 文件暂不支持临时禁用与恢复"); `canDisable`/`canRestore` always false |
-| Agent description contains a detectable secret | `safeSummary.description` omitted; `descriptionRedacted: true` only |
-| Project Prompt/Rules path supplied to a native-resource command | `INVALID_INPUT` / `NOT_FOUND`; no native read or write |
-| Apply when `sync_runs.status != "previewed"` | `PREVIEW_ALREADY_CONSUMED` **before** the action matrix |
-| Stale resource/target `row_version` or target identity change | `STALE_PREVIEW` / `CONFLICT`; no overwrite |
-| Restore path/selector occupied | `CONFLICT`; keep private snapshot |
-| Active writer or `rollback_failed` | `WRITE_IN_PROGRESS` |
-| MCP restore preview JSON / DTO / journal contains fixture secret | Fail the audit; register restore-projection secrets |
-| Disabled/conflict rows while deleting a referenced snapshot | per-item `CONFLICT` from `delete_snapshots` |
+| Condition                                                        | Required result                                                                              |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Preview input includes path, hash, selector, or raw config       | Reject at type boundary; only `resourceId` + `rowVersion` + `action`                         |
+| `active` + `restore`, or `disabled` + `disable`                  | `INVALID_INPUT`                                                                              |
+| `missing` or `conflict` + any action                             | `CONFLICT`                                                                                   |
+| Central-owned or central-drift item presented as native disable  | `NOT_FOUND` / `CONFLICT`; no native write                                                    |
+| `hook_entry` resource action preview                             | `INVALID_INPUT` ("Hooks 暂不支持临时禁用与恢复"); `canDisable`/`canRestore` always false     |
+| Hook command contains a detectable secret                        | `safeSummary.command` omitted; `commandRedacted: true` only                                  |
+| `agent_file` resource action preview                             | `INVALID_INPUT` ("Agent 文件暂不支持临时禁用与恢复"); `canDisable`/`canRestore` always false |
+| Agent description contains a detectable secret                   | `safeSummary.description` omitted; `descriptionRedacted: true` only                          |
+| Project Prompt/Rules path supplied to a native-resource command  | `INVALID_INPUT` / `NOT_FOUND`; no native read or write                                       |
+| Apply when `sync_runs.status != "previewed"`                     | `PREVIEW_ALREADY_CONSUMED` **before** the action matrix                                      |
+| Stale resource/target `row_version` or target identity change    | `STALE_PREVIEW` / `CONFLICT`; no overwrite                                                   |
+| Restore path/selector occupied                                   | `CONFLICT`; keep private snapshot                                                            |
+| Active writer or `rollback_failed`                               | `WRITE_IN_PROGRESS`                                                                          |
+| MCP restore preview JSON / DTO / journal contains fixture secret | Fail the audit; register restore-projection secrets                                          |
+| Disabled/conflict rows while deleting a referenced snapshot      | per-item `CONFLICT` from `delete_snapshots`                                                  |
 
 ### 5. Good/Base/Bad Cases
 
@@ -1756,6 +1761,7 @@ validate_action_matrix(state, action)?;
 ## Scenario: Hooks artifact (array-shaped native entries)
 
 ### 1. Scope / Trigger
+
 - Trigger: any change to `hooks/` service, `domain::HookEvent`, hook adapter
   descriptors, migration `0014_hooks.sql`, or the shared
   `PreviewTargetRequest.hook_initial_adopt` flag. Hooks are the first artifact
@@ -1763,6 +1769,7 @@ validate_action_matrix(state, action)?;
   the per-item machinery differs from MCP despite reusing the same pipeline.
 
 ### 2. Signatures
+
 - `ArtifactKind::Hook` (`"hook"`), `domain::HookEvent` (13 canonical PascalCase
   events), `HookEvent::supported_for_tool(tool)`, `HookEvent::native_key(tool)`
   (Cursor → camelCase).
@@ -1774,8 +1781,9 @@ validate_action_matrix(state, action)?;
 - `hooks::service::assess_hooks_drift(descriptor, baseline, scan, tool)`.
 
 ### 3. Contracts
+
 - Projections (document-rooted): claude/codex `{"hooks": {<Event>: [{matcher?,
-  hooks: [{type:"command", command, timeout?}]}]}}`; zcode
+hooks: [{type:"command", command, timeout?}]}]}}`; zcode
   `{"hooks": {"enabled": true, "events": {...}}}` (runner switch always true —
   config-file hooks do not run otherwise); cursor
   `{"version": 1, "hooks": {<camelCase event>: [flat entries]}}` (matcher
@@ -1787,6 +1795,7 @@ validate_action_matrix(state, action)?;
   it surface as preview deletions (explicit confirm), never silent overwrites.
 
 ### 4. Validation & Error Matrix
+
 - Event unsupported for tool → `INVALID_INPUT` "该工具的原生 hooks 合同不支持此事件"
   (assignment, import, projection).
 - Detectable secret in `command` → `INVALID_INPUT` (same policy as MCP args).
@@ -1799,6 +1808,7 @@ validate_action_matrix(state, action)?;
   gone → item removed. Empty hash match alone must NOT be treated as removal.
 
 ### 5. Good/Base/Bad Cases
+
 - Good: codex `hooks.json` = `{"description": "保留我", "hooks": {}}` → first
   preview merges (Add/Update) and description survives (selectors only).
 - Base: target file missing → `ChangeKind::Add` without any adopt flag.
@@ -1806,6 +1816,7 @@ validate_action_matrix(state, action)?;
   collides keys; putting matcher before the identity breaks `splitn` parsing.
 
 ### 6. Tests Required
+
 - `hooks::service::tests` — per-tool projection golden (4 shapes), event
   support matrix, ownership covers every declared root, unsupported event
   fails closed.
@@ -1875,12 +1886,12 @@ let relocated = if let [event, _identity, matcher] = parts.as_slice() {
   rebuilt and backfilled from `hooks.event`, mutual-exclusion triggers recreated).
 - Assignment RPCs take `event`; `assigned=true` validates
   `hook_event_supported(tool, event)` and upserts (`ON CONFLICT … DO UPDATE SET
-  event`) so re-assigning to another event switches it. One event per
+event`) so re-assigning to another event switches it. One event per
   (tool, hook) — two simultaneous events require duplicating the central hook.
 - `list_assigned_hooks` returns `HookRecord` with the event from the assignment
   row; projection/native-key/external-key/claim-check all consume the effective
   event unchanged. `HookDto.globalTools` became `globalAssignments: [{tool,
-  event}]`.
+event}]`.
 - Migration lesson: rebuild table pairs that reference each other via triggers
   — DROP the triggers FIRST. `DROP TABLE` re-parses the schema and fails with
   "no such table" when a trigger on the sibling table still points at the
@@ -1929,14 +1940,14 @@ let relocated = if let [event, _identity, matcher] = parts.as_slice() {
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required result |
-| --- | --- |
+| Condition                                                                            | Required result                                         |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------- |
 | Unknown key, wrong type, invalid enum, model/tool/feature name, or oversized payload | `INVALID_INPUT` with `AGENT_FIELD_INVALID`; no DB write |
-| Cursor/OpenCode/ZCode settings request | `INVALID_INPUT` with `AGENT_TOOL_SETTINGS_UNSUPPORTED` |
-| Stale `row_version` | `CONFLICT`; overlay and Agent row remain unchanged |
-| Import allowlist field has an invalid type/value | Candidate is non-importable with `AGENT_FIELD_INVALID` |
-| Codex `features` contains a non-boolean nested value | Whole `features` key is listed in `droppedFields` |
-| Empty object/list after normalization | Overlay row is removed; projection omits the key |
+| Cursor/OpenCode/ZCode settings request                                               | `INVALID_INPUT` with `AGENT_TOOL_SETTINGS_UNSUPPORTED`  |
+| Stale `row_version`                                                                  | `CONFLICT`; overlay and Agent row remain unchanged      |
+| Import allowlist field has an invalid type/value                                     | Candidate is non-importable with `AGENT_FIELD_INVALID`  |
+| Codex `features` contains a non-boolean nested value                                 | Whole `features` key is listed in `droppedFields`       |
+| Empty object/list after normalization                                                | Overlay row is removed; projection omits the key        |
 
 ### 5. Good / Base / Bad Cases
 
