@@ -168,12 +168,16 @@ CREATE TABLE prompt_project_assignments (...); -- 0008 历史 DDL，触发重解
   不删除行——快照 RESTRICT 外键引用行 id，删除会失败；NULL 基线 +
   观测内容即规范中的中性 `PROJECT_TARGET_INITIAL_UNMANAGED` 语义。
 - 导入接管（`adopt_baseline`）对**孤儿基线**必须刷新而不是报 CONFLICT：
-  导入事务先经 `reject_existing_profiles` / `reject_prompt_import_blocked`
+  导入事务先经 Provider 的逐 `provider_id` 去重 / `reject_prompt_import_blocked`
   保证没有任何生效或同源档案引用目标，因此既有基线必然无人引用（删光
   档案后基线残留是常态）。刷新走 `UPDATE ... WHERE id = ? AND row_version = ?`
   并把 `last_status` 置 `in_sync`（同 `mcp_imports` 的 extend 模式）；
   `row_version` 由触发器在 UPDATE 后自动递增，禁止手动 SET。该守卫是
   IMMEDIATE 事务内的 fail-closed 防御分支，不承担跨事务并发检测。
+  历史备注：Provider 曾用 `reject_existing_profiles`（「该工具尚无任何渠道档案」）；
+  Pi 的 `models.json` 是多 provider 文件，已换成逐 `provider_id` 去重
+  （新建 `providers/<id>` 才拒绝），完整契约见
+  [pi-adapter-guidelines.md](./pi-adapter-guidelines.md)。
 - 同形 CHECK 字符串可能出现在多张表（如 `tool IN ('claude','codex')` 同时
   存在于 `provider_profiles` 与 `prompt_profiles`）：`WHERE` 必须额外限定
   `name = '<目标表>'`，否则 replace 会误伤其他表（0009 先例）。

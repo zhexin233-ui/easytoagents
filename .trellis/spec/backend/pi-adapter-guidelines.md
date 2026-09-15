@@ -18,7 +18,8 @@
   `with_pi_mcp_exclusive_mode(bool)`；访问器 `pi_agent_dir()`、`pi_agent_dir_unmapped()`、
   `pi_mcp_exclusive_mode()`。Adapter 内部**永不**读 `std::env`；边界读取只在 `lib.rs`。
 - Adapter：`PiAdapter::capability(context)`、`ProviderCodec for PiAdapter`（`render`/`discover`/
-  `ownership`/`default_options`）；只读探测 `probe::probe_mcp_adapter(PiMcpAdapterProbeInput)`；
+  `ownership`/`default_options`/`merge_import_baseline`；`discover` 返回候选**列表**）；只读探测
+  `probe::probe_mcp_adapter(PiMcpAdapterProbeInput)`；
   遮蔽检测 `pi::detect_mcp_shadowing(root, managed_names, scope)`；链接自检
   `pi::managed_children_symlink_diagnostic(dir, names, allowed_root)`；提示词回退探测
   `pi::prompt_fallback_present(agent_dir)` 与 `pi::inline_api_key_diagnostic(api_key)`。
@@ -28,6 +29,11 @@
 
 ### 3. Contracts
 
+- **Provider 候选与 `models` 合并**：`discover` 返回 `providers` 下**全部**条目（`defaultProvider`
+  只标注默认渠道，不参与取舍）；`models` 属于档案内容，渲染时**按模型 id 合并**（原数组逐字段
+  保留，仅当默认模型不在其中时追加裸 `{ "id": … }`）；禁止把数组整段替换成单个 `{ id }`，也
+  禁止写 `models: []`。多候选导入的受管基线是「已导入 provider」的并集（`merge_import_baseline`），
+  未导入的 provider 永不入基线。完整契约见下方 Provider 场景。
 - **唯一写入面（6 个 descriptor）**：`<pi_agent_dir>/models.json`（`providers` 条目级局部合并）、
   `<pi_agent_dir>/AGENTS.md`（整文档）、`<pi_agent_dir>/skills` 与 `<root>/.pi/skills`
   （`ManagedChildrenOnly` 受管子链接）、`<pi_agent_dir>/mcp.json` 与 `<root>/.pi/mcp.json`
@@ -66,21 +72,25 @@
 
 ### 4. Validation & Error Matrix
 
-| 条件                                               | 必须结果                                                                           |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `PI_CODING_AGENT_DIR` 存在但不可映射（相对路径等） | 6 个 descriptor 全部 `unsupported(PI_AGENT_DIR_OVERRIDE_UNMAPPED)`，不暴露默认路径 |
-| Pi 未安装 / 探针异常                               | `ToolNotInstalled` / `unsupported(PI_INSTALLATION_PROBE_UNSUPPORTED)`              |
-| `pi-mcp-adapter` 缺失 / 未加载 / 版本过低          | 两个 MCP 目标 `unsupported(PI_MCP_ADAPTER_*)`，`path = None`，零外部写入           |
-| 全局版本过低 + 项目 package 被过滤                 | `PI_MCP_ADAPTER_NOT_LOADED`，并保留已观测的全局版本；不得提前返回版本不支持        |
-| `PI_MCP_CONFIG_MODE=exclusive`                     | 项目 MCP descriptor `unsupported(PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED)`           |
-| alias-only MCP 容器                                | 正常观测 + `PI_MCP_CONTAINER_ALIAS_DETECTED`；Apply 后只保留 `mcpServers`           |
-| 项目文件与受管 MCP 名称同名                        | 项目预览 `Conflict` + `PI_MCP_SHADOWED_BY_PROJECT_SHARED` / `_PROJECT_PI`          |
-| `AGENTS.override.md` 存在或不可判定                | Prompt 预览 `Conflict` + `PI_PROMPT_OVERRIDE_DETECTED`，Apply 拒绝                 |
-| 用户存在 `CLAUDE.md`/`AGENTS.MD` 回退文件          | 仅提示 `PI_PROMPT_FALLBACK_PRESENT`（不阻断）                                      |
-| 受管子链接断链 / 逃逸 `allowed_root`               | `Conflict` + `PI_SKILL_SYMLINK_BROKEN` / `PI_SKILL_SYMLINK_ESCAPE`                 |
-| 项目未受信任（Skills）                             | `untrusted` + `PI_PROJECT_SKILLS_UNTRUSTED` / `_TRUST_UNKNOWN`                     |
-| 任意 Hook / Agent 入口携带 `tool == pi`            | `INVALID_INPUT` + `PI_HOOKS_UNSUPPORTED` / `PI_AGENTS_UNSUPPORTED`，零写入         |
-| `managed_targets` 写入 `pi` + `hook`/`agent`       | 数据库 CHECK 拒绝                                                                  |
+| 条件                                               | 必须结果                                                                                  |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `PI_CODING_AGENT_DIR` 存在但不可映射（相对路径等） | 6 个 descriptor 全部 `unsupported(PI_AGENT_DIR_OVERRIDE_UNMAPPED)`，不暴露默认路径        |
+| Pi 未安装 / 探针异常                               | `ToolNotInstalled` / `unsupported(PI_INSTALLATION_PROBE_UNSUPPORTED)`                     |
+| `pi-mcp-adapter` 缺失 / 未加载 / 版本过低          | 两个 MCP 目标 `unsupported(PI_MCP_ADAPTER_*)`，`path = None`，零外部写入                  |
+| 全局版本过低 + 项目 package 被过滤                 | `PI_MCP_ADAPTER_NOT_LOADED`，并保留已观测的全局版本；不得提前返回版本不支持               |
+| `PI_MCP_CONFIG_MODE=exclusive`                     | 项目 MCP descriptor `unsupported(PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED)`                  |
+| alias-only MCP 容器                                | 正常观测 + `PI_MCP_CONTAINER_ALIAS_DETECTED`；Apply 后只保留 `mcpServers`                 |
+| 项目文件与受管 MCP 名称同名                        | 项目预览 `Conflict` + `PI_MCP_SHADOWED_BY_PROJECT_SHARED` / `_PROJECT_PI`                 |
+| `AGENTS.override.md` 存在或不可判定                | Prompt 预览 `Conflict` + `PI_PROMPT_OVERRIDE_DETECTED`，Apply 拒绝                        |
+| 用户存在 `CLAUDE.md`/`AGENTS.MD` 回退文件          | 仅提示 `PI_PROMPT_FALLBACK_PRESENT`（不阻断）                                             |
+| 受管子链接断链 / 逃逸 `allowed_root`               | `Conflict` + `PI_SKILL_SYMLINK_BROKEN` / `PI_SKILL_SYMLINK_ESCAPE`                        |
+| 项目未受信任（Skills）                             | `untrusted` + `PI_PROJECT_SKILLS_UNTRUSTED` / `_TRUST_UNKNOWN`                            |
+| `providers` 条目非对象 / provider id 非法          | 该候选 `invalid` + `PI_PROVIDER_ENTRY_INVALID` / `PI_PROVIDER_ID_INVALID`，不阻断其他候选 |
+| 候选缺 `apiKey` 或字段不受支持                     | 该候选 `invalid` + `PI_PROVIDER_FIELDS_INVALID`；确认该候选为 `INVALID_INPUT`             |
+| 同一 `provider_id` 已有中央渠道档案                | 候选只读 `already_managed`；确认返回 `CONFLICT`，不产生第二份档案                         |
+| 分次导入第二个 provider                            | 基线取并集；Apply 不得删除或改写先前导入的 provider 条目                                  |
+| 任意 Hook / Agent 入口携带 `tool == pi`            | `INVALID_INPUT` + `PI_HOOKS_UNSUPPORTED` / `PI_AGENTS_UNSUPPORTED`，零写入                |
+| `managed_targets` 写入 `pi` + `hook`/`agent`       | 数据库 CHECK 拒绝                                                                         |
 
 ### 5. Good / Base / Bad Cases
 
@@ -97,8 +107,15 @@
 - Adapter：6 个 descriptor 的 scope/path/format/selector/trust/allowed_root 矩阵；无 Hook/Agent
   descriptor；适配器三态与版本过低；显式覆盖“全局 Ready + 项目 Filtered”和“全局版本过低 +
   项目 Filtered”，分别断言 Ready 与 NotLoaded；`exclusive` 模式；遮蔽与断链自检。
-- Provider codec：条目级合并保留未知字段与非受管 provider、不写 `models: []`、
-  `$ENV`/`!command` 原样保留、明文 apiKey 诊断与脱敏。
+- Provider codec：多候选枚举（含无 `defaultProvider`、条目非对象、provider id 非法）、
+  `models` 按 id 合并四象限（原条目逐字段保留 / 追加默认模型 / 无默认模型保留 / 无原数组回退）、
+  条目级合并保留未知字段与非受管 provider、不写 `models: []`、
+  `$ENV`/`!command` 原样保留、明文 apiKey 诊断与脱敏、`merge_import_baseline` 并集语义。
+- Provider 服务（Pi 全链路）：两候选检测 → 批量导入 → Preview → Apply 后逐模型元数据与 `api`
+  保留、未受管 provider 逐字节不变；只导一个后再导第二个的增量导入与基线并集；重复导入冲突；
+  不完整条目只作废自身；`provider_dto` 的只读摘要不含凭据。
+- 数据库：迁移 `0026` 的 `provider_import_previews` 表结构与 tool 白名单（`cursor` 拒绝、
+  `pi` 接受），以及批量接管的单事务原子性（第二条失败时零档案、零基线、预览仍未消费）。
 - Database：v24 → v25 升级、旧行保留、同连接插入、重开、外键/索引、
   canary（`pi` + `hook|agent` 被拒，`pi` + `provider|prompt|mcp|skill` 可插入，
   `agent_*`/`hook_*` 表继续拒绝 `pi`）。
@@ -133,5 +150,142 @@
     if !value.enabled {
         object.insert("disabled".to_owned(), Value::Bool(true));
     }
+}
+```
+
+## Scenario: Pi Provider 多条目枚举、models 保真与批量接管
+
+### 1. Scope / Trigger
+
+- Trigger：改动 Pi 的 `models.json` Provider 检测、候选状态、导入确认、`models` 渲染、
+  受管基线并集、渠道档案只读摘要，或新增 `PI_PROVIDER_*` 诊断码。
+- 覆盖 `src-tauri/src/adapters/pi/mod.rs`、`src-tauri/src/adapters/discovery.rs`（`ProviderCodec`）、
+  `src-tauri/src/profiles/{provider_discovery,service_orchestration,provider,sync,models,helpers}.rs`、
+  `src-tauri/src/db/provider_imports.rs`、`src-tauri/src/db/migrations/0026_*.sql`、
+  `src-tauri/src/commands/profiles.rs` 与 `src/features/tool-profiles/*`。Provider 检测已迁出
+  `profile_import_previews`：该表仅保留 Prompt 单预览语义。
+
+### 2. Signatures
+
+- `ProviderCodec::discover(&self, descriptor, managed_projection, full_hash)
+  -> Result<Vec<ProviderCodecDiscovery>, AppError>`。单 provider 工具最多返回一个元素；
+  Pi 返回 `providers` 下全部条目。
+- `ProviderCodecDiscovery` 携带 `provider_id`、`suggested_name`（回退 provider id）、
+  `is_default_provider`、`unimportable_reason`（适配层已判定结构不可证明时的稳定原因码）。
+- `ProviderCodec::merge_import_baseline(&self, existing: Option<&Value>, batch: &Value)
+  -> Result<Value, AppError>`，默认实现为**替换**（单 provider 工具的首次接管语义）；
+  Pi 覆写为 `providers` 条目级深合并。
+- `discover_provider_import(database, environment, redactor, tool)
+  -> Result<ProviderImportPreviewDto, AppError>`（非 `Option`；`previewId` 可空）。
+- `confirm_provider_import(database, environment, redactor,
+  ConfirmProviderImportInput { preview_id, items: Vec<ConfirmProviderImportItem { candidate_id, name }> })
+  -> Result<ProviderImportResultDto, AppError>`。
+- 迁移 `0026_provider_import_previews.sql`：`id`/`tool`/`target_path`/`observed_full_hash`/
+  `context_json`/`redacted_preview_json`/`status`/时间戳 + `(status, created_at)` 索引；
+  tool 白名单 `claude|codex|zcode|opencode|pi`（Cursor 无 Provider 合同）。
+- 生成绑定：`commands.discoverProviderImport(tool)`、
+  `commands.confirmProviderImport({ previewId, items })`。
+
+### 3. Contracts
+
+- **候选枚举**：`providers` 的每个条目都是独立候选，顺序与原生顺序一致；
+  `settings.json.defaultProvider` 只写 `is_default_provider`，缺失或指向不存在的条目时
+  仍然返回全部候选（不得再 fail closed 整份文件）。
+- **候选状态**：`importable` / `already_managed` / `invalid`。只有 `importable` 可勾选；
+  `already_managed` 由「该工具已有中央渠道档案的 `config_json.provider_id` 命中」判定。
+- **增量导入**：Pi 允许在已有中央档案时继续检测（按 `provider_id` 逐候选去重）；
+  其他工具保留「该工具尚无中央档案」的首次接管守卫。确认同一 `provider_id` 必须
+  `CONFLICT`，不得产生第二份档案。
+- **候选身份**：`context_json` 只保存 `{version, candidates:[{candidateId, providerId,
+  suggestedName}]}`，不含投影或凭据；`providerId` 允许为 `null`（Claude / Codex 官方登录
+  没有原生 key）。确认时重新扫描原生文件，用 `providerId` 与证据求交，缺失即 `STALE_PREVIEW`。
+  前端只回传不透明 `candidateId` 与用户确认的名称。
+- **`models` 按 id 合并**：档案的 `extra_provider_fields` 必须包含 `models` 原数组；渲染时
+  逐字段保留原条目，仅当默认模型 id 不在数组中时追加 `{ "id": <默认模型> }`；没有原数组时
+  退回 `[{ "id": … }]`；两者皆无时不写 `models`（绝不写 `models: []`）。
+- **目标级 desired 必须并集**：Pi 的 `models.json` 承载多个 provider，同步意图
+  （`provider_sync_intent`）取**全部**中央 Pi 渠道投影的并集；只写当前生效档案会让
+  未生效渠道的原生条目被删空。非 Pi 工具仍只取当前生效档案。
+- **基线并集**：批量接管写入的 `managed_targets.baseline_projection_json` 是
+  `merge_import_baseline(既有基线, 本批次并集)`；未导入的 provider 永不入基线，
+  因此不会被当成「受管但缺失」删除。
+- **原子性**：`db::provider_imports::adopt_imported_providers` 在单个 `IMMEDIATE` 事务内
+  校验预览行与 `context_json`、拒绝活动 writer、插入 N 份档案、写并集基线、条件消费预览；
+  任一失败整体回滚且预览保持 `previewed`。取到写锁后重新扫描原生文件再提交。
+- **只读摘要**：`ProviderProfileDto.pi` 仅含 `apiFormat` 与 `models[]` 的 `id`/`name`；
+  绝不暴露 `apiKey`、`headers`、`modelOverrides` 的值。
+
+### 4. Validation & Error Matrix
+
+| 条件                                            | 必须结果                                                                      |
+| ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| `providers` 条目非对象                          | 该候选 `invalid` + `PI_PROVIDER_ENTRY_INVALID`，其余候选照常                  |
+| provider id 非法（空/控制字符/分隔符/超长）     | 该候选 `invalid` + `PI_PROVIDER_ID_INVALID`，不阻断同文件其他 provider        |
+| 缺 `apiKey`、`baseUrl` 非法或选项不受支持       | 该候选 `invalid` + `PI_PROVIDER_FIELDS_INVALID`；确认该候选为 `INVALID_INPUT` |
+| 无 `defaultProvider` / 指向不存在的条目         | 仍返回全部候选，`is_default_provider` 全为 false                              |
+| `provider_id` 已有中央档案                      | 候选只读 `already_managed`；确认 `CONFLICT`                                   |
+| 候选进入更新状态（原生文件变化 / 中央档案变化） | `STALE_PREVIEW`，零档案、零基线、预览未消费                                   |
+| 批次内名称重复或 NOCASE 冲突                    | `CONFLICT`（同一事务回滚）                                                    |
+| 活动 apply/restore 或 rollback_failed writer    | `WRITE_IN_PROGRESS`，预览保持未消费                                           |
+| 第二条档案插入失败                              | 零档案、零基线、预览仍 `previewed`                                            |
+| 分次导入第二个 provider                         | 基线取并集；Apply 保留先前 provider 条目                                      |
+| `managed_targets` 写入 `pi` + `hook`/`agent`    | 数据库 CHECK 拒绝                                                             |
+
+### 5. Good / Base / Bad Cases
+
+- Good：`models.json` 含 `cc` 与 `gemini`，`defaultProvider=cc`；检测返回 2 个可导入候选，
+  全选导入生成 2 份档案，Apply 后 `cc.models[0]` 的 `contextWindow`/`reasoning`/`cost`/
+  `thinkingLevelMap` 与 `api` 逐字段保留，`gemini` 逐字节不变。
+- Base：只导入 `cc`；再次检测时 `cc` 显示 `already_managed`、`gemini` 仍可导入，
+  导入后基线含两者且 Apply 不删除 `cc`。
+- Bad：只取 `defaultProvider` 那一条（旧行为，静默丢 provider）；把 `models` 整段替换成
+  `[{ "id": 默认模型 }]`；只写当前生效档案的 desired；把 providerId 从 `redacted_preview_json`
+  反推；把 Pi 的多条目标记当作「同一目标多行基线」。
+
+### 6. Tests Required
+
+- 适配器（`adapters/pi/tests.rs`）：多候选枚举、无 `defaultProvider`、空 `providers`、
+  非法条目降级、`api`/`models`/未知键进入 `extra_provider_fields`、`models` 合并四象限、
+  `merge_import_baseline` 并集与同名覆盖。
+- 服务（`profiles/tests.rs`）：Pi 两候选全选导入 → Preview → Apply 的逐字段保真与
+  未受管 provider 不变；增量导入与基线并集；重复导入冲突与预览消费；
+  不完整条目只作废自身；无 `defaultProvider` 仍列出全部候选。
+- 数据库（`db/tests.rs`）：`0026` 表结构（9 列 + 状态索引）、tool 白名单（`cursor` 拒绝、
+  `pi` 接受）、批量接管原子性（第二条失败时零档案 / 零基线 / 预览未消费）与并集基线落库。
+- 前端（`tool-profiles-page.test.tsx`、`onboarding-wizard.test.tsx`）：多候选勾选与名称编辑的
+  精确 payload、`already_managed`/`invalid` 不可勾选且显示原因、只读摘要文案、
+  首次接管批量导入、检测失败/无候选时不留残留预览。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// 旧行为：只认 defaultProvider，其余 provider 静默丢失；models 被整段替换。
+let Some((provider_id, entry)) = providers
+    .iter()
+    .find(|(id, _)| Some(id.as_str()) == default_provider.as_deref())
+else {
+    return Ok(Vec::new());
+};
+set_or_remove(
+    &mut entry,
+    "models",
+    default_model.map(|model| json!([{ "id": model }])),
+);
+```
+
+#### Correct
+
+```rust
+// 1) 每个 provider 条目都是候选，坏条目只作废自己；
+// 2) models 按 id 合并，原条目逐字段保留；
+// 3) 多个已导入 provider 的 desired 与基线都取并集。
+for (provider_id, value) in providers {
+    if validate_provider_id(provider_id).is_err() {
+        discoveries.push(unimportable_discovery(/* … */ PI_PROVIDER_ID_INVALID));
+        continue;
+    }
+    /* … extra_provider_fields 包含 models 原数组 … */
 }
 ```

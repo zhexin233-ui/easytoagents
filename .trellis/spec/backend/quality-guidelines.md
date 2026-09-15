@@ -461,8 +461,11 @@ apply_persisted_preview(
   `UpdatePromptProfileInput`, and `VersionedProfileInput`; list responses are
   `PromptProfileDto`.
 - Native takeover is a two-step contract:
-  `discover_*_import(...) -> *ImportPreviewDto`, then
-  `confirm_*_import(ConfirmImportInput) -> *ProfileDto`.
+  `discover_*_import(...) -> *ImportPreviewDto`, then a confirmation command.
+  Provider confirmation is multi-candidate:
+  `confirm_provider_import(ConfirmProviderImportInput { previewId, items }) ->
+  ProviderImportResultDto`; Prompt keeps the single-candidate
+  `confirm_prompt_import(ConfirmImportInput) -> PromptProfileDto`.
 - Native synchronization is a separate two-step contract:
   `preview_{provider,prompt}_sync(tool) -> PreviewPlan`, then
   `apply_profile_preview(ApplyProfilePreviewInput) -> ApplyResult`.
