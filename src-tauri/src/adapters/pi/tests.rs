@@ -12,8 +12,8 @@ use super::{
     probe::PiMcpAdapterState, prompt_fallback_present, read_mcp_servers, PiAdapter,
     PiMcpShadowSource, PI_AGENT_DIR_OVERRIDE_UNMAPPED, PI_INSTALLATION_PROBE_UNSUPPORTED,
     PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED, PI_MCP_SHADOWED_BY_PROJECT_PI,
-    PI_MCP_SHADOWED_BY_PROJECT_SHARED, PI_PROVIDER_INLINE_API_KEY, PI_SKILL_SYMLINK_BROKEN,
-    PI_SKILL_SYMLINK_ESCAPE,
+    PI_MCP_SHADOWED_BY_PROJECT_SHARED, PI_PROVIDER_ENTRY_INVALID, PI_PROVIDER_ID_INVALID,
+    PI_PROVIDER_INLINE_API_KEY, PI_SKILL_SYMLINK_BROKEN, PI_SKILL_SYMLINK_ESCAPE,
 };
 use crate::{
     adapters::{
@@ -958,6 +958,76 @@ fn provider_codec_renders_partial_entry_and_preserves_unknown_fields() {
 }
 
 #[test]
+fn provider_render_merges_models_by_id_and_keeps_metadata() {
+    let adapter = PiAdapter;
+    let extra_env = std::collections::BTreeMap::new();
+    let mut extra = std::collections::BTreeMap::new();
+    extra.insert(
+        "models".to_owned(),
+        json!([
+            {
+                "id": "deepseek-v4",
+                "contextWindow": 1_000_000,
+                "reasoning": true,
+                "cost": { "input": 0.27, "output": 1.11 },
+                "thinkingLevelMap": { "off": null, "low": "low" }
+            },
+            { "id": "second", "name": "Second" }
+        ]),
+    );
+    let input = crate::adapters::ProviderCodecProfileInput {
+        name: "Pi 自定义渠道",
+        auth_kind: crate::adapters::PROVIDER_AUTH_KIND_API_KEY,
+        api_base_url: Some("https://api.example.test"),
+        api_key: Some("$MY_KEY"),
+        default_model: Some("deepseek-v4"),
+        credential_env_key: None,
+        extra_env: &extra_env,
+        provider_id: Some("custom"),
+        wire_api: None,
+        zcode_kind: None,
+        opencode_npm: None,
+        opencode_api: None,
+        extra_provider_fields: &extra,
+    };
+    let rendered = ProviderCodec::render(&adapter, &input).unwrap();
+    let models = rendered["providers"]["custom"]["models"]
+        .as_array()
+        .unwrap();
+    // 默认模型已在数组中 → 原数组逐字段保留，不追加、不重排。
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0]["contextWindow"], 1_000_000);
+    assert_eq!(models[0]["reasoning"], true);
+    assert_eq!(models[0]["cost"]["output"], 1.11);
+    assert_eq!(models[0]["thinkingLevelMap"]["low"], "low");
+    assert_eq!(models[1]["name"], "Second");
+
+    // 默认模型不在数组中 → 追加一条裸 `{ id }`，已有条目保持不动。
+    let input = crate::adapters::ProviderCodecProfileInput {
+        default_model: Some("third"),
+        ..input
+    };
+    let rendered = ProviderCodec::render(&adapter, &input).unwrap();
+    let models = rendered["providers"]["custom"]["models"]
+        .as_array()
+        .unwrap();
+    assert_eq!(models.len(), 3);
+    assert_eq!(models[2], json!({ "id": "third" }));
+    assert_eq!(models[0]["contextWindow"], 1_000_000);
+
+    // 无默认模型 → 原数组原样保留（绝不写 `models: []`）。
+    let input = crate::adapters::ProviderCodecProfileInput {
+        default_model: None,
+        ..input
+    };
+    let rendered = ProviderCodec::render(&adapter, &input).unwrap();
+    assert_eq!(
+        rendered["providers"]["custom"]["models"][0]["contextWindow"],
+        1_000_000
+    );
+}
+
+#[test]
 fn provider_render_keeps_existing_builtin_models_when_desired_has_none() {
     let adapter = PiAdapter;
     // 只给 baseUrl 的 desired 投影；ownership 只拥有 desired 中的 key。
@@ -986,6 +1056,150 @@ fn provider_render_keeps_existing_builtin_models_when_desired_has_none() {
     assert_eq!(value["providers"]["p"]["headers"]["Keep"], "me");
     assert_eq!(value["providers"]["p"]["models"][0]["id"], "builtin");
     assert_eq!(value["providers"]["other"]["baseUrl"], "https://other.test");
+}
+
+#[test]
+fn provider_discover_enumerates_all_providers_and_preserves_extra_fields() {
+    let adapter = PiAdapter;
+    let temporary = tempdir().unwrap();
+    let home = fs::canonicalize(temporary.path()).unwrap();
+    let agent_dir = home.join(".pi/agent");
+    write_json(
+        &agent_dir.join("settings.json"),
+        json!({ "defaultProvider": "cc", "defaultModel": "cc/deepseek-v4" }),
+    );
+    let descriptor = TargetDescriptor::builder(Tool::Pi, ArtifactKind::Provider, Scope::Global)
+        .path(Some(
+            agent_dir.join("models.json").to_str().unwrap().to_owned(),
+        ))
+        .format(TargetFormat::Json)
+        .managed_selectors(["providers"])
+        .build();
+    let projection = json!({
+        "providers": {
+            "cc": {
+                "baseUrl": "https://api.example.test",
+                "api": "openai-completions",
+                "apiKey": "$MY_KEY",
+                "headers": { "X": "1" },
+                "models": [{ "id": "deepseek-v4" }, { "id": "second" }]
+            },
+            "other": { "baseUrl": "https://other.test" }
+        }
+    });
+    let discovered = ProviderCodec::discover(&adapter, &descriptor, &projection, "hash").unwrap();
+    // 两个 provider 都是候选；默认渠道排在最前。
+    assert_eq!(discovered.len(), 2);
+    let cc = &discovered[0];
+    assert_eq!(cc.provider_id.as_deref(), Some("cc"));
+    assert_eq!(cc.api_base_url, "https://api.example.test");
+    assert_eq!(cc.api_key.as_deref(), Some("$MY_KEY"));
+    assert_eq!(cc.default_model, "deepseek-v4");
+    assert_eq!(cc.suggested_name.as_deref(), Some("cc"));
+    assert_eq!(cc.unimportable_reason, None);
+    assert_eq!(cc.auth_kind, crate::adapters::PROVIDER_AUTH_KIND_API_KEY);
+    assert_eq!(
+        cc.extra_provider_fields.get("api"),
+        Some(&json!("openai-completions"))
+    );
+    assert_eq!(
+        cc.extra_provider_fields.get("headers"),
+        Some(&json!({ "X": "1" }))
+    );
+    // `models` 必须进档案例，否则 Apply 时会丢掉逐模型元数据。
+    assert_eq!(
+        cc.extra_provider_fields.get("models"),
+        Some(&json!([{ "id": "deepseek-v4" }, { "id": "second" }]))
+    );
+    assert!(!cc.extra_provider_fields.contains_key("baseUrl"));
+    assert!(!cc.extra_provider_fields.contains_key("apiKey"));
+    let other = &discovered[1];
+    assert_eq!(other.provider_id.as_deref(), Some("other"));
+    assert_eq!(other.default_model, "");
+
+    // 无 `defaultProvider` → 仍然枚举全部候选（不再 fail closed）。
+    write_json(&agent_dir.join("settings.json"), json!({}));
+    let discovered = ProviderCodec::discover(&adapter, &descriptor, &projection, "hash").unwrap();
+    assert_eq!(discovered.len(), 2);
+
+    // 空 `providers` → 没有候选，不报错。
+    assert!(
+        ProviderCodec::discover(&adapter, &descriptor, &json!({ "providers": {} }), "hash")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn provider_discover_marks_invalid_entries_without_dropping_others() {
+    let adapter = PiAdapter;
+    let temporary = tempdir().unwrap();
+    let home = fs::canonicalize(temporary.path()).unwrap();
+    let agent_dir = home.join(".pi/agent");
+    let descriptor = TargetDescriptor::builder(Tool::Pi, ArtifactKind::Provider, Scope::Global)
+        .path(Some(
+            agent_dir.join("models.json").to_str().unwrap().to_owned(),
+        ))
+        .format(TargetFormat::Json)
+        .managed_selectors(["providers"])
+        .build();
+    let projection = json!({
+        "providers": {
+            "bad/id": { "baseUrl": "https://bad.test", "apiKey": "k" },
+            "scalar": "not-an-object",
+            "good": { "baseUrl": "https://good.test", "apiKey": "k" }
+        }
+    });
+    let discovered = ProviderCodec::discover(&adapter, &descriptor, &projection, "hash").unwrap();
+    assert_eq!(discovered.len(), 3);
+    let by_id = |id: &str| {
+        discovered
+            .iter()
+            .find(|item| item.provider_id.as_deref() == Some(id))
+            .unwrap()
+    };
+    assert_eq!(
+        by_id("bad/id").unimportable_reason.as_deref(),
+        Some(PI_PROVIDER_ID_INVALID)
+    );
+    assert_eq!(
+        by_id("scalar").unimportable_reason.as_deref(),
+        Some(PI_PROVIDER_ENTRY_INVALID)
+    );
+    assert_eq!(by_id("good").unimportable_reason, None);
+}
+
+#[test]
+fn provider_import_baseline_merges_provider_entries() {
+    let adapter = PiAdapter;
+    let existing = json!({
+        "providers": { "cc": { "baseUrl": "https://cc.test" } },
+        "unknown": true
+    });
+    let batch = json!({
+        "providers": { "gemini": { "baseUrl": "https://gemini.test" } }
+    });
+    let merged = adapter
+        .merge_import_baseline(Some(&existing), &batch)
+        .unwrap();
+    assert_eq!(merged["providers"]["cc"]["baseUrl"], "https://cc.test");
+    assert_eq!(
+        merged["providers"]["gemini"]["baseUrl"],
+        "https://gemini.test"
+    );
+    assert_eq!(merged["unknown"], true);
+
+    // 同名条目以本批次为准。
+    let batch = json!({
+        "providers": { "cc": { "baseUrl": "https://cc-new.test" } }
+    });
+    let merged = adapter
+        .merge_import_baseline(Some(&existing), &batch)
+        .unwrap();
+    assert_eq!(merged["providers"]["cc"]["baseUrl"], "https://cc-new.test");
+
+    // 首次导入：基线就是本批次的投影。
+    assert_eq!(adapter.merge_import_baseline(None, &batch).unwrap(), batch);
 }
 
 #[test]
@@ -1019,67 +1233,6 @@ fn provider_ownership_tracks_only_declared_entry_keys() {
     ]));
 
     assert!(adapter.ownership(None, &json!({})).is_err());
-}
-
-#[test]
-fn provider_discover_selects_default_provider_and_preserves_extra_fields() {
-    let adapter = PiAdapter;
-    let temporary = tempdir().unwrap();
-    let home = fs::canonicalize(temporary.path()).unwrap();
-    let agent_dir = home.join(".pi/agent");
-    write_json(
-        &agent_dir.join("settings.json"),
-        json!({ "defaultProvider": "cc", "defaultModel": "cc/deepseek-v4" }),
-    );
-    let descriptor = TargetDescriptor::builder(Tool::Pi, ArtifactKind::Provider, Scope::Global)
-        .path(Some(
-            agent_dir.join("models.json").to_str().unwrap().to_owned(),
-        ))
-        .format(TargetFormat::Json)
-        .managed_selectors(["providers"])
-        .build();
-    let projection = json!({
-        "providers": {
-            "cc": {
-                "baseUrl": "https://api.example.test",
-                "api": "openai-completions",
-                "apiKey": "$MY_KEY",
-                "headers": { "X": "1" },
-                "models": [{ "id": "deepseek-v4" }, { "id": "second" }]
-            },
-            "other": { "baseUrl": "https://other.test" }
-        }
-    });
-    let discovered = ProviderCodec::discover(&adapter, &descriptor, &projection, "hash")
-        .unwrap()
-        .unwrap();
-    assert_eq!(discovered.provider_id.as_deref(), Some("cc"));
-    assert_eq!(discovered.api_base_url, "https://api.example.test");
-    assert_eq!(discovered.api_key.as_deref(), Some("$MY_KEY"));
-    assert_eq!(discovered.default_model, "deepseek-v4");
-    assert_eq!(
-        discovered.auth_kind,
-        crate::adapters::PROVIDER_AUTH_KIND_API_KEY
-    );
-    assert_eq!(
-        discovered.extra_provider_fields.get("api"),
-        Some(&json!("openai-completions"))
-    );
-    assert_eq!(
-        discovered.extra_provider_fields.get("headers"),
-        Some(&json!({ "X": "1" }))
-    );
-    assert!(!discovered.extra_provider_fields.contains_key("baseUrl"));
-    assert!(!discovered.extra_provider_fields.contains_key("apiKey"));
-    assert!(!discovered.extra_provider_fields.contains_key("models"));
-
-    // 多 provider 且无 defaultProvider → 歧义，fail closed。
-    write_json(&agent_dir.join("settings.json"), json!({}));
-    assert!(
-        ProviderCodec::discover(&adapter, &descriptor, &projection, "hash")
-            .unwrap()
-            .is_none()
-    );
 }
 
 #[test]

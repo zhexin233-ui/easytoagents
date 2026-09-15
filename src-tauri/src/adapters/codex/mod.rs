@@ -283,7 +283,7 @@ impl ProviderCodec for CodexAdapter {
         descriptor: &TargetDescriptor,
         managed_projection: &Value,
         full_hash: &str,
-    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+    ) -> Result<Vec<ProviderCodecDiscovery>, AppError> {
         const OPENAI_PROVIDER_ID: &str = "openai";
         const RESERVED_PROVIDER_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
         // `model` 可缺省：Codex 会使用内置默认模型，导入后档案的默认模型保持为空。
@@ -297,20 +297,22 @@ impl ProviderCodec for CodexAdapter {
             .get("model_provider")
             .and_then(Value::as_str)
         {
-            Some(value) if value.trim().is_empty() => return Ok(None),
+            Some(value) if value.trim().is_empty() => return Ok(Vec::new()),
             Some(value) => value,
             None => OPENAI_PROVIDER_ID,
         };
         if provider_id == OPENAI_PROVIDER_ID {
-            return discover_openai_provider(
+            return Ok(discover_openai_provider(
                 descriptor,
                 managed_projection,
                 full_hash,
                 default_model,
-            );
+            )?
+            .into_iter()
+            .collect());
         }
         if RESERVED_PROVIDER_IDS.contains(&provider_id) {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         validate_provider_id(provider_id)?;
         let Some(table) = managed_projection
@@ -319,7 +321,7 @@ impl ProviderCodec for CodexAdapter {
             .and_then(|providers| providers.get(provider_id))
             .and_then(Value::as_object)
         else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let api_base_url = table
             .get("base_url")
@@ -327,7 +329,7 @@ impl ProviderCodec for CodexAdapter {
             .unwrap_or_default()
             .to_owned();
         if api_base_url.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let api_key = table
             .get("experimental_bearer_token")
@@ -387,7 +389,7 @@ impl ProviderCodec for CodexAdapter {
             })
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
-        Ok(Some(ProviderCodecDiscovery {
+        Ok(vec![ProviderCodecDiscovery {
             target_path: descriptor_path(descriptor)?,
             full_hash: full_hash.to_owned(),
             projection: managed_projection,
@@ -398,6 +400,8 @@ impl ProviderCodec for CodexAdapter {
             credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
             extra_env: BTreeMap::new(),
             skipped_env_keys: Vec::new(),
+            is_default_provider: false,
+            unimportable_reason: None,
             provider_id: Some(provider_id.to_owned()),
             wire_api,
             zcode_kind: None,
@@ -405,7 +409,7 @@ impl ProviderCodec for CodexAdapter {
             opencode_api: None,
             extra_provider_fields,
             suggested_name,
-        }))
+        }])
     }
 }
 
@@ -480,6 +484,8 @@ fn discover_openai_provider(
         credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
         extra_env: BTreeMap::new(),
         skipped_env_keys: Vec::new(),
+        is_default_provider: false,
+        unimportable_reason: None,
         provider_id: Some("openai".to_owned()),
         wire_api: None,
         zcode_kind: None,

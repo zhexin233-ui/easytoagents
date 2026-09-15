@@ -278,7 +278,7 @@ impl ProviderCodec for OpencodeAdapter {
         descriptor: &TargetDescriptor,
         managed_projection: &Value,
         full_hash: &str,
-    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+    ) -> Result<Vec<ProviderCodecDiscovery>, AppError> {
         let target_path = descriptor_path(descriptor)?;
         let root = managed_projection
             .as_object()
@@ -288,10 +288,10 @@ impl ProviderCodec for OpencodeAdapter {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let Some((provider_id, model_id)) = model_ref.split_once('/') else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         if provider_id.trim().is_empty() || model_id.trim().is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let Some(entry) = root
             .get("provider")
@@ -299,25 +299,25 @@ impl ProviderCodec for OpencodeAdapter {
             .and_then(|providers| providers.get(provider_id))
             .and_then(Value::as_object)
         else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let Some(npm) = entry.get("npm").and_then(Value::as_str) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let Some(name) = entry.get("name").and_then(Value::as_str) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         if npm.trim().is_empty() || name.trim().is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let Some(options) = entry.get("options").and_then(Value::as_object) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let Some(api_base_url) = options.get("baseURL").and_then(Value::as_str) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         if api_base_url.trim().is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let api_key = options
             .get("apiKey")
@@ -344,7 +344,7 @@ impl ProviderCodec for OpencodeAdapter {
                 );
             }
         }
-        Ok(Some(ProviderCodecDiscovery {
+        Ok(vec![ProviderCodecDiscovery {
             target_path,
             full_hash: full_hash.to_owned(),
             projection: json!({
@@ -358,6 +358,8 @@ impl ProviderCodec for OpencodeAdapter {
             credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
             extra_env: BTreeMap::new(),
             skipped_env_keys: Vec::new(),
+            is_default_provider: false,
+            unimportable_reason: None,
             provider_id: Some(provider_id.to_owned()),
             wire_api: None,
             zcode_kind: None,
@@ -373,7 +375,7 @@ impl ProviderCodec for OpencodeAdapter {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
             suggested_name: Some(name.to_owned()),
-        }))
+        }])
     }
 }
 

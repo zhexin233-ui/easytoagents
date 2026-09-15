@@ -1342,6 +1342,11 @@ pub struct ProviderCodecDiscovery {
     pub opencode_api: Option<String>,
     pub extra_provider_fields: BTreeMap<String, Value>,
     pub suggested_name: Option<String>,
+    /// 原生配置把该条目标记为默认渠道（Pi 的 `settings.json.defaultProvider`）。
+    pub is_default_provider: bool,
+    /// 适配层已判定该条目不可导入时的稳定原因码（条目非对象、provider id 非法等）。
+    /// `None` 表示字段事实完整，字段级校验仍由 Profiles 负责。
+    pub unimportable_reason: Option<String>,
 }
 
 /// Provider 的工具专属 ownership 与选项编解码合同。
@@ -1366,12 +1371,29 @@ pub trait ProviderCodec: Sync {
     ///
     /// 只传入 descriptor、managed projection 与 hash，避免 codec 依赖 sync
     /// 层的内部观察类型；Profiles 仍掌握扫描/策略/持久化编排。
+    ///
+    /// 返回**全部**候选：单 provider 工具最多一个元素（保持既有语义），Pi 的
+    /// `providers` 是多条目的映射，必须逐条目产出候选，不能只挑默认项。
     fn discover(
         &self,
         descriptor: &TargetDescriptor,
         managed_projection: &Value,
         full_hash: &str,
-    ) -> Result<Option<ProviderCodecDiscovery>, AppError>;
+    ) -> Result<Vec<ProviderCodecDiscovery>, AppError>;
+
+    /// 把本批次导入的候选投影并入目标级受管基线。
+    ///
+    /// 默认替换：单 provider 工具的目标文件只承载一份档案，重新导入就是重新接管。
+    /// 一个目标文件承载多个 Provider 条目的 codec（Pi）必须覆写为条目级并集，
+    /// 否则分次导入会覆盖前一批基线，并让未导入的 provider 被误判为「受管但缺失」。
+    fn merge_import_baseline(
+        &self,
+        existing: Option<&Value>,
+        batch: &Value,
+    ) -> Result<Value, AppError> {
+        let _ = existing;
+        Ok(batch.clone())
+    }
 }
 
 pub trait ToolAdapter {

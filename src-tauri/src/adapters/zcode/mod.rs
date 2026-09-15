@@ -223,7 +223,7 @@ impl ProviderCodec for ZcodeAdapter {
         descriptor: &TargetDescriptor,
         managed_projection: &Value,
         full_hash: &str,
-    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+    ) -> Result<Vec<ProviderCodecDiscovery>, AppError> {
         const PROVIDER_KINDS: &[&str] = &["anthropic", "openai", "gemini"];
         let entries = managed_projection
             .get("provider")
@@ -240,7 +240,7 @@ impl ProviderCodec for ZcodeAdapter {
                 .iter()
                 .next()
                 .ok_or_else(|| AppError::parse("~/.zcode/v2/config.json", "json"))?,
-            _ => return Ok(None),
+            _ => return Ok(Vec::new()),
         };
         let (provider_id, entry) = selected;
         if entry
@@ -248,7 +248,7 @@ impl ProviderCodec for ZcodeAdapter {
             .and_then(Value::as_str)
             .map_or(true, |kind| !PROVIDER_KINDS.contains(&kind))
         {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let kind = entry
             .get("kind")
@@ -262,7 +262,7 @@ impl ProviderCodec for ZcodeAdapter {
             .unwrap_or_default()
             .to_owned();
         if api_base_url.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let api_key = options
             .and_then(|options| options.get("apiKey"))
@@ -285,7 +285,7 @@ impl ProviderCodec for ZcodeAdapter {
                 managed_entry.insert(leaf.to_owned(), value.clone());
             }
         }
-        Ok(Some(ProviderCodecDiscovery {
+        Ok(vec![ProviderCodecDiscovery {
             target_path: descriptor_path(descriptor)?,
             full_hash: full_hash.to_owned(),
             projection: json!({ "provider": { provider_id: Value::Object(managed_entry) } }),
@@ -296,6 +296,8 @@ impl ProviderCodec for ZcodeAdapter {
             credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
             extra_env: std::collections::BTreeMap::new(),
             skipped_env_keys: Vec::new(),
+            is_default_provider: false,
+            unimportable_reason: None,
             provider_id: Some(provider_id.clone()),
             wire_api: None,
             zcode_kind: Some(kind),
@@ -307,7 +309,7 @@ impl ProviderCodec for ZcodeAdapter {
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .or_else(|| Some(provider_id.clone())),
-        }))
+        }])
     }
 }
 

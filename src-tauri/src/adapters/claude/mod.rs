@@ -263,9 +263,9 @@ impl ProviderCodec for ClaudeAdapter {
         descriptor: &TargetDescriptor,
         managed_projection: &Value,
         full_hash: &str,
-    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+    ) -> Result<Vec<ProviderCodecDiscovery>, AppError> {
         let Some(env) = managed_projection.get("env").and_then(Value::as_object) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let text = |key: &str| {
             env.get(key)
@@ -303,7 +303,7 @@ impl ProviderCodec for ClaudeAdapter {
                 (true, None, None) => (PROVIDER_AUTH_KIND_API_KEY, CLAUDE_API_KEY_KEY, None),
                 (false, None, None) => {
                     if extra_env.is_empty() && default_model.is_empty() {
-                        return Ok(None);
+                        return Ok(Vec::new());
                     }
                     (PROVIDER_AUTH_KIND_OFFICIAL_LOGIN, CLAUDE_API_KEY_KEY, None)
                 }
@@ -317,7 +317,7 @@ impl ProviderCodec for ClaudeAdapter {
         for (key, value) in &extra_env {
             projection_env.insert(key.clone(), Value::String(value.clone()));
         }
-        Ok(Some(ProviderCodecDiscovery {
+        Ok(vec![ProviderCodecDiscovery {
             target_path: descriptor_path(descriptor)?,
             full_hash: full_hash.to_owned(),
             projection: json!({ "env": projection_env }),
@@ -328,6 +328,8 @@ impl ProviderCodec for ClaudeAdapter {
             credential_env_key: credential_env_key.to_owned(),
             extra_env,
             skipped_env_keys,
+            is_default_provider: false,
+            unimportable_reason: None,
             provider_id: None,
             wire_api: None,
             zcode_kind: None,
@@ -335,7 +337,7 @@ impl ProviderCodec for ClaudeAdapter {
             opencode_api: None,
             extra_provider_fields: BTreeMap::new(),
             suggested_name: None,
-        }))
+        }])
     }
 }
 

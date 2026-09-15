@@ -84,6 +84,13 @@ pub const PI_MCP_ADAPTER_WRITES_MANAGED_ENTRY: &str = "PI_MCP_ADAPTER_WRITES_MAN
 /// Provider 条目含明文字面 `apiKey`（非 `$ENV`/`!command` 引用）：脱敏 + 提示。
 pub const PI_PROVIDER_INLINE_API_KEY: &str = "PI_PROVIDER_INLINE_API_KEY";
 
+/// `providers` 下的条目不是 JSON 对象，无法证明其渠道字段。
+pub const PI_PROVIDER_ENTRY_INVALID: &str = "PI_PROVIDER_ENTRY_INVALID";
+/// `providers` 下的条目 key 不是合法 provider id。
+pub const PI_PROVIDER_ID_INVALID: &str = "PI_PROVIDER_ID_INVALID";
+/// 字段级校验不通过（缺 `apiKey`、`baseUrl` 非法、选项不受支持等）。
+pub const PI_PROVIDER_FIELDS_INVALID: &str = "PI_PROVIDER_FIELDS_INVALID";
+
 /// 受管符号链接断链（Pi 静默忽略，必须自检）。
 pub const PI_SKILL_SYMLINK_BROKEN: &str = "PI_SKILL_SYMLINK_BROKEN";
 /// 受管符号链接逃逸 allowed_root（Pi 静默忽略，必须自检）。
@@ -426,18 +433,70 @@ impl ProviderCodec for PiAdapter {
             (None, None) => None,
         };
         set_or_remove(&mut entry, "apiKey", api_key);
-        // 没有默认模型时不写 `models`（不得写成 `models: []`）。
-        set_or_remove(
-            &mut entry,
-            "models",
-            input
-                .default_model
-                .filter(|value| !value.is_empty())
-                .map(|model| Value::Array(vec![serde_json::json!({ "id": model })])),
-        );
+        // `models` 按模型 id 合并：导入时带回来的原数组必须逐字节保留，否则逐模型
+        // 元数据（name/contextWindow/reasoning/cost/thinkingLevelMap/input/maxTokens）
+        // 会在下一次 Apply 时被一个裸 `{ id }` 覆盖。只有默认模型不在原数组里时才
+        // 追加一条；没有原数组时退回旧行为；两者皆无时不写 `models: []`。
+        let models = match (
+            entry.get("models").and_then(Value::as_array).cloned(),
+            input.default_model.filter(|value| !value.is_empty()),
+        ) {
+            (Some(mut models), Some(default_model)) => {
+                let present = models
+                    .iter()
+                    .any(|model| model.get("id").and_then(Value::as_str) == Some(default_model));
+                if !present {
+                    models.push(serde_json::json!({ "id": default_model }));
+                }
+                Some(Value::Array(models))
+            }
+            (Some(models), None) => Some(Value::Array(models)),
+            (None, Some(default_model)) => Some(Value::Array(vec![
+                serde_json::json!({ "id": default_model }),
+            ])),
+            (None, None) => None,
+        };
+        set_or_remove(&mut entry, "models", models);
         Ok(serde_json::json!({
             "providers": { provider_id: Value::Object(entry) }
         }))
+    }
+
+    /// 尚未导入的 provider 不入基线，因此后续 Apply 不会把它当成「受管但缺失」删除。
+    fn merge_import_baseline(
+        &self,
+        existing: Option<&Value>,
+        batch: &Value,
+    ) -> Result<Value, AppError> {
+        let Some(existing) = existing else {
+            return Ok(batch.clone());
+        };
+        let mut merged = existing.as_object().cloned().ok_or_else(|| {
+            AppError::invalid_input("managedBaseline", "Pi Provider 基线必须是 JSON 对象")
+        })?;
+        let mut providers = merged
+            .get("providers")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let Some(additions) = batch.get("providers").and_then(Value::as_object) else {
+            return Err(AppError::invalid_input(
+                "managedBaseline",
+                "Pi Provider 候选基线必须是 JSON 对象",
+            ));
+        };
+        for (provider_id, entry) in additions {
+            providers.insert(provider_id.clone(), entry.clone());
+        }
+        merged.insert("providers".to_owned(), Value::Object(providers));
+        if let Some(extra) = batch.as_object() {
+            for (key, value) in extra {
+                if key != "providers" {
+                    merged.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        Ok(Value::Object(merged))
     }
 
     fn discover(
@@ -445,7 +504,7 @@ impl ProviderCodec for PiAdapter {
         descriptor: &TargetDescriptor,
         managed_projection: &Value,
         full_hash: &str,
-    ) -> Result<Option<ProviderCodecDiscovery>, AppError> {
+    ) -> Result<Vec<ProviderCodecDiscovery>, AppError> {
         let target_path = descriptor_path(descriptor)?;
         let Some(providers) = managed_projection
             .get("providers")
@@ -453,68 +512,113 @@ impl ProviderCodec for PiAdapter {
         else {
             return Err(AppError::parse(&target_path, "json"));
         };
-        if providers.is_empty() {
-            return Ok(None);
-        }
         let agent_dir = Path::new(&target_path).parent();
+        // `defaultProvider` 只用于标注默认渠道，不再参与候选取舍：Pi 的
+        // `providers` 是多条目映射，每个条目都是一份独立可导入的渠道配置。
         let default_provider = agent_dir.and_then(read_default_provider);
-        let selected = default_provider
-            .as_deref()
-            .filter(|id| providers.contains_key(*id))
-            .map(|id| (id.to_owned(), providers.get(id)))
-            .or_else(|| {
-                // 没有 `defaultProvider` 时只在唯一 provider 条目下导入；
-                // 多条目且无默认值属歧义，fail closed 由用户显式选择。
-                (providers.len() == 1)
-                    .then(|| providers.iter().next())
-                    .flatten()
-                    .map(|(id, entry)| (id.clone(), Some(entry)))
+        let mut discoveries = Vec::with_capacity(providers.len());
+        for (provider_id, value) in providers {
+            // 单条目不可证明只作废该条目，不阻断同文件其他 provider 的导入。
+            if validate_provider_id(provider_id).is_err() {
+                discoveries.push(unimportable_discovery(
+                    target_path.clone(),
+                    full_hash,
+                    provider_id,
+                    PI_PROVIDER_ID_INVALID,
+                ));
+                continue;
+            }
+            let Some(entry) = value.as_object() else {
+                discoveries.push(unimportable_discovery(
+                    target_path.clone(),
+                    full_hash,
+                    provider_id,
+                    PI_PROVIDER_ENTRY_INVALID,
+                ));
+                continue;
+            };
+            let api_base_url = entry
+                .get("baseUrl")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let api_key = entry
+                .get("apiKey")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let default_model = agent_dir
+                .map(|dir| resolve_default_model(dir, provider_id, entry))
+                .unwrap_or_default();
+            // `models` 必须进入档案：它是 provider 条目的原生内容，漏掉就会在
+            // Apply 时被单个裸 `{ id }` 覆盖掉逐模型元数据。
+            let extra_provider_fields = entry
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "baseUrl" | "apiKey"))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let suggested_name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .map(str::to_owned)
+                .or_else(|| Some(provider_id.clone()));
+            discoveries.push(ProviderCodecDiscovery {
+                target_path: target_path.clone(),
+                full_hash: full_hash.to_owned(),
+                projection: serde_json::json!({
+                    "providers": { provider_id.clone(): Value::Object(entry.clone()) }
+                }),
+                auth_kind: crate::adapters::PROVIDER_AUTH_KIND_API_KEY.to_owned(),
+                api_base_url,
+                api_key,
+                default_model,
+                // 与既有非 Claude codec 一致：Pi 不使用 Claude 凭据环境变量契约。
+                credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
+                extra_env: BTreeMap::new(),
+                skipped_env_keys: Vec::new(),
+                provider_id: Some(provider_id.clone()),
+                wire_api: None,
+                zcode_kind: None,
+                opencode_npm: None,
+                opencode_api: None,
+                extra_provider_fields,
+                suggested_name,
+                is_default_provider: default_provider.as_deref() == Some(provider_id.as_str()),
+                unimportable_reason: None,
             });
-        let Some((provider_id, Some(entry))) = selected else {
-            return Ok(None);
-        };
-        let Some(entry) = entry.as_object() else {
-            return Ok(None);
-        };
-        let api_base_url = entry
-            .get("baseUrl")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        let api_key = entry
-            .get("apiKey")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let default_model = agent_dir
-            .map(|dir| resolve_default_model(dir, &provider_id, entry))
-            .unwrap_or_default();
-        let extra_provider_fields = entry
-            .iter()
-            .filter(|(key, _)| !matches!(key.as_str(), "baseUrl" | "apiKey" | "models"))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
-        Ok(Some(ProviderCodecDiscovery {
-            target_path,
-            full_hash: full_hash.to_owned(),
-            projection: serde_json::json!({
-                "providers": { provider_id.clone(): Value::Object(entry.clone()) }
-            }),
-            auth_kind: crate::adapters::PROVIDER_AUTH_KIND_API_KEY.to_owned(),
-            api_base_url,
-            api_key,
-            default_model,
-            // 与既有非 Claude codec 一致：Pi 不使用 Claude 凭据环境变量契约。
-            credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
-            extra_env: BTreeMap::new(),
-            skipped_env_keys: Vec::new(),
-            provider_id: Some(provider_id),
-            wire_api: None,
-            zcode_kind: None,
-            opencode_npm: None,
-            opencode_api: None,
-            extra_provider_fields,
-            suggested_name: entry.get("name").and_then(Value::as_str).map(str::to_owned),
-        }))
+        }
+        Ok(discoveries)
+    }
+}
+
+/// 适配层直接判定不可导入的候选：只保留身份，字段事实留空，由 Profiles
+/// 依据 `unimportable_reason` 标记为「配置无效」并给出稳定原因码。
+fn unimportable_discovery(
+    target_path: String,
+    full_hash: &str,
+    provider_id: &str,
+    reason: &str,
+) -> ProviderCodecDiscovery {
+    ProviderCodecDiscovery {
+        target_path,
+        full_hash: full_hash.to_owned(),
+        projection: Value::Object(Map::new()),
+        auth_kind: crate::adapters::PROVIDER_AUTH_KIND_API_KEY.to_owned(),
+        api_base_url: String::new(),
+        api_key: None,
+        default_model: String::new(),
+        credential_env_key: "ANTHROPIC_API_KEY".to_owned(),
+        extra_env: BTreeMap::new(),
+        skipped_env_keys: Vec::new(),
+        provider_id: Some(provider_id.to_owned()),
+        wire_api: None,
+        zcode_kind: None,
+        opencode_npm: None,
+        opencode_api: None,
+        extra_provider_fields: BTreeMap::new(),
+        suggested_name: None,
+        is_default_provider: false,
+        unimportable_reason: Some(reason.to_owned()),
     }
 }
 
