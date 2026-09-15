@@ -2,6 +2,7 @@
 .claude/
 .codex/
 .cursor/
+.pi/
 .trellis/
 AGENTS.md
 node_modules/

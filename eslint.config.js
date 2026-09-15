@@ -11,6 +11,7 @@ export default defineConfig([
     ".claude/**",
     ".codex/**",
     ".cursor/**",
+    ".pi/**",
     ".trellis/**",
     "dist/**",
     "node_modules/**",
