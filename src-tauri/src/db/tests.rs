@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn github_skill_source_migration_accepts_only_normalized_source_shape() {
         let (_temporary, _paths, database) = open_isolated_database();
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         database
             .connection()
             .execute(
@@ -110,7 +110,7 @@ mod tests {
             .unwrap();
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
         assert_eq!(foreign_keys, 1);
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -141,6 +141,7 @@ mod tests {
             "sync_items",
             "snapshots",
             "profile_import_previews",
+            "provider_import_previews",
             "mcp_import_previews",
             "skill_import_previews",
             "onboarding_state",
@@ -723,7 +724,7 @@ mod tests {
         }
         for (iteration, _) in (0..2).enumerate() {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             // 只有第一次打开有待执行迁移，才产生启动备份。
             assert_eq!(database.startup_backup().is_some(), iteration == 0);
             let (name, previews): (String, i64) = database.connection().query_row(
@@ -759,7 +760,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let (name, previews): (String, i64) = database.connection().query_row("SELECT name, (SELECT COUNT(*) FROM skill_import_previews) FROM mcp_servers WHERE id = ?1", [MCP_ID], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(name, "Preserved MCP");
             assert_eq!(previews, 0);
@@ -814,7 +815,7 @@ mod tests {
             }
         }
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         let kinds = database
             .connection()
             .prepare_cached("SELECT id, storage_kind FROM snapshots ORDER BY id")
@@ -1056,7 +1057,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         assert_eq!(
             fs::read(&project_prompt_path).unwrap(),
             project_prompt_bytes
@@ -1204,7 +1205,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 25);
+        assert_eq!(reopened.schema_version().unwrap(), 26);
         assert_eq!(
             reopened
                 .connection()
@@ -1264,7 +1265,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             // 既有全局 prompt 基线在迁移后原样保留。
             let preserved: i64 = database
                 .connection()
@@ -1329,7 +1330,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             // 旧生效档案按工具种子到新启用位；遗留 is_active 清零。
             let (claude_flag, codex_flag, legacy_active): (i64, i64, i64) = connection
@@ -1417,7 +1418,7 @@ mod tests {
 
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -1571,7 +1572,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1688,7 +1689,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -1768,7 +1769,7 @@ mod tests {
                     0
                 ))
                 .unwrap(),
-            25
+            26
         );
         for (tool, artifact, accepted) in [
             ("opencode", "provider", true),
@@ -1813,7 +1814,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         let connection = database.connection();
         connection
             .execute(
@@ -1869,7 +1870,7 @@ mod tests {
 
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 25);
+        assert_eq!(reopened.schema_version().unwrap(), 26);
         assert_eq!(
             reopened
                 .connection()
@@ -1935,7 +1936,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         let connection = database.connection();
 
         // 旧行与旧工具的生效位保持不变。
@@ -2123,7 +2124,7 @@ mod tests {
         // 重开与重复打开保持幂等，新列可读回。
         drop(database);
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 25);
+        assert_eq!(reopened.schema_version().unwrap(), 26);
         assert_eq!(
             reopened
                 .connection()
@@ -2137,7 +2138,7 @@ mod tests {
         );
         drop(reopened);
         let third = Database::open(&paths).unwrap();
-        assert_eq!(third.schema_version().unwrap(), 25);
+        assert_eq!(third.schema_version().unwrap(), 26);
     }
 
     #[test]
@@ -2192,7 +2193,7 @@ mod tests {
                     |row| row.get::<_, i64>(0),
                 )
                 .unwrap(),
-            25
+            26
         );
     }
 
@@ -2225,7 +2226,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2374,7 +2375,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2486,7 +2487,7 @@ mod tests {
         }
         for _round in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             assert_eq!(
                 connection
@@ -2662,7 +2663,7 @@ mod tests {
         }
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             let preserved: i64 = connection
                 .query_row(
@@ -2819,7 +2820,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
             type PreservedRow = (String, String, String, Option<String>, Option<String>);
             let rows: Vec<PreservedRow> = connection
@@ -3047,7 +3048,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         let connection = database.connection();
         type PreservedRow = (
             String,
@@ -3133,7 +3134,7 @@ mod tests {
         drop(database);
 
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 25);
+        assert_eq!(reopened.schema_version().unwrap(), 26);
         let (count, agent_type): (i64, String) = reopened
             .connection()
             .query_row(
@@ -3257,7 +3258,7 @@ mod tests {
 
         for _ in 0..2 {
             let database = Database::open(&paths).unwrap();
-            assert_eq!(database.schema_version().unwrap(), 25);
+            assert_eq!(database.schema_version().unwrap(), 26);
             let connection = database.connection();
 
             // 旧行保留：hook、分配与受管目标在 writable_schema 改写后逐字保留。
@@ -3509,7 +3510,7 @@ mod tests {
         }
 
         let database = Database::open(&paths).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 25);
+        assert_eq!(database.schema_version().unwrap(), 26);
         let record: (String, String) = database
             .connection()
             .query_row(
@@ -3576,6 +3577,183 @@ mod tests {
             assert_eq!(remaining, 0);
         }
         let reopened = Database::open(&paths).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 25);
+        assert_eq!(reopened.schema_version().unwrap(), 26);
+    }
+    /// 0026：新表结构、tool 白名单与批量接管的单事务原子性。
+    #[test]
+    fn provider_import_previews_migration_and_atomic_batch_adoption() {
+        use crate::{
+            db::{
+                profiles::NewProviderProfileRecord,
+                provider_imports::{
+                    adopt_imported_providers, get_preview, persist_preview,
+                    ProviderImportPreviewRecord,
+                },
+            },
+            domain::Tool,
+            sync::hash_json,
+        };
+
+        let (_temporary, paths, mut database) = open_isolated_database();
+        let connection = database.connection();
+
+        // 表结构：9 列 + 状态索引，且 tool 白名单含 pi。
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('provider_import_previews')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            9
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'index' AND name = 'idx_provider_import_previews_status'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert!(connection
+            .execute(
+                "INSERT INTO provider_import_previews(
+                    id, tool, target_path, observed_full_hash, context_json, redacted_preview_json
+                 ) VALUES ('00000000-0000-4000-8000-000000000301', 'cursor',
+                    '/fixture/models.json', ?1, '{}', '{}')",
+                ["a".repeat(64)],
+            )
+            .is_err());
+        // Cursor 没有 Provider 合同；pi 必须被接受。
+        connection
+            .execute(
+                "INSERT INTO provider_import_previews(
+                    id, tool, target_path, observed_full_hash, context_json, redacted_preview_json
+                 ) VALUES ('00000000-0000-4000-8000-000000000302', 'pi',
+                    '/fixture/models.json', ?1, '{}', '{}')",
+                ["b".repeat(64)],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM provider_import_previews
+                 WHERE id = '00000000-0000-4000-8000-000000000302'",
+                [],
+            )
+            .unwrap();
+
+        // 批量接管：第二条因名称冲突失败时整批回滚，且预览不被消费。
+        let preview = ProviderImportPreviewRecord {
+            id: "00000000-0000-4000-8000-000000000303".to_owned(),
+            tool: Tool::Pi,
+            target_path: "/fixture/home/.pi/agent/models.json".to_owned(),
+            observed_full_hash: "c".repeat(64),
+            context_json: r#"{"version":1,"candidates":[]}"#.to_owned(),
+            redacted_preview_json: "{}".to_owned(),
+            status: "previewed".to_owned(),
+        };
+        persist_preview(&database, &preview).unwrap();
+        let profile = |id: &str, name: &str| NewProviderProfileRecord {
+            id: id.to_owned(),
+            tool: Tool::Pi,
+            name: name.to_owned(),
+            api_base_url: Some("https://fixture.invalid/v1".to_owned()),
+            api_key: Some("fixture-secret".to_owned()),
+            default_model: Some("m1".to_owned()),
+            config_json: r#"{"providerId":"cc"}"#.to_owned(),
+            is_active: false,
+        };
+        let projection = serde_json::json!({
+            "providers": { "cc": { "baseUrl": "https://fixture.invalid/v1", "models": [{ "id": "m1" }] } }
+        });
+        let failed = adopt_imported_providers(
+            &mut database,
+            &preview,
+            &[
+                profile("00000000-0000-4000-8000-000000000311", "重复名称"),
+                profile("00000000-0000-4000-8000-000000000312", "重复名称"),
+            ],
+            &projection,
+            || Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(failed.code(), ErrorCode::Conflict);
+        let connection = database.connection();
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM provider_profiles", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_targets
+                     WHERE tool = 'pi' AND artifact_kind = 'provider'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            get_preview(&database, &preview.id).unwrap().status,
+            "previewed"
+        );
+
+        // 成功路径：两条档案 + 并集基线 + 预览消费。
+        let adopted = adopt_imported_providers(
+            &mut database,
+            &preview,
+            &[
+                profile("00000000-0000-4000-8000-000000000321", "渠道一"),
+                profile("00000000-0000-4000-8000-000000000322", "渠道二"),
+            ],
+            &projection,
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(adopted.len(), 2);
+        let connection = database.connection();
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM provider_profiles", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            2
+        );
+        let stored: String = connection
+            .query_row(
+                "SELECT baseline_projection_json FROM managed_targets
+                 WHERE tool = 'pi' AND artifact_kind = 'provider'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&stored).unwrap(),
+            projection
+        );
+        let managed_hash: String = connection
+            .query_row(
+                "SELECT baseline_managed_hash FROM managed_targets
+                 WHERE tool = 'pi' AND artifact_kind = 'provider'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(managed_hash, hash_json(&projection));
+        assert_eq!(
+            get_preview(&database, &preview.id).unwrap().status,
+            "consumed"
+        );
+        assert_eq!(paths.database().extension().unwrap(), "sqlite3");
     }
 }

@@ -24,6 +24,7 @@ pub(crate) mod mcp_imports;
 pub(crate) mod native_resources;
 pub mod profiles;
 pub mod projects;
+pub(crate) mod provider_imports;
 pub(crate) mod skill_imports;
 pub mod skills;
 pub(crate) mod sync;
@@ -163,6 +164,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 25,
         name: "pi_tool_support",
         sql: include_str!("migrations/0025_pi_tool_support.sql"),
+    },
+    Migration {
+        version: 26,
+        name: "provider_import_previews",
+        sql: include_str!("migrations/0026_provider_import_previews.sql"),
     },
 ];
 

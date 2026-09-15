@@ -6,9 +6,11 @@ use uuid::Uuid;
 
 use super::models::{
     optional_text, validate_prompt_fields, validate_provider_fields, ClaudeCredentialEnvKey,
-    ConfirmImportInput, CopyProviderProfileInput, DeleteProfileResultDto, PromptImportPreviewDto,
+    ConfirmImportInput, ConfirmProviderImportInput, CopyProviderProfileInput,
+    DeleteProfileResultDto, PiProviderModelDto, PiProviderSummaryDto, PromptImportPreviewDto,
     PromptProfileDto, PromptProfileInput, ProviderAuthKind, ProviderFieldsInput,
-    ProviderImportPreviewDto, ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput,
+    ProviderImportCandidateDto, ProviderImportCandidateStatus, ProviderImportPreviewDto,
+    ProviderImportResultDto, ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput,
     ReadoptProviderTargetInput, ReadoptProviderTargetResultDto, SecretUpdate,
     SetGlobalPromptAssignmentInput, StoredProviderConfig, ToolProfileStatusDto,
     UpdatePromptProfileInput, UpdateProviderProfileInput, VersionedProfileInput,
@@ -26,6 +28,7 @@ use crate::{
             NewPromptProfileRecord, NewProviderProfileRecord, PromptProfileRecord,
             ProviderProfileRecord,
         },
+        provider_imports::ProviderImportPreviewRecord,
         Database,
     },
     domain::{ArtifactKind, ArtifactName, Scope, Tool},
@@ -33,10 +36,10 @@ use crate::{
     git::GitPathStatus,
     security::SecretRedactor,
     sync::{
-        apply_persisted_preview, build_preview_plan, hash_json, load_persisted_preview,
-        persist_preview, safe_row_version, scan_target, ApplyResult, ApplyTargetInput,
-        DatabaseEntityType, DatabaseRowVersion, ManagedTargetBaseline, NoApplyFault, PreviewPlan,
-        PreviewTargetRequest, TargetScan,
+        apply_persisted_preview, build_preview_plan, load_persisted_preview, persist_preview,
+        safe_row_version, scan_target, ApplyResult, ApplyTargetInput, DatabaseEntityType,
+        DatabaseRowVersion, ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest,
+        TargetScan,
     },
 };
 

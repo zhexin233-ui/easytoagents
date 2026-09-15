@@ -41,12 +41,7 @@ pub fn readopt_provider_target(
     ensure_tool_is_available(&descriptor)?;
 
     let target = ensure_profile_target(database, &descriptor)?;
-    let active = repository::find_active_provider_profile(database, input.tool)?;
-    let desired_projection = active
-        .as_ref()
-        .map(provider_projection)
-        .transpose()?
-        .unwrap_or_else(|| Value::Object(Map::new()));
+    let desired_projection = provider_sync_intent(database, input.tool)?.desired_projection;
     // Provider 没有 managed_items；ownership 仍必须沿用 Preview 的 codec
     // 口径（基线 + 当前中央意图），否则重新接管后下一份 Preview 的 managed
     // hash 会与本次扫描不一致。
@@ -183,34 +178,26 @@ fn prepare_provider_sync(
     refine_claude_provider_policy(&mut descriptor);
     ensure_tool_is_available(&descriptor)?;
     let target = ensure_profile_target(database, &descriptor)?;
-    let active = repository::find_active_provider_profile(database, tool)?;
-    if active.is_none() && target.baseline.full_hash.is_none() {
+    let intent = provider_sync_intent(database, tool)?;
+    if intent.active.is_none() && target.baseline.full_hash.is_none() {
         return Err(AppError::not_found("activeProviderProfile", tool.as_str()));
     }
-    if let Some(secret) = active.as_ref().and_then(|profile| profile.api_key.as_ref()) {
-        redactor.register_secret(secret.clone());
+    for profile in &intent.profiles {
+        if let Some(secret) = profile.api_key.as_ref() {
+            redactor.register_secret(secret.clone());
+        }
     }
-    let desired_projection = active
-        .as_ref()
-        .map(provider_projection)
-        .transpose()?
-        .unwrap_or_else(|| Value::Object(Map::new()));
-    let ownership = provider_ownership(tool, target.projection.as_ref(), &desired_projection)?;
+    let ownership =
+        provider_ownership(tool, target.projection.as_ref(), &intent.desired_projection)?;
     let scan = scan_target(tool.adapter(), &descriptor, &ownership);
-    let row_versions = active
-        .as_ref()
-        .map(provider_row_version)
-        .transpose()?
-        .into_iter()
-        .collect();
     Ok(PreparedProfileSync {
         allowed_root: crate::adapters::descriptor_allowed_root(&descriptor)?,
         descriptor,
         ownership,
         baseline: target.baseline,
         scan,
-        desired_projection,
-        row_versions,
+        desired_projection: intent.desired_projection,
+        row_versions: intent.row_versions,
         git: None,
         delete_target: false,
     })

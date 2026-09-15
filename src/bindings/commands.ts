@@ -268,7 +268,7 @@ async getToolProfileStatus(tool: Tool) : Promise<Result<ToolProfileStatusDto, Ap
     else return { status: "error", error: e  as any };
 }
 },
-async discoverProviderImport(tool: Tool) : Promise<Result<ProviderImportPreviewDto | null, AppError>> {
+async discoverProviderImport(tool: Tool) : Promise<Result<ProviderImportPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("discover_provider_import", { tool }) };
 } catch (e) {
@@ -276,7 +276,7 @@ async discoverProviderImport(tool: Tool) : Promise<Result<ProviderImportPreviewD
     else return { status: "error", error: e  as any };
 }
 },
-async confirmProviderImport(input: ConfirmImportInput) : Promise<Result<ProviderProfileDto, AppError>> {
+async confirmProviderImport(input: ConfirmProviderImportInput) : Promise<Result<ProviderImportResultDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("confirm_provider_import", { input }) };
 } catch (e) {
@@ -1002,6 +1002,8 @@ export type ConfirmAgentImportInput = { tool: Tool; agents: ConfirmAgentImportAg
 export type ConfirmHookImportInput = { tool: Tool; hooks: CreateHookInput[] }
 export type ConfirmImportInput = { previewId: string; name: string }
 export type ConfirmMcpImportInput = { previewId: string; candidateIds: string[] }
+export type ConfirmProviderImportInput = { previewId: string; items: ConfirmProviderImportItem[] }
+export type ConfirmProviderImportItem = { candidateId: string; name: string }
 export type ConfirmSkillImportInput = { previewId: string; candidateIds: string[] }
 export type CopyProviderProfileInput = { sourceId: string; targetTool: Tool; targetName: string; activate: boolean }
 export type CreateAgentInput = { name: string; description: string; prompt: string; enabled: boolean }
@@ -1123,6 +1125,12 @@ diagnostic: string | null;
  * 登录子进程打印的授权地址；浏览器没有自动打开时供用户手动访问。
  */
 loginUrl: string | null; manualCommand: string }
+/**
+ * Pi 渠道的只读摘要：让用户看到导入确实保留了 API 格式与模型列表，
+ * 只用非敏感字段（绝不包含 `headers`/`apiKey`）。
+ */
+export type PiProviderModelDto = { id: string; name: string | null }
+export type PiProviderSummaryDto = { apiFormat: string | null; models: PiProviderModelDto[] }
 export type PolicyState = "allowed" | "blocked" | "unknown"
 export type PrepareSkillTakeoverInput = { previewId: string; candidateIds: string[] }
 export type PreviewAgentSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
@@ -1151,11 +1159,36 @@ export type PromptProfileInput = { name: string; body: string }
  * 不保存任何接入地址或密钥，原生配置回到工具自带的官方账号登录。
  */
 export type ProviderAuthKind = "api_key" | "official_login"
-export type ProviderImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; authKind: ProviderAuthKind; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; redactedProjection: JsonValue;
+export type ProviderImportCandidateDto = {
+/**
+ * 服务端签发的不透明候选 id；前端只回传它，不参与还原原生 key。
+ */
+candidateId: string; providerId: string; suggestedName: string; status: ProviderImportCandidateStatus;
+/**
+ * 不可导入时的稳定原因码；不回显任何凭据。
+ */
+reason: string | null; authKind: ProviderAuthKind; defaultProvider: boolean; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string;
+/**
+ * 只读展示：Provider 的 API 格式（`providers.<id>.api` 等）。
+ */
+apiFormat: string | null; modelCount: number; redactedProjection: JsonValue;
 /**
  * 原生 env 中疑似凭据或格式不受支持、因此未纳入管理的键名（不含值）。
  */
 skippedEnvKeys: string[] }
+/**
+ * 候选的可导入性：只有 `importable` 可以在界面上勾选。
+ *
+ * `already_managed` 用于一个目标文件承载多个 Provider 条目的工具（Pi）：
+ * 该原生条目已经有一份中央档案，重复导入必须被拒绝。
+ */
+export type ProviderImportCandidateStatus = "importable" | "already_managed" | "invalid"
+export type ProviderImportPreviewDto = {
+/**
+ * 至少一个可导入候选时由服务端签发的预览 id；否则为空。
+ */
+previewId: string | null; tool: Tool; targetPath: string; candidates: ProviderImportCandidateDto[]; message: string | null }
+export type ProviderImportResultDto = { tool: Tool; importedCount: number }
 export type ProviderOptionsDto = { authKind: ProviderAuthKind; credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null; opencodeNpm: string | null; opencodeApi: string | null }
 export type ProviderOptionsInput = {
 /**
@@ -1168,7 +1201,11 @@ authKind?: ProviderAuthKind; credentialEnvKey: ClaudeCredentialEnvKey | null; ex
  * installs or executes the package.
  */
 opencodeNpm: string | null; opencodeApi: string | null }
-export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto; isActive: boolean; rowVersion: number }
+export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBaseUrl: string; apiKeyConfigured: boolean; defaultModel: string; options: ProviderOptionsDto;
+/**
+ * 仅 Pi 有值：API 格式与模型列表的只读摘要。
+ */
+pi: PiProviderSummaryDto | null; isActive: boolean; rowVersion: number }
 export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
 export type ReadoptAgentTargetInput = { tool: Tool; projectId: string | null; targetPath: string }
 export type ReadoptAgentTargetResultDto = { targetPath: string }

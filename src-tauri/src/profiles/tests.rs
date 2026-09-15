@@ -11,10 +11,12 @@ mod tests {
         discover_prompt_import, discover_provider_import, get_tool_profile_status,
         list_provider_profiles, preview_prompt_sync, preview_provider_sync,
         readopt_provider_target, set_active_provider_profile, set_global_prompt_assignment,
-        update_prompt_profile, update_provider_profile, CopyProviderProfileInput, PromptProfileDto,
-        PromptProfileInput, ProviderAuthKind, ProviderOptionsInput, ProviderProfileInput,
-        ReadoptProviderTargetInput, SetGlobalPromptAssignmentInput, UpdatePromptProfileInput,
-        UpdateProviderProfileInput, CLAUDE_MODEL_KEY,
+        update_prompt_profile, update_provider_profile, ConfirmProviderImportInput,
+        CopyProviderProfileInput, PromptProfileDto, PromptProfileInput, ProviderAuthKind,
+        ProviderImportCandidateDto, ProviderImportCandidateStatus, ProviderImportPreviewDto,
+        ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput, ReadoptProviderTargetInput,
+        SetGlobalPromptAssignmentInput, UpdatePromptProfileInput, UpdateProviderProfileInput,
+        CLAUDE_MODEL_KEY,
     };
     use crate::{
         adapters::{
@@ -24,7 +26,8 @@ mod tests {
         app::AppPaths,
         db::Database,
         domain::{ArtifactKind, Tool},
-        profiles::{ConfirmImportInput, SecretUpdate},
+        error::AppError,
+        profiles::{ConfirmImportInput, ConfirmProviderImportItem, SecretUpdate},
         security::SecretRedactor,
     };
 
@@ -96,15 +99,59 @@ mod tests {
         }
     }
 
+    /// 检测结果里唯一的可导入候选（单 provider 工具的既有用例夹具）。
+    fn single_candidate(preview: &ProviderImportPreviewDto) -> &ProviderImportCandidateDto {
+        let importable = preview
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.status == ProviderImportCandidateStatus::Importable)
+            .collect::<Vec<_>>();
+        assert_eq!(importable.len(), 1, "fixture 应恰好有一个可导入候选");
+        importable[0]
+    }
+
+    /// 可导入候选由服务端签发预览 id；没有可导入候选时为空。
+    fn preview_id(preview: &ProviderImportPreviewDto) -> String {
+        preview.preview_id.clone().expect("可导入候选应签发预览 id")
+    }
+
+    /// 旧的「一次导入一个渠道」确认入口：批量改造后仍用于单候选工具的用例，
+    /// 并返回导入后的档案（单候选场景下名称唯一）。
+    fn confirm_provider_import_single(
+        database: &mut Database,
+        environment: &ExplicitEnvironment,
+        redactor: &mut SecretRedactor,
+        preview: &ProviderImportPreviewDto,
+        name: String,
+    ) -> Result<ProviderProfileDto, AppError> {
+        let candidate = single_candidate(preview);
+        confirm_provider_import(
+            database,
+            environment,
+            redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(preview),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: candidate.candidate_id.clone(),
+                    name: name.clone(),
+                }],
+            },
+        )?;
+        list_provider_profiles(database, preview.tool)?
+            .into_iter()
+            .find(|profile| profile.name == name)
+            .ok_or_else(|| AppError::internal("导入后应存在同名档案"))
+    }
+
     #[test]
     fn opencode_provider_discovery_reads_model_and_provider_in_json_and_jsonc() {
         let fixture = fixture();
         let directory = fixture.environment.opencode_config_dir();
         fs::create_dir_all(directory).unwrap();
         assert!(
-            super::discover_native_provider(&fixture.environment, Tool::Opencode)
+            super::discover_native_providers(&fixture.environment, Tool::Opencode)
                 .unwrap()
-                .is_none()
+                .is_empty()
         );
         for (filename, comment) in [("opencode.json", ""), ("opencode.jsonc", "// 已有配置\n")]
         {
@@ -113,8 +160,10 @@ mod tests {
                 "{{{comment}\"model\":\"fixture/model-a\",\"provider\":{{\"fixture\":{{\"npm\":\"@ai-sdk/openai-compatible\",\"name\":\"测试渠道\",\"options\":{{\"baseURL\":\"https://fixture.invalid/v1\",\"apiKey\":\"fixture-secret\"}}}}}},\"unrelated\":true}}"
             );
             fs::write(&path, &content).unwrap();
-            let discovered = super::discover_native_provider(&fixture.environment, Tool::Opencode)
+            let discovered = super::discover_native_providers(&fixture.environment, Tool::Opencode)
                 .unwrap()
+                .into_iter()
+                .next()
                 .unwrap();
             assert_eq!(discovered.provider_id.as_deref(), Some("fixture"));
             assert_eq!(discovered.default_model, "model-a");
@@ -189,22 +238,26 @@ mod tests {
             &redactor,
             Tool::Zcode,
         )
-        .unwrap()
-        .expect("fixture 配置应包含一个可导入的 provider");
-        assert_eq!(preview_dto.suggested_name, "Fixture Plan");
-        assert_eq!(preview_dto.api_base_url, "https://fixture.invalid/v1");
-        assert!(preview_dto.api_key_configured);
+        .unwrap();
+        assert!(preview_dto.preview_id.is_some());
+        assert_eq!(
+            single_candidate(&preview_dto).suggested_name,
+            "Fixture Plan"
+        );
+        assert_eq!(
+            single_candidate(&preview_dto).api_base_url,
+            "https://fixture.invalid/v1"
+        );
+        assert!(single_candidate(&preview_dto).api_key_configured);
         let serialized = serde_json::to_string(&preview_dto).unwrap();
         assert!(!serialized.contains("fixture-native-secret"));
 
-        let created = confirm_provider_import(
+        let created = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            crate::profiles::ConfirmImportInput {
-                preview_id: preview_dto.preview_id,
-                name: "Fixture Plan".to_owned(),
-            },
+            &preview_dto,
+            "Fixture Plan".to_owned(),
         )
         .unwrap();
         assert_eq!(
@@ -724,16 +777,15 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        assert!(preview.api_key_configured);
+        assert!(single_candidate(&preview).api_key_configured);
         assert!(!serde_json::to_string(&preview).unwrap().contains(secret));
         let persisted: String = fixture
             .database
             .connection()
             .query_row(
-                "SELECT redacted_preview_json FROM profile_import_previews WHERE id = ?1",
-                [&preview.preview_id],
+                "SELECT redacted_preview_json FROM provider_import_previews WHERE id = ?1",
+                [&preview_id(&preview)],
                 |row| row.get(0),
             )
             .unwrap();
@@ -745,14 +797,12 @@ mod tests {
             r#""permissions": {"allow": ["Read", "Glob"]}"#,
         );
         fs::write(&settings_path, &externally_changed).unwrap();
-        let stale = confirm_provider_import(
+        let stale = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "过期导入".to_owned(),
-            },
+            &preview,
+            "过期导入".to_owned(),
         )
         .unwrap_err();
         assert_eq!(stale.code(), crate::error::ErrorCode::StalePreview);
@@ -771,17 +821,14 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
 
-        let imported = confirm_provider_import(
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "导入渠道".to_owned(),
-            },
+            &preview,
+            "导入渠道".to_owned(),
         )
         .unwrap();
         assert!(imported.api_key_configured);
@@ -844,16 +891,13 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        let first = confirm_provider_import(
+        let first = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: first_preview.preview_id,
-                name: "首次导入".to_owned(),
-            },
+            &first_preview,
+            "首次导入".to_owned(),
         )
         .unwrap();
         let (first_full_hash, first_managed_hash, first_status) = baseline_row(&fixture);
@@ -880,16 +924,13 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        let second = confirm_provider_import(
+        let second = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: second_preview.preview_id,
-                name: "重新导入".to_owned(),
-            },
+            &second_preview,
+            "重新导入".to_owned(),
         )
         .unwrap();
         assert_eq!(second.name, "重新导入");
@@ -932,16 +973,13 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        let first = confirm_provider_import(
+        let first = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: first_preview.preview_id,
-                name: "首次导入".to_owned(),
-            },
+            &first_preview,
+            "首次导入".to_owned(),
         )
         .unwrap();
         super::delete_provider_profile(
@@ -981,16 +1019,13 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        let second = confirm_provider_import(
+        let second = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: second_preview.preview_id,
-                name: "重新导入".to_owned(),
-            },
+            &second_preview,
+            "重新导入".to_owned(),
         )
         .unwrap();
         assert_eq!(second.name, "重新导入");
@@ -1035,34 +1070,34 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        assert!(preview.api_key_configured);
-        assert_eq!(preview.auth_kind, ProviderAuthKind::ApiKey);
+        assert!(single_candidate(&preview).api_key_configured);
+        assert_eq!(
+            single_candidate(&preview).auth_kind,
+            ProviderAuthKind::ApiKey
+        );
         // 默认模型只来自 ANTHROPIC_MODEL；模型族键作为额外 env 原样保留。
-        assert_eq!(preview.default_model, "");
-        assert!(preview.skipped_env_keys.is_empty());
+        assert_eq!(single_candidate(&preview).default_model, "");
+        assert!(single_candidate(&preview).skipped_env_keys.is_empty());
         assert!(!serde_json::to_string(&preview).unwrap().contains(secret));
-        assert!(preview.redacted_projection["env"]
+        assert!(single_candidate(&preview).redacted_projection["env"]
             .get(CLAUDE_MODEL_KEY)
             .is_none());
         assert_eq!(
-            preview.redacted_projection["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            single_candidate(&preview).redacted_projection["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             crate::security::REDACTED
         );
         assert_eq!(
-            preview.redacted_projection["env"]["ANTHROPIC_AUTH_TOKEN"],
+            single_candidate(&preview).redacted_projection["env"]["ANTHROPIC_AUTH_TOKEN"],
             crate::security::REDACTED
         );
 
-        let imported = confirm_provider_import(
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "导入默认模型族".to_owned(),
-            },
+            &preview,
+            "导入默认模型族".to_owned(),
         )
         .unwrap();
         assert_eq!(imported.default_model, "");
@@ -1130,11 +1165,10 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        assert_eq!(preview.default_model, "claude-relay");
+        assert_eq!(single_candidate(&preview).default_model, "claude-relay");
         assert_eq!(
-            preview.skipped_env_keys,
+            single_candidate(&preview).skipped_env_keys,
             vec![
                 "ANTHROPIC_CUSTOM_HEADERS".to_owned(),
                 "SOME_FLAG".to_owned()
@@ -1143,17 +1177,15 @@ mod tests {
         let serialized = serde_json::to_string(&preview).unwrap();
         assert!(!serialized.contains(secret));
         assert!(!serialized.contains(header_secret));
-        assert!(preview.redacted_projection["env"]
+        assert!(single_candidate(&preview).redacted_projection["env"]
             .get("ANTHROPIC_CUSTOM_HEADERS")
             .is_none());
-        let imported = confirm_provider_import(
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "中转渠道".to_owned(),
-            },
+            &preview,
+            "中转渠道".to_owned(),
         )
         .unwrap();
         assert_eq!(
@@ -1317,20 +1349,20 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        assert_eq!(preview.auth_kind, ProviderAuthKind::OfficialLogin);
-        assert_eq!(preview.api_base_url, "");
-        assert_eq!(preview.default_model, "");
-        assert!(!preview.api_key_configured);
-        let imported = confirm_provider_import(
+        assert_eq!(
+            single_candidate(&preview).auth_kind,
+            ProviderAuthKind::OfficialLogin
+        );
+        assert_eq!(single_candidate(&preview).api_base_url, "");
+        assert_eq!(single_candidate(&preview).default_model, "");
+        assert!(!single_candidate(&preview).api_key_configured);
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "官方登录".to_owned(),
-            },
+            &preview,
+            "官方登录".to_owned(),
         )
         .unwrap();
         assert_eq!(imported.options.auth_kind, ProviderAuthKind::OfficialLogin);
@@ -1349,14 +1381,18 @@ mod tests {
 
         // 完全空的 env 没有可导入项；只有接入地址没有模型仍可导入。
         fs::write(&settings_path, r#"{"env": {}}"#).unwrap();
-        assert!(discover_provider_import(
+        let empty_preview = discover_provider_import(
             &mut fixture.database,
             &fixture.environment,
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
-        .is_none());
+        .unwrap();
+        assert!(empty_preview.preview_id.is_none());
+        assert!(empty_preview
+            .candidates
+            .iter()
+            .all(|candidate| candidate.status != ProviderImportCandidateStatus::Importable));
     }
 
     #[test]
@@ -1375,19 +1411,19 @@ mod tests {
             &redactor,
             Tool::Claude,
         )
-        .unwrap()
         .unwrap();
-        assert_eq!(preview.auth_kind, ProviderAuthKind::ApiKey);
-        assert_eq!(preview.default_model, "");
-        assert!(preview.api_key_configured);
-        let imported = confirm_provider_import(
+        assert_eq!(
+            single_candidate(&preview).auth_kind,
+            ProviderAuthKind::ApiKey
+        );
+        assert_eq!(single_candidate(&preview).default_model, "");
+        assert!(single_candidate(&preview).api_key_configured);
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "无模型渠道".to_owned(),
-            },
+            &preview,
+            "无模型渠道".to_owned(),
         )
         .unwrap();
         assert_eq!(imported.default_model, "");
@@ -1700,18 +1736,18 @@ wire_api = "chat"
             &redactor,
             Tool::Codex,
         )
-        .unwrap()
         .unwrap();
-        assert_eq!(preview.default_model, "");
-        assert_eq!(preview.auth_kind, ProviderAuthKind::ApiKey);
-        let imported = confirm_provider_import(
+        assert_eq!(single_candidate(&preview).default_model, "");
+        assert_eq!(
+            single_candidate(&preview).auth_kind,
+            ProviderAuthKind::ApiKey
+        );
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "Relay".to_owned(),
-            },
+            &preview,
+            "Relay".to_owned(),
         )
         .unwrap();
         assert_eq!(imported.default_model, "");
@@ -2146,21 +2182,21 @@ tenant = "fixture"
             &redactor,
             Tool::Codex,
         )
-        .unwrap()
         .unwrap();
-        assert_eq!(preview.suggested_name, "External Fixture");
+        assert_eq!(
+            single_candidate(&preview).suggested_name,
+            "External Fixture"
+        );
         let serialized = serde_json::to_string(&preview).unwrap();
         assert!(!serialized.contains(token));
         assert!(!serialized.contains(header));
 
-        let imported = confirm_provider_import(
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: preview.suggested_name,
-            },
+            &preview,
+            single_candidate(&preview).suggested_name.clone(),
         )
         .unwrap();
         assert!(!serde_json::to_string(&imported).unwrap().contains(token));
@@ -2262,26 +2298,35 @@ tenant = "fixture"
             &redactor,
             Tool::Codex,
         )
-        .unwrap()
         .unwrap();
-        assert_eq!(preview.suggested_name, "Codex 官方账号登录");
-        assert_eq!(preview.default_model, "gpt-5.5");
-        assert_eq!(preview.auth_kind, ProviderAuthKind::OfficialLogin);
-        assert!(!preview.api_key_configured);
+        assert_eq!(
+            single_candidate(&preview).suggested_name,
+            "Codex 官方账号登录"
+        );
+        assert_eq!(single_candidate(&preview).default_model, "gpt-5.5");
+        assert_eq!(
+            single_candidate(&preview).auth_kind,
+            ProviderAuthKind::OfficialLogin
+        );
+        assert!(!single_candidate(&preview).api_key_configured);
         let serialized_preview = serde_json::to_string(&preview).unwrap();
         assert!(!serialized_preview.contains(access_token));
         assert!(!serialized_preview.contains(refresh_token));
-        assert_eq!(preview.redacted_projection["model"], "gpt-5.5");
-        assert!(preview.redacted_projection.get("model_provider").is_none());
+        assert_eq!(
+            single_candidate(&preview).redacted_projection["model"],
+            "gpt-5.5"
+        );
+        assert!(single_candidate(&preview)
+            .redacted_projection
+            .get("model_provider")
+            .is_none());
 
-        let imported = confirm_provider_import(
+        let imported = confirm_provider_import_single(
             &mut fixture.database,
             &fixture.environment,
             &mut redactor,
-            ConfirmImportInput {
-                preview_id: preview.preview_id,
-                name: "Codex OAuth 登录".to_owned(),
-            },
+            &preview,
+            "Codex OAuth 登录".to_owned(),
         )
         .unwrap();
         assert!(!imported.api_key_configured);
@@ -2366,7 +2411,7 @@ tenant = "fixture"
             Tool::Codex,
         )
         .unwrap();
-        assert!(preview.is_none());
+        assert!(preview.preview_id.is_none());
     }
 
     #[test]
@@ -2590,5 +2635,484 @@ tenant = "fixture"
                 .code(),
             crate::error::ErrorCode::InvalidInput
         );
+    }
+
+    /// Pi 的 `models.json` 是多 provider 文件：逐个候选导入，并且 Apply 后
+    /// `models` 的逐模型元数据与 `api` 必须逐字段保留。
+    #[test]
+    fn pi_provider_import_preserves_every_provider_and_model_metadata() {
+        let mut fixture = fixture();
+        let agent_dir = fixture.home.join(".pi/agent");
+        let models_path = agent_dir.join("models.json");
+        fs::create_dir_all(&agent_dir).unwrap();
+        let original = r#"{
+  "providers": {
+    "cc": {
+      "baseUrl": "https://cc.example.test/v1",
+      "api": "openai-completions",
+      "apiKey": "fixture-cc-secret",
+      "models": [
+        {
+          "id": "deepseek/v4.1-flash",
+          "contextWindow": 1000000,
+          "reasoning": true,
+          "cost": { "input": 0.28, "output": 1.11 },
+          "thinkingLevelMap": { "off": null, "low": "low" }
+        }
+      ]
+    },
+    "gemini": {
+      "baseUrl": "https://gemini.example.test/v1",
+      "api": "openai-completions",
+      "apiKey": "fixture-gemini-secret",
+      "models": [{ "id": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash High" }]
+    }
+  }
+}
+"#;
+        fs::write(&models_path, original).unwrap();
+        fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"defaultProvider":"cc","defaultModel":"cc/deepseek/v4.1-flash"}"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        // 两个 provider 都是候选（旧行为只发现 defaultProvider 那一个）。
+        assert_eq!(preview.candidates.len(), 2);
+        let cc = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.provider_id == "cc")
+            .unwrap();
+        let gemini = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.provider_id == "gemini")
+            .unwrap();
+        assert_eq!(cc.status, ProviderImportCandidateStatus::Importable);
+        assert!(cc.default_provider);
+        assert_eq!(cc.api_format.as_deref(), Some("openai-completions"));
+        assert_eq!(cc.model_count, 1);
+        assert_eq!(cc.default_model, "deepseek/v4.1-flash");
+        assert!(!gemini.default_provider);
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains("fixture-cc-secret"));
+        assert!(!serialized.contains("fixture-gemini-secret"));
+
+        let result = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&preview),
+                items: vec![
+                    ConfirmProviderImportItem {
+                        candidate_id: cc.candidate_id.clone(),
+                        name: "CC 渠道".to_owned(),
+                    },
+                    ConfirmProviderImportItem {
+                        candidate_id: gemini.candidate_id.clone(),
+                        name: "Gemini 渠道".to_owned(),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.imported_count, 2);
+        let profiles = list_provider_profiles(&fixture.database, Tool::Pi).unwrap();
+        assert_eq!(profiles.len(), 2);
+        // 默认渠道成为生效档案；只读摘要让用户看到 api 与模型列表确实保留。
+        let active = profiles.iter().find(|profile| profile.is_active).unwrap();
+        assert_eq!(active.name, "CC 渠道");
+        let summary = active.pi.as_ref().unwrap();
+        assert_eq!(summary.api_format.as_deref(), Some("openai-completions"));
+        assert_eq!(summary.models.len(), 1);
+        assert_eq!(summary.models[0].id, "deepseek/v4.1-flash");
+        assert!(serde_json::to_string(&profiles)
+            .unwrap()
+            .contains("deepseek/v4.1-flash"));
+        assert!(!serde_json::to_string(&profiles)
+            .unwrap()
+            .contains("fixture-cc-secret"));
+
+        // 改一次档案也不会丢 `api`/`models`（编辑路径保留 extra 字段）。
+        let edited = update_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            UpdateProviderProfileInput {
+                id: active.id.clone(),
+                name: active.name.clone(),
+                api_base_url: active.api_base_url.clone(),
+                api_key: SecretUpdate::Keep,
+                default_model: "second-model".to_owned(),
+                options: ProviderOptionsInput::default(),
+                row_version: active.row_version,
+            },
+        )
+        .unwrap();
+        let summary = edited.pi.as_ref().unwrap();
+        assert_eq!(summary.api_format.as_deref(), Some("openai-completions"));
+        assert_eq!(summary.models[0].id, "deepseek/v4.1-flash");
+
+        let plan = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &plan.preview_id,
+            Tool::Pi,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+
+        let rendered: Value =
+            serde_json::from_str(&fs::read_to_string(&models_path).unwrap()).unwrap();
+        let cc_entry = &rendered["providers"]["cc"];
+        assert_eq!(cc_entry["api"], "openai-completions");
+        assert_eq!(cc_entry["baseUrl"], "https://cc.example.test/v1");
+        // 逐模型元数据必须逐字段保留。
+        assert_eq!(cc_entry["models"][0]["id"], "deepseek/v4.1-flash");
+        assert_eq!(cc_entry["models"][0]["contextWindow"], 1000000);
+        assert_eq!(cc_entry["models"][0]["reasoning"], true);
+        assert_eq!(cc_entry["models"][0]["cost"]["output"], 1.11);
+        assert!(cc_entry["models"][0]["thinkingLevelMap"]["off"].is_null());
+        // 编辑后追加的新默认模型出现在数组里，原条目不动。
+        assert_eq!(cc_entry["models"][1]["id"], "second-model");
+        // 未受管的另一个 provider 逐字节不变。
+        assert_eq!(
+            rendered["providers"]["gemini"],
+            serde_json::from_str::<Value>(original)
+                .unwrap()
+                .get("providers")
+                .unwrap()
+                .get("gemini")
+                .unwrap()
+                .clone()
+        );
+    }
+
+    /// 只选一个导入后，另一个仍可继续导入；受管基线取并集而不是覆盖。
+    #[test]
+    fn pi_provider_import_supports_incremental_import_and_unions_baseline() {
+        let mut fixture = fixture();
+        let agent_dir = fixture.home.join(".pi/agent");
+        let models_path = agent_dir.join("models.json");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            &models_path,
+            r#"{
+  "providers": {
+    "cc": { "baseUrl": "https://cc.example.test/v1", "apiKey": "fixture-cc", "models": [{ "id": "m1" }] },
+    "gemini": { "baseUrl": "https://gemini.example.test/v1", "apiKey": "fixture-gemini", "models": [{ "id": "m2" }] }
+  }
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"defaultProvider":"cc"}"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        let cc = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.provider_id == "cc")
+            .unwrap();
+        confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&preview),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: cc.candidate_id.clone(),
+                    name: "CC".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            list_provider_profiles(&fixture.database, Tool::Pi)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // 再次检测：已导入的 provider 标记为已纳入管理，另一个仍可导入。
+        let second = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        assert!(second.candidates.iter().any(|candidate| {
+            candidate.provider_id == "cc"
+                && candidate.status == ProviderImportCandidateStatus::AlreadyManaged
+        }));
+        let gemini = second
+            .candidates
+            .iter()
+            .find(|candidate| candidate.provider_id == "gemini")
+            .unwrap();
+        assert_eq!(gemini.status, ProviderImportCandidateStatus::Importable);
+        confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&second),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: gemini.candidate_id.clone(),
+                    name: "Gemini".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            list_provider_profiles(&fixture.database, Tool::Pi)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // 基线是并集：Apply 不会因为第二个档案而删掉第一个 provider。
+        let stored: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT baseline_projection_json FROM managed_targets
+                 WHERE tool = 'pi' AND artifact_kind = 'provider' AND scope = 'global'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let baseline: Value = serde_json::from_str(&stored).unwrap();
+        assert!(baseline["providers"]["cc"].is_object());
+        assert!(baseline["providers"]["gemini"].is_object());
+
+        let plan = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &plan.preview_id,
+            Tool::Pi,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+        let rendered: Value =
+            serde_json::from_str(&fs::read_to_string(&models_path).unwrap()).unwrap();
+        assert_eq!(rendered["providers"]["cc"]["models"][0]["id"], "m1");
+        assert_eq!(rendered["providers"]["gemini"]["models"][0]["id"], "m2");
+    }
+
+    /// 重复导入同一 provider 必须被拒绝，而不是产生第二份档案。
+    #[test]
+    fn pi_provider_import_rejects_a_duplicate_provider() {
+        let mut fixture = fixture();
+        let agent_dir = fixture.home.join(".pi/agent");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("models.json"),
+            r#"{"providers": {"cc": {"baseUrl": "https://cc.example.test/v1", "apiKey": "fixture-cc", "models": [{"id": "m1"}]}}}"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        let candidate = single_candidate(&preview);
+        confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&preview),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: candidate.candidate_id.clone(),
+                    name: "CC".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+
+        // 旧上下文已被消费。
+        let consumed = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&preview),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: candidate.candidate_id.clone(),
+                    name: "CC 再来一次".to_owned(),
+                }],
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            consumed.code(),
+            crate::error::ErrorCode::PreviewAlreadyConsumed
+        );
+
+        // 新一次检测：该 provider 已是 already_managed，强行确认必须冲突。
+        let again = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        assert!(again.preview_id.is_none());
+        assert!(again
+            .candidates
+            .iter()
+            .all(|candidate| candidate.status == ProviderImportCandidateStatus::AlreadyManaged));
+        assert_eq!(
+            list_provider_profiles(&fixture.database, Tool::Pi)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// 条目字段不完整时只作废该条目，同文件其他 provider 仍可导入。
+    #[test]
+    fn pi_provider_import_marks_incomplete_entry_invalid_without_blocking_others() {
+        let mut fixture = fixture();
+        let agent_dir = fixture.home.join(".pi/agent");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("models.json"),
+            r#"{
+  "providers": {
+    "no-key": { "baseUrl": "https://no-key.example.test/v1", "models": [{ "id": "m" }] },
+    "scalar": "not-an-object",
+    "good": { "baseUrl": "https://good.example.test/v1", "apiKey": "fixture-good", "models": [{ "id": "m" }] }
+  }
+}"#,
+        )
+        .unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        let status = |provider_id: &str| {
+            preview
+                .candidates
+                .iter()
+                .find(|candidate| candidate.provider_id == provider_id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            status("no-key").status,
+            ProviderImportCandidateStatus::Invalid
+        );
+        assert_eq!(
+            status("no-key").reason.as_deref(),
+            Some(crate::adapters::pi::PI_PROVIDER_FIELDS_INVALID)
+        );
+        assert_eq!(
+            status("scalar").status,
+            ProviderImportCandidateStatus::Invalid
+        );
+        assert_eq!(
+            status("scalar").reason.as_deref(),
+            Some(crate::adapters::pi::PI_PROVIDER_ENTRY_INVALID)
+        );
+        assert_eq!(
+            status("good").status,
+            ProviderImportCandidateStatus::Importable
+        );
+
+        // 直接确认不可导入候选必须被拒绝。
+        let invalid = confirm_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            ConfirmProviderImportInput {
+                preview_id: preview_id(&preview),
+                items: vec![ConfirmProviderImportItem {
+                    candidate_id: status("no-key").candidate_id,
+                    name: "坏的".to_owned(),
+                }],
+            },
+        )
+        .unwrap_err();
+        assert_eq!(invalid.code(), crate::error::ErrorCode::InvalidInput);
+        assert!(list_provider_profiles(&fixture.database, Tool::Pi)
+            .unwrap()
+            .is_empty());
+    }
+
+    /// 没有 `defaultProvider` 时也要枚举全部候选（旧行为直接放弃整份文件）。
+    #[test]
+    fn pi_provider_import_without_default_provider_still_lists_every_candidate() {
+        let mut fixture = fixture();
+        let agent_dir = fixture.home.join(".pi/agent");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("models.json"),
+            r#"{"providers": {"a": {"baseUrl": "https://a.test/v1", "apiKey": "k", "models": [{"id": "m"}]}, "b": {"baseUrl": "https://b.test/v1", "apiKey": "k", "models": [{"id": "m"}]}}}"#,
+        )
+        .unwrap();
+        fs::write(agent_dir.join("settings.json"), "{}").unwrap();
+        let preview = discover_provider_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Pi,
+        )
+        .unwrap();
+        assert_eq!(preview.candidates.len(), 2);
+        assert!(preview.preview_id.is_some());
+        assert!(preview
+            .candidates
+            .iter()
+            .all(|candidate| candidate.status == ProviderImportCandidateStatus::Importable));
     }
 }

@@ -129,6 +129,35 @@ fn provider_options_from_codec(
     })
 }
 
+/// 仅 Pi 有值：API 格式与模型列表的只读摘要（非敏感字段）。
+fn pi_provider_summary(tool: Tool, config: &StoredProviderConfig) -> Option<PiProviderSummaryDto> {
+    if tool != Tool::Pi {
+        return None;
+    }
+    let api_format = config
+        .extra_provider_fields
+        .get("api")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let models = config
+        .extra_provider_fields
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| {
+                    Some(PiProviderModelDto {
+                        id: model.get("id").and_then(Value::as_str)?.to_owned(),
+                        name: model.get("name").and_then(Value::as_str).map(str::to_owned),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(PiProviderSummaryDto { api_format, models })
+}
+
 fn provider_dto(record: &ProviderProfileRecord) -> Result<ProviderProfileDto, AppError> {
     let config = parse_stored_provider_config(record)?;
     Ok(ProviderProfileDto {
@@ -142,6 +171,7 @@ fn provider_dto(record: &ProviderProfileRecord) -> Result<ProviderProfileDto, Ap
             .is_some_and(|value| !value.is_empty()),
         default_model: record.default_model.clone().unwrap_or_default(),
         options: config.options_dto(record.tool),
+        pi: pi_provider_summary(record.tool, &config),
         is_active: record.is_active,
         row_version: safe_row_version(record.row_version)?,
     })

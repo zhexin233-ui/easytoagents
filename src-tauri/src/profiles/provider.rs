@@ -35,3 +35,53 @@ fn provider_ownership(
         .ok_or_else(|| cursor_unsupported(ArtifactKind::Provider))?
         .ownership(baseline, desired)
 }
+
+/// 目标级同步意图（desired 投影 + 参与写回的渠道 + 行版本）。
+struct ProviderSyncIntent {
+    /// 当前生效渠道；没有生效渠道但已有基线时允许为空（清空语义）。
+    active: Option<ProviderProfileRecord>,
+    desired_projection: Value,
+    row_versions: Vec<DatabaseRowVersion>,
+    /// 本次意图会写回的中央渠道。
+    profiles: Vec<ProviderProfileRecord>,
+}
+
+/// 单 provider 工具的目标文件只承载一份档案：desired 就是当前生效档案。
+/// Pi 的 `models.json` 是多 provider 文件：desired 必须是**全部**中央 Pi 渠道的
+/// 并集，否则 Apply 会把未生效渠道的原生条目删空（并让基线校验与写入不一致）。
+fn provider_sync_intent(database: &Database, tool: Tool) -> Result<ProviderSyncIntent, AppError> {
+    let active = repository::find_active_provider_profile(database, tool)?;
+    if !supports_incremental_provider_import(tool) {
+        let desired_projection = active
+            .as_ref()
+            .map(provider_projection)
+            .transpose()?
+            .unwrap_or_else(|| Value::Object(Map::new()));
+        let row_versions = active
+            .as_ref()
+            .map(provider_row_version)
+            .transpose()?
+            .into_iter()
+            .collect();
+        let profiles = active.iter().cloned().collect();
+        return Ok(ProviderSyncIntent {
+            active,
+            desired_projection,
+            row_versions,
+            profiles,
+        });
+    }
+    let profiles = repository::list_provider_profiles(database, tool)?;
+    let mut desired_projection = Value::Object(Map::new());
+    let mut row_versions = Vec::with_capacity(profiles.len());
+    for profile in &profiles {
+        merge_json_objects(&mut desired_projection, &provider_projection(profile)?);
+        row_versions.push(provider_row_version(profile)?);
+    }
+    Ok(ProviderSyncIntent {
+        active,
+        desired_projection,
+        row_versions,
+        profiles,
+    })
+}

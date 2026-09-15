@@ -147,6 +147,8 @@ pub struct ProviderProfileDto {
     pub api_key_configured: bool,
     pub default_model: String,
     pub options: ProviderOptionsDto,
+    /// 仅 Pi 有值：API 格式与模型列表的只读摘要。
+    pub pi: Option<PiProviderSummaryDto>,
     pub is_active: bool,
     pub row_version: u32,
 }
@@ -202,20 +204,87 @@ pub struct PromptProfileDto {
     pub row_version: u32,
 }
 
+/// 候选的可导入性：只有 `importable` 可以在界面上勾选。
+///
+/// `already_managed` 用于一个目标文件承载多个 Provider 条目的工具（Pi）：
+/// 该原生条目已经有一份中央档案，重复导入必须被拒绝。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderImportCandidateStatus {
+    Importable,
+    AlreadyManaged,
+    Invalid,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ProviderImportPreviewDto {
-    pub preview_id: String,
-    pub tool: Tool,
-    pub target_path: String,
+pub struct ProviderImportCandidateDto {
+    /// 服务端签发的不透明候选 id；前端只回传它，不参与还原原生 key。
+    pub candidate_id: String,
+    pub provider_id: String,
     pub suggested_name: String,
+    pub status: ProviderImportCandidateStatus,
+    /// 不可导入时的稳定原因码；不回显任何凭据。
+    pub reason: Option<String>,
     pub auth_kind: ProviderAuthKind,
+    pub default_provider: bool,
     pub api_base_url: String,
     pub api_key_configured: bool,
     pub default_model: String,
+    /// 只读展示：Provider 的 API 格式（`providers.<id>.api` 等）。
+    pub api_format: Option<String>,
+    pub model_count: u32,
     pub redacted_projection: Value,
     /// 原生 env 中疑似凭据或格式不受支持、因此未纳入管理的键名（不含值）。
     pub skipped_env_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderImportPreviewDto {
+    /// 至少一个可导入候选时由服务端签发的预览 id；否则为空。
+    pub preview_id: Option<String>,
+    pub tool: Tool,
+    pub target_path: String,
+    pub candidates: Vec<ProviderImportCandidateDto>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmProviderImportItem {
+    pub candidate_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmProviderImportInput {
+    pub preview_id: String,
+    pub items: Vec<ConfirmProviderImportItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderImportResultDto {
+    pub tool: Tool,
+    pub imported_count: u32,
+}
+
+/// Pi 渠道的只读摘要：让用户看到导入确实保留了 API 格式与模型列表，
+/// 只用非敏感字段（绝不包含 `headers`/`apiKey`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PiProviderModelDto {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PiProviderSummaryDto {
+    pub api_format: Option<String>,
+    pub models: Vec<PiProviderModelDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]

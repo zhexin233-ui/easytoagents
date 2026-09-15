@@ -145,70 +145,6 @@ pub fn get_import_preview(
         .ok_or_else(|| AppError::not_found("profileImportPreview", preview_id))
 }
 
-pub fn adopt_imported_provider(
-    database: &mut Database,
-    preview: &ImportPreviewRecord,
-    profile: &NewProviderProfileRecord,
-    baseline: &ImportedBaselineRecord,
-) -> Result<ProviderProfileRecord, AppError> {
-    let database_path = database.path().to_string_lossy().into_owned();
-    let transaction = database
-        .connection_mut()
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| {
-            AppError::database(&database_path, "begin_adopt_provider_import").with_source(error)
-        })?;
-    validate_import_preview(
-        &transaction,
-        preview,
-        ArtifactKind::Provider,
-        &database_path,
-    )?;
-    reject_existing_profiles(
-        &transaction,
-        "provider_profiles",
-        profile.tool,
-        &database_path,
-    )?;
-    reject_provider_name_conflict(
-        &transaction,
-        profile.tool,
-        &profile.name,
-        None,
-        &database_path,
-    )?;
-    transaction
-        .execute(
-            "INSERT INTO provider_profiles(
-                id, tool, name, api_base_url, api_key, default_model, config_json, is_active
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
-            params![
-                profile.id,
-                profile.tool.as_str(),
-                profile.name,
-                profile.api_base_url,
-                profile.api_key,
-                profile.default_model,
-                profile.config_json,
-            ],
-        )
-        .map_err(|error| {
-            map_profile_write_error(error, &database_path, "adopt_provider_profile")
-        })?;
-    adopt_baseline(
-        &transaction,
-        profile.tool,
-        ArtifactKind::Provider,
-        baseline,
-        &database_path,
-    )?;
-    consume_import_preview(&transaction, &preview.id, &database_path)?;
-    transaction.commit().map_err(|error| {
-        AppError::database(&database_path, "commit_adopt_provider_import").with_source(error)
-    })?;
-    get_provider_profile(database, &profile.id)
-}
-
 pub fn adopt_imported_prompt(
     database: &mut Database,
     preview: &ImportPreviewRecord,
@@ -886,29 +822,7 @@ fn validate_import_preview(
     Ok(())
 }
 
-fn reject_existing_profiles(
-    transaction: &Transaction<'_>,
-    table: &str,
-    tool: Tool,
-    database_path: &str,
-) -> Result<(), AppError> {
-    let query = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE tool = ?1)");
-    let exists = transaction
-        .query_row(&query, [tool.as_str()], |row| row.get::<_, bool>(0))
-        .map_err(|error| {
-            AppError::database(database_path, "check_existing_import_profiles").with_source(error)
-        })?;
-    if exists {
-        Err(AppError::conflict(
-            "import",
-            "首次导入仅在该工具尚无中央档案时可确认",
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn adopt_baseline(
+pub(crate) fn adopt_baseline(
     transaction: &Transaction<'_>,
     tool: Tool,
     artifact_kind: ArtifactKind,
@@ -928,7 +842,7 @@ fn adopt_baseline(
         .map_err(|error| {
             AppError::database(database_path, "find_import_managed_target").with_source(error)
         })?;
-    // 导入守卫（reject_existing_profiles / reject_prompt_import_blocked）已保证
+    // 导入守卫（Provider 的逐 provider_id 去重 / reject_prompt_import_blocked）已保证
     // 没有任何生效或同源档案引用该目标；历史同步或导入留下的既有基线属于孤儿
     // 基线，按当前原生内容刷新而不是拒绝重新接管。
     let (target_id, target_row_version) = match existing {
@@ -1000,7 +914,7 @@ fn consume_import_preview(
     Ok(())
 }
 
-fn reject_provider_name_conflict(
+pub(crate) fn reject_provider_name_conflict(
     transaction: &Transaction<'_>,
     tool: Tool,
     name: &str,
@@ -1107,7 +1021,7 @@ fn reject_prompt_import_blocked(
     }
 }
 
-fn deactivate_provider_profiles(
+pub(crate) fn deactivate_provider_profiles(
     transaction: &Transaction<'_>,
     tool: Tool,
     except_id: Option<&str>,
@@ -1182,7 +1096,7 @@ fn delete_profile_row(
     }
 }
 
-fn map_profile_write_error(
+pub(crate) fn map_profile_write_error(
     error: rusqlite::Error,
     database_path: &str,
     operation: &'static str,

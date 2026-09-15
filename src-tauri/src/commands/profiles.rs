@@ -8,12 +8,12 @@ use crate::{
     domain::Tool,
     error::AppError,
     profiles::{
-        self, ApplyProfilePreviewInput, ConfirmImportInput, CopyProviderProfileInput,
-        DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto, PromptProfileInput,
-        ProviderImportPreviewDto, ProviderProfileDto, ProviderProfileInput,
-        ReadoptProviderTargetInput, ReadoptProviderTargetResultDto, SetGlobalPromptAssignmentInput,
-        ToolProfileStatusDto, UpdatePromptProfileInput, UpdateProviderProfileInput,
-        VersionedProfileInput,
+        self, ApplyProfilePreviewInput, ConfirmImportInput, ConfirmProviderImportInput,
+        CopyProviderProfileInput, DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto,
+        PromptProfileInput, ProviderImportPreviewDto, ProviderImportResultDto, ProviderProfileDto,
+        ProviderProfileInput, ReadoptProviderTargetInput, ReadoptProviderTargetResultDto,
+        SetGlobalPromptAssignmentInput, ToolProfileStatusDto, UpdatePromptProfileInput,
+        UpdateProviderProfileInput, VersionedProfileInput,
     },
     sync::{ApplyResult, PreviewPlan},
 };
@@ -149,7 +149,7 @@ pub fn get_tool_profile_status(
 pub fn discover_provider_import(
     state: State<'_, AppState>,
     tool: Tool,
-) -> Result<Option<ProviderImportPreviewDto>, AppError> {
+) -> Result<ProviderImportPreviewDto, AppError> {
     with_db_and_redactor(&state, |database, redactor| {
         profiles::discover_provider_import(database, &*state.environment()?, redactor, tool)
     })
@@ -159,8 +159,8 @@ pub fn discover_provider_import(
 #[specta::specta]
 pub fn confirm_provider_import(
     state: State<'_, AppState>,
-    input: ConfirmImportInput,
-) -> Result<ProviderProfileDto, AppError> {
+    input: ConfirmProviderImportInput,
+) -> Result<ProviderImportResultDto, AppError> {
     with_db_and_redactor(&state, |database, redactor| {
         profiles::confirm_provider_import(database, &*state.environment()?, redactor, input)
     })
