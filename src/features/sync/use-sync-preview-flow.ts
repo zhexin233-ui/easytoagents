@@ -5,6 +5,7 @@ import {
   type AppError,
   type ApplyResult,
   type ArtifactKind,
+  type DatabaseRowVersion,
   type PreviewPlan,
   type Result,
   type Tool,
@@ -22,7 +23,10 @@ export interface OpenSyncPreview {
   tool: Tool;
 }
 
-export interface SyncPreviewFlowOptions<TReadopt = never> {
+export interface SyncPreviewFlowOptions<
+  TReadopt = never,
+  TAdoptNative = never,
+> {
   artifactKind: ArtifactKind;
   preview: (tool: Tool) => Promise<Result<PreviewPlan, AppError>>;
   apply: (input: {
@@ -33,6 +37,15 @@ export interface SyncPreviewFlowOptions<TReadopt = never> {
     tool: Tool,
     targetPath?: string,
   ) => Promise<Result<TReadopt, AppError>>;
+  /**
+   * 把原生目标当前内容写回中央档案并刷新基线（与 readopt 的区别：后者只改基线）。
+   * `rowVersions` 来自用户所看预览，服务端据此做乐观并发校验。
+   */
+  adoptNative?: (
+    tool: Tool,
+    targetPath: string | undefined,
+    rowVersions: DatabaseRowVersion[],
+  ) => Promise<Result<TAdoptNative, AppError>>;
   invalidate: () => Promise<void>;
   messages: {
     previewFailed: string;
@@ -40,9 +53,11 @@ export interface SyncPreviewFlowOptions<TReadopt = never> {
     applied: (result: ApplyResult) => string;
     empty?: string;
     readoptFailed?: string;
+    adoptNativeFailed?: string;
   };
   directApply: boolean;
   onReadopted?: (result: TReadopt, tool: Tool) => Promise<void> | void;
+  onAdoptedNative?: (result: TAdoptNative, tool: Tool) => Promise<void> | void;
 }
 
 interface PreviewRequest {
@@ -65,6 +80,12 @@ type ReadoptRequest =
   // 保留旧的单目标调用形式；Agents 需要额外传入 targetPath。
   | Tool;
 
+interface AdoptNativeRequest {
+  tool: Tool;
+  targetPath?: string;
+  rowVersions: DatabaseRowVersion[];
+}
+
 function isStalePreviewError(error: unknown): boolean {
   return (
     error instanceof ProfileRpcError && error.appError.code === "STALE_PREVIEW"
@@ -76,8 +97,8 @@ function isStalePreviewError(error: unknown): boolean {
  * pages. A page supplies only typed RPC callbacks and invalidation; this hook
  * never turns CRUD success into an implicit native write.
  */
-export function useSyncPreviewFlow<TReadopt = never>(
-  options: SyncPreviewFlowOptions<TReadopt>,
+export function useSyncPreviewFlow<TReadopt = never, TAdoptNative = never>(
+  options: SyncPreviewFlowOptions<TReadopt, TAdoptNative>,
 ) {
   const { notify } = useNotify();
   const [openPreview, setOpenPreview] = useState<OpenSyncPreview | null>(null);
@@ -209,6 +230,38 @@ export function useSyncPreviewFlow<TReadopt = never>(
     },
   });
 
+  const adoptNativeMutation = useMutation({
+    mutationFn: async ({
+      tool,
+      targetPath,
+      rowVersions,
+    }: AdoptNativeRequest) => {
+      if (!options.adoptNative) {
+        throw new Error("当前预览不支持按原生内容接管。");
+      }
+      return unwrapResult(
+        await options.adoptNative(tool, targetPath, rowVersions),
+      );
+    },
+    onSuccess: async (result, request) => {
+      if (!mountedRef.current) return;
+      closePreview();
+      await options.invalidate();
+      if (!mountedRef.current) return;
+      await options.onAdoptedNative?.(result, request.tool);
+    },
+    onError: (error) => {
+      if (!mountedRef.current) return;
+      notify({
+        kind: "error",
+        message:
+          profileErrorText(error) ??
+          options.messages.adoptNativeFailed ??
+          "按原生内容接管渠道失败。",
+      });
+    },
+  });
+
   const previewQueueRef = useRef(Promise.resolve());
   const requestPreview = (tool: Tool, autoApply: boolean): void => {
     // Serialize preview → Apply chains. TanStack mutations can run multiple
@@ -230,6 +283,7 @@ export function useSyncPreviewFlow<TReadopt = never>(
     previewMutation,
     applyMutation,
     readoptMutation,
+    adoptNativeMutation,
     closePreview,
     openPersistedPreview,
     submitPersistedPreview,

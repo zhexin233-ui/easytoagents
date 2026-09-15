@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import {
   commands,
+  type AdoptProviderNativeResultDto,
   type ReadoptProviderTargetResultDto,
   type Tool,
 } from "@/bindings/commands";
@@ -51,8 +52,12 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
     requestPreview,
     applyMutation,
     readoptMutation,
+    adoptNativeMutation,
     closePreview,
-  } = useSyncPreviewFlow<ReadoptProviderTargetResultDto>({
+  } = useSyncPreviewFlow<
+    ReadoptProviderTargetResultDto,
+    AdoptProviderNativeResultDto
+  >({
     artifactKind: "provider",
     directApply,
     preview: (previewTool) => commands.previewProviderSync(previewTool),
@@ -74,10 +79,21 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
         targetPath,
       });
     },
+    adoptNative: (previewTool, targetPath, rowVersions) => {
+      if (!targetPath) {
+        throw new Error("按原生内容接管 Provider 目标缺少路径。");
+      }
+      return commands.adoptProviderNative({
+        tool: previewTool,
+        targetPath,
+        rowVersions,
+      });
+    },
     messages: {
       previewFailed: "生成渠道预览失败。",
       applyFailed: "应用渠道预览失败。",
       readoptFailed: "重新接管渠道目标失败。",
+      adoptNativeFailed: "按原生内容接管渠道失败。",
       applied: (result) =>
         `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`,
     },
@@ -85,6 +101,16 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
       notify({
         kind: "success",
         message: "已以当前内容重新接管渠道目标；正在重新生成预览。",
+      });
+      requestPreview(previewTool, directApply);
+    },
+    onAdoptedNative: (result, previewTool) => {
+      notify({
+        kind: "success",
+        message:
+          result.adopted.length > 0
+            ? `已按原生内容接管 ${result.adopted.join("、")}；正在重新生成预览。`
+            : "没有需要接管的漂移渠道；正在重新生成预览。",
       });
       requestPreview(previewTool, directApply);
     },
@@ -242,6 +268,16 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               readoptMutation.mutate({
                 tool: openPreview.tool,
                 targetPath,
+              });
+            }
+          }}
+          adoptingNative={adoptNativeMutation.isPending}
+          onAdoptNative={(targetPath, rowVersions) => {
+            if (openPreview) {
+              adoptNativeMutation.mutate({
+                tool: openPreview.tool,
+                targetPath,
+                rowVersions,
               });
             }
           }}

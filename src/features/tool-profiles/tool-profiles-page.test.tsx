@@ -1595,4 +1595,73 @@ describe("ToolProfilesPage", () => {
       ),
     ).toBeVisible();
   });
+
+  it("按原生内容接管漂移渠道并带上预览绑定的行版本", async () => {
+    const baseTarget = preview.targets[0];
+    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
+    vi.mocked(commands.previewProviderSync).mockReset();
+    const conflictPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000440",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "conflict" as const,
+          status: "external_owned_change" as const,
+          readoptAvailable: true,
+          errorCode: "CONFLICT" as const,
+        },
+      ],
+    };
+    const settledPreview = {
+      ...preview,
+      previewId: "00000000-0000-0000-0000-000000000441",
+      targets: [
+        {
+          ...baseTarget,
+          changeKind: "unchanged" as const,
+          status: "in_sync" as const,
+          readoptAvailable: false,
+          errorCode: null,
+        },
+      ],
+    };
+    vi.mocked(commands.previewProviderSync)
+      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
+      .mockResolvedValueOnce({ status: "ok", data: settledPreview });
+    vi.mocked(commands.adoptProviderNative).mockResolvedValue({
+      status: "ok",
+      data: { tool: "claude", adopted: ["主渠道"] },
+    });
+
+    renderPage();
+    const section = sectionByHeading("渠道");
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "预览渠道同步" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "确认原生配置变更",
+    });
+    // 两个入口并存：只刷新基线的重新接管，与把文件内容写回档案的接管。
+    expect(
+      within(dialog).getByRole("button", { name: /以当前内容重新接管/ }),
+    ).toBeVisible();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /按原生内容接管渠道档案/ }),
+    );
+
+    await waitFor(() =>
+      expect(commands.adoptProviderNative).toHaveBeenCalledWith({
+        tool: "claude",
+        targetPath: baseTarget.descriptor.path,
+        rowVersions: baseTarget.rowVersions,
+      }),
+    );
+    // 成功后重新生成预览，供用户确认已经一致。
+    await waitFor(() =>
+      expect(commands.previewProviderSync).toHaveBeenCalledTimes(2),
+    );
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+  });
 });

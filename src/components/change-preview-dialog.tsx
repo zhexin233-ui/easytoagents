@@ -1,4 +1,9 @@
-import type { ArtifactKind, PreviewPlan, Tool } from "@/bindings/commands";
+import type {
+  ArtifactKind,
+  DatabaseRowVersion,
+  PreviewPlan,
+  Tool,
+} from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +24,18 @@ interface ChangePreviewDialogProps {
   applying: boolean;
   readopting?: boolean;
   onReadopt?: (targetPath: string) => void;
+  adoptingNative?: boolean;
+  /**
+   * 把目标文件当前内容写回中央档案并刷新基线。
+   *
+   * 与 `onReadopt` 的区别：重新接管只刷新基线，档案保持旧内容，因此下一次 Apply
+   * 会把用户手改的原生内容改回去；本操作让「文件怎样就以文件为准」。
+   * 传入预览绑定的行版本，供服务端做乐观并发校验。
+   */
+  onAdoptNative?: (
+    targetPath: string,
+    rowVersions: DatabaseRowVersion[],
+  ) => void;
   onClose: () => void;
   onApply: (previewId: string, tool: Tool, artifactKind: ArtifactKind) => void;
 }
@@ -30,6 +47,8 @@ export function ChangePreviewDialog({
   applying,
   readopting = false,
   onReadopt,
+  adoptingNative = false,
+  onAdoptNative,
   onClose,
   onApply,
 }: ChangePreviewDialogProps) {
@@ -107,24 +126,57 @@ export function ChangePreviewDialog({
                       code={target.errorCode}
                     />
                     {target.readoptAvailable &&
-                    onReadopt &&
+                    (onReadopt || onAdoptNative) &&
                     target.descriptor.path ? (
                       <div className="mt-3 space-y-2">
                         <p className="text-muted-foreground text-xs leading-5">
                           重新接管只更新基线，不会立即修改文件。
                         </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={readopting || applying}
-                          aria-label={`以当前内容重新接管 ${target.descriptor.path ?? "目标"}`}
-                          onClick={() => {
-                            const targetPath = target.descriptor.path;
-                            if (targetPath) onReadopt(targetPath);
-                          }}
-                        >
-                          {readopting ? "正在重新接管…" : "以当前内容重新接管"}
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          {onReadopt ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={
+                                readopting || adoptingNative || applying
+                              }
+                              aria-label={`以当前内容重新接管 ${target.descriptor.path ?? "目标"}`}
+                              onClick={() => {
+                                const targetPath = target.descriptor.path;
+                                if (targetPath) onReadopt(targetPath);
+                              }}
+                            >
+                              {readopting
+                                ? "正在重新接管…"
+                                : "以当前内容重新接管"}
+                            </Button>
+                          ) : null}
+                          {onAdoptNative ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={
+                                readopting || adoptingNative || applying
+                              }
+                              aria-label={`按原生内容接管渠道档案 ${target.descriptor.path ?? "目标"}`}
+                              onClick={() => {
+                                const targetPath = target.descriptor.path;
+                                if (targetPath)
+                                  onAdoptNative(targetPath, target.rowVersions);
+                              }}
+                            >
+                              {adoptingNative
+                                ? "正在按原生内容接管…"
+                                : "按原生内容接管渠道档案"}
+                            </Button>
+                          ) : null}
+                        </div>
+                        {onAdoptNative ? (
+                          <p className="text-muted-foreground text-xs leading-5">
+                            按原生内容接管会把文件当前内容写回中央渠道档案，
+                            之后同步不再改写该文件。
+                          </p>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
