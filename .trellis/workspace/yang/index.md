@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 70
+- **Total Sessions**: 71
 - **Last Active**: 2026-09-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1760 | Active |
+| `journal-1.md` | ~1795 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -30,6 +30,7 @@
 
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 71 | 2026-09-15 | Provider 按原生内容接管（手改 models.json 后一键收敛漂移） | `ab86b99`, `d2c84f5`, `84e0da2` | `main` |
 | 70 | 2026-09-15 | 修复 Pi 渠道导入：多 provider 检测与 models 元数据保真 | `992de1e`, `2c8e3e1`, `3e22558`, `842f7af` | `main` |
 | 69 | 2026-09-15 | 修复 Pi 渠道入口与接管检测体验 | `bb355e9` | `main` |
 | 68 | 2026-09-15 | 修复 Pi MCP 探测与容器别名 | `de60d35` | `main` |

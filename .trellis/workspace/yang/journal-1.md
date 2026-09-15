@@ -1758,3 +1758,38 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 71: Provider 按原生内容接管（手改 models.json 后一键收敛漂移）
+
+**Date**: 2026-09-15
+**Task**: Provider 按原生内容接管（手改 models.json 后一键收敛漂移）
+**Branch**: `main`
+
+### Summary
+
+需求：上一版把 models 变为受管字段后，用户手改 models.json 会显示漂移，但缺少「直接按文件为准」的入口。既有「以当前内容重新接管」(readopt_provider_target) 只刷新目标基线、不改中央档案，因此下一次 Apply 会把用户手改的原生内容改回去——这正是摩擦点。
+
+实现：新增 adopt_provider_native({ tool, targetPath, rowVersions })。只处理已漂移的渠道（档案投影 ≠ 原生条目），把原生条目写回档案（extra 字段含 api/models/headers/modelOverrides，apiKey 原样采纳：明文入私有库、$ENV 保持引用），并在同一个 IMMEDIATE 事务里把目标基线刷新为全部中央渠道投影的并集——只改档案会留旧基线（下次仍报漂移），只改基线会被 Apply 回写，两者必须同时做。配对规则：档案有 provider_id 按 id 匹配；Claude 等无稳定原生 key 的 codec 仅在唯一配对时匹配。不写原生文件。
+
+并发安全：按用户所看预览绑定的行版本（DatabaseEntityType::ProviderProfile）做乐观校验，缺条目 INVALID_INPUT、已过期 STALE_PREVIEW，避免静默覆盖其他窗口的档案编辑（初版用服务端即时重读，等于没有校验，已修正并补测试）。
+
+前端：ChangePreviewDialog 在冲突态同时提供「以当前内容重新接管」（只刷基线）与「按原生内容接管渠道档案」（文件→档案），后者透传 rowVersions，成功后重新生成预览；仅渠道页接线，MCP/Agents/项目页不受影响。
+
+验证：pnpm check EXIT=0（343 前端测试 + 全部 Rust 测试 + clippy -D warnings + fmt + bindings:check）。新增 2 个 Rust 用例（接管后档案按文件、基线刷新、下次 Apply 后文件逐字节不变；预览行版本过期被 STALE_PREVIEW 拒绝）与 1 个前端用例（冲突态两按钮并存、精确 payload 含 rowVersions、不触发 Apply）。
+
+已知边界：若档案默认模型对应的 id 被从 models 数组删除，App 会补回该 id（默认模型必须存在于数组），这种特定编辑会持续显示小漂移，需在 UI 改默认模型收敛。文件中从未导入过的 provider 仍走「检测已有配置」。
+
+过程备注：pi-lens 自动格式化两轮把 spec 列表续行反缩进（与仓库 2 空格续行主流写法冲突），已两次以 stash 形式拒绝、不进入历史；Rust 侧自动 import 重排经 cargo fmt --check 验证为 rustfmt 容忍范围内 churn，同样未采用。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ab86b99` | (see git log) |
+| `d2c84f5` | (see git log) |
+| `84e0da2` | (see git log) |
+
+### Status
+
+[OK] **Completed**
