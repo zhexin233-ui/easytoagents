@@ -995,7 +995,12 @@ fn restore_desired_projection(
             let bytes = fs::read(&snapshot.snapshot_path).map_err(|error| {
                 AppError::not_found("snapshot", &snapshot.snapshot_path).with_source(error)
             })?;
-            let document = parse_config_value(descriptor.format, &bytes)?;
+            let mut document = parse_config_value(descriptor.format, &bytes)?;
+            if descriptor.tool == Tool::Pi {
+                // Pi snapshot 可能来自规范化前的 alias-only 文件。恢复条目读取与
+                // 实时扫描复用同一容器解释，最终 render 再统一写回 canonical。
+                document = crate::adapters::pi::normalize_mcp_document(&document)?.0;
+            }
             let container = native_mcp_container(descriptor.tool);
             let item = projection_value_at(&document, container)
                 .and_then(Value::as_object)

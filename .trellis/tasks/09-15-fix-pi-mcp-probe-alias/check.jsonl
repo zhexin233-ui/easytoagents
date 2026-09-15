@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/pi-adapter-guidelines.md", "reason": "逐条复核 probe、alias、trust 与 fail-closed 合同"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "复核 Import/Apply/Restore 的格式兼容与数据保留"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核跨层观测、漂移、原子写入和原生资源恢复"}
+{"file": ".trellis/tasks/09-15-fix-pi-mcp-probe-alias/prd.md", "reason": "AC1–AC8 验收基线"}

@@ -1653,6 +1653,14 @@ impl PiFixture {
             fs::create_dir(directory).expect("创建 Pi fixture 目录失败");
         }
         fs::create_dir_all(project.join(".pi/skills")).expect("创建项目 Skills 目录失败");
+        // 项目 package 同时声明但当前 trust 未知；全局 Ready 必须继续生效，
+        // 不能被项目 scope 的保守过滤覆盖。
+        fs::write(
+            project.join(".pi/settings.json"),
+            br#"{"packages":["npm:pi-mcp-adapter"]}
+"#,
+        )
+        .expect("写入 Pi 项目 settings.json 失败");
         // 适配器声明 + 安装 + 版本（3.33.0 > 最低 2.33.0）。
         fs::write(
             pi_agent_dir.join("settings.json"),
@@ -1889,6 +1897,13 @@ fn pi_chain_covers_provider_prompt_mcp_drift_restore_and_fail_closed() {
         },
     )
     .expect("Pi MCP 全局分配失败");
+    let pi_mcp_path = fixture.pi_agent_dir.join("mcp.json");
+    fs::write(
+        &pi_mcp_path,
+        br#"{"future":{"keep":true},"mcp-servers":{"external-alias":{"command":"keep","unknown":"preserve"}}}
+"#,
+    )
+    .expect("写入 Pi alias-only MCP fixture 失败");
     let mcp_plan = preview_mcp_sync_with_probes(
         &mut fixture.database,
         &fixture.environment,
@@ -1902,6 +1917,10 @@ fn pi_chain_covers_provider_prompt_mcp_drift_restore_and_fail_closed() {
         &fixture.policy_evidence,
     )
     .expect("Pi 全局 MCP 预览失败");
+    assert!(mcp_plan.targets[0]
+        .warning_codes
+        .iter()
+        .any(|code| code == "PI_MCP_CONTAINER_ALIAS_DETECTED"));
     apply_mcp_preview_with_probes(
         &fixture.write_operations,
         &mut fixture.database,
@@ -1917,10 +1936,15 @@ fn pi_chain_covers_provider_prompt_mcp_drift_restore_and_fail_closed() {
         &fixture.policy_evidence,
     )
     .expect("Pi 全局 MCP 应用失败");
-    let global_mcp: Value = serde_json::from_str(
-        &fs::read_to_string(fixture.pi_agent_dir.join("mcp.json")).expect("读取 mcp.json 失败"),
-    )
-    .expect("解析 mcp.json 失败");
+    let global_mcp: Value =
+        serde_json::from_str(&fs::read_to_string(&pi_mcp_path).expect("读取 mcp.json 失败"))
+            .expect("解析 mcp.json 失败");
+    assert!(global_mcp.get("mcp-servers").is_none());
+    assert_eq!(global_mcp["future"]["keep"], true);
+    assert_eq!(
+        global_mcp["mcpServers"]["external-alias"]["unknown"],
+        "preserve"
+    );
     let global_entry = &global_mcp["mcpServers"]["pi-mcp"];
     assert!(global_entry.get("type").is_none(), "Pi 不写 type");
     assert_eq!(global_entry["command"], json!("pi-mcp-command"));

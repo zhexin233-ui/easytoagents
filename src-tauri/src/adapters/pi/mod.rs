@@ -36,10 +36,10 @@ use serde_json::{Map, Value};
 
 use crate::{
     adapters::{
-        descriptor_path, DiscoveryContext, ManagedOwnership, PromptOverrideState, ProviderCodec,
-        ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
-        ProviderCodecProfileInput, SymlinkPolicy, TargetCapability, TargetDescriptor, TargetFormat,
-        TargetTrustState, ToolAdapter, ToolAvailabilityState,
+        descriptor_path, DiscoveryContext, ManagedOwnership, ObservedDocument, PromptOverrideState,
+        ProviderCodec, ProviderCodecDiscovery, ProviderCodecInput, ProviderCodecOptions,
+        ProviderCodecProfileInput, RenderedTarget, SymlinkPolicy, TargetCapability,
+        TargetDescriptor, TargetFormat, TargetTrustState, ToolAdapter, ToolAvailabilityState,
     },
     domain::{ArtifactKind, Scope, Tool},
     error::AppError,
@@ -258,6 +258,70 @@ impl ToolAdapter for PiAdapter {
 
         crate::adapters::populate_descriptor_allowed_roots(environment, &mut targets)?;
         Ok(targets)
+    }
+
+    fn project_managed(
+        &self,
+        document: &ObservedDocument,
+        ownership: &ManagedOwnership,
+    ) -> Result<Value, AppError> {
+        if !mcp_ownership(ownership) {
+            return super::project_document(document, ownership);
+        }
+        let normalized = normalize_mcp_observed_document(document)?;
+        super::project_document(&normalized, ownership)
+    }
+
+    fn render(
+        &self,
+        target: &TargetDescriptor,
+        current: Option<&ObservedDocument>,
+        desired_projection: &Value,
+        ownership: &ManagedOwnership,
+    ) -> Result<RenderedTarget, AppError> {
+        super::validate_managed_ownership(target, ownership)?;
+        if target.artifact_kind != ArtifactKind::Mcp {
+            if let Some(current) = current {
+                super::project_document(current, ownership)?;
+            }
+            return super::render_document(target, current, desired_projection, ownership);
+        }
+
+        // Pi MCP 写入以适配器实际选中的容器为当前值，并始终规范化回 canonical。
+        // canonical 与 alias 并存时不会合并 alias 独有条目，严格匹配上游 `??`。
+        let normalized_current = current.map(normalize_mcp_observed_document).transpose()?;
+        if let Some(current) = normalized_current.as_ref() {
+            super::project_document(current, ownership)?;
+        }
+        super::render_document(
+            target,
+            normalized_current.as_ref(),
+            desired_projection,
+            ownership,
+        )
+    }
+}
+
+fn mcp_ownership(ownership: &ManagedOwnership) -> bool {
+    matches!(
+        ownership,
+        ManagedOwnership::Selectors(selectors)
+            if selectors.iter().any(|selector| selector.first().is_some_and(|root| root == "mcpServers"))
+    )
+}
+
+fn normalize_mcp_observed_document(
+    document: &ObservedDocument,
+) -> Result<ObservedDocument, AppError> {
+    match document {
+        ObservedDocument::Json(value) => {
+            let (value, _) = normalize_mcp_document(value)?;
+            Ok(ObservedDocument::Json(value))
+        }
+        _ => Err(AppError::invalid_input(
+            "mcpContainer",
+            "Pi MCP 配置必须是 JSON 对象",
+        )),
     }
 }
 
@@ -610,13 +674,13 @@ fn discover_project_trust(agent_dir: &Path, project_root: &str) -> TargetTrustSt
 
 /// Pi 的 MCP 文件接受 `mcpServers` 及其别名 `mcp-servers`（`config.ts:733`）。
 /// 读取必须同时识别两者，否则会漏读用户条目；写入只写 canonical `mcpServers`。
-pub struct ObservedMcpServers<'a> {
-    pub servers: &'a Map<String, Value>,
+pub struct ObservedMcpServers {
+    pub servers: Map<String, Value>,
     /// 观测来自别名 `mcp-servers` 而非 canonical 容器。
     pub alias_used: bool,
 }
 
-impl ObservedMcpServers<'_> {
+impl ObservedMcpServers {
     /// 别名命中的提示性诊断；canonical 容器返回 `None`。
     pub const fn diagnostic_code(&self) -> Option<&'static str> {
         if self.alias_used {
@@ -628,19 +692,60 @@ impl ObservedMcpServers<'_> {
 }
 
 /// 只读识别 Pi MCP 容器（canonical 优先，其次别名）。
-pub fn read_mcp_servers(root: &Value) -> Option<ObservedMcpServers<'_>> {
-    if let Some(servers) = root.get("mcpServers").and_then(Value::as_object) {
-        return Some(ObservedMcpServers {
-            servers,
+pub fn read_mcp_servers(root: &Value) -> Result<Option<ObservedMcpServers>, AppError> {
+    let object = root
+        .as_object()
+        .ok_or_else(|| AppError::invalid_input("mcpContainer", "Pi MCP 配置根必须是对象"))?;
+    if let Some(value) = object.get("mcpServers") {
+        let servers = value.as_object().ok_or_else(|| {
+            AppError::invalid_input("mcpServers", "Pi MCP canonical 容器必须是对象")
+        })?;
+        return Ok(Some(ObservedMcpServers {
+            servers: servers.clone(),
             alias_used: false,
-        });
+        }));
     }
-    root.get("mcp-servers")
-        .and_then(Value::as_object)
-        .map(|servers| ObservedMcpServers {
-            servers,
-            alias_used: true,
+    object
+        .get("mcp-servers")
+        .map(|value| {
+            let servers = value.as_object().ok_or_else(|| {
+                AppError::invalid_input("mcp-servers", "Pi MCP alias 容器必须是对象")
+            })?;
+            Ok(ObservedMcpServers {
+                servers: servers.clone(),
+                alias_used: true,
+            })
         })
+        .transpose()
+}
+
+/// 将 Pi MCP 的 alias-only 文档投影成 canonical，并删除 alias。
+/// 返回值中的布尔值仅在 alias 实际被选中时为 true。
+pub fn normalize_mcp_document(root: &Value) -> Result<(Value, bool), AppError> {
+    let observed = read_mcp_servers(root)?;
+    let mut object = root
+        .as_object()
+        .cloned()
+        .ok_or_else(|| AppError::invalid_input("mcpContainer", "Pi MCP 配置根必须是对象"))?;
+    object.remove("mcp-servers");
+    let alias_used = observed
+        .as_ref()
+        .is_some_and(|observed| observed.alias_used);
+    if let Some(observed) = observed {
+        object.insert("mcpServers".to_owned(), Value::Object(observed.servers));
+    }
+    Ok((Value::Object(object), alias_used))
+}
+
+/// 从已解析文档读取提示性 alias 诊断，不暴露任何 server 内容。
+pub fn mcp_container_alias_diagnostic(document: &ObservedDocument) -> Option<&'static str> {
+    match document {
+        ObservedDocument::Json(value) => read_mcp_servers(value)
+            .ok()
+            .flatten()
+            .and_then(|observed| observed.diagnostic_code()),
+        _ => None,
+    }
 }
 
 /// 同名遮蔽来源。
@@ -713,7 +818,10 @@ pub fn detect_mcp_shadowing(
 /// 只返回同名集合，值永不离开本函数（避免把凭据带进调用方）。
 fn read_mcp_servers_for_shadowing(path: &Path) -> Option<BTreeSet<String>> {
     let value = probe::read_json_file(path)?;
-    read_mcp_servers(&value).map(|observed| observed.servers.keys().cloned().collect())
+    read_mcp_servers(&value)
+        .ok()
+        .flatten()
+        .map(|observed| observed.servers.keys().cloned().collect())
 }
 
 enum DiscoveryFile {

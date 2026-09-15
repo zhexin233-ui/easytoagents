@@ -1109,6 +1109,84 @@ enabled = true
         ).unwrap()
     }
 
+    fn ready_pi_import_fixture(fixture: &mut Fixture) -> std::path::PathBuf {
+        let agent_dir = fixture.home.join("pi-agent");
+        fs::create_dir_all(agent_dir.join("npm/node_modules/pi-mcp-adapter")).unwrap();
+        fs::write(
+            agent_dir.join("settings.json"),
+            r#"{"packages":["npm:pi-mcp-adapter"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            agent_dir.join("npm/node_modules/pi-mcp-adapter/package.json"),
+            r#"{"name":"pi-mcp-adapter","version":"2.33.0"}"#,
+        )
+        .unwrap();
+        fixture.environment = fixture
+            .environment
+            .clone()
+            .with_pi_agent_dir(agent_dir.clone())
+            .unwrap();
+        agent_dir
+    }
+
+    #[test]
+    fn pi_import_reads_alias_and_prefers_canonical_when_both_exist() {
+        use crate::mcp::{
+            confirm_mcp_import, discover_mcp_import, McpImportCandidateStatus,
+        };
+
+        let mut fixture = Fixture::new();
+        let agent_dir = ready_pi_import_fixture(&mut fixture);
+        let path = agent_dir.join("mcp.json");
+        fs::write(
+            &path,
+            r#"{"future":{"keep":true},"mcp-servers":{"alias-only":{"command":"npx","unknown":"keep"}}}"#,
+        )
+        .unwrap();
+        let before = fs::read(&path).unwrap();
+        let mut redactor = SecretRedactor::default();
+        let preview = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        assert_eq!(preview.candidates.len(), 1);
+        assert_eq!(preview.candidates[0].name, "alias-only");
+        assert_eq!(
+            preview.candidates[0].status,
+            McpImportCandidateStatus::Importable
+        );
+        let result = confirm_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &import_selection(&preview, &["alias-only"]),
+        )
+        .unwrap();
+        assert_eq!(result.created_count, 1);
+        assert_eq!(fs::read(&path).unwrap(), before, "Import 不得改写原生文件");
+
+        let mut fixture = Fixture::new();
+        let agent_dir = ready_pi_import_fixture(&mut fixture);
+        fs::write(
+            agent_dir.join("mcp.json"),
+            r#"{"mcpServers":{"canonical":{"command":"canonical"}},"mcp-servers":{"ignored":{"command":"alias"}}}"#,
+        )
+        .unwrap();
+        let preview = discover_mcp_import(
+            &mut fixture.database,
+            &fixture.environment,
+            &redactor,
+            Tool::Pi,
+        )
+        .unwrap();
+        assert_eq!(preview.candidates.len(), 1);
+        assert_eq!(preview.candidates[0].name, "canonical");
+    }
+
     #[test]
     fn mcp_import_selects_extends_and_syncs_without_touching_unselected_entries() {
         use crate::mcp::{confirm_mcp_import, discover_mcp_import, McpImportCandidateStatus};

@@ -1,0 +1,29 @@
+{
+  "id": "fix-pi-mcp-probe-alias",
+  "name": "fix-pi-mcp-probe-alias",
+  "title": "修复 Pi MCP 探测与容器别名",
+  "description": "修复 Pi MCP 全局适配器被项目 trust 错误禁用、mcp-servers 别名漏读，并统一 settings/trust 只读边界",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "yang",
+  "assignee": "yang",
+  "createdAt": "2026-09-15",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "source_task": "09-14-add-pi-tool-support",
+    "review_date": "2026-09-15"
+  }
+}

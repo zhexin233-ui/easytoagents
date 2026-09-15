@@ -8,9 +8,9 @@ use super::probe::{
 };
 use super::{
     detect_mcp_shadowing, inline_api_key_diagnostic, managed_children_symlink_diagnostic,
-    probe::probe_mcp_adapter, probe::PiMcpAdapterProbeInput, probe::PiMcpAdapterState,
-    prompt_fallback_present, read_mcp_servers, PiAdapter, PiMcpShadowSource,
-    PI_AGENT_DIR_OVERRIDE_UNMAPPED, PI_INSTALLATION_PROBE_UNSUPPORTED,
+    normalize_mcp_document, probe::probe_mcp_adapter, probe::PiMcpAdapterProbeInput,
+    probe::PiMcpAdapterState, prompt_fallback_present, read_mcp_servers, PiAdapter,
+    PiMcpShadowSource, PI_AGENT_DIR_OVERRIDE_UNMAPPED, PI_INSTALLATION_PROBE_UNSUPPORTED,
     PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED, PI_MCP_SHADOWED_BY_PROJECT_PI,
     PI_MCP_SHADOWED_BY_PROJECT_SHARED, PI_PROVIDER_INLINE_API_KEY, PI_SKILL_SYMLINK_BROKEN,
     PI_SKILL_SYMLINK_ESCAPE,
@@ -264,6 +264,80 @@ fn mcp_adapter_probe_project_scope_requires_trust_and_honours_exclusive_mode() {
 }
 
 #[test]
+fn global_ready_adapter_is_not_overridden_by_project_trust_or_filtering() {
+    let temporary = tempdir().unwrap();
+    let home = fs::canonicalize(temporary.path()).unwrap();
+    let agent_dir = home.join(".pi/agent");
+    let project = home.join("project");
+    fs::create_dir_all(&project).unwrap();
+    ready_mcp_adapter(&agent_dir);
+    write_json(
+        &project.join(".pi/settings.json"),
+        json!({ "packages": ["npm:pi-mcp-adapter"] }),
+    );
+    write_json(
+        &project.join(".pi/npm/node_modules/pi-mcp-adapter/package.json"),
+        json!({ "name": "pi-mcp-adapter", "version": "2.33.0" }),
+    );
+
+    let untrusted = probe_mcp_adapter(&PiMcpAdapterProbeInput {
+        pi_agent_dir: &agent_dir,
+        project_root: Some(&project),
+        project_trusted: false,
+        exclusive_mode: false,
+    });
+    assert_eq!(untrusted.state, PiMcpAdapterState::Ready);
+    assert_eq!(untrusted.version.as_deref(), Some("2.33.0"));
+
+    write_json(
+        &project.join(".pi/settings.json"),
+        json!({ "packages": [{ "source": "npm:pi-mcp-adapter", "extensions": [] }] }),
+    );
+    let filtered = probe_mcp_adapter(&PiMcpAdapterProbeInput {
+        pi_agent_dir: &agent_dir,
+        project_root: Some(&project),
+        project_trusted: true,
+        exclusive_mode: false,
+    });
+    assert_eq!(filtered.state, PiMcpAdapterState::Ready);
+
+    let exclusive = probe_mcp_adapter(&PiMcpAdapterProbeInput {
+        pi_agent_dir: &agent_dir,
+        project_root: Some(&project),
+        project_trusted: false,
+        exclusive_mode: true,
+    });
+    assert_eq!(exclusive.state, PiMcpAdapterState::Ready);
+}
+
+#[test]
+fn global_unsupported_version_does_not_override_project_filtering() {
+    let temporary = tempdir().unwrap();
+    let home = fs::canonicalize(temporary.path()).unwrap();
+    let agent_dir = home.join(".pi/agent");
+    let project = home.join("project");
+    fs::create_dir_all(&project).unwrap();
+    write_json(
+        &agent_dir.join("settings.json"),
+        json!({ "packages": ["npm:pi-mcp-adapter"] }),
+    );
+    write_adapter_package(&agent_dir, "2.0.0");
+    write_json(
+        &project.join(".pi/settings.json"),
+        json!({ "packages": [{ "source": "npm:pi-mcp-adapter", "extensions": [] }] }),
+    );
+
+    let probe = probe_mcp_adapter(&PiMcpAdapterProbeInput {
+        pi_agent_dir: &agent_dir,
+        project_root: Some(&project),
+        project_trusted: true,
+        exclusive_mode: false,
+    });
+    assert_eq!(probe.state, PiMcpAdapterState::NotLoaded);
+    assert_eq!(probe.version.as_deref(), Some("2.0.0"));
+}
+
+#[test]
 fn declared_but_not_installed_adapter_fails_closed() {
     let temporary = tempdir().unwrap();
     let home = fs::canonicalize(temporary.path()).unwrap();
@@ -442,6 +516,32 @@ fn descriptor_matrix_matches_the_frozen_six_target_surface() {
         project_mcp.mcp_container,
         Some(vec!["mcpServers".to_owned()])
     );
+}
+
+#[test]
+fn global_ready_keeps_both_mcp_descriptors_available_for_untrusted_project_package() {
+    let temporary = tempdir().unwrap();
+    let home = fs::canonicalize(temporary.path()).unwrap();
+    let agent_dir = home.join(".pi/agent");
+    ready_mcp_adapter(&agent_dir);
+    let project = project_root(&home);
+    write_json(
+        &Path::new(project.as_str()).join(".pi/settings.json"),
+        json!({ "packages": ["npm:pi-mcp-adapter"] }),
+    );
+    write_json(
+        &agent_dir.join("trust.json"),
+        json!({ project.as_str(): false }),
+    );
+    let environment = environment(&home, ToolAvailabilityState::Installed);
+    let host = ContextHost::new();
+    let targets =
+        ToolAdapter::discover(&PiAdapter, &host.context(&environment, Some(&project))).unwrap();
+    for scope in [Scope::Global, Scope::Project] {
+        let descriptor = find(&targets, ArtifactKind::Mcp, scope);
+        assert_eq!(descriptor.capability.state, CapabilityState::Supported);
+        assert!(descriptor.path.is_some());
+    }
 }
 
 #[test]
@@ -683,13 +783,13 @@ fn project_trust_states_are_read_only_and_fail_closed() {
 #[test]
 fn mcp_container_alias_is_read_but_never_written() {
     let canonical = json!({ "mcpServers": { "one": { "url": "https://example.test" } } });
-    let observed = read_mcp_servers(&canonical).unwrap();
+    let observed = read_mcp_servers(&canonical).unwrap().unwrap();
     assert!(!observed.alias_used);
     assert_eq!(observed.diagnostic_code(), None);
     assert!(observed.servers.contains_key("one"));
 
     let aliased = json!({ "mcp-servers": { "two": { "command": "echo" } } });
-    let observed = read_mcp_servers(&aliased).unwrap();
+    let observed = read_mcp_servers(&aliased).unwrap().unwrap();
     assert!(observed.alias_used);
     assert_eq!(
         observed.diagnostic_code(),
@@ -697,7 +797,64 @@ fn mcp_container_alias_is_read_but_never_written() {
     );
     assert!(observed.servers.contains_key("two"));
 
-    assert!(read_mcp_servers(&json!({ "imports": [] })).is_none());
+    assert!(read_mcp_servers(&json!({ "imports": [] }))
+        .unwrap()
+        .is_none());
+
+    let both = json!({
+        "mcpServers": { "canonical": { "command": "canonical" } },
+        "mcp-servers": { "alias": { "command": "ignored" } },
+        "future": { "keep": true }
+    });
+    let observed = read_mcp_servers(&both).unwrap().unwrap();
+    assert!(!observed.alias_used);
+    assert!(observed.servers.contains_key("canonical"));
+    assert!(!observed.servers.contains_key("alias"));
+    let (normalized, alias_used) = normalize_mcp_document(&both).unwrap();
+    assert!(!alias_used);
+    assert!(normalized.get("mcp-servers").is_none());
+    assert_eq!(normalized["future"]["keep"], true);
+    assert!(normalized["mcpServers"].get("alias").is_none());
+
+    assert!(read_mcp_servers(&json!({ "mcpServers": [] })).is_err());
+    assert!(read_mcp_servers(&json!({ "mcp-servers": [] })).is_err());
+}
+
+#[test]
+fn mcp_alias_projection_and_render_normalize_without_losing_unknown_fields() {
+    let adapter = PiAdapter;
+    let descriptor = TargetDescriptor::builder(Tool::Pi, ArtifactKind::Mcp, Scope::Global)
+        .format(TargetFormat::Json)
+        .managed_selectors(["mcpServers"])
+        .build();
+    let ownership =
+        ManagedOwnership::selectors([["mcpServers", "managed"], ["mcpServers", "removed"]]);
+    let current = ObservedDocument::Json(json!({
+        "mcp-servers": {
+            "managed": { "command": "old", "unknown": "preserve" },
+            "removed": { "command": "remove" },
+            "external": { "command": "keep" }
+        },
+        "future": { "keep": true }
+    }));
+    let projected = adapter.project_managed(&current, &ownership).unwrap();
+    assert_eq!(projected["mcpServers"]["managed"]["unknown"], "preserve");
+
+    let desired = json!({
+        "mcpServers": {
+            "managed": { "command": "new", "unknown": "preserve" }
+        }
+    });
+    let rendered =
+        ToolAdapter::render(&adapter, &descriptor, Some(&current), &desired, &ownership).unwrap();
+    let crate::adapters::RenderedTarget::File(bytes) = rendered;
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(value.get("mcp-servers").is_none());
+    assert_eq!(value["mcpServers"]["managed"]["command"], "new");
+    assert_eq!(value["mcpServers"]["managed"]["unknown"], "preserve");
+    assert!(value["mcpServers"].get("removed").is_none());
+    assert_eq!(value["mcpServers"]["external"]["command"], "keep");
+    assert_eq!(value["future"]["keep"], true);
 }
 
 #[test]

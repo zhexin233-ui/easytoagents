@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引与适用检查项"}
+{"file": ".trellis/spec/backend/pi-adapter-guidelines.md", "reason": "Pi descriptor、MCP 探针、trust 与 alias 合同"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "原生 MCP 导入、格式兼容和原子接管合同"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "观测、预览、漂移、disable/restore 与失败回滚边界"}
+{"file": ".trellis/tasks/archive/2026-09/09-14-add-pi-tool-support/research/pi-mcp-adapter.md", "reason": "上游适配器路径、容器别名、优先级和 trust 证据"}
+{"file": ".trellis/tasks/archive/2026-09/09-14-add-pi-tool-support/research/verified-contract.md", "reason": "Pi 能力矩阵和证据汇总"}

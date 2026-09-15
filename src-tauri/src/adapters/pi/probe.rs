@@ -116,12 +116,23 @@ pub fn probe_mcp_adapter(input: &PiMcpAdapterProbeInput<'_>) -> PiMcpAdapterProb
             )
         })
         .unwrap_or(ScopeReadiness::NotDeclared);
+    let declared = !matches!(&global, ScopeReadiness::NotDeclared)
+        || !matches!(&project, ScopeReadiness::NotDeclared);
 
+    // Pi 在解析项目 trust 前已经加载 user/global extensions。因而全局适配器
+    // 一旦 Ready，项目 package 被过滤或项目未受信任都不能撤销全局加载结果。
+    if let ScopeReadiness::Installed(version) = &global {
+        if version_meets_minimum(version) {
+            return PiMcpAdapterProbe {
+                state: PiMcpAdapterState::Ready,
+                version: Some(version.clone()),
+                declared,
+            };
+        }
+    }
     let scopes = [global, project];
-    let declared = scopes
-        .iter()
-        .any(|scope| !matches!(scope, ScopeReadiness::NotDeclared));
-    // 过滤/未受信任优先：扩展不加载时，安装目录存在也无效。
+    // 全局没有可用安装时，项目 scope 才决定当前项目上下文是否能加载扩展。
+    // 过滤/未受信任仍优先于项目安装目录，保持 fail closed。
     if scopes
         .iter()
         .any(|scope| matches!(scope, ScopeReadiness::Filtered))

@@ -701,6 +701,17 @@ pub fn build_preview_plan(
             };
 
         let mut warning_codes = assessment.diagnostic_codes;
+        if request.descriptor.tool == Tool::Pi
+            && request.descriptor.artifact_kind == ArtifactKind::Mcp
+        {
+            if let TargetScan::Observed(observed) = &request.scan {
+                if let Some(code) =
+                    crate::adapters::pi::mcp_container_alias_diagnostic(observed.document())
+                {
+                    warning_codes.push(code.to_owned());
+                }
+            }
+        }
         if takeover_allows_merge {
             // 显式接管证据已覆盖冲突，预览只保留需要用户确认的接管提示。
             warning_codes.retain(|code| code != ERROR_EXTERNAL_OWNED_CHANGE);

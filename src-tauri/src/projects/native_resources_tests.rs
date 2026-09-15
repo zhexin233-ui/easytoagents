@@ -387,6 +387,122 @@ mod tests {
     }
 
     #[test]
+    fn pi_alias_mcp_is_observed_disabled_and_restored_as_canonical() {
+        let mut fixture = Fixture::new();
+        let pi_agent_dir = fixture.home.join("pi-agent");
+        fs::create_dir_all(pi_agent_dir.join("npm/node_modules/pi-mcp-adapter")).unwrap();
+        fs::write(
+            pi_agent_dir.join("settings.json"),
+            r#"{"packages":["npm:pi-mcp-adapter"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            pi_agent_dir.join("npm/node_modules/pi-mcp-adapter/package.json"),
+            r#"{"name":"pi-mcp-adapter","version":"2.33.0"}"#,
+        )
+        .unwrap();
+        fixture.environment = fixture
+            .environment
+            .clone()
+            .with_pi_agent_dir(pi_agent_dir)
+            .unwrap();
+        let project = fixture.register_project_with(|root| {
+            fs::create_dir_all(root.join(".pi")).unwrap();
+            fs::write(
+                root.join(".pi/mcp.json"),
+                r#"{"future":{"keep":true},"mcp-servers":{"native-pi":{"command":"npx","unknown":"keep"},"sibling":{"command":"keep"}}}"#,
+            )
+            .unwrap();
+        });
+        let items = list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project.id.clone(),
+                tool: Tool::Pi,
+                artifact_kind: ArtifactKind::Mcp,
+            },
+        )
+        .unwrap();
+        let native = items
+            .into_iter()
+            .find(|item| item.display_name == "native-pi")
+            .expect("alias-only Pi MCP 条目必须被观测");
+
+        let mut redactor = SecretRedactor::default();
+        let disable = preview_project_native_resource_action(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewProjectNativeResourceActionInput {
+                resource_id: native.id.clone(),
+                row_version: native.row_version,
+                action: ProjectNativeResourceAction::Disable,
+            },
+        )
+        .unwrap();
+        assert!(disable
+            .warning_codes
+            .iter()
+            .any(|code| code == crate::adapters::pi::PI_MCP_CONTAINER_ALIAS_DETECTED));
+        apply_project_native_resource_preview(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &ApplyProjectNativeResourcePreviewInput {
+                preview_id: disable.preview_id,
+            },
+        )
+        .unwrap();
+        let path = fixture.home.join("projects/native/.pi/mcp.json");
+        let disabled: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(disabled.get("mcp-servers").is_none());
+        assert!(disabled["mcpServers"].get("native-pi").is_none());
+        assert_eq!(disabled["mcpServers"]["sibling"]["command"], "keep");
+        assert_eq!(disabled["future"]["keep"], true);
+
+        let disabled_item = list_project_native_resources(
+            &mut fixture.database,
+            &fixture.environment,
+            &ProjectNativeResourceQueryInput {
+                project_id: project.id,
+                tool: Tool::Pi,
+                artifact_kind: ArtifactKind::Mcp,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .find(|item| item.display_name == "native-pi")
+        .unwrap();
+        let restore = preview_project_native_resource_action(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewProjectNativeResourceActionInput {
+                resource_id: disabled_item.id,
+                row_version: disabled_item.row_version,
+                action: ProjectNativeResourceAction::Restore,
+            },
+        )
+        .unwrap();
+        apply_project_native_resource_preview(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &ApplyProjectNativeResourcePreviewInput {
+                preview_id: restore.preview_id,
+            },
+        )
+        .unwrap();
+        let restored: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(restored["mcpServers"]["native-pi"]["command"], "npx");
+        assert_eq!(restored["mcpServers"]["native-pi"]["unknown"], "keep");
+        assert_eq!(restored["mcpServers"]["sibling"]["command"], "keep");
+    }
+
+    #[test]
     fn codex_mcp_disable_restore_preserves_toml_comments_and_siblings() {
         let mut fixture = Fixture::new();
         let project = fixture.register_project_with(|root| {

@@ -43,6 +43,17 @@
   （当前 `2.33.0`）才 `supported`；否则两个 MCP descriptor 必须
   `TargetCapability::unsupported(PI_MCP_ADAPTER_MISSING|_NOT_LOADED|_VERSION_UNSUPPORTED)` 且
   `path = None`。不得用 `pi list` 输出或运行时会话作为判据。
+- **只读边界**：`settings.json` / `trust.json` 不属于受管目标，任何流程都不得写回；仅允许为
+  Provider 默认选择、package 就绪和项目 trust 做限量、拒绝符号链接的只读探测。该静态证据不
+  代表某次 Pi 会话的 `--approve` / `--no-approve` 或扩展临时 trust 决定。
+- **scope 聚合**：全局适配器 Ready 时，项目 package 未受信任或被过滤不能撤销全局扩展已加载
+  的事实；只有全局已安装版本满足最低要求时才能提前返回 Ready。全局版本过低不得提前短路，
+  仍须进入既有聚合顺序；仅当全局不 Ready 时才由项目声明、trust、过滤和安装版本决定当前项目
+  上下文能力，没有任何 Ready scope 时保持 `Filtered -> NotLoaded` 优先于
+  `Installed(版本过低) -> VersionUnsupported`。
+- **MCP 容器兼容**：所有 Pi MCP 生产观测统一按 `mcpServers ?? mcp-servers` 读取；canonical
+  存在时绝不合并 alias 独有条目。alias-only 文件投影成 canonical 供 Import、Preview、漂移、
+  原生资源与 Restore 共用，成功写入后删除 alias，并保留未知顶层字段与非受管 server。
 - **零求值**：`apiKey`/`headers`/`env` 值原样保留；绝不展开 `$ENV`、绝不执行 `!command`。
   明文 `apiKey` 只产出 `PI_PROVIDER_INLINE_API_KEY` 诊断并走既有脱敏。
 - **项目 trust**：`<root>/.pi/skills` 沿用 Pi 的 `trust.json`/`defaultProjectTrust` 语义（`ask`
@@ -60,7 +71,9 @@
 | `PI_CODING_AGENT_DIR` 存在但不可映射（相对路径等） | 6 个 descriptor 全部 `unsupported(PI_AGENT_DIR_OVERRIDE_UNMAPPED)`，不暴露默认路径 |
 | Pi 未安装 / 探针异常                               | `ToolNotInstalled` / `unsupported(PI_INSTALLATION_PROBE_UNSUPPORTED)`              |
 | `pi-mcp-adapter` 缺失 / 未加载 / 版本过低          | 两个 MCP 目标 `unsupported(PI_MCP_ADAPTER_*)`，`path = None`，零外部写入           |
+| 全局版本过低 + 项目 package 被过滤                 | `PI_MCP_ADAPTER_NOT_LOADED`，并保留已观测的全局版本；不得提前返回版本不支持        |
 | `PI_MCP_CONFIG_MODE=exclusive`                     | 项目 MCP descriptor `unsupported(PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED)`           |
+| alias-only MCP 容器                                | 正常观测 + `PI_MCP_CONTAINER_ALIAS_DETECTED`；Apply 后只保留 `mcpServers`           |
 | 项目文件与受管 MCP 名称同名                        | 项目预览 `Conflict` + `PI_MCP_SHADOWED_BY_PROJECT_SHARED` / `_PROJECT_PI`          |
 | `AGENTS.override.md` 存在或不可判定                | Prompt 预览 `Conflict` + `PI_PROMPT_OVERRIDE_DETECTED`，Apply 拒绝                 |
 | 用户存在 `CLAUDE.md`/`AGENTS.MD` 回退文件          | 仅提示 `PI_PROMPT_FALLBACK_PRESENT`（不阻断）                                      |
@@ -76,13 +89,14 @@
 - Base：适配器未安装时 MCP 页面只显示诊断与安装指引（`pi install npm:pi-mcp-adapter`），
   不创建 `mcp.json`、不生成 assignment 行。
 - Bad：把 Pi 的 MCP 写入复用 Claude 的 `type: stdio` 写法；把 `<pi_agent_dir>/settings.json`
-  当受管目标；用 `AGENTS.override.md` 场景下的 warning 代替硬阻断；把 `~/.pi/agents` 当作
+  或 `trust.json` 当受管目标或写回探测结果；用 `AGENTS.override.md` 场景下的 warning 代替硬阻断；把 `~/.pi/agents` 当作
   Pi 的 Agents 合同。
 
 ### 6. Tests Required
 
 - Adapter：6 个 descriptor 的 scope/path/format/selector/trust/allowed_root 矩阵；无 Hook/Agent
-  descriptor；适配器三态与版本过低；`exclusive` 模式；遮蔽与断链自检。
+  descriptor；适配器三态与版本过低；显式覆盖“全局 Ready + 项目 Filtered”和“全局版本过低 +
+  项目 Filtered”，分别断言 Ready 与 NotLoaded；`exclusive` 模式；遮蔽与断链自检。
 - Provider codec：条目级合并保留未知字段与非受管 provider、不写 `models: []`、
   `$ENV`/`!command` 原样保留、明文 apiKey 诊断与脱敏。
 - Database：v24 → v25 升级、旧行保留、同连接插入、重开、外键/索引、
