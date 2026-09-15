@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/pi-adapter-guidelines.md", "reason": "Pi provider codec 的写入面、零求值、诊断码与 Validation Matrix 是本次合同变更的基线"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "多候选导入、context_json 证据表、候选状态与原子接管的既有先例"}
+{"file": ".trellis/spec/backend/skill-import-guidelines.md", "reason": "批量导入的候选/确认 RPC 形态与预览表设计先例"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增迁移、表结构约束、事务与旧数据保留规则"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Provider Preview/Apply、受管基线、ownership 与路径安全总合同"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "stale_preview / conflict / 诊断码需要保持稳定语义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "codec DTO、命令签名与生成绑定必须跨层一致"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用既有校验/哈希/脱敏与 MCP 导入编排，避免重复实现"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "渠道检测/导入的 mutation 状态、query 失效与对话框隔离"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增导入对话框的复用组件、可访问性与样式约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "绑定类型唯一来源，禁止手写 DTO 漂移"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "显式确认、错误回显与 direct apply 契约"}

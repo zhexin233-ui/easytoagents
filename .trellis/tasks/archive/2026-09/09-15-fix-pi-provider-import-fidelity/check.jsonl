@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/pi-adapter-guidelines.md", "reason": "核验候选枚举、models 按 id 合并、基线并集与新增 PI_* 诊断码符合 Pi 合同"}
+{"file": ".trellis/spec/backend/mcp-import-guidelines.md", "reason": "核验候选身份只来自持久化证据、前端只回传不透明 id、脱敏未回退"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核验 0026 迁移、表约束、单事务原子性与旧行保留"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核验 Preview/Apply 不静默丢字段、受管基线只含已导入 provider"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核验 stale/conflict 错误码与既有语义一致"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核验 codec/服务/命令/前端绑定全链路一致且其他工具零回归"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核验没有复制第三份导入实现或重复校验逻辑"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "核验对话框关闭/失败重试、列表刷新与双提交防护"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "核验新对话框的可访问性、键盘与样式一致性"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "核验生成绑定未手改、旧 DTO 残留已清理"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核验 UI 显式确认、错误文案与只读摘要不泄漏凭据"}
