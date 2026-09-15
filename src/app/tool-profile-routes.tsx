@@ -26,4 +26,5 @@ export const TOOL_PROFILE_ROUTES: ReadonlyArray<ToolProfileRoute> = [
     path: "opencode",
     element: <ToolProfilesPage key="opencode" tool="opencode" />,
   },
+  { path: "pi", element: <ToolProfilesPage key="pi" tool="pi" /> },
 ];

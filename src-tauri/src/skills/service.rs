@@ -370,6 +370,10 @@ pub(crate) fn build_skill_takeover_preview_in_connection(
         environment,
         &input,
         environment.claude_customization_policy_probe(),
+        &entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<BTreeSet<_>>(),
     )?;
     let target = prepared
         .target
@@ -658,6 +662,7 @@ fn prepare_skill_sync(
         environment,
         input,
         policy_probe,
+        &BTreeSet::new(),
     )
 }
 
@@ -668,6 +673,7 @@ fn prepare_skill_sync_in_connection(
     environment: &crate::adapters::ExplicitEnvironment,
     input: &PreviewSkillSyncInput,
     policy_probe: &dyn ClaudeCustomizationPolicyProbe,
+    takeover_names: &BTreeSet<String>,
 ) -> Result<PreparedSkillSync, AppError> {
     let project = input
         .project_id
@@ -788,6 +794,7 @@ fn prepare_skill_sync_in_connection(
                 .chain(inherited_records.iter())
                 .map(|record| record.name.clone())
                 .chain(existing_items.iter().map(|item| item.external_key.clone()))
+                .filter(|name| !takeover_names.contains(name))
                 .collect::<Vec<_>>();
             crate::adapters::pi::managed_children_symlink_diagnostic(
                 directory,

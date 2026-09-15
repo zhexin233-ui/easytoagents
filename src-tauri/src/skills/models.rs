@@ -164,6 +164,7 @@ pub enum SkillImportSourceKind {
     ZcodeHome,
     ZcodeAgents,
     OpencodeGlobal,
+    PiAgentGlobal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]

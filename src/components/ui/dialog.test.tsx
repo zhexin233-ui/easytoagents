@@ -57,4 +57,13 @@ describe("DialogContent outside click", () => {
     fireEvent.mouseDown(screen.getByRole("presentation"));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
+
+  it("弹窗主体保留纵向滚动所有权并允许横向收缩", () => {
+    renderDialog(vi.fn());
+
+    const body = screen.getByRole("button", {
+      name: "弹窗内按钮",
+    }).parentElement;
+    expect(body).toHaveClass("min-h-0", "min-w-0", "overflow-y-auto");
+  });
 });

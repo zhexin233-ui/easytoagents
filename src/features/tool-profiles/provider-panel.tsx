@@ -284,10 +284,10 @@ export function ProviderPanel({
   return (
     <section
       aria-labelledby={`${tool}-providers-title`}
-      className="bg-card rounded-lg border p-5"
+      className="bg-card min-w-0 rounded-lg border p-5"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h2 id={`${tool}-providers-title`} className="text-xl font-semibold">
             渠道
           </h2>
@@ -402,7 +402,9 @@ export function ProviderPanel({
       </ul>
 
       {importPreview ? (
-        <div className={`mt-5 rounded-lg border p-4 ${toneClass("warning")}`}>
+        <div
+          className={`mt-5 max-w-full min-w-0 rounded-lg border p-4 ${toneClass("warning")}`}
+        >
           <p className="font-medium">发现已有渠道</p>
           <p className="mt-1 text-sm break-all">{importPreview.targetPath}</p>
           <p className="text-muted-foreground mt-1 text-xs">
@@ -415,7 +417,7 @@ export function ProviderPanel({
               {importPreview.skippedEnvKeys.join("、")}
             </p>
           ) : null}
-          <pre className="bg-card rounded-control mt-3 overflow-auto p-3 text-xs">
+          <pre className="bg-card rounded-control mt-3 max-w-full overflow-auto p-3 text-xs">
             {JSON.stringify(importPreview.redactedProjection, null, 2)}
           </pre>
           <div className="mt-3 flex gap-2">

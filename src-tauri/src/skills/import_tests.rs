@@ -214,6 +214,284 @@ mod tests {
     }
 
     #[test]
+    fn pi_global_source_copies_without_mutating_the_native_installation() {
+        let mut fixture = Fixture::new();
+        let source = fixture.environment.pi_agent_dir().join("skills/one");
+        fixture.skill(&source, "one");
+        let source_skill = fs::metadata(source.join("SKILL.md")).unwrap();
+        let metadata = fixture.metadata_counts();
+
+        let preview = fixture.preview(Tool::Pi);
+        assert_eq!(preview.sources.len(), 1);
+        assert_eq!(preview.sources[0].kind, SourceKind::PiAgentGlobal);
+        assert_eq!(preview.sources[0].status, SourceStatus::Ready);
+        let candidate = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "one")
+            .unwrap();
+        assert_eq!(candidate.status, CandidateStatus::Importable);
+        assert!(!candidate.takeover_eligible);
+
+        let result = fixture
+            .confirm(&ConfirmSkillImportInput {
+                preview_id: preview.preview_id.unwrap(),
+                candidate_ids: vec![candidate.candidate_id.clone()],
+            })
+            .unwrap();
+        assert_eq!(result.tool, Tool::Pi);
+        assert_eq!(result.created_count, 1);
+        assert_eq!(fixture.metadata_counts(), metadata);
+        let source_after = fs::metadata(source.join("SKILL.md")).unwrap();
+        assert_eq!(
+            (source_skill.ino(), source_skill.mode()),
+            (source_after.ino(), source_after.mode())
+        );
+        assert!(source.join("SKILL.md").is_file());
+        assert!(fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM skill_global_assignments WHERE tool = 'pi'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            == 0);
+    }
+
+    #[test]
+    fn pi_global_source_reports_missing_and_empty_without_candidates() {
+        let fixture = Fixture::new();
+        let root = fixture.environment.pi_agent_dir().join("skills");
+
+        let missing = fixture.preview(Tool::Pi);
+        assert_eq!(missing.sources.len(), 1);
+        assert_eq!(missing.sources[0].kind, SourceKind::PiAgentGlobal);
+        assert_eq!(missing.sources[0].status, SourceStatus::Missing);
+        assert_eq!(
+            missing.sources[0].diagnostic_code.as_deref(),
+            Some("SKILL_IMPORT_SOURCE_MISSING")
+        );
+        assert!(missing.candidates.is_empty());
+        assert!(missing.preview_id.is_none());
+
+        fs::create_dir_all(&root).unwrap();
+        let empty = fixture.preview(Tool::Pi);
+        assert_eq!(empty.sources[0].status, SourceStatus::Empty);
+        assert!(empty.candidates.is_empty());
+        assert!(empty.preview_id.is_none());
+    }
+
+    #[test]
+    fn pi_formal_global_entry_supports_explicit_takeover_but_not_central_self_links() {
+        let mut fixture = Fixture::new();
+        let external = fixture.root.join("external/pi-one");
+        fixture.skill(&external, "pi-one");
+        let cursor_root = fixture.environment.home().join(".cursor/skills");
+        fs::create_dir_all(&cursor_root).unwrap();
+        symlink(&external, cursor_root.join("pi-one")).unwrap();
+        let import_preview = fixture.preview(Tool::Cursor);
+        fixture.confirm(&Fixture::input(&import_preview)).unwrap();
+        fs::remove_file(cursor_root.join("pi-one")).unwrap();
+
+        let pi_root = fixture.environment.pi_agent_dir().join("skills");
+        fs::create_dir_all(&pi_root).unwrap();
+        let pi_entry = pi_root.join("pi-one");
+        symlink(&external, &pi_entry).unwrap();
+        let external_before = fs::metadata(external.join("SKILL.md")).unwrap();
+        let preview = fixture.preview(Tool::Pi);
+        let candidate = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "pi-one")
+            .unwrap();
+        assert_eq!(candidate.status, CandidateStatus::AlreadyImported);
+        assert!(candidate.takeover_eligible);
+        assert_eq!(
+            candidate.takeover_entry_type,
+            Some(SkillTakeoverEntryType::ExternalSymlink)
+        );
+
+        let takeover_input = PrepareSkillTakeoverInput {
+            preview_id: preview.preview_id.clone().unwrap(),
+            candidate_ids: vec![candidate.candidate_id.clone()],
+        };
+        assert_eq!(
+            fixture
+                .confirm(&ConfirmSkillImportInput {
+                    preview_id: takeover_input.preview_id.clone(),
+                    candidate_ids: takeover_input.candidate_ids.clone(),
+                })
+                .unwrap_err()
+                .code(),
+            ErrorCode::InvalidInput
+        );
+        let takeover = prepare_skill_takeover(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &takeover_input,
+        )
+        .unwrap();
+        assert_eq!(takeover.tool, Tool::Pi);
+        assert_eq!(takeover.assigned_count, 1);
+        assert!(takeover
+            .plan
+            .warning_codes
+            .iter()
+            .any(|code| code == crate::sync::WARNING_SKILL_TAKEOVER_CONFIRMATION));
+        assert_eq!(fs::read_link(&pi_entry).unwrap(), external);
+
+        service::apply_skill_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &crate::skills::ApplySkillPreviewInput {
+                preview_id: takeover.plan.preview_id,
+                tool: Tool::Pi,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        let central = skills::list_skills(&fixture.database).unwrap()[0]
+            .central_path
+            .clone();
+        assert_eq!(
+            fs::canonicalize(&pi_entry).unwrap(),
+            PathBuf::from(central.clone())
+        );
+        let external_after = fs::metadata(external.join("SKILL.md")).unwrap();
+        assert_eq!(external_before.ino(), external_after.ino());
+
+        // 已经直接指向中央私有副本的 Pi 入口不是新的接管候选，也不会创建令牌。
+        fs::remove_file(&pi_entry).unwrap();
+        symlink(&central, &pi_entry).unwrap();
+        let central_preview = fixture.preview(Tool::Pi);
+        let central_candidate = central_preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "pi-one")
+            .unwrap();
+        assert_eq!(central_candidate.status, CandidateStatus::AlreadyImported);
+        assert!(!central_candidate.takeover_eligible);
+        assert!(central_preview.preview_id.is_none());
+    }
+
+    #[test]
+    fn pi_formal_global_directory_supports_explicit_takeover() {
+        let mut fixture = Fixture::new();
+        let external = fixture.root.join("external/pi-directory");
+        fixture.skill(&external, "pi-directory");
+        let cursor_root = fixture.environment.home().join(".cursor/skills");
+        fs::create_dir_all(&cursor_root).unwrap();
+        symlink(&external, cursor_root.join("pi-directory")).unwrap();
+        let import_preview = fixture.preview(Tool::Cursor);
+        fixture.confirm(&Fixture::input(&import_preview)).unwrap();
+        fs::remove_file(cursor_root.join("pi-directory")).unwrap();
+
+        let pi_entry = fixture
+            .environment
+            .pi_agent_dir()
+            .join("skills/pi-directory");
+        fixture.skill(&pi_entry, "pi-directory");
+        let preview = fixture.preview(Tool::Pi);
+        let candidate = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "pi-directory")
+            .unwrap();
+        assert_eq!(candidate.status, CandidateStatus::AlreadyImported);
+        assert!(candidate.takeover_eligible);
+        assert_eq!(
+            candidate.takeover_entry_type,
+            Some(SkillTakeoverEntryType::Directory)
+        );
+
+        let takeover = prepare_skill_takeover(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &PrepareSkillTakeoverInput {
+                preview_id: preview.preview_id.unwrap(),
+                candidate_ids: vec![candidate.candidate_id.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(takeover.assigned_count, 1);
+        assert!(pi_entry.is_dir());
+
+        service::apply_skill_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            &crate::skills::ApplySkillPreviewInput {
+                preview_id: takeover.plan.preview_id,
+                tool: Tool::Pi,
+                project_id: None,
+            },
+        )
+        .unwrap();
+        let central = skills::list_skills(&fixture.database).unwrap()[0]
+            .central_path
+            .clone();
+        assert_eq!(fs::canonicalize(&pi_entry).unwrap(), PathBuf::from(central));
+        assert_eq!(fs::read_to_string(external.join("asset.sh")).unwrap(), "exit 0\n");
+    }
+
+    #[test]
+    fn pi_formal_takeover_requires_the_entry_basename_to_match_skill_name() {
+        let mut fixture = Fixture::new();
+        let external = fixture.root.join("external/pi-name");
+        fixture.skill(&external, "pi-name");
+        let cursor_root = fixture.environment.home().join(".cursor/skills");
+        fs::create_dir_all(&cursor_root).unwrap();
+        symlink(&external, cursor_root.join("pi-name")).unwrap();
+        let import_preview = fixture.preview(Tool::Cursor);
+        fixture.confirm(&Fixture::input(&import_preview)).unwrap();
+        fs::remove_file(cursor_root.join("pi-name")).unwrap();
+
+        let pi_root = fixture.environment.pi_agent_dir().join("skills");
+        fs::create_dir_all(&pi_root).unwrap();
+        symlink(&external, pi_root.join("alias")).unwrap();
+
+        let preview = fixture.preview(Tool::Pi);
+        let candidate = preview
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "pi-name")
+            .unwrap();
+        assert_eq!(candidate.status, CandidateStatus::AlreadyImported);
+        assert!(!candidate.takeover_eligible);
+        assert!(preview.preview_id.is_none());
+    }
+
+    #[test]
+    fn pi_unmapped_agent_directory_fails_closed_without_reading_candidates() {
+        let fixture = Fixture::new();
+        let root = fixture.environment.pi_agent_dir().join("skills");
+        fixture.skill(&root.join("one"), "one");
+        let environment = fixture.environment.clone().with_pi_agent_dir_unmapped();
+        let preview = discover_skill_import(&fixture.database, &fixture.paths, &environment, Tool::Pi)
+            .unwrap();
+        assert_eq!(preview.sources.len(), 1);
+        assert_eq!(preview.sources[0].kind, SourceKind::PiAgentGlobal);
+        assert_eq!(preview.sources[0].status, SourceStatus::Unavailable);
+        assert_eq!(
+            preview.sources[0].diagnostic_code.as_deref(),
+            Some("SKILL_IMPORT_TOOL_UNAVAILABLE")
+        );
+        assert!(preview.candidates.is_empty());
+        assert!(preview.preview_id.is_none());
+    }
+
+    #[test]
     fn exact_external_link_requires_takeover_preview_before_apply() {
         for tool in [Tool::Cursor, Tool::Opencode] {
             verify_external_link_takeover(tool);
@@ -425,7 +703,7 @@ mod tests {
                 Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
                 Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
                 Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
-                Tool::Pi => unreachable!("Pi Skills 导入在后续阶段接入"),
+                Tool::Pi => unreachable!("此回归循环只覆盖内置集合来源"),
             };
             fixture.skill(&compat.join(".system/builtin"), "builtin");
             fs::create_dir_all(&source).unwrap();
@@ -464,7 +742,7 @@ mod tests {
                     Tool::Cursor => fixture.environment.home().join(".cursor/skills"),
                     Tool::Zcode => fixture.environment.home().join(".zcode/skills"),
                     Tool::Opencode => fixture.environment.opencode_config_dir().join("skills"),
-                    Tool::Pi => unreachable!("Pi Skills 导入在后续阶段接入"),
+                    Tool::Pi => unreachable!("此回归循环只覆盖内置集合来源"),
                 };
                 let actual = fixture.root.join("external");
                 fixture.skill(&actual.join("one"), "one");

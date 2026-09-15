@@ -147,7 +147,10 @@ export function DialogBody({
   return (
     <div
       {...props}
-      className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-3", className)}
+      className={cn(
+        "min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-3",
+        className,
+      )}
     >
       {children}
     </div>

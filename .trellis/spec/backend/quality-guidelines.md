@@ -997,8 +997,10 @@ let adopted = adopt_skill_content(database, paths, &VersionedSkillInput { id, ro
   metadata, status, paths, hashes, and stable codes.
 - First-run detection is read-only. Import confirmation changes only central intent;
   every native write still needs a persisted preview and exact Apply. An interrupted
-  wizard can regenerate previews from active central profiles. Explicit all-skip is
-  persisted so the app does not loop forever while both tools remain unmanaged.
+  wizard re-detects current native and central state, intersects persisted choices with
+  current evidence, and never re-imports or previews an item already active centrally.
+  Explicit all-skip is persisted so the app does not loop forever while tools remain
+  unmanaged.
 - A global snapshot restore derives its allowed root from the exact tool/artifact
   matrix (`HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or Cursor's
   `$HOME/.cursor`). Cursor accepts MCP/Skill and global Prompt snapshots; Provider

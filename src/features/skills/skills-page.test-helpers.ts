@@ -18,7 +18,9 @@ export function nativeImport(tool: Tool): SkillImportPreviewDto {
       ? "/isolated/custom-claude/skills"
       : tool === "codex"
         ? "/isolated/custom-codex/skills"
-        : "/isolated/custom-cursor/skills";
+        : tool === "pi"
+          ? "/isolated/custom-pi-agent/skills"
+          : "/isolated/custom-cursor/skills";
   return {
     previewId: `native-${tool}-preview`,
     tool,
@@ -50,22 +52,32 @@ export function nativeImport(tool: Tool): SkillImportPreviewDto {
                 message: null,
               },
             ]
-          : [
-              {
-                kind: "cursor_home",
-                path: root,
-                status: "ready",
-                diagnosticCode: null,
-                message: null,
-              },
-              {
-                kind: "cursor_agents",
-                path: "/isolated/home/.agents/skills",
-                status: "missing",
-                diagnosticCode: "SKILL_IMPORT_SOURCE_MISSING",
-                message: null,
-              },
-            ],
+          : tool === "pi"
+            ? [
+                {
+                  kind: "pi_agent_global",
+                  path: root,
+                  status: "ready",
+                  diagnosticCode: null,
+                  message: null,
+                },
+              ]
+            : [
+                {
+                  kind: "cursor_home",
+                  path: root,
+                  status: "ready",
+                  diagnosticCode: null,
+                  message: null,
+                },
+                {
+                  kind: "cursor_agents",
+                  path: "/isolated/home/.agents/skills",
+                  status: "missing",
+                  diagnosticCode: "SKILL_IMPORT_SOURCE_MISSING",
+                  message: null,
+                },
+              ],
     candidates: [
       {
         candidateId: "new",
@@ -189,6 +201,13 @@ export function setupMocks() {
         tool: "cursor",
         projectId: null,
         targetPath: "/isolated/home/.cursor/skills",
+        status: "missing",
+        diagnosticCode: null,
+      },
+      {
+        tool: "pi",
+        projectId: null,
+        targetPath: "/isolated/custom-pi-agent/skills",
         status: "missing",
         diagnosticCode: null,
       },

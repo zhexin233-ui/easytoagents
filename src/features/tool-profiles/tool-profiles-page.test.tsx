@@ -1348,6 +1348,17 @@ describe("ToolProfilesPage", () => {
     ).toHaveLength(1);
   });
 
+  it("工具档案路由注册 Pi 并可从共享页签导航到详情页", async () => {
+    expect(TOOL_PROFILE_ROUTES.map(({ path }) => path)).toContain("pi");
+    renderWithProviders(<ToolRouteHarness />, { route: "/claude" });
+
+    fireEvent.click(screen.getByRole("link", { name: "pi" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Pi", level: 1 }),
+    ).toBeVisible();
+  });
+
   it("切换工具页签后导入预览不残留", async () => {
     vi.mocked(commands.discoverProviderImport).mockResolvedValue({
       status: "ok",

@@ -35,7 +35,7 @@ commands.importGithubSkill({ url });
 | 列                           | 约束 / 用途                                                                                        |
 | ---------------------------- | -------------------------------------------------------------------------------------------------- |
 | `id`                         | 小写 UUID 文本主键                                                                                 |
-| `tool`                       | `claude` / `codex` / `cursor`                                                                      |
+| `tool`                       | 生成绑定中的 `Tool`（包括 `claude` / `codex` / `cursor` / `zcode` / `opencode` / `pi`）         |
 | `context_json`               | 合法 object JSON；版本、来源环境指纹、全部中央 Skill ID/row_version 指纹、候选来源链/目录身份/hash，以及可接管入口类型/身份/中央路径 |
 | `redacted_preview_json`      | 合法 object JSON；安全的展示 DTO                                                                   |
 | `status`                     | `previewed` / `consumed`，默认 `previewed`                                                         |
@@ -84,8 +84,35 @@ SQL 提交报错后必须按本次 UUID 重读记录：确认已提交则保留�
 | Claude | `environment.claude_config_dir()/skills`                                 | 同一 Claude 来源根                   |
 | Codex  | `environment.codex_home()/skills`、`environment.home()/.agents/skills`   | `$CODEX_HOME/skills`（跟随 CODEX_HOME） |
 | Cursor | `environment.home()/.cursor/skills`、`environment.home()/.agents/skills` | `$HOME/.cursor/skills`               |
+| Pi     | `environment.pi_agent_dir()/skills`                                      | 同一 Pi 全局来源根                   |
 
 Codex 的正式同步目标是 Codex 实际读取技能的目录 `$CODEX_HOME/skills`（Codex 自带 `.system` 内置技能即位于其中）；`HOME/.agents/skills` 是跨工具通用目录，仅作导入来源（kind `codex_agents`），**不是**同步目标。`CLAUDE_CONFIG_DIR` / `CODEX_HOME` 由启动时的 `ExplicitEnvironment` 提供；前端不得传任意路径，服务不得重新读环境。能力不支持或策略非 Allowed 时，不读取候选内容。
+
+Pi 的全局来源 kind 为 `pi_agent_global`，其路径由显式环境的
+`environment.pi_agent_dir()/skills` 提供；项目 `.pi/skills` 不属于无 project identity 的
+全局发现命令。该来源也是 Pi 的正式同步目标，因此只有其直属精确同名入口才具备接管资格。
+
+#### 场景：Pi 全局 Skills 发现与显式接管
+
+1. **Scope / Trigger**：当全局 Skills RPC 的 `tool` 为 `pi` 时启用；项目
+   `.pi/skills` 不进入该无 project identity 的流程。
+2. **Signatures**：`discover_skill_import(..., Tool::Pi)` 返回来源 kind
+   `pi_agent_global`；复制继续调用 `confirm_skill_import`，接管继续调用
+   `prepare_skill_takeover`，不增加 Pi 专用命令。
+3. **Contracts**：来源根只能由启动时捕获的
+   `ExplicitEnvironment::pi_agent_dir()/skills` 派生。复制只创建中央副本；接管准备只返回
+   持久化 `PreviewPlan`，Apply 仍需用户用精确 `preview_id` 确认。
+4. **Validation & Error Matrix**：未映射/不支持/策略阻断 → `unavailable` 且不读候选；
+   缺失根 → `missing`；空根 → `empty`；入口 basename 与 frontmatter `name` 不同、非直属、
+   指向已知 Ready 中央副本或 hash/身份 stale → 不提供接管资格或在准备时拒绝。
+5. **Good / Base / Bad**：Good 是正式根直属同名的外部链接或真实目录与 Ready 中央副本
+   完整树 hash 相同；Base 是普通未导入目录仅可复制；Bad 是中央链接、别名入口、项目入口、
+   名称或内容不一致，均不得接管。
+6. **Tests Required**：覆盖 missing/empty/ready/unmapped、复制无 assignment/managed/sync
+   副作用、同名外链与目录的 Preview→Apply、中央链接排除，以及确认前来源变化失败。
+7. **Wrong vs Correct**：错误做法是看到 `<pi_agent_dir>/skills` 下存在同 hash 目录就自动
+   接管；正确做法是先验证直属 basename、frontmatter name、完整树 hash、入口与中央身份，
+   再生成持久化 Preview，并等待显式 Apply。
 
 Cursor 的同步目标只允许 `$HOME/.cursor/skills` 或登记项目的
 `<root>/.cursor/skills`；`$HOME/.agents/skills` 对 Cursor 也仅是导入来源（kind
@@ -113,7 +140,7 @@ Desktop smoke 已验证指向中央 Skill 目录的符号链接可被发现；�
 ### 精确接管证据与预览
 
 检测仍是只读的。只有正式全局来源 kind（`claude_global` / `codex_home` /
-`cursor_home`）中，入口路径精确等于 `<formal_root>/<skill.name>`，才可附加接管
+`cursor_home` / `pi_agent_global`）中，入口路径精确等于 `<formal_root>/<skill.name>`，才可附加接管
 资格。入口必须是解析到应用数据根之外的符号链接，或正式根下的真实目录；完整树
 hash、入口类型、no-follow 身份指纹、中央 Skill ID/path/hash 都写入私有
 `context_json`。已指向中央库、兼容来源别名、项目路径、非直属入口、名称或内容不一致
@@ -148,10 +175,12 @@ Apply 没有接管证据时仍拒绝外部链接或目录，不能扩宽既有�
 
 - 预览：`previewId: string | null`、`tool`、`sources`、`candidates`、`message`。无可复制且无可接管候选时没有确认令牌。
 - 来源：`kind`（`claude_global` / `codex_home` / `codex_agents` /
-  `cursor_home` / `cursor_agents`）、`path`、`status`（`ready` / `missing` /
+  `cursor_home` / `cursor_agents` / `zcode_home` / `zcode_agents` /
+  `opencode_global` / `pi_agent_global`）、`path`、`status`（`ready` / `missing` /
   `empty` / `unavailable`）、`diagnosticCode`、`message`。一个来源失败不能隐藏
-  另一个来源结果。`codex_home`、`cursor_home` 分别是正式同步目标所在目录；
-  `codex_agents`、`cursor_agents` 仅作导入来源。
+  另一个来源结果。`codex_home`、`cursor_home`、`zcode_home`、`opencode_global`、
+  `pi_agent_global` 分别是正式同步目标所在目录；`codex_agents`、`cursor_agents`、
+  `zcode_agents` 仅作导入来源。
 - 候选：`candidateId`、`name`、`description`、`sourcePaths`、`status`、`reason`、`existingSkillId`、`takeoverEligible`、`takeoverEntryType`。状态为 `importable` / `already_imported` / `name_conflict` / `invalid`；接管类型仅为 `external_symlink` / `directory`。
 - 确认输入仅 `previewId` 与 1–32 个非重复 `candidateIds`。路径、名称、hash、工具均从私有证据读取，不信任客户端重建值。
 - 结果仅 `tool`、`createdCount`；不返回暗示自动分配的数量。同目录或精确 name/hash 相同来源合并并保留来源路径；同名不同内容和 NOCASE 名称碰撞不可选，不覆盖或自动改名。
@@ -240,14 +269,14 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 
 使用临时 home/config/data 和 fixture 技能；不向真实用户目录确认导入或 Apply。
 
-- `skills::import`：默认/自定义来源、缺失正式目标、绝对/相对链接、去重/冲突、中央复用、非法路径与限额；检测无 staging，普通 DTO/持久化证据不含 fixture 正文和私有 frontmatter。
+- `skills::import`：默认/自定义来源、Pi `pi_agent_dir()/skills`（缺失/空/就绪及未映射环境）、缺失正式目标、绝对/相对链接、去重/冲突、中央复用、非法路径与限额；检测无 staging，普通 DTO/持久化证据不含 fixture 正文和私有 frontmatter。
 - 内置回归同时遍历 Claude/Codex/Cursor：真实 `.system`、集合链接和真实目标别名；集合无 `SKILL.md` 仍排除；确认前、copy、SQL 阶段新建内置别名时整批拒绝且 token 未消费。
 - 确认回归：选择子集、空/重复/未知 ID、来源/中央 stale、活动 writer、两个独立 DB 连接竞争、第二项故障、提交不确定与回滚；原文件 inode/权限/链接文本及全部 assignment/managed/sync 表不变。
 - library：排他 rename 不覆盖既有目录；清理保留被替换/更改的目录；原单目录根链接仍拒绝。
 - DB：v5→v6 保留已有数据，重复打开幂等，绑定生成检查通过。
 - service + UI：初始/空/仅元文件/缺失目标/无基线 target 行/半基线/desired/managed item 漂移/同名普通目录与外部或断裂链接/中央损坏/策略权限类型错误/完整基线后真实非受管变化矩阵；首次三工具 Apply 后 InSync 且原兄弟保留，MCP 回归不变。
 - `skills-page.test.tsx`：选择和精确 payload、局部失败、失效重扫、晚到响应、双提交与关闭锁、Tab/Escape/焦点、复制后刷新失败，断言没有 assignment/Apply。
-- 接管回归：Claude/Codex/Cursor 正式入口的外链与目录资格、兼容来源不可接管、准备 stale/活动 writer/重复消费、普通复制拒绝接管候选；Apply 覆盖接管前后竞态、外链目标不变、目录树快照恢复/删除、隔离项回滚/崩溃清理。
+- 接管回归：Claude/Codex/Cursor/Pi 正式入口的外链与目录资格、兼容来源不可接管、准备 stale/活动 writer/重复消费、普通复制拒绝接管候选；Apply 覆盖接管前后竞态、外链目标不变、目录树快照恢复/删除、隔离项回滚/崩溃清理。
 - `skills-page.test.tsx`：复制/接管分组与独立 payload；接管准备后一定打开精确返回的持久化预览，`direct` 下也断言 Apply 尚未调用。
 - `snapshot-restore-dialog.test.tsx`：显示 `payload_file` / `metadata_only` / `directory_tree`，旧目录占位快照禁恢复但可删除，目录树恢复预览提示恢复后的中央漂移。
 - 分配 UI：断言中央列表与目标状态一起刷新，成功文案说明仍需显式同步；仅 `missing` 或 `external_non_owned_change` 与 pending 诊断组合覆盖徽标，其它组合不覆盖；分配/取消分配均不调用 Preview/Apply。

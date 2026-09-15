@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   commands,
@@ -27,6 +27,7 @@ import {
 } from "@/features/tool-profiles/provider-text";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { profileErrorText, profileKeys, unwrapResult } from "@/lib/profile-api";
+import { appSettingsQueryOptions } from "@/lib/settings-api";
 import { toneClass } from "@/lib/tone-class";
 import {
   PROFILE_TOOLS,
@@ -62,6 +63,19 @@ interface WizardPreview {
   plan: PreviewPlan;
 }
 
+interface PendingToolConfiguration {
+  /** 仅返回尚未被中央 active 档案接管的原生证据。 */
+  provider: ProviderImportPreviewDto | null;
+  prompt: PromptImportPreviewDto | null;
+  /** 工具是否已经没有任何需要用户处理的受支持配置。 */
+  resolved: boolean;
+}
+
+interface DetectionRequest {
+  requestId: number;
+  tools: readonly ProfileTool[];
+}
+
 const emptyChoices: Choices = {
   claude: { provider: false, prompt: false, skip: false },
   codex: { provider: false, prompt: false, skip: false },
@@ -83,7 +97,11 @@ export function OnboardingWizard({
 
 function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  // useEnabledTools 在设置尚未返回时会回落默认集合；检测必须等真实设置
+  // 到位后再启动，否则启用 Pi 时首轮检测会在 Pi 加入 tools 前结束。
+  const settingsQuery = useQuery(appSettingsQueryOptions());
   const tools = filterEnabledTools(PROFILE_TOOLS, useEnabledTools());
+  const toolsKey = tools.join(",");
   const [step, setStep] = useState<"detect" | "select" | "preview" | "done">(
     "detect",
   );
@@ -94,67 +112,72 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   const [choices, setChoices] = useState<Choices>(() => readChoices());
   const [previews, setPreviews] = useState<WizardPreview[]>([]);
   const [hasAppliedPreview, setHasAppliedPreview] = useState(false);
+  const detectionRequestId = useRef(0);
   const { dialogRef } = useDialogFocus(true, onClose);
 
   const detectMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ tools: detectionTools }: DetectionRequest) => {
       const entries = await Promise.all(
-        tools.map(async (tool): Promise<[ProfileTool, ToolDiscovery]> => {
-          const errors: string[] = [];
-          const providerSupported = toolMetadata(tool).capabilities.provider;
-          const [
-            statusResult,
-            providerResult,
-            promptResult,
-            providersResult,
-            promptsResult,
-          ] = await Promise.allSettled([
-            commands.getToolProfileStatus(tool).then(unwrapResult),
-            // Provider 不受支持的工具（Cursor）不发起 Provider 导入发现，保持
-            // fail closed：原生 Provider 目标不会被读取。
-            providerSupported
-              ? commands.discoverProviderImport(tool).then(unwrapResult)
-              : Promise.resolve(null),
-            commands.discoverPromptImport(tool).then(unwrapResult),
-            providerSupported
-              ? commands.listProviderProfiles(tool).then(unwrapResult)
-              : Promise.resolve(null),
-            commands.listPromptProfiles().then(unwrapResult),
-          ]);
-          const status = settledValue(
-            statusResult,
-            errors,
-            "工具安装状态读取失败",
-          );
-          const provider = settledValue(
-            providerResult,
-            errors,
-            "Provider 检测失败",
-          );
-          const prompt = settledValue(promptResult, errors, "提示词检测失败");
-          const providerManaged =
-            settledValue(
+        detectionTools.map(
+          async (tool): Promise<[ProfileTool, ToolDiscovery]> => {
+            const errors: string[] = [];
+            const providerSupported = toolMetadata(tool).capabilities.provider;
+            const [
+              statusResult,
+              providerResult,
+              promptResult,
               providersResult,
+              promptsResult,
+            ] = await Promise.allSettled([
+              commands.getToolProfileStatus(tool).then(unwrapResult),
+              // Provider 不受支持的工具（Cursor）不发起 Provider 导入发现，保持
+              // fail closed：原生 Provider 目标不会被读取。
+              providerSupported
+                ? commands.discoverProviderImport(tool).then(unwrapResult)
+                : Promise.resolve(null),
+              commands.discoverPromptImport(tool).then(unwrapResult),
+              providerSupported
+                ? commands.listProviderProfiles(tool).then(unwrapResult)
+                : Promise.resolve(null),
+              commands.listPromptProfiles().then(unwrapResult),
+            ]);
+            const status = settledValue(
+              statusResult,
               errors,
-              "中央 Provider 状态读取失败",
-            )?.some((profile) => profile.isActive) ?? false;
-          const promptManaged =
-            settledValue(promptsResult, errors, "中央提示词状态读取失败")?.some(
-              (profile) => profile.globalTools.includes(tool),
-            ) ?? false;
-          return [
-            tool,
-            {
-              availability: status?.availability ?? "unsupported",
-              installationVersion: status?.installationVersion ?? null,
-              provider,
-              prompt,
-              providerManaged,
-              promptManaged,
+              "工具安装状态读取失败",
+            );
+            const provider = settledValue(
+              providerResult,
               errors,
-            },
-          ];
-        }),
+              "Provider 检测失败",
+            );
+            const prompt = settledValue(promptResult, errors, "提示词检测失败");
+            const providerManaged =
+              settledValue(
+                providersResult,
+                errors,
+                "中央 Provider 状态读取失败",
+              )?.some((profile) => profile.isActive) ?? false;
+            const promptManaged =
+              settledValue(
+                promptsResult,
+                errors,
+                "中央提示词状态读取失败",
+              )?.some((profile) => profile.globalTools.includes(tool)) ?? false;
+            return [
+              tool,
+              {
+                availability: status?.availability ?? "unsupported",
+                installationVersion: status?.installationVersion ?? null,
+                provider,
+                prompt,
+                providerManaged,
+                promptManaged,
+                errors,
+              },
+            ];
+          },
+        ),
       );
       const result: Record<ProfileTool, ToolDiscovery> = {
         claude: {
@@ -217,42 +240,63 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
       }
       return result;
     },
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
+      // 设置变化或用户重扫可能让多个只读检测同时在途；旧响应不能覆盖
+      // 最新工具集合和中央档案状态。
+      if (variables.requestId !== detectionRequestId.current) return;
       setDiscovery(result);
+      setChoices((current) =>
+        reconcileChoices(current, result, variables.tools),
+      );
       setStep("select");
     },
   });
+  const startDetection = () => {
+    const requestId = detectionRequestId.current + 1;
+    detectionRequestId.current = requestId;
+    // 新一轮检测开始后，旧 discovery/Preview 不再是可提交证据；先清空
+    // 它们，避免新请求失败时把旧选择重新暴露给用户。
+    setDiscovery(null);
+    setPreviews([]);
+    setHasAppliedPreview(false);
+    setStep("detect");
+    if (!prepareMutation.isPending) prepareMutation.reset();
+    if (!applyMutation.isPending) applyMutation.reset();
+    detectMutation.mutate({ requestId, tools });
+  };
   const prepareMutation = useMutation({
     mutationFn: async () => {
       const prepared: WizardPreview[] = [];
+      const currentChoices = reconcileChoices(choices, discovery, tools);
       for (const tool of tools) {
-        const selected = choices[tool];
+        const selected = currentChoices[tool];
         const found = discovery?.[tool];
         if (selected.skip || !found) continue;
-        if (selected.provider && found.provider) {
+        const pending = pendingToolConfiguration(tool, found);
+        if (selected.provider && pending.provider) {
           unwrapResult(
             await commands.confirmProviderImport({
-              previewId: found.provider.previewId,
-              name: found.provider.suggestedName,
+              previewId: pending.provider.previewId,
+              name: pending.provider.suggestedName,
             }),
           );
         }
-        if (selected.provider && (found.provider || found.providerManaged)) {
+        if (selected.provider && pending.provider) {
           prepared.push({
             tool,
             artifactKind: "provider",
             plan: unwrapResult(await commands.previewProviderSync(tool)),
           });
         }
-        if (selected.prompt && found.prompt) {
+        if (selected.prompt && pending.prompt) {
           unwrapResult(
             await commands.confirmPromptImport({
-              previewId: found.prompt.previewId,
-              name: found.prompt.suggestedName,
+              previewId: pending.prompt.previewId,
+              name: pending.prompt.suggestedName,
             }),
           );
         }
-        if (selected.prompt && (found.prompt || found.promptManaged)) {
+        if (selected.prompt && pending.prompt) {
           prepared.push({
             tool,
             artifactKind: "prompt",
@@ -305,10 +349,19 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   });
 
   useEffect(() => {
-    detectMutation.mutate();
-    // 组件每次打开都会重新挂载，因此必须重新读取原生目标，不能复用旧 discovery。
+    if (settingsQuery.isPending) return;
+    let active = true;
+    // 让首次检测在当前渲染提交后启动；这样清空旧证据不会在 effect
+    // 体内同步触发级联渲染，设置变化时仍保持 fail closed。
+    queueMicrotask(() => {
+      if (active) startDetection();
+    });
+    return () => {
+      active = false;
+    };
+    // 组件每次打开都会重新挂载；启用工具设置变化时也必须重新读取原生目标。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [settingsQuery.isPending, toolsKey]);
 
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(choices));
@@ -322,20 +375,28 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
   const previewWarnings = previews.flatMap(
     (preview) => preview.plan.warningCodes,
   );
-  const operationError = profileErrorText(
-    detectMutation.error ?? prepareMutation.error ?? applyMutation.error,
-  );
+  const isDetecting = detectMutation.isPending;
+  const operationError = isDetecting
+    ? null
+    : profileErrorText(
+        detectMutation.error ?? prepareMutation.error ?? applyMutation.error,
+      );
+  // localStorage 中的选择只是用户偏好，不是当前检测证据。中央档案状态
+  // 变化后，已接管的旧选择在渲染、prepare 和 canPrepare 三处均被收敛掉。
+  const effectiveChoices = reconcileChoices(choices, discovery, tools);
   const canPrepare =
     discovery !== null &&
+    !isDetecting &&
     tools.every((tool) => {
-      const choice = choices[tool];
+      const choice = effectiveChoices[tool];
       const found = discovery[tool];
+      const pending = pendingToolConfiguration(tool, found);
       return (
         choice.skip ||
+        pending.resolved ||
         (found.availability === "installed" &&
-          ((choice.provider &&
-            (found.provider !== null || found.providerManaged)) ||
-            (choice.prompt && (found.prompt !== null || found.promptManaged))))
+          ((choice.provider && pending.provider !== null) ||
+            (choice.prompt && pending.prompt !== null)))
       );
     });
 
@@ -349,7 +410,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
         size="lg"
       >
         <DialogHeader>
-          <div>
+          <div className="min-w-0">
             <p className="text-muted-foreground">首次接管向导</p>
             <h2
               id="onboarding-title"
@@ -393,33 +454,44 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                 {...(step === "detect"
                   ? {
                       actionLabel: "重新检测",
-                      onAction: () => detectMutation.mutate(),
+                      onAction: startDetection,
                     }
                   : {})}
               />
             </div>
           ) : null}
 
-          {step === "detect" ? (
+          {step === "detect" || isDetecting ? (
             <p role="status" className="mt-6 text-sm">
               正在只读检测各工具的 Provider 与全局提示词…
             </p>
           ) : null}
 
-          {step === "select" && discovery ? (
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
+          {step === "select" && discovery && !isDetecting ? (
+            <div className="mt-6 grid min-w-0 gap-4 md:grid-cols-2">
               {tools.map((tool) => {
                 const found = discovery[tool];
-                const choice = choices[tool];
-                const providerDisabledReason = toolMetadata(tool).capabilities
-                  .provider
-                  ? providerChoiceDisabledReason(found)
-                  : "该工具不支持渠道配置。";
-                const promptDisabledReason = promptChoiceDisabledReason(found);
+                const choice = effectiveChoices[tool];
+                const pending = pendingToolConfiguration(tool, found);
+                // 已完成接管的工具不再要求用户“跳过”，也不显示空卡片。
+                if (pending.resolved) return null;
+                const providerSupported =
+                  toolMetadata(tool).capabilities.provider;
+                const promptSupported =
+                  toolMetadata(tool).capabilities.promptGlobal;
+                const providerDisabledReason = providerSupported
+                  ? providerChoiceDisabledReason(found, pending.provider)
+                  : null;
+                const promptDisabledReason = promptSupported
+                  ? promptChoiceDisabledReason(found, pending.prompt)
+                  : null;
                 const providerReasonId = `${tool}-provider-choice-reason`;
                 const promptReasonId = `${tool}-prompt-choice-reason`;
                 return (
-                  <fieldset key={tool} className="rounded-lg border p-4">
+                  <fieldset
+                    key={tool}
+                    className="min-w-0 rounded-lg border p-4"
+                  >
                     <legend className="px-1 font-semibold">
                       {toolLabel(tool)}
                     </legend>
@@ -428,43 +500,43 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                         ? "未检测到安装，请跳过。"
                         : found.availability === "unsupported"
                           ? "无法确认版本，请检查安装后重试。"
-                          : found.provider || found.prompt
+                          : pending.provider || pending.prompt
                             ? `已检测到${found.installationVersion ? `版本 ${found.installationVersion}，` : ""}可接管的原生配置。`
                             : found.providerManaged || found.promptManaged
-                              ? "已有中央档案。"
+                              ? "已有中央档案；其余项目可选择跳过。"
                               : "未发现可导入配置。"}
                     </p>
-                    {found.provider ? (
-                      <div className="bg-muted rounded-control mt-3 p-3 text-xs">
+                    {pending.provider ? (
+                      <div className="bg-muted rounded-control mt-3 max-w-full min-w-0 p-3 text-xs">
                         <p className="font-medium">发现 Provider</p>
                         <code className="mt-1 block break-all">
-                          {found.provider.targetPath}
+                          {pending.provider.targetPath}
                         </code>
                         <p className="text-muted-foreground mt-1">
-                          {providerModelText(found.provider.defaultModel)} ·{" "}
-                          {providerImportCredentialText(found.provider)}
+                          {providerModelText(pending.provider.defaultModel)} ·{" "}
+                          {providerImportCredentialText(pending.provider)}
                         </p>
-                        {found.provider.skippedEnvKeys.length > 0 ? (
+                        {pending.provider.skippedEnvKeys.length > 0 ? (
                           <p className="text-muted-foreground mt-1">
                             以下 env
                             疑似凭据或格式不受支持，不纳入管理并保持原样：
-                            {found.provider.skippedEnvKeys.join("、")}
+                            {pending.provider.skippedEnvKeys.join("、")}
                           </p>
                         ) : null}
-                        <pre className="mt-2 overflow-auto">
+                        <pre className="mt-2 max-w-full overflow-auto">
                           {JSON.stringify(
-                            found.provider.redactedProjection,
+                            pending.provider.redactedProjection,
                             null,
                             2,
                           )}
                         </pre>
                       </div>
                     ) : null}
-                    {found.prompt ? (
-                      <div className="bg-muted rounded-control mt-3 p-3 text-xs">
+                    {pending.prompt ? (
+                      <div className="bg-muted rounded-control mt-3 max-w-full min-w-0 p-3 text-xs">
                         <p className="font-medium">发现全局提示词</p>
                         <code className="mt-1 block break-all">
-                          {found.prompt.targetPath}
+                          {pending.prompt.targetPath}
                         </code>
                       </div>
                     ) : null}
@@ -477,59 +549,69 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                         {error}
                       </p>
                     ))}
-                    <label className="mt-4 flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={choice.provider}
-                        disabled={providerDisabledReason !== null}
-                        aria-describedby={
-                          providerDisabledReason ? providerReasonId : undefined
-                        }
-                        onChange={(event) =>
-                          updateChoice(
-                            setChoices,
-                            tool,
-                            "provider",
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      导入并接管 Provider
-                    </label>
-                    {providerDisabledReason ? (
-                      <p
-                        id={providerReasonId}
-                        className="text-muted-foreground mt-1 pl-6 text-xs"
-                      >
-                        {providerDisabledReason}
-                      </p>
+                    {providerSupported && !found.providerManaged ? (
+                      <>
+                        <label className="mt-4 flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={choice.provider}
+                            disabled={providerDisabledReason !== null}
+                            aria-describedby={
+                              providerDisabledReason
+                                ? providerReasonId
+                                : undefined
+                            }
+                            onChange={(event) =>
+                              updateChoice(
+                                setChoices,
+                                tool,
+                                "provider",
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          导入并接管 Provider
+                        </label>
+                        {providerDisabledReason ? (
+                          <p
+                            id={providerReasonId}
+                            className="text-muted-foreground mt-1 pl-6 text-xs"
+                          >
+                            {providerDisabledReason}
+                          </p>
+                        ) : null}
+                      </>
                     ) : null}
-                    <label className="mt-3 flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={choice.prompt}
-                        disabled={promptDisabledReason !== null}
-                        aria-describedby={
-                          promptDisabledReason ? promptReasonId : undefined
-                        }
-                        onChange={(event) =>
-                          updateChoice(
-                            setChoices,
-                            tool,
-                            "prompt",
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      无损导入并接管全局提示词
-                    </label>
-                    {promptDisabledReason ? (
-                      <p
-                        id={promptReasonId}
-                        className="text-muted-foreground mt-1 pl-6 text-xs"
-                      >
-                        {promptDisabledReason}
-                      </p>
+                    {promptSupported && !found.promptManaged ? (
+                      <>
+                        <label className="mt-3 flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={choice.prompt}
+                            disabled={promptDisabledReason !== null}
+                            aria-describedby={
+                              promptDisabledReason ? promptReasonId : undefined
+                            }
+                            onChange={(event) =>
+                              updateChoice(
+                                setChoices,
+                                tool,
+                                "prompt",
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          无损导入并接管全局提示词
+                        </label>
+                        {promptDisabledReason ? (
+                          <p
+                            id={promptReasonId}
+                            className="text-muted-foreground mt-1 pl-6 text-xs"
+                          >
+                            {promptDisabledReason}
+                          </p>
+                        ) : null}
+                      </>
                     ) : null}
                     <label className="mt-3 flex items-center gap-2 text-sm">
                       <input
@@ -564,7 +646,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             </div>
           ) : null}
 
-          {step === "preview" ? (
+          {step === "preview" && !isDetecting ? (
             <div className="mt-6 space-y-4">
               {previewWarnings.length > 0 ? (
                 <ul
@@ -578,7 +660,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
               {previews.map((preview) => (
                 <article
                   key={`${preview.tool}-${preview.artifactKind}`}
-                  className="rounded-lg border p-4"
+                  className="min-w-0 rounded-lg border p-4"
                 >
                   <h3 className="font-medium">
                     {toolLabel(preview.tool)} ·{" "}
@@ -588,7 +670,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                     {preview.plan.targets.map((target) => (
                       <div
                         key={target.targetId}
-                        className="rounded-control border p-3"
+                        className="rounded-control min-w-0 border p-3"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <code className="text-xs break-all">
@@ -614,7 +696,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                             ))}
                           </ul>
                         ) : null}
-                        <pre className="bg-muted rounded-control mt-3 overflow-auto p-3 text-xs">
+                        <pre className="bg-muted rounded-control mt-3 max-w-full overflow-auto p-3 text-xs">
                           {JSON.stringify(target.redactedDiff, null, 2)}
                         </pre>
                       </div>
@@ -640,7 +722,7 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
             </div>
           ) : null}
 
-          {step === "done" ? (
+          {step === "done" && !isDetecting ? (
             <div
               className={`mt-6 rounded-lg border p-5 ${toneClass("success")}`}
             >
@@ -703,23 +785,65 @@ function updateChoice(
   }));
 }
 
-function providerChoiceDisabledReason(found: ToolDiscovery): string | null {
+function pendingToolConfiguration(
+  tool: ProfileTool,
+  found: ToolDiscovery,
+): PendingToolConfiguration {
+  const capabilities = toolMetadata(tool).capabilities;
+  const provider =
+    capabilities.provider && !found.providerManaged ? found.provider : null;
+  const prompt =
+    capabilities.promptGlobal && !found.promptManaged ? found.prompt : null;
+  const resolved =
+    (!capabilities.provider || found.providerManaged) &&
+    (!capabilities.promptGlobal || found.promptManaged);
+  return { provider, prompt, resolved };
+}
+
+function reconcileChoices(
+  choices: Choices,
+  discovery: Record<ProfileTool, ToolDiscovery> | null,
+  tools: readonly ProfileTool[],
+): Choices {
+  if (!discovery) return choices;
+  const next = { ...choices };
+  for (const tool of tools) {
+    const found = discovery[tool];
+    const pending = pendingToolConfiguration(tool, found);
+    const choice = choices[tool];
+    next[tool] = {
+      ...choice,
+      // 旧选择只代表用户偏好，不能重新获得已接管项的提交资格。
+      provider: choice.provider && pending.provider !== null,
+      prompt: choice.prompt && pending.prompt !== null,
+    };
+  }
+  return next;
+}
+
+function providerChoiceDisabledReason(
+  found: ToolDiscovery,
+  pending: ProviderImportPreviewDto | null,
+): string | null {
   const availabilityReason = availabilityDisabledReason(found.availability);
   if (availabilityReason) {
     return availabilityReason;
   }
-  if (!found.provider && !found.providerManaged) {
+  if (!pending) {
     return "未发现可导入的 Provider。";
   }
   return null;
 }
 
-function promptChoiceDisabledReason(found: ToolDiscovery): string | null {
+function promptChoiceDisabledReason(
+  found: ToolDiscovery,
+  pending: PromptImportPreviewDto | null,
+): string | null {
   const availabilityReason = availabilityDisabledReason(found.availability);
   if (availabilityReason) {
     return availabilityReason;
   }
-  if (!found.prompt && !found.promptManaged) {
+  if (!pending) {
     return "未发现可导入的全局提示词。";
   }
   return null;

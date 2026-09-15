@@ -64,7 +64,12 @@ fn is_managed_source(kind: SourceKind) -> bool {
             | SourceKind::CursorHome
             | SourceKind::ZcodeHome
             | SourceKind::OpencodeGlobal
+            | SourceKind::PiAgentGlobal
     )
+}
+
+fn takeover_entry_matches_name(entry: &Path, name: &str) -> bool {
+    entry.file_name().and_then(|value| value.to_str()) == Some(name)
 }
 
 fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKind, PathBuf)> {
@@ -111,9 +116,13 @@ fn source_roots(environment: &ExplicitEnvironment, tool: Tool) -> Vec<(SourceKin
             SourceKind::OpencodeGlobal,
             environment.opencode_config_dir().join("skills"),
         )],
-        // Pi Skills 导入来源（`<pi_agent_dir>/skills` 与项目 `.pi/skills`）
-        // 在阶段 2/4 接入；在此之前显式返回空集合。
-        Tool::Pi => Vec::new(),
+        // Pi 的全局正式来源同时也是其实际全局同步目标。
+        // 项目 `.pi/skills` 没有 project identity，继续由项目页的原生资源
+        // 流程处理，不加入这个全局发现命令。
+        Tool::Pi => vec![(
+            SourceKind::PiAgentGlobal,
+            environment.pi_agent_dir().join("skills"),
+        )],
     }
 }
 
@@ -426,6 +435,7 @@ pub fn discover_skill_import(
                     if is_managed_source(kind)
                         && descriptor.path.as_deref() == root.to_str()
                         && !evidence.resolved.starts_with(paths.data_root())
+                        && takeover_entry_matches_name(&entry, &candidate.name)
                     {
                         if let Ok(takeover) = library::inspect_skill_takeover_entry(&entry) {
                             if takeover.content_hash == inspection.hash {
@@ -957,6 +967,9 @@ fn validate_takeover_candidate_entry(
     entry_type: SkillTakeoverEntryType,
     expected_fingerprint: &str,
 ) -> Result<(), AppError> {
+    if !takeover_entry_matches_name(&source.entry, &candidate.name) {
+        return Err(AppError::stale_preview(preview_id, "skillTakeover"));
+    }
     let current = library::inspect_skill_takeover_entry(&source.entry)
         .map_err(|error| AppError::stale_preview(preview_id, "skillTakeover").with_source(error))?;
     let current_type = match current.entry_type {

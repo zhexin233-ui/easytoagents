@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核验共享弹窗收缩、滚动所有权和路由 key 未回归"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核验已接管项过滤、暂停恢复、Preview/Apply 与前端测试覆盖"}
+{"file":".trellis/spec/backend/skill-import-guidelines.md","reason":"核验 Pi 来源沿用复制/接管证据链且无隐式原生写入"}
+{"file":".trellis/spec/backend/pi-adapter-guidelines.md","reason":"核验 Pi 路径、descriptor、allowed_root 与失败关闭行为"}

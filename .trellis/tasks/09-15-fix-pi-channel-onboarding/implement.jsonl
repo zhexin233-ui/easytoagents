@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/index.md","reason":"前端开发规范入口与相关指南路由"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"共享 Dialog、滚动所有权、min-w-0 与工具档案路由 key 合同"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"首次接管 detect/choice/preview/apply、恢复状态与测试合同"}
+{"file":".trellis/spec/backend/index.md","reason":"后端开发规范入口与相关指南路由"}
+{"file":".trellis/spec/backend/skill-import-guidelines.md","reason":"Skills 来源、复制导入、精确接管、首次状态与安全重验合同"}
+{"file":".trellis/spec/backend/pi-adapter-guidelines.md","reason":"Pi agent dir、Skills descriptor、allowed_root 与 fail-closed 约束"}
+

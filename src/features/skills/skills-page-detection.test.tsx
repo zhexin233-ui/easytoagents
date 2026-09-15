@@ -271,6 +271,63 @@ describe("全局 Skills 检测与复制导入", () => {
       expect(commands.applySkillPreview).not.toHaveBeenCalled();
     },
   );
+
+  it("Pi 检测使用显式全局 skills 来源并只复制所选项", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex", "cursor", "pi"],
+      },
+    });
+    vi.mocked(commands.listGlobalSkillTargetStatuses).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          tool: "pi",
+          projectId: null,
+          targetPath: "/isolated/custom-pi-agent/skills",
+          status: "missing",
+          diagnosticCode: null,
+        },
+      ],
+    });
+    vi.mocked(commands.confirmSkillImport).mockResolvedValue({
+      status: "ok",
+      data: { tool: "pi", createdCount: 1 },
+    });
+
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "检测并导入 Pi 全局 Skills",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "导入 Pi 全局 Skills",
+    });
+    expect(
+      await within(dialog).findByText("Pi 全局 skills 目录（正式同步目标）"),
+    ).toBeVisible();
+    const candidate = within(dialog).getByRole("checkbox", {
+      name: "导入 new-skill",
+    });
+    fireEvent.click(candidate);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "复制所选项（1）" }),
+    );
+
+    await waitFor(() =>
+      expect(commands.confirmSkillImport).toHaveBeenCalledExactlyOnceWith({
+        previewId: nativeImport("pi").previewId,
+        candidateIds: ["new"],
+      }),
+    );
+    expect(commands.setGlobalSkillAssignment).not.toHaveBeenCalled();
+    expect(commands.previewSkillSync).not.toHaveBeenCalled();
+    expect(commands.applySkillPreview).not.toHaveBeenCalled();
+  });
+
   it("逐来源展示局部失败，保留另一来源的可选候选与全部重复入口", async () => {
     const data = nativeImport("codex");
     data.sources = data.sources.map((source) =>

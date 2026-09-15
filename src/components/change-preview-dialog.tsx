@@ -71,13 +71,13 @@ export function ChangePreviewDialog({
               </ul>
             </section>
           ) : null}
-          <div className="divide-y">
+          <div className="min-w-0 divide-y">
             {preview.targets.map((target) => (
               <article
                 key={target.targetId}
-                className="hover:bg-muted/50 px-1 py-2.5"
+                className="hover:bg-muted/50 min-w-0 px-1 py-2.5"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                   <code className="text-xs break-all">
                     {target.descriptor.path ?? "目标路径不可用"}
                   </code>
@@ -129,7 +129,7 @@ export function ChangePreviewDialog({
                     ) : null}
                   </div>
                 ) : null}
-                <pre className="bg-muted rounded-control mt-3 overflow-auto p-3 text-xs leading-5">
+                <pre className="bg-muted rounded-control mt-3 max-w-full overflow-auto p-3 text-xs leading-5">
                   {JSON.stringify(target.redactedDiff, null, 2)}
                 </pre>
               </article>

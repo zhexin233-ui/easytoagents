@@ -493,12 +493,14 @@ const adopted = unwrapResult(
   described as synchronized.
 - Onboarding follows detect → explicit per-tool choice → persisted preview → exact
   Apply. Detection renders only redacted native evidence. Closing preserves choices;
-  reopening re-detects native state and can preview an already imported active central
-  profile without confirming the import twice. All-skip calls the typed completion
-  command and performs no native Apply. When multiple previews are applied sequentially,
-  a partial success removes only consumed previews from the retry set and disables
-  returning to the import-selection step; retry must never resubmit a consumed preview.
-  A persisted skip choice must not disable an otherwise available Provider/Prompt
+  reopening re-detects native state and intersects persisted choices with the current
+  evidence. An active central Provider or global Prompt is not rendered as a selectable
+  item and never generates a second import/sync preview; when all supported items for a
+  tool are active, its card is hidden and treated as resolved. All-skip calls the typed
+  completion command and performs no native Apply. When multiple previews are applied
+  sequentially, a partial success removes only consumed previews from the retry set and
+  disables returning to the import-selection step; retry must never resubmit a consumed
+  preview. A persisted skip choice must not disable an otherwise available Provider/Prompt
   checkbox; selecting Provider/Prompt clears skip so users can recover without first
   toggling skip off.
 - `ChangePreviewDialog`, `SyncStatusBadge`, `BlockingState`, and
@@ -532,6 +534,8 @@ const adopted = unwrapResult(
 | Project resource/tool view switch | Update both groups' `aria-pressed`; show/query only the active tool/resource combination; reset transient state |
 | Selected resource unsupported by the next tool | Hide the unsupported resource button and render/query the first supported resource without an intermediate unsupported RPC |
 | Mutation completes after a project view switch | Invalidate affected server queries when required; ignore stale preview/message/dialog UI effects |
+| Active central onboarding item | Hide the item and exclude it from choice, import, and sync preview |
+| All supported onboarding items active | Hide the entire tool card and treat it as resolved |
 | Tool onboarding choice omitted | Keep preview disabled until choose import/manage or explicit skip |
 | Persisted onboarding skip plus newly available import | Provider/Prompt checkbox remains enabled; selecting it clears skip |
 | All tools skipped | Call typed completion only; no preview/apply command |
@@ -572,7 +576,8 @@ const adopted = unwrapResult(
   and assert they cannot reopen a stale dialog, close the current dialog, or write the
   inactive combination's message. Keep the exact current tool in preview/Apply payload
   assertions.
-- Cover explicit all-skip completion, interrupted active-profile preview regeneration,
+- Cover explicit all-skip completion, interrupted onboarding choice reconciliation when
+  an item becomes centrally active, fully/partially managed item filtering,
   redacted discovery/preview rendering, exact preview ID Apply, partial-success retry
   that submits only remaining preview IDs, and no implicit native write command.
 - Cover dialog label/modal attributes, Tab containment, Escape, focus restoration,

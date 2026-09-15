@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,7 +9,12 @@ import {
 } from "@/bindings/commands";
 import { OnboardingWizard } from "@/features/onboarding/onboarding-wizard";
 import { renderWithProviders } from "@/test/render";
-import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
+import {
+  makePreviewPlan,
+  makePromptProfile,
+  makeProviderProfile,
+  makeTarget,
+} from "@/test/fixtures";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/bindings/commands")>();
@@ -49,6 +54,14 @@ const promptImportPreview: PromptImportPreviewDto = {
   targetPath: "/isolated/home/.claude/CLAUDE.md",
   suggestedName: "已发现 Claude 提示词",
   body: "# fixture prompt",
+};
+
+const piImportPreview: ProviderImportPreviewDto = {
+  ...importPreview,
+  previewId: "00000000-0000-4000-8000-000000000729",
+  tool: "pi",
+  targetPath: "/isolated/home/.pi/agent/models.json",
+  suggestedName: "已发现 Pi 渠道",
 };
 
 const syncPreview: PreviewPlan = makePreviewPlan({
@@ -374,7 +387,7 @@ describe("OnboardingWizard", () => {
     ).toBeEnabled();
   });
 
-  it("中断后从中央 active 档案重新生成持久化预览而不重复导入", async () => {
+  it("中断后忽略已在中央 active 档案中的旧选择且不生成其预览", async () => {
     localStorage.setItem(
       "easytoagents.onboarding.selections.v1",
       JSON.stringify({
@@ -418,12 +431,234 @@ describe("OnboardingWizard", () => {
     );
 
     renderWizard();
-    expect(await screen.findByText("已有中央档案。")).toBeInTheDocument();
+    expect(
+      await screen.findByText("已有中央档案；其余项目可选择跳过。"),
+    ).toBeInTheDocument();
+    const claudeCard = screen.getByText("Claude").closest("fieldset");
+    if (!claudeCard) throw new Error("缺少 Claude 工具卡片");
+    expect(
+      within(claudeCard).queryByLabelText("导入并接管 Provider"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "确认选择并生成预览" }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText("跳过 Claude，保持非受管"));
     fireEvent.click(screen.getByRole("button", { name: "确认选择并生成预览" }));
 
-    expect(await screen.findByText("Claude · Provider")).toBeInTheDocument();
+    expect(await screen.findByText("向导已完成")).toBeInTheDocument();
     expect(commands.confirmProviderImport).not.toHaveBeenCalled();
-    expect(commands.previewProviderSync).toHaveBeenCalledWith("claude");
+    expect(commands.previewProviderSync).not.toHaveBeenCalled();
+  });
+
+  it("部分接管时隐藏已接管 Provider，并只为待处理提示词生成预览", async () => {
+    vi.mocked(commands.discoverPromptImport).mockResolvedValue({
+      status: "ok",
+      data: promptImportPreview,
+    });
+    vi.mocked(commands.listProviderProfiles).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data:
+          tool === "claude"
+            ? [makeProviderProfile({ tool: "claude", isActive: true })]
+            : [],
+      }),
+    );
+    vi.mocked(commands.confirmPromptImport).mockResolvedValue({
+      status: "ok",
+      data: makePromptProfile({ globalTools: ["claude"] }),
+    });
+    vi.mocked(commands.previewPromptSync).mockResolvedValue({
+      status: "ok",
+      data: promptSyncPreview,
+    });
+
+    renderWizard();
+
+    const claudeCard = await waitFor(() => {
+      const card = screen.getByText("Claude").closest("fieldset");
+      if (!card) throw new Error("缺少 Claude 工具卡片");
+      return card;
+    });
+    expect(
+      within(claudeCard).queryByLabelText("导入并接管 Provider"),
+    ).not.toBeInTheDocument();
+    const promptChoice =
+      within(claudeCard).getByLabelText("无损导入并接管全局提示词");
+    expect(promptChoice).toBeEnabled();
+    fireEvent.click(promptChoice);
+    fireEvent.click(screen.getByLabelText("跳过 Codex，保持非受管"));
+    fireEvent.click(screen.getByRole("button", { name: "确认选择并生成预览" }));
+
+    expect(await screen.findByText("Claude · 全局提示词")).toBeInTheDocument();
+    expect(commands.confirmProviderImport).not.toHaveBeenCalled();
+    expect(commands.previewProviderSync).not.toHaveBeenCalled();
+    expect(commands.confirmPromptImport).toHaveBeenCalledWith({
+      previewId: promptImportPreview.previewId,
+      name: promptImportPreview.suggestedName,
+    });
+    expect(commands.previewPromptSync).toHaveBeenCalledWith("claude");
+  });
+
+  it("Provider 与全局提示词均已接管时隐藏整张工具卡片", async () => {
+    vi.mocked(commands.discoverPromptImport).mockResolvedValue({
+      status: "ok",
+      data: promptImportPreview,
+    });
+    vi.mocked(commands.listProviderProfiles).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data:
+          tool === "claude"
+            ? [makeProviderProfile({ tool: "claude", isActive: true })]
+            : [],
+      }),
+    );
+    vi.mocked(commands.listPromptProfiles).mockResolvedValue({
+      status: "ok",
+      data: [makePromptProfile({ globalTools: ["claude"] })],
+    });
+
+    renderWizard();
+
+    await screen.findByLabelText("跳过 Codex，保持非受管");
+    expect(
+      screen.queryByText("Claude", { selector: "legend" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("跳过 Codex，保持非受管")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("跳过 Codex，保持非受管"));
+    fireEvent.click(screen.getByRole("button", { name: "确认选择并生成预览" }));
+
+    await waitFor(() =>
+      expect(commands.completeOnboarding).toHaveBeenCalledOnce(),
+    );
+    expect(commands.confirmProviderImport).not.toHaveBeenCalled();
+    expect(commands.confirmPromptImport).not.toHaveBeenCalled();
+    expect(commands.previewProviderSync).not.toHaveBeenCalled();
+    expect(commands.previewPromptSync).not.toHaveBeenCalled();
+  });
+
+  it("启用 Pi 时首次接管检测纳入 Pi Provider", async () => {
+    vi.mocked(commands.getAppSettings).mockResolvedValue({
+      status: "ok",
+      data: {
+        applyMode: "preview_confirm",
+        enabledTools: ["claude", "codex", "cursor", "zcode", "opencode", "pi"],
+      },
+    });
+    vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data: tool === "pi" ? piImportPreview : null,
+      }),
+    );
+
+    renderWizard();
+
+    const piCard = await waitFor(() => {
+      const card = screen.getByText("Pi").closest("fieldset");
+      if (!card) throw new Error("缺少 Pi 工具卡片");
+      return card;
+    });
+    expect(within(piCard).getByText("发现 Provider")).toBeInTheDocument();
+    const piProviderChoice =
+      within(piCard).getByLabelText("导入并接管 Provider");
+    fireEvent.click(piProviderChoice);
+    for (const tool of ["Claude", "Codex", "Cursor", "ZCode", "OpenCode"]) {
+      fireEvent.click(screen.getByLabelText(`跳过 ${tool}，保持非受管`));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "确认选择并生成预览" }));
+
+    expect(await screen.findByText("Pi · Provider")).toBeInTheDocument();
+    expect(commands.confirmProviderImport).toHaveBeenCalledWith({
+      previewId: piImportPreview.previewId,
+      name: piImportPreview.suggestedName,
+    });
+    expect(commands.previewProviderSync).toHaveBeenCalledWith("pi");
+  });
+
+  it("启用工具变化触发新检测时忽略晚到的旧结果", async () => {
+    const originalStatus = vi
+      .mocked(commands.getToolProfileStatus)
+      .getMockImplementation();
+    if (!originalStatus) throw new Error("缺少工具状态 mock");
+    let releaseFirstDetection!: () => void;
+    const firstDetectionBlocked = new Promise<void>((resolve) => {
+      releaseFirstDetection = resolve;
+    });
+    let statusCalls = 0;
+    let secondDetectionStarted = false;
+    vi.mocked(commands.getToolProfileStatus).mockImplementation((tool) => {
+      statusCalls += 1;
+      const result = originalStatus(tool);
+      if (tool === "claude" && statusCalls === 1) {
+        return firstDetectionBlocked.then(() => result);
+      }
+      return result;
+    });
+    vi.mocked(commands.discoverProviderImport).mockImplementation((tool) =>
+      Promise.resolve({
+        status: "ok",
+        data: secondDetectionStarted
+          ? null
+          : tool === "claude"
+            ? importPreview
+            : null,
+      }),
+    );
+
+    const { queryClient } = renderWizard();
+    await waitFor(() =>
+      expect(commands.getToolProfileStatus).toHaveBeenCalledWith("claude"),
+    );
+    secondDetectionStarted = true;
+    queryClient.setQueryData(["settings"], {
+      applyMode: "preview_confirm",
+      enabledTools: ["claude"],
+    });
+
+    expect(await screen.findByText("未发现可导入配置。")).toBeInTheDocument();
+    releaseFirstDetection();
+    await waitFor(() =>
+      expect(screen.queryByText("发现 Provider")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("新检测在途时不再显示上一轮的选择证据", async () => {
+    let secondDetectionStarted = false;
+    let releaseSecondDetection!: () => void;
+    const secondDetectionBlocked = new Promise<void>((resolve) => {
+      releaseSecondDetection = resolve;
+    });
+    vi.mocked(commands.discoverProviderImport).mockImplementation((tool) => {
+      if (secondDetectionStarted) {
+        return secondDetectionBlocked.then(() => ({
+          status: "ok" as const,
+          data: null,
+        }));
+      }
+      return Promise.resolve({
+        status: "ok" as const,
+        data: tool === "claude" ? importPreview : null,
+      });
+    });
+
+    const { queryClient } = renderWizard();
+    expect(await screen.findByText("发现 Provider")).toBeInTheDocument();
+
+    secondDetectionStarted = true;
+    queryClient.setQueryData(["settings"], {
+      applyMode: "preview_confirm",
+      enabledTools: ["claude"],
+    });
+    expect(
+      await screen.findByText("正在只读检测各工具的 Provider 与全局提示词…"),
+    ).toBeVisible();
+    expect(screen.queryByText("发现 Provider")).not.toBeInTheDocument();
+
+    releaseSecondDetection();
+    expect(await screen.findByText("未发现可导入配置。")).toBeInTheDocument();
   });
 
   it("无可导入 Provider 且无 active 档案时显示复选框禁用原因", async () => {
