@@ -1705,3 +1705,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 69: 修复 Pi 渠道入口与接管检测体验
+
+**Date**: 2026-09-15
+**Task**: 修复 Pi 渠道入口与接管检测体验
+**Branch**: `main`
+
+### Summary
+
+完成 Pi 工具档案路由、首次接管已接管项过滤与竞态收敛、弹窗窄窗口约束，以及 Pi 全局 Skills 复制和显式接管；同步生成绑定、测试与后端/前端规范，全部质量门禁通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bb355e9` | (see git log) |
+
+### Status
+
+[OK] **Completed**

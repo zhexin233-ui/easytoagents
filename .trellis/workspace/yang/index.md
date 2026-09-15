@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 68
+- **Total Sessions**: 69
 - **Last Active**: 2026-09-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1707 | Active |
+| `journal-1.md` | ~1728 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -30,6 +30,7 @@
 
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 69 | 2026-09-15 | 修复 Pi 渠道入口与接管检测体验 | `bb355e9` | `main` |
 | 68 | 2026-09-15 | 修复 Pi MCP 探测与容器别名 | `de60d35` | `main` |
 | 67  | 2026-09-14 | Pi 工具支持（Provider/Prompt/MCP/Skills）                                           | `194ca40`, `bc1e7c4`                                                                                                                          | `main`                                    |
 | 66  | 2026-09-14 | 修复渠道切换冲突恢复                                                                | `82b6ec8`                                                                                                                                     | `main`                                    |
