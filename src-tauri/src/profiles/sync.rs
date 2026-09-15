@@ -50,19 +50,15 @@ pub fn readopt_provider_target(
     // Provider 没有 managed_items；ownership 仍必须沿用 Preview 的 codec
     // 口径（基线 + 当前中央意图），否则重新接管后下一份 Preview 的 managed
     // hash 会与本次扫描不一致。
-    let ownership = provider_ownership(
-        input.tool,
-        target.projection.as_ref(),
-        &desired_projection,
-    )?;
+    let ownership =
+        provider_ownership(input.tool, target.projection.as_ref(), &desired_projection)?;
     let scan = scan_target(input.tool.adapter(), &descriptor, &ownership);
     let database_path = database.path().to_string_lossy().into_owned();
     let transaction = database
         .connection_mut()
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|error| {
-            AppError::database(&database_path, "begin_readopt_provider_target")
-                .with_source(error)
+            AppError::database(&database_path, "begin_readopt_provider_target").with_source(error)
         })?;
     match &scan {
         TargetScan::Observed(observed) => crate::db::sync::update_readopt_target_baseline(

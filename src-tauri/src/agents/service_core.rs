@@ -28,14 +28,27 @@ pub fn create_agent(
     database: &mut Database,
     input: &CreateAgentInput,
 ) -> Result<AgentDto, AppError> {
-    let value = validate_agent_definition(&input.name, &input.description, &input.prompt, input.enabled)?;
+    let value = validate_agent_definition(
+        &input.name,
+        &input.description,
+        &input.prompt,
+        input.enabled,
+    )?;
     let id = Uuid::new_v4().to_string();
     let record = repository::insert_agent(database, &id, &value)?;
     agent_dto(database, &record)
 }
 
-pub fn update_agent(database: &mut Database, input: &UpdateAgentInput) -> Result<AgentDto, AppError> {
-    let value = validate_agent_definition(&input.name, &input.description, &input.prompt, input.enabled)?;
+pub fn update_agent(
+    database: &mut Database,
+    input: &UpdateAgentInput,
+) -> Result<AgentDto, AppError> {
+    let value = validate_agent_definition(
+        &input.name,
+        &input.description,
+        &input.prompt,
+        input.enabled,
+    )?;
     let record = repository::update_agent(database, &input.id, input.row_version, &value)?;
     agent_dto(database, &record)
 }
@@ -72,9 +85,8 @@ pub fn set_agent_tool_settings(
     };
     let record = match normalized {
         Some(settings) => {
-            let json = serde_json::to_string(settings.value()).map_err(|_| {
-                AppError::invalid_input("settings", "AGENT_FIELD_INVALID")
-            })?;
+            let json = serde_json::to_string(settings.value())
+                .map_err(|_| AppError::invalid_input("settings", "AGENT_FIELD_INVALID"))?;
             repository::upsert_tool_settings(
                 database,
                 &input.agent_id,
@@ -250,41 +262,38 @@ pub fn list_global_agent_target_statuses(
                 tool.as_str(),
             )?;
             let directory_path = descriptor.path.clone();
-            let (aggregate_status, diagnostic_code, files) =
-                if descriptor.capability.state != crate::adapters::CapabilityState::Supported {
-                    (
-                        SyncStatus::Failed,
-                        descriptor.capability.diagnostic_code.clone(),
-                        Vec::new(),
-                    )
-                } else if descriptor.policy != crate::adapters::PolicyState::Allowed {
-                    // 与 hooks/mcp 的全局状态口径一致：策略未知或封锁时呈现
-                    // policy_blocked；claude 之外的工具策略恒为 Allowed。
-                    (
-                        SyncStatus::PolicyBlocked,
-                        Some(str::to_owned(
-                            if descriptor.policy == crate::adapters::PolicyState::Unknown {
-                                "CLAUDE_POLICY_UNKNOWN"
-                            } else {
-                                "CLAUDE_POLICY_BLOCKED"
-                            },
-                        )),
-                        Vec::new(),
-                    )
+            let (aggregate_status, diagnostic_code, files) = if descriptor.capability.state
+                != crate::adapters::CapabilityState::Supported
+            {
+                (
+                    SyncStatus::Failed,
+                    descriptor.capability.diagnostic_code.clone(),
+                    Vec::new(),
+                )
+            } else if descriptor.policy != crate::adapters::PolicyState::Allowed {
+                // 与 hooks/mcp 的全局状态口径一致：策略未知或封锁时呈现
+                // policy_blocked；claude 之外的工具策略恒为 Allowed。
+                (
+                    SyncStatus::PolicyBlocked,
+                    Some(str::to_owned(
+                        if descriptor.policy == crate::adapters::PolicyState::Unknown {
+                            "CLAUDE_POLICY_UNKNOWN"
+                        } else {
+                            "CLAUDE_POLICY_BLOCKED"
+                        },
+                    )),
+                    Vec::new(),
+                )
+            } else {
+                let rows =
+                    repository::list_agent_managed_targets(database, *tool, Scope::Global, None)?;
+                if rows.is_empty() {
+                    (SyncStatus::Missing, None, Vec::new())
                 } else {
-                    let rows = repository::list_agent_managed_targets(
-                        database,
-                        *tool,
-                        Scope::Global,
-                        None,
-                    )?;
-                    if rows.is_empty() {
-                        (SyncStatus::Missing, None, Vec::new())
-                    } else {
-                        let (status, files) = aggregate_file_statuses(*tool, &descriptor, &rows)?;
-                        (status, None, files)
-                    }
-                };
+                    let (status, files) = aggregate_file_statuses(*tool, &descriptor, &rows)?;
+                    (status, None, files)
+                }
+            };
             Ok(AgentToolTargetStatusDto {
                 tool: *tool,
                 directory_path,
@@ -329,7 +338,8 @@ fn agent_file_status(
     directory_descriptor: &TargetDescriptor,
     row: &AgentManagedTargetRecord,
 ) -> Result<(SyncStatus, Option<String>), AppError> {
-    let file_descriptor = match agent_file_descriptor(directory_descriptor, &row.target_path, tool) {
+    let file_descriptor = match agent_file_descriptor(directory_descriptor, &row.target_path, tool)
+    {
         Ok(descriptor) => descriptor,
         Err(_) => {
             return Ok((SyncStatus::Failed, Some("TARGET_READ_FAILED".to_owned())));
@@ -526,11 +536,9 @@ pub fn readopt_agent_target(
             ));
         }
     }
-    transaction
-        .commit()
-        .map_err(|error| {
-            AppError::database(&database_path, "commit_readopt_agent_target").with_source(error)
-        })?;
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_readopt_agent_target").with_source(error)
+    })?;
     Ok(ReadoptAgentTargetResultDto {
         target_path: input.target_path.clone(),
     })
@@ -596,8 +604,8 @@ fn prepare_agents_sync(
         project.as_ref().map(|project| project.id.as_str()),
     )?
     .into_iter()
-        .filter(|record| record.enabled)
-        .collect();
+    .filter(|record| record.enabled)
+    .collect();
     let all_tool_settings = repository::tool_settings_for_all_agents(database)?;
     if scope == Scope::Project {
         // 全局分配在项目内只读继承；互斥触发器保证同一 agent 不会同时
@@ -662,11 +670,7 @@ fn prepare_agents_sync(
         let settings = all_tool_settings
             .get(&record.id)
             .and_then(|settings| settings.get(&input.tool));
-        let projection = build_agent_projection(
-            input.tool,
-            record,
-            settings,
-        )?;
+        let projection = build_agent_projection(input.tool, record, settings)?;
         let scan = scan_target(
             input.tool.adapter(),
             &file_descriptor,
@@ -693,8 +697,7 @@ fn prepare_agents_sync(
         let assessment = assess_drift(&file_descriptor, &baseline, &scan);
         // 重新接管只对「外部改写了受管内容」这一类冲突有意义。
         let readopt_available = assessment.status == SyncStatus::ExternalOwnedChange;
-        let row_versions =
-            agent_row_versions(project.as_ref(), [record].into_iter())?;
+        let row_versions = agent_row_versions(project.as_ref(), [record].into_iter())?;
         let git = project_root
             .as_ref()
             .zip(file_descriptor.path.as_deref())

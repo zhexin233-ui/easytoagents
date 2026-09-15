@@ -55,19 +55,19 @@
 
 ### 4. Validation & Error Matrix
 
-| 条件 | 必须结果 |
-| ------------------------------------------------- | -------------------------------------------------------------------- |
+| 条件                                               | 必须结果                                                                           |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `PI_CODING_AGENT_DIR` 存在但不可映射（相对路径等） | 6 个 descriptor 全部 `unsupported(PI_AGENT_DIR_OVERRIDE_UNMAPPED)`，不暴露默认路径 |
-| Pi 未安装 / 探针异常 | `ToolNotInstalled` / `unsupported(PI_INSTALLATION_PROBE_UNSUPPORTED)` |
-| `pi-mcp-adapter` 缺失 / 未加载 / 版本过低 | 两个 MCP 目标 `unsupported(PI_MCP_ADAPTER_*)`，`path = None`，零外部写入 |
-| `PI_MCP_CONFIG_MODE=exclusive` | 项目 MCP descriptor `unsupported(PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED)` |
-| 项目文件与受管 MCP 名称同名 | 项目预览 `Conflict` + `PI_MCP_SHADOWED_BY_PROJECT_SHARED` / `_PROJECT_PI` |
-| `AGENTS.override.md` 存在或不可判定 | Prompt 预览 `Conflict` + `PI_PROMPT_OVERRIDE_DETECTED`，Apply 拒绝 |
-| 用户存在 `CLAUDE.md`/`AGENTS.MD` 回退文件 | 仅提示 `PI_PROMPT_FALLBACK_PRESENT`（不阻断） |
-| 受管子链接断链 / 逃逸 `allowed_root` | `Conflict` + `PI_SKILL_SYMLINK_BROKEN` / `PI_SKILL_SYMLINK_ESCAPE` |
-| 项目未受信任（Skills） | `untrusted` + `PI_PROJECT_SKILLS_UNTRUSTED` / `_TRUST_UNKNOWN` |
-| 任意 Hook / Agent 入口携带 `tool == pi` | `INVALID_INPUT` + `PI_HOOKS_UNSUPPORTED` / `PI_AGENTS_UNSUPPORTED`，零写入 |
-| `managed_targets` 写入 `pi` + `hook`/`agent` | 数据库 CHECK 拒绝 |
+| Pi 未安装 / 探针异常                               | `ToolNotInstalled` / `unsupported(PI_INSTALLATION_PROBE_UNSUPPORTED)`              |
+| `pi-mcp-adapter` 缺失 / 未加载 / 版本过低          | 两个 MCP 目标 `unsupported(PI_MCP_ADAPTER_*)`，`path = None`，零外部写入           |
+| `PI_MCP_CONFIG_MODE=exclusive`                     | 项目 MCP descriptor `unsupported(PI_MCP_EXCLUSIVE_MODE_PROJECT_IGNORED)`           |
+| 项目文件与受管 MCP 名称同名                        | 项目预览 `Conflict` + `PI_MCP_SHADOWED_BY_PROJECT_SHARED` / `_PROJECT_PI`          |
+| `AGENTS.override.md` 存在或不可判定                | Prompt 预览 `Conflict` + `PI_PROMPT_OVERRIDE_DETECTED`，Apply 拒绝                 |
+| 用户存在 `CLAUDE.md`/`AGENTS.MD` 回退文件          | 仅提示 `PI_PROMPT_FALLBACK_PRESENT`（不阻断）                                      |
+| 受管子链接断链 / 逃逸 `allowed_root`               | `Conflict` + `PI_SKILL_SYMLINK_BROKEN` / `PI_SKILL_SYMLINK_ESCAPE`                 |
+| 项目未受信任（Skills）                             | `untrusted` + `PI_PROJECT_SKILLS_UNTRUSTED` / `_TRUST_UNKNOWN`                     |
+| 任意 Hook / Agent 入口携带 `tool == pi`            | `INVALID_INPUT` + `PI_HOOKS_UNSUPPORTED` / `PI_AGENTS_UNSUPPORTED`，零写入         |
+| `managed_targets` 写入 `pi` + `hook`/`agent`       | 数据库 CHECK 拒绝                                                                  |
 
 ### 5. Good / Base / Bad Cases
 

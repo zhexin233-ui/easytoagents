@@ -2107,8 +2107,9 @@ mod tests {
         );
         assert_eq!(
             connection
-                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row
-                    .get::<_, i64>(0))
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
                 .unwrap(),
             0
         );
@@ -2766,9 +2767,30 @@ mod tests {
                 .unwrap();
             let disabled_at = "2026-09-01T00:00:00.000Z";
             for (id, external_key, entry_type, state, snapshot, hash) in [
-                (RESOURCE_MCP, "mcp|native", "mcp_entry", "active", None, Some("a".repeat(64))),
-                (RESOURCE_DIRECTORY, "native-dir", "directory", "active", None, Some("b".repeat(64))),
-                (RESOURCE_SYMLINK, "native-link", "symlink", "disabled", Some(SNAPSHOT_ID), None),
+                (
+                    RESOURCE_MCP,
+                    "mcp|native",
+                    "mcp_entry",
+                    "active",
+                    None,
+                    Some("a".repeat(64)),
+                ),
+                (
+                    RESOURCE_DIRECTORY,
+                    "native-dir",
+                    "directory",
+                    "active",
+                    None,
+                    Some("b".repeat(64)),
+                ),
+                (
+                    RESOURCE_SYMLINK,
+                    "native-link",
+                    "symlink",
+                    "disabled",
+                    Some(SNAPSHOT_ID),
+                    None,
+                ),
             ] {
                 connection
                     .execute(
@@ -2784,7 +2806,11 @@ mod tests {
                             state,
                             hash,
                             snapshot,
-                            if snapshot.is_some() { Some(disabled_at) } else { None },
+                            if snapshot.is_some() {
+                                Some(disabled_at)
+                            } else {
+                                None
+                            },
                         ],
                     )
                     .unwrap();
@@ -2795,13 +2821,7 @@ mod tests {
             let database = Database::open(&paths).unwrap();
             assert_eq!(database.schema_version().unwrap(), 25);
             let connection = database.connection();
-            type PreservedRow = (
-                String,
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-            );
+            type PreservedRow = (String, String, String, Option<String>, Option<String>);
             let rows: Vec<PreservedRow> = connection
                 .prepare(
                     "SELECT id, external_key, entry_type, disabled_snapshot_id, disabled_at
@@ -2968,10 +2988,38 @@ mod tests {
                 .unwrap();
             let disabled_at = "2026-09-01T00:00:00.000Z";
             for (id, external_key, entry_type, state, observed_hash, snapshot) in [
-                (RESOURCE_MCP, "mcp-native", "mcp_entry", "active", Some("a".repeat(64)), None),
-                (RESOURCE_DIRECTORY, "native-dir", "directory", "active", Some("b".repeat(64)), None),
-                (RESOURCE_SYMLINK, "native-link", "symlink", "disabled", None, Some(SNAPSHOT_ID)),
-                (RESOURCE_HOOK, "PreToolUse||abc123", "hook_entry", "active", Some("c".repeat(64)), None),
+                (
+                    RESOURCE_MCP,
+                    "mcp-native",
+                    "mcp_entry",
+                    "active",
+                    Some("a".repeat(64)),
+                    None,
+                ),
+                (
+                    RESOURCE_DIRECTORY,
+                    "native-dir",
+                    "directory",
+                    "active",
+                    Some("b".repeat(64)),
+                    None,
+                ),
+                (
+                    RESOURCE_SYMLINK,
+                    "native-link",
+                    "symlink",
+                    "disabled",
+                    None,
+                    Some(SNAPSHOT_ID),
+                ),
+                (
+                    RESOURCE_HOOK,
+                    "PreToolUse||abc123",
+                    "hook_entry",
+                    "active",
+                    Some("c".repeat(64)),
+                    None,
+                ),
             ] {
                 connection
                     .execute(
@@ -2987,7 +3035,11 @@ mod tests {
                             state,
                             observed_hash,
                             snapshot,
-                            if snapshot.is_some() { Some(disabled_at) } else { None },
+                            if snapshot.is_some() {
+                                Some(disabled_at)
+                            } else {
+                                None
+                            },
                         ],
                     )
                     .unwrap();
@@ -3318,7 +3370,8 @@ mod tests {
                     params![AGENT_ONE_ID],
                 )
                 .unwrap();
-            for (index, bad_name) in ["Bad_Name", "-lead", "a b", "名前"].into_iter().enumerate() {
+            for (index, bad_name) in ["Bad_Name", "-lead", "a b", "名前"].into_iter().enumerate()
+            {
                 assert!(
                     connection
                         .execute(
@@ -3327,16 +3380,19 @@ mod tests {
                             params![CANARY_IDS[index + 7], bad_name],
                         )
                         .is_err(),
-                        "非法名称 {bad_name} 必须被 agents.name CHECK 拒绝"
+                    "非法名称 {bad_name} 必须被 agents.name CHECK 拒绝"
                 );
             }
-            assert!(connection
-                .execute(
-                    "INSERT INTO agents(id, name, description, prompt)
+            assert!(
+                connection
+                    .execute(
+                        "INSERT INTO agents(id, name, description, prompt)
                      VALUES (?1, 'valid-name', '', '正文')",
-                    params![CANARY_IDS[11]],
-                )
-                .is_err(), "空描述必须被拒绝");
+                        params![CANARY_IDS[11]],
+                    )
+                    .is_err(),
+                "空描述必须被拒绝"
+            );
 
             // 分配 + 互斥触发器：全局分配后项目分配被拒；删除被 RESTRICT 保护。
             connection

@@ -1745,7 +1745,8 @@ mod tests {
         .unwrap();
         assert!(codex_preview.targets.is_empty());
         let descriptor =
-            super::skill_target_descriptor(&fixture.environment, Tool::Codex, None, &policy).unwrap();
+            super::skill_target_descriptor(&fixture.environment, Tool::Codex, None, &policy)
+                .unwrap();
         assert_eq!(
             descriptor.path.as_deref(),
             Some(
@@ -1758,7 +1759,8 @@ mod tests {
             )
         );
         let cursor_global =
-            super::skill_target_descriptor(&fixture.environment, Tool::Cursor, None, &policy).unwrap();
+            super::skill_target_descriptor(&fixture.environment, Tool::Cursor, None, &policy)
+                .unwrap();
         assert_eq!(
             cursor_global.path.as_deref(),
             fixture.home.join(".cursor/skills").to_str()

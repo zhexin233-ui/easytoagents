@@ -17,8 +17,8 @@
 
 ### Git Commits
 
-| Hash | Message |
-| ------ | --------- |
+| Hash      | Message       |
+| --------- | ------------- |
 | `28302af` | (see git log) |
 | `769632e` | (see git log) |
 | `7f1ccab` | (see git log) |
@@ -46,8 +46,8 @@
 
 ### Git Commits
 
-| Hash | Message |
-| ------ | --------- |
+| Hash      | Message       |
+| --------- | ------------- |
 | `1e938ba` | (see git log) |
 | `539b89f` | (see git log) |
 | `46de613` | (see git log) |
@@ -69,8 +69,8 @@
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `452dc08` | (see git log) |
 
 ### Status
@@ -94,8 +94,8 @@
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `27729fc` | (see git log) |
 
 ### Testing
@@ -125,8 +125,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `cb8e022` | (see git log) |
 
 ### Testing
@@ -160,8 +160,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `bf94c45` | (see git log) |
 
 ### Testing
@@ -194,8 +194,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash                                       | Message       |
+| ------------------------------------------ | ------------- |
 | `0f28c561d6e59b55f17b9a673e846e0c06e3f7c5` | (see git log) |
 
 ### Testing
@@ -220,8 +220,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `4f4f67c` | (see git log) |
 
 ### Status
@@ -240,8 +240,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `bf7bac9` | (see git log) |
 
 ### Status
@@ -260,8 +260,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `bbdbdfb` | (see git log) |
 
 ### Status
@@ -280,8 +280,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `19bfe91` | (see git log) |
 
 ### Status
@@ -300,8 +300,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `c1b6298` | (see git log) |
 
 ### Status
@@ -320,8 +320,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `2349a9d` | (see git log) |
 
 ### Status
@@ -340,8 +340,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `83d82c0` | (see git log) |
 
 ### Status
@@ -360,8 +360,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `36974fe` | (see git log) |
 
 ### Status
@@ -380,8 +380,8 @@ MCP、渠道档案和全局提示词改为按钮触发弹窗，完成自动化�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `a92ef9e` | (see git log) |
 | `24da1c1` | (see git log) |
 
@@ -401,8 +401,8 @@ Skills 页移除常驻本地目录导入卡片，改为中央列表头部按钮�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `88f4e44` | (see git log) |
 
 ### Status
@@ -421,8 +421,8 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `5f99dca` | (see git log) |
 | `a7ad5b9` | (see git log) |
 
@@ -442,8 +442,8 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `61a53c1` | (see git log) |
 
 ### Status
@@ -462,8 +462,8 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `605bae9` | (see git log) |
 
 ### Status
@@ -482,8 +482,8 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `a4b0f0d` | (see git log) |
 
 ### Status
@@ -502,8 +502,8 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `9f7b23a` | (see git log) |
 
 ### Status
@@ -522,8 +522,8 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `3742093` | (see git log) |
 
 ### Status
@@ -538,12 +538,12 @@ Skills 中央副本目录从 UUID 改为 frontmatter.name 命名：prepare 阶�
 
 ### Summary
 
-EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills 与 <project>/.agents/skills，而 Codex 实际读取 $CODEX_HOME/skills 与 <project>/.codex/skills，导致应用显示已同步但 Codex 看不到技能（实机 ~2 个受管链接落错位置）。按 Trellis 全流程修复：全局/项目 target descriptor 改为 codex_home 与 .codex/skills（跟随 CODEX_HOME）；导入来源主次对调，枚举 codex_compatibility 重命名 codex_home 并重生成 bindings；前端导入对话框标签更正；同步调整 prepare_skill_sync allowed_root 与 overview 恢复矩阵的 (Codex, Skill) 分支；Rust/前端测试与 phase8 e2e 全部迁移到新路径。pnpm check 全绿（vitest 156、cargo 198+3 通过）。spec 同步更新 quality-guidelines 与 skill-import-guidelines 的路径契约，并记录"同步目标必须镜像工具真实读取路径"的教训。遗留：用户需在应用内对 Codex 全局 Skills 重新 Apply；~/.agents/skills 旧链接（skill-install、smart-search-cli）按用户决定保留（ZCode 仍在读该目录）。
+EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills 与 <project>/.agents/skills，而 Codex 实际读取 $CODEX_HOME/skills 与 <project>/.codex/skills，导致应用显示已同步但 Codex 看不到技能（实机 ~~2 个受管链接落错位置）。按 Trellis 全流程修复：全局/项目 target descriptor 改为 codex_home 与 .codex/skills（跟随 CODEX_HOME）；导入来源主次对调，枚举 codex_compatibility 重命名 codex_home 并重生成 bindings；前端导入对话框标签更正；同步调整 prepare_skill_sync allowed_root 与 overview 恢复矩阵的 (Codex, Skill) 分支；Rust/前端测试与 phase8 e2e 全部迁移到新路径。pnpm check 全绿（vitest 156、cargo 198+3 通过）。spec 同步更新 quality-guidelines 与 skill-import-guidelines 的路径契约，并记录"同步目标必须镜像工具真实读取路径"的教训。遗留：用户需在应用内对 Codex 全局 Skills 重新 Apply；~~/.agents/skills 旧链接（skill-install、smart-search-cli）按用户决定保留（ZCode 仍在读该目录）。
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `91d8a17` | (see git log) |
 | `70beed4` | (see git log) |
 
@@ -563,8 +563,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `36bce6f` | (see git log) |
 | `3fad27b` | (see git log) |
 
@@ -584,8 +584,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `0e21565` | (see git log) |
 | `b8f665f` | (see git log) |
 
@@ -605,8 +605,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `5ac1663` | (see git log) |
 
 ### Status
@@ -625,8 +625,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `af6d421` | (see git log) |
 
 ### Status
@@ -645,8 +645,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `b8f4293` | (see git log) |
 
 ### Status
@@ -665,8 +665,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `88d8283` | (see git log) |
 
 ### Status
@@ -685,8 +685,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `10ee524` | (see git log) |
 
 ### Status
@@ -705,8 +705,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `7e17e86` | (see git log) |
 
 ### Status
@@ -725,8 +725,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `0036a94` | (see git log) |
 
 ### Status
@@ -745,8 +745,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `4966eac` | (see git log) |
 
 ### Status
@@ -765,8 +765,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `d1b7d0d` | (see git log) |
 
 ### Status
@@ -785,8 +785,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `c3d043e` | (see git log) |
 
 ### Status
@@ -811,8 +811,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `583da65` | (see git log) |
 | `63126c4` | (see git log) |
 
@@ -840,8 +840,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `ccb305e` | (see git log) |
 
 ### Status
@@ -864,8 +864,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `a17fbce` | (see git log) |
 
 ### Testing
@@ -888,12 +888,12 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Summary
 
-在 feat/zcode-tool-support 分支完成 ZCode 作为第四个可选原生工具的全套接入。证据核验：本机 /Applications/ZCode.app（Bundle ID dev.zcode.app）+ 官方 zcode-configuration-guide；Provider=~/.zcode/v2/config.json 的 provider 条目（只接管 name/kind/options/enabled，models/source 等自管字段保留）、Prompt=AGENTS.md、MCP=mcp.servers 嵌套键、Skills=~/.zcode/skills。实现：Tool 枚举加 Zcode、ZcodeAdapter、桌面 bundle 探针（CLI 无官方合同不探测）、DB 迁移 0013（放宽 tool CHECK + is_active_zcode 生效位）、服务层全链路（导入/分配/预览/应用/恢复）、MCP 容器抽象改为路径以支持嵌套键、前端 /zcode 路由与设置启用项（默认不启用，与 Cursor 同为可选）。pnpm check 全绿，新增适配器/探针/迁移/Provider 往返/MCP 跨工具导入专项测试。
+在 feat/zcode-tool-support 分支完成 ZCode 作为第四个可选原生工具的全套接入。证据核验：本机 /Applications/ZCode.app（Bundle ID dev.zcode.app）+ 官方 zcode-configuration-guide；Provider=~~/.zcode/v2/config.json 的 provider 条目（只接管 name/kind/options/enabled，models/source 等自管字段保留）、Prompt=AGENTS.md、MCP=mcp.servers 嵌套键、Skills=~~/.zcode/skills。实现：Tool 枚举加 Zcode、ZcodeAdapter、桌面 bundle 探针（CLI 无官方合同不探测）、DB 迁移 0013（放宽 tool CHECK + is_active_zcode 生效位）、服务层全链路（导入/分配/预览/应用/恢复）、MCP 容器抽象改为路径以支持嵌套键、前端 /zcode 路由与设置启用项（默认不启用，与 Cursor 同为可选）。pnpm check 全绿，新增适配器/探针/迁移/Provider 往返/MCP 跨工具导入专项测试。
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `b59c6eb` | (see git log) |
 
 ### Status
@@ -919,8 +919,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `4689f42` | (see git log) |
 
 ### Testing
@@ -954,8 +954,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `83177b6` | (see git log) |
 
 ### Testing
@@ -987,8 +987,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `24dc7d3` | (see git log) |
 
 ### Testing
@@ -1021,8 +1021,8 @@ EasyToAgents 曾把 Codex Skills 同步目标错误指向 HOME/.agents/skills �
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `06b6a1f` | (see git log) |
 
 ### Testing
@@ -1049,8 +1049,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `b7b2cc9` | (see git log) |
 
 ### Status
@@ -1069,8 +1069,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `eac5339` | (see git log) |
 
 ### Status
@@ -1093,8 +1093,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `e7f15b9` | (see git log) |
 
 ### Status
@@ -1113,8 +1113,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `72dec60` | (see git log) |
 
 ### Status
@@ -1133,8 +1133,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `dc76c93` | (see git log) |
 
 ### Status
@@ -1153,8 +1153,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `bfc6a92` | (see git log) |
 
 ### Status
@@ -1173,8 +1173,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `b80c835` | (see git log) |
 
 ### Status
@@ -1193,8 +1193,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `c31eeae` | (see git log) |
 
 ### Status
@@ -1213,8 +1213,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `ec2239e` | (see git log) |
 
 ### Status
@@ -1233,8 +1233,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `ce67ede` | (see git log) |
 
 ### Status
@@ -1253,8 +1253,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `79fbdb7` | (see git log) |
 
 ### Status
@@ -1273,8 +1273,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `7a8c9b6` | (see git log) |
 
 ### Status
@@ -1293,8 +1293,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `42d91e2` | (see git log) |
 
 ### Status
@@ -1313,8 +1313,8 @@ Hooks 页工具事件分组的文字页签换成品牌图标按钮（复用项�
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `2ea5b71` | (see git log) |
 
 ### Status
@@ -1333,8 +1333,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `3f2434d` | (see git log) |
 
 ### Status
@@ -1353,8 +1353,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `7957fdb` | (see git log) |
 
 ### Status
@@ -1373,8 +1373,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `7b792ff` | (see git log) |
 
 ### Status
@@ -1393,8 +1393,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `acfbc28` | (see git log) |
 
 ### Status
@@ -1413,8 +1413,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `6d2b3aa` | (see git log) |
 | `a4ff8b7` | (see git log) |
 
@@ -1434,8 +1434,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `9bfa24c` | (see git log) |
 
 ### Status
@@ -1454,8 +1454,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `34c89cc` | (see git log) |
 | `654a23a` | (see git log) |
 
@@ -1475,8 +1475,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-| ------ | --------- |
+| Hash      | Message       |
+| --------- | ------------- |
 | `c2c2a83` | (see git log) |
 | `eb902d6` | (see git log) |
 | `2f10cc4` | (see git log) |
@@ -1503,8 +1503,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-| ------ | --------- |
+| Hash      | Message       |
+| --------- | ------------- |
 | `e6a8f15` | (see git log) |
 | `7424291` | (see git log) |
 | `3df5f63` | (see git log) |
@@ -1533,8 +1533,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-| ------ | --------- |
+| Hash      | Message       |
+| --------- | ------------- |
 | `556a562` | (see git log) |
 | `afd84a2` | (see git log) |
 | `27a4b03` | (see git log) |
@@ -1573,8 +1573,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `4800914` | (see git log) |
 
 ### Status
@@ -1593,8 +1593,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `330fff5` | (see git log) |
 
 ### Status
@@ -1613,8 +1613,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-| ------ | --------- |
+| Hash      | Message       |
+| --------- | ------------- |
 | `b9c8adb` | (see git log) |
 | `29ff07d` | (see git log) |
 | `f1b3a4e` | (see git log) |
@@ -1635,8 +1635,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `82b6ec8` | (see git log) |
 
 ### Status
@@ -1665,8 +1665,8 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 
 ### Git Commits
 
-| Hash | Message |
-|------|---------|
+| Hash      | Message       |
+| --------- | ------------- |
 | `194ca40` | (see git log) |
 | `bc1e7c4` | (see git log) |
 
