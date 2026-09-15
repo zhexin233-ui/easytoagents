@@ -89,6 +89,11 @@
 | 候选缺 `apiKey` 或字段不受支持                     | 该候选 `invalid` + `PI_PROVIDER_FIELDS_INVALID`；确认该候选为 `INVALID_INPUT`             |
 | 同一 `provider_id` 已有中央渠道档案                | 候选只读 `already_managed`；确认返回 `CONFLICT`，不产生第二份档案                         |
 | 分次导入第二个 provider                            | 基线取并集；Apply 不得删除或改写先前导入的 provider 条目                                  |
+| 手改原生 `models` 后点「按原生内容接管」           | 档案改为文件内容 + 基线刷新；下一次预览不再冲突，Apply 不回写用户手改内容                 |
+| 预览绑定的渠道行版本缺失                           | `INVALID_INPUT`；不改档案、不改基线                                                       |
+| 预览绑定的渠道行版本已过期                         | `STALE_PREVIEW`；不改档案、不改基线                                                       |
+| 原生条目字段校验失败（缺 `apiKey` 等）             | `INVALID_INPUT`；不做部分接管                                                             |
+| 没有任何漂移渠道                                   | 成功但 `adopted` 为空；不改任何行                                                         |
 | 任意 Hook / Agent 入口携带 `tool == pi`            | `INVALID_INPUT` + `PI_HOOKS_UNSUPPORTED` / `PI_AGENTS_UNSUPPORTED`，零写入                |
 | `managed_targets` 写入 `pi` + `hook`/`agent`       | 数据库 CHECK 拒绝                                                                         |
 
@@ -183,8 +188,11 @@
 - 迁移 `0026_provider_import_previews.sql`：`id`/`tool`/`target_path`/`observed_full_hash`/
   `context_json`/`redacted_preview_json`/`status`/时间戳 + `(status, created_at)` 索引；
   tool 白名单 `claude|codex|zcode|opencode|pi`（Cursor 无 Provider 合同）。
+- `adopt_provider_native(database, environment, redactor, AdoptProviderNativeInput {
+  tool, target_path, row_versions }) -> AdoptProviderNativeResultDto { tool, adopted }`。
 - 生成绑定：`commands.discoverProviderImport(tool)`、
-  `commands.confirmProviderImport({ previewId, items })`。
+  `commands.confirmProviderImport({ previewId, items })`、
+  `commands.adoptProviderNative({ tool, targetPath, rowVersions })`。
 
 ### 3. Contracts
 
@@ -214,6 +222,15 @@
   任一失败整体回滚且预览保持 `previewed`。取到写锁后重新扫描原生文件再提交。
 - **只读摘要**：`ProviderProfileDto.pi` 仅含 `apiFormat` 与 `models[]` 的 `id`/`name`；
   绝不暴露 `apiKey`、`headers`、`modelOverrides` 的值。
+- **按原生内容接管**（`adopt_provider_native`）：只处理**已漂移**的渠道（档案投影 ≠ 原生
+  条目），按原生文件内容改写档案（`apiKey` 原样采纳：明文入库、`$ENV` 保持引用），并在同一
+  `IMMEDIATE` 事务里把目标基线刷新为全部中央渠道投影的并集。与
+  `readopt_provider_target` 的区别：后者只刷新基线、档案保持旧内容，因此下一次 Apply 会把
+  用户手改的原生内容改回去——接管必须同时改档案，否则用户点完仍会被回写。
+  必须按用户所看预览绑定的行版本（`DatabaseEntityType::ProviderProfile`）做乐观校验：缺条目
+  报 `INVALID_INPUT`、已过期报 `STALE_PREVIEW`，不得静默覆盖其他窗口的档案编辑。
+  配对规则：档案有 `provider_id` 时按 id 匹配；没有稳定原生 key 的 codec（Claude）只在
+  唯一配对时匹配。本操作不写原生文件。
 
 ### 4. Validation & Error Matrix
 
@@ -255,6 +272,10 @@
 - 前端（`tool-profiles-page.test.tsx`、`onboarding-wizard.test.tsx`）：多候选勾选与名称编辑的
   精确 payload、`already_managed`/`invalid` 不可勾选且显示原因、只读摘要文案、
   首次接管批量导入、检测失败/无候选时不留残留预览。
+- 按原生内容接管：手改原生文件后接管 → 档案改按文件（只读摘要可见）、基线刷新、
+  下一次 Apply 不回写；过期行版本 → `STALE_PREVIEW`；无漂移 → 空结果。前端断言同步 Preview
+  冲突态同时提供「重新接管」（只刷基线）与「按原生内容接管」，后者带 `rowVersions` 调用
+  且不触发 Apply。
 
 ### 7. Wrong vs Correct
 
