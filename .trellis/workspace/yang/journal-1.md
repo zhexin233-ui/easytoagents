@@ -1835,3 +1835,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 74: 统一诊断码用户提示
+
+**Date**: 2026-09-18
+**Task**: 统一诊断码用户提示
+**Branch**: `main`
+
+### Summary
+
+建立共享诊断文案注册表，将 Skills、MCP、Hooks、Agents、Profiles、Projects、Dashboard、Onboarding、Preview、RPC 与运行记录中的内部诊断码转换为可执行中文提示；补充未知码 fallback、Codex 重启提示、前端测试与质量检查，并已推送到 origin/main。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3c51aef` | (see git log) |
+
+### Status
+
+[OK] **Completed**

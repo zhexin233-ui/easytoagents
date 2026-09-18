@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 73
+- **Total Sessions**: 74
 - **Last Active**: 2026-09-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1837 | Active |
+| `journal-1.md` | ~1858 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -30,6 +30,7 @@
 
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 74 | 2026-09-18 | 统一诊断码用户提示 | `3c51aef` | `main` |
 | 73 | 2026-09-18 | 修复 GitHub 质量门 Clippy 失败 | `feb1f16` | `main` |
 | 72 | 2026-09-18 | 完成原生配置强制覆盖与 Provider 本地复现修复 | `3e9dcea` | `codex/force-native-config-overwrite` |
 | 71 | 2026-09-15 | Provider 按原生内容接管（手改 models.json 后一键收敛漂移） | `ab86b99`, `d2c84f5`, `84e0da2` | `main` |
