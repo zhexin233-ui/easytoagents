@@ -78,7 +78,7 @@ describe("SkillsPage", () => {
     [
       "CLAUDE_POLICY_BLOCKED",
       "策略阻止",
-      "Claude 管理策略禁止该类自定义目标。",
+      "Claude 管理策略禁止修改该类自定义目标。",
       "bg-red-50",
     ],
   ] as const)(
@@ -106,7 +106,7 @@ describe("SkillsPage", () => {
       if (!card) throw new Error("未找到 Claude Skills 状态卡");
       expect(within(card).getByText(label)).toHaveClass(toneClass);
       expect(within(card).getByText(description)).toBeVisible();
-      expect(within(card).getByText(diagnosticCode)).toBeVisible();
+      expect(within(card).queryByText(diagnosticCode)).not.toBeInTheDocument();
       expect(
         within(card).queryByRole("button", { name: "预览全局同步" }),
       ).not.toBeInTheDocument();
@@ -430,7 +430,9 @@ describe("全局 Skills 检测与复制导入", () => {
       expect(await screen.findByText(label)).toBeVisible();
       const dialog = screen.getByRole("dialog");
       expect(within(dialog).getByText(message)).toBeVisible();
-      expect(within(dialog).getByText(diagnosticCode)).toBeVisible();
+      expect(
+        within(dialog).queryByText(diagnosticCode),
+      ).not.toBeInTheDocument();
       expect(within(dialog).queryAllByRole("checkbox")).toHaveLength(0);
       expect(
         within(dialog).getByRole("button", { name: "复制所选项（0）" }),
@@ -460,7 +462,7 @@ describe("全局 Skills 检测与复制导入", () => {
       }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "PERMISSION_DENIED：无法安全读取来源",
+      "无法安全读取来源 请修复文件或项目权限后重试。 请重新检测后再确认。",
     );
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
@@ -496,7 +498,9 @@ describe("全局 Skills 检测与复制导入", () => {
       );
       fireEvent.click(screen.getByRole("button", { name: "复制所选项（1）" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        `${code}：检测证据已过期 请重新检测后再确认。`,
+        code === "STALE_PREVIEW"
+          ? "检测证据已过期 请重新检测并生成预览后再应用。 请重新检测后再确认。"
+          : "检测证据已过期 请重新生成预览后重试。 请重新检测后再确认。",
       );
       expect(
         screen.getByRole("checkbox", { name: "导入 new-skill" }),

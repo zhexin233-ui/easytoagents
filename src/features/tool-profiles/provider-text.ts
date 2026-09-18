@@ -5,6 +5,7 @@ import type {
   ProviderProfileDto,
   Tool,
 } from "@/bindings/commands";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 
 /** 支持"官方账号登录"渠道类型的工具；其余工具只有 API Key 渠道。 */
 export const OFFICIAL_LOGIN_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
@@ -47,15 +48,12 @@ export const providerCandidateStatusText: Record<
   invalid: "配置无效",
 };
 
-/** 候选原因码的固定文案；未知码只显示原始码，不回显任何原生值。 */
-const candidateReasonText: Record<string, string> = {
-  PI_PROVIDER_ENTRY_INVALID: "原生条目不是 JSON 对象",
-  PI_PROVIDER_ID_INVALID: "原生 provider id 非法",
-  PI_PROVIDER_FIELDS_INVALID: "缺少接入地址或 API Key",
-};
-
+/** 候选原因码统一经过诊断 registry；未知码也只展示安全 fallback。 */
 export function providerCandidateReasonText(reason: string): string {
-  return candidateReasonText[reason] ?? reason;
+  const presentation = presentTargetDiagnostic("failed", reason, {
+    artifactKind: "provider",
+  });
+  return `${presentation.description} ${presentation.nextStep}`;
 }
 
 /**

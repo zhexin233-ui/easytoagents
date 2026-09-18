@@ -1043,3 +1043,87 @@ useQuery(projectNativeResourcesQueryOptions(projectId, tool, "agent"));
 useQuery(agentProjectOptionsQueryOptions(projectId, tool));
 requestPreview(scopes); // 自动消费持久化 Preview → Apply，不展示二次确认
 ```
+
+## Scenario: Shared diagnostic presentation registry
+
+### 1. Scope / Trigger
+
+- Trigger: any feature renders a backend diagnostic code, RPC error, Preview
+  warning, sync-run error, or external-change reason in ordinary user-facing UI.
+- The stable machine code remains part of generated DTOs, logs, and tests, but
+  it is not the primary copy shown to users.
+
+### 2. Signatures
+
+- `src/lib/diagnostic-presentations.ts` is the single frontend presentation
+  boundary. Use `presentTargetDiagnostic`, `presentRpcError`,
+  `presentPreviewCode`, `presentSyncRunError`, or `presentDiagnosticReason`
+  according to the source DTO.
+- A `DiagnosticPresentation` contains `label`, `description`, `tone`,
+  `nextStep`, and (when applicable) `previewBlocked`; callers render these
+  fields without rebuilding code-specific copy locally.
+
+### 3. Contracts
+
+- Known backend codes map to concise Chinese copy and an executable next step.
+  `CODEX_INSTALLATION_PROBE_UNSUPPORTED` (including tool-suffixed variants)
+  must tell the user: “Codex 需要重新检测，请重启 easytoagents 后重试”。
+- Unknown machine codes use a safe Chinese fallback appropriate to the source
+  (target, RPC, Preview, or sync run); never interpolate an unknown code into
+  the main user message.
+- A human-authored diagnostic message may be preserved as descriptive text, but
+  the stable code must not replace the actionable label/next step.
+- Presentation mapping cannot change backend codes, DTO shapes, fail-closed
+  sync decisions, Preview lifecycle, redaction, or native-write behavior.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required rendering |
+| --- | --- |
+| Known target/RPC/Preview code | Localized label, explanation, and next step; preserve blocked state |
+| Unknown target or Preview code | Safe refresh/re-detect fallback; remain blocked when the DTO says so |
+| Unknown RPC code or machine-like message | Safe operation-failed fallback; no raw machine code |
+| `details.reason` is a known code | Resolve it through the same registry |
+| `details.reason` is unknown machine text | Ignore the code in primary copy and show a safe fallback |
+| Codex installation probe unsupported | Prompt restart of easytoagents, then re-detection |
+| Human diagnostic text | Keep it as description, with a generic re-detect/retry action |
+
+### 5. Good / Base / Bad Cases
+
+- Good: pass the DTO code to the shared presenter and render `nextStep`; keep
+  the raw code available to logs and test assertions.
+- Base: use a source-specific safe fallback when the registry has no key, so a
+  newly added backend code is still understandable and actionable.
+- Bad: render `errorCode`, `reason`, or `AppError.message` directly in a page,
+  duplicate code-to-copy maps inside feature components, or expose a backend
+  code in a button label intended for ordinary users.
+
+### 6. Tests Required
+
+- Registry unit tests must cover the Codex restart/re-detect copy, representative
+  known codes, unknown target/RPC/Preview fallbacks, machine-like reason values,
+  and preservation of human diagnostic descriptions.
+- Feature tests must assert localized copy is visible and the stable code is not
+  in the ordinary DOM for Skills, MCP, Hooks, Agents, Profiles, Projects,
+  Dashboard, Onboarding, Preview, RPC, and run-history states.
+- Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test --run`,
+  `pnpm bindings:check`, `pnpm check`, and `git diff --check` after changing
+  the registry or its callers.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+<p>{status.diagnosticCode}: {status.message}</p>
+```
+
+#### Correct
+
+```tsx
+const presentation = presentTargetDiagnostic(status.diagnosticCode, {
+  tool,
+  artifactKind,
+});
+<StatusCard description={presentation.description} nextStep={presentation.nextStep} />
+```

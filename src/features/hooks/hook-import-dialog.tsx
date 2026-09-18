@@ -19,6 +19,7 @@ import {
   DialogOverlay,
 } from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { presentDiagnosticReason } from "@/lib/diagnostic-presentations";
 import { hookImportQueryOptions } from "@/lib/hooks-api";
 import { profileErrorText, unwrapResult } from "@/lib/rpc";
 import { toolMetadata } from "@/lib/tool-metadata";
@@ -85,7 +86,16 @@ export function HookImportDialog(props: HookImportDialogProps) {
               <code className="block text-xs break-all">
                 {preview.targetPath}
               </code>
-              {preview.message ? <p role="status">{preview.message}</p> : null}
+              {preview.message ? (
+                <p role="status">
+                  {
+                    presentDiagnosticReason(preview.message, {
+                      tool: props.tool,
+                      artifactKind: "hook",
+                    }).description
+                  }
+                </p>
+              ) : null}
               {preview.candidates.length > 0 ? (
                 <div className="space-y-3">
                   {preview.candidates.map((candidate) => (
@@ -131,7 +141,12 @@ export function HookImportDialog(props: HookImportDialogProps) {
                       </code>
                       {candidate.reason ? (
                         <p className="text-warning mt-2 text-xs">
-                          {candidate.reason}
+                          {
+                            presentDiagnosticReason(candidate.reason, {
+                              tool: props.tool,
+                              artifactKind: "hook",
+                            }).description
+                          }
                         </p>
                       ) : null}
                     </article>

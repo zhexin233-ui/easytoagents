@@ -16,25 +16,12 @@ import {
   toolProfileStatusQueryOptions,
 } from "@/lib/profile-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 import { toneClass } from "@/lib/tone-class";
 import { toolMetadata } from "@/lib/tool-metadata";
 
 interface ToolProfilesPageProps {
   tool: Tool;
-}
-
-// 安装探针诊断码 → 用户可读原因。未知码只展示原始码，不猜测语义。
-const INSTALLATION_PROBE_DIAGNOSTIC_TEXT: Record<string, string> = {
-  INSTALLATION_PROBE_SKIPPED_PATH_ENTRIES:
-    "PATH 中存在被跳过的不安全条目（相对路径、`.` 或同名目录），这些位置没有被搜索；如工具安装在那里，请改用绝对路径。",
-  INSTALLATION_PROBE_NO_SAFE_PATH_ENTRIES:
-    "PATH 为空或没有任何安全的绝对路径条目，探针无处可搜。",
-  INSTALLATION_PROBE_UNSAFE_CANDIDATE:
-    "PATH 中首个同名文件无法安全解析、不是普通文件或不可执行。",
-};
-
-function installationProbeDiagnosticText(code: string): string {
-  return INSTALLATION_PROBE_DIAGNOSTIC_TEXT[code] ?? "安装探针报告了额外诊断。";
 }
 
 export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
@@ -75,8 +62,15 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
         <main className="px-8 py-6">
           <BlockingState
             title={`${title} 渠道不受支持`}
-            description={`${title} 不支持渠道配置。`}
-            code="CURSOR_PROVIDER_UNSUPPORTED"
+            description={`${
+              presentTargetDiagnostic("failed", "CURSOR_PROVIDER_UNSUPPORTED", {
+                tool,
+              }).description
+            } ${
+              presentTargetDiagnostic("failed", "CURSOR_PROVIDER_UNSUPPORTED", {
+                tool,
+              }).nextStep
+            }`}
           />
         </main>
       </>
@@ -110,11 +104,24 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               ) : null}
               {statusQuery.data.installationProbeDiagnostic ? (
                 <p className="text-warning mt-2 text-xs">
-                  {installationProbeDiagnosticText(
-                    statusQuery.data.installationProbeDiagnostic,
-                  )}
-                  （诊断码：
-                  <code>{statusQuery.data.installationProbeDiagnostic}</code>）
+                  {
+                    presentTargetDiagnostic(
+                      statusQuery.data.availability === "installed"
+                        ? "in_sync"
+                        : "failed",
+                      statusQuery.data.installationProbeDiagnostic,
+                      { tool },
+                    ).description
+                  }{" "}
+                  {
+                    presentTargetDiagnostic(
+                      statusQuery.data.availability === "installed"
+                        ? "in_sync"
+                        : "failed",
+                      statusQuery.data.installationProbeDiagnostic,
+                      { tool },
+                    ).nextStep
+                  }
                 </p>
               ) : null}
               <p>{statusQuery.data.newSessionNotice}</p>
@@ -152,7 +159,14 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
             const presentation = globalTargetStatusPresentation(
               target.status,
               target.diagnosticCode,
+              { tool: target.tool, artifactKind: target.artifactKind },
             );
+            const diagnosticPresentation = target.diagnosticCode
+              ? presentTargetDiagnostic(target.status, target.diagnosticCode, {
+                  tool: target.tool,
+                  artifactKind: target.artifactKind,
+                })
+              : null;
             const artifactLabel =
               target.artifactKind === "provider" ? "Provider" : "提示词";
             return (
@@ -177,9 +191,9 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
                     {presentation.description}
                   </p>
                 ) : null}
-                {target.diagnosticCode ? (
+                {diagnosticPresentation ? (
                   <p className="text-warning mt-2 text-xs">
-                    诊断码：<code>{target.diagnosticCode}</code>
+                    {diagnosticPresentation.nextStep}
                   </p>
                 ) : null}
                 <ExternalChangeActions

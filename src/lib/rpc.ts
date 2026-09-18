@@ -1,4 +1,8 @@
 import type { AppError, Result } from "@/bindings/commands";
+import {
+  isMachineDiagnosticCode,
+  presentRpcError,
+} from "@/lib/diagnostic-presentations";
 
 /**
  * 生成的 Tauri 命令统一返回 `Result<T, AppError>`。这里是前端唯一的解包点：
@@ -33,10 +37,14 @@ export function profileErrorText(error: unknown): string | null {
       }
     }
     // message 是按错误码分类的通用文案；details.reason 才是后端给出的具体原因。
-    const reason = errorDetailString(error, "reason");
-    return `${error.appError.code}：${reason ?? error.appError.message}`;
+    // 稳定 code 只保留在结构化错误和日志中，不拼接到普通用户主文案。
+    const presentation = presentRpcError(error.appError);
+    return `${presentation.description} ${presentation.nextStep}`;
   }
   if (error instanceof Error) {
+    if (isMachineDiagnosticCode(error.message)) {
+      return "操作失败，请重新扫描后再试。";
+    }
     return error.message;
   }
   return error ? "操作失败，请重新扫描后再试。" : null;

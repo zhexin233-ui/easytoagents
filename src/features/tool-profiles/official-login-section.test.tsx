@@ -174,7 +174,7 @@ describe("OfficialLoginSection", () => {
     });
     renderWithProviders(<OfficialLoginSection tool="claude" />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "ENVIRONMENT_PROBING：工具环境仍在检测中，请稍后重试",
+      "工具环境仍在检测中，请稍后重试 请等待检测完成后重试。",
     );
     expect(screen.getByRole("button", { name: "登录官方账号" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "刷新状态" })).toBeEnabled();

@@ -13,6 +13,7 @@ import {
   profileErrorText,
   unwrapResult,
 } from "@/lib/profile-api";
+import { presentDiagnosticReason } from "@/lib/diagnostic-presentations";
 
 interface ExternalChangeActionsProps {
   artifactKind: ArtifactKind;
@@ -86,13 +87,19 @@ export function ExternalChangeActions({
           ? plan.canAdoptNative
           : plan.canOverwriteCentral;
       if (!allowed) {
-        throw new Error(
+        const blockedReason =
           (action === "adopt_native"
             ? plan.adoptBlockedReason
             : plan.overwriteBlockedReason) ??
-            (action === "adopt_native"
-              ? "NATIVE_ADOPTION_UNAVAILABLE"
-              : "CENTRAL_OVERWRITE_UNAVAILABLE"),
+          (action === "adopt_native"
+            ? "NATIVE_ADOPTION_UNAVAILABLE"
+            : "CENTRAL_OVERWRITE_UNAVAILABLE");
+        const blockedPresentation = presentDiagnosticReason(blockedReason, {
+          tool,
+          artifactKind,
+        });
+        throw new Error(
+          `${blockedPresentation.description} ${blockedPresentation.nextStep}`,
         );
       }
       return unwrapResult(
@@ -168,6 +175,15 @@ export function ExternalChangeActions({
 
   if (!hasExternalChange) return null;
 
+  const adoptBlockedPresentation = presentDiagnosticReason(
+    planQuery.data?.adoptBlockedReason,
+    { tool, artifactKind },
+  );
+  const overwriteBlockedPresentation = presentDiagnosticReason(
+    planQuery.data?.overwriteBlockedReason,
+    { tool, artifactKind },
+  );
+
   return (
     <div className="mt-3 flex flex-wrap gap-2">
       {planQuery.isPending ? (
@@ -196,18 +212,15 @@ export function ExternalChangeActions({
       ) : null}
       {planQuery.data && adoptBlocked ? (
         <p className="text-warning basis-full text-xs">
-          原生更改暂不可直接采纳：
-          <code className="ml-1">{planQuery.data.adoptBlockedReason}</code>
+          原生更改暂不可直接采纳：{adoptBlockedPresentation.description}{" "}
+          {adoptBlockedPresentation.nextStep}
           {onMatchOrImport ? "，请使用应用内匹配/导入。" : "。"}
         </p>
       ) : null}
       {planQuery.data && overwriteBlocked ? (
         <p className="text-warning basis-full text-xs">
-          中央覆盖已阻止：
-          <code className="ml-1">
-            {planQuery.data.overwriteBlockedReason ??
-              "CENTRAL_OVERWRITE_UNAVAILABLE"}
-          </code>
+          中央覆盖已阻止：{overwriteBlockedPresentation.description}{" "}
+          {overwriteBlockedPresentation.nextStep}
         </p>
       ) : null}
       <Button

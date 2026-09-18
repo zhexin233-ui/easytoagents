@@ -174,19 +174,23 @@ describe("SkillsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "同步更改" }));
     fireEvent.click(screen.getByRole("button", { name: "是" }));
     const alert = await screen.findByText(
-      "同步更改失败：CONFLICT：Skill 已被其他操作修改",
+      "同步更改失败：Skill 已被其他操作修改 请检查冲突并重新检测后再试。",
     );
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveAttribute("aria-atomic", "true");
     expect(
-      screen.getAllByText("同步更改失败：CONFLICT：Skill 已被其他操作修改"),
+      screen.getAllByText(
+        "同步更改失败：Skill 已被其他操作修改 请检查冲突并重新检测后再试。",
+      ),
     ).toHaveLength(1);
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: "同步更改" }),
       ).not.toBeInTheDocument(),
     );
-    expect(screen.getByText("CENTRAL_SKILL_CONTENT_CHANGED")).toBeVisible();
+    expect(
+      screen.queryByText("CENTRAL_SKILL_CONTENT_CHANGED"),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "同步更改" })).toBeVisible();
     expect(commands.previewSkillSync).not.toHaveBeenCalled();
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
@@ -344,21 +348,23 @@ describe("SkillsPage", () => {
       await screen.findByRole("button", { name: "Codex 全局未分配" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "DATABASE_ERROR：Skills 预览暂不可用",
+      "同步失败：codex：Skills 预览暂不可用 请稍后重试；若持续发生，请重新打开应用。",
     );
     expect(
-      screen.getAllByText(/DATABASE_ERROR：Skills 预览暂不可用/),
+      screen.getAllByText(
+        /同步失败：codex：Skills 预览暂不可用 请稍后重试；若持续发生，请重新打开应用。/,
+      ),
     ).toHaveLength(1);
     fireEvent.click(
       await screen.findByRole("button", { name: "Claude 全局已分配" }),
     );
     await waitFor(() =>
       expect(
-        screen.getByText(/ATOMIC_WRITE_FAILED：Skills 应用失败/),
+        screen.getByText(/Skills 应用失败 请检查权限并从恢复点恢复后重试。/),
       ).toHaveAttribute("role", "alert"),
     );
     expect(
-      screen.getAllByText(/ATOMIC_WRITE_FAILED：Skills 应用失败/),
+      screen.getAllByText(/Skills 应用失败 请检查权限并从恢复点恢复后重试。/),
     ).toHaveLength(1);
   });
   it("全局空目标自动同步只提示无需写入", async () => {

@@ -274,20 +274,22 @@ describe("McpPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "停用" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "DATABASE_ERROR：MCP 预览暂不可用",
+      "同步失败：claude：MCP 预览暂不可用 请稍后重试；若持续发生，请重新打开应用。",
     );
     expect(
-      screen.getAllByText(/DATABASE_ERROR：MCP 预览暂不可用/),
+      screen.getAllByText(
+        /同步失败：claude：MCP 预览暂不可用 请稍后重试；若持续发生，请重新打开应用。/,
+      ),
     ).toHaveLength(1);
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(
-        screen.getByText(/ATOMIC_WRITE_FAILED：MCP 应用失败/),
+        screen.getByText(/MCP 应用失败 请检查权限并从恢复点恢复后重试。/),
       ).toHaveAttribute("role", "alert"),
     );
     expect(
-      screen.getAllByText(/ATOMIC_WRITE_FAILED：MCP 应用失败/),
+      screen.getAllByText(/MCP 应用失败 请检查权限并从恢复点恢复后重试。/),
     ).toHaveLength(1);
   });
   it("编辑已分配 MCP 保存后自动同步并 Apply", async () => {
@@ -395,7 +397,7 @@ describe("McpPage", () => {
     [
       "CLAUDE_POLICY_BLOCKED",
       "策略阻止",
-      "Claude 管理策略禁止该类自定义目标。",
+      "Claude 管理策略禁止修改该类自定义目标。",
       "bg-red-50",
     ],
   ] as const)(
@@ -424,7 +426,9 @@ describe("McpPage", () => {
 
       expect(within(claudeCard).getByText(label)).toHaveClass(toneClass);
       expect(within(claudeCard).getByText(description)).toBeVisible();
-      expect(within(claudeCard).getByText(diagnosticCode)).toBeVisible();
+      expect(
+        within(claudeCard).queryByText(diagnosticCode),
+      ).not.toBeInTheDocument();
       const importButton = within(claudeCard).getByRole("button", {
         name: "检测并导入已有 MCP",
       });

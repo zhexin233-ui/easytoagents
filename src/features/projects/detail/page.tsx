@@ -5,6 +5,7 @@ import {
   commands,
   type ArtifactKind,
   type PreviewPlan,
+  type ProjectPathStatus,
   type Tool,
 } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
@@ -16,6 +17,10 @@ import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import {
+  presentPreviewCode,
+  presentTargetDiagnostic,
+} from "@/lib/diagnostic-presentations";
 import {
   invalidateProjectScope,
   projectQueryOptions,
@@ -34,6 +39,24 @@ import { ProjectMcpAssignments } from "./assignments/mcp";
 import { ProjectHookAssignments } from "./assignments/hook";
 import { ProjectSkillAssignments } from "./assignments/skill";
 import { ProjectAgentAssignments } from "./assignments/agent";
+
+const PROJECT_PATH_DIAGNOSTIC_CODES: Record<
+  Exclude<ProjectPathStatus, "valid">,
+  string
+> = {
+  missing: "PROJECT_ROOT_MISSING",
+  permission_denied: "PROJECT_ROOT_PERMISSION_DENIED",
+  invalid: "PROJECT_ROOT_INVALID",
+};
+
+function projectPathDescription(status: Exclude<ProjectPathStatus, "valid">) {
+  const presentation = presentTargetDiagnostic(
+    "failed",
+    PROJECT_PATH_DIAGNOSTIC_CODES[status],
+    { artifactKind: "mcp" },
+  );
+  return `${presentation.description} ${presentation.nextStep}`;
+}
 
 const PROJECT_RESOURCE_VIEWS = [
   {
@@ -228,8 +251,7 @@ export function ProjectDetailPage() {
           {project.pathStatus !== "valid" ? (
             <BlockingState
               title="项目目录不可用"
-              description="请重新扫描确认路径。"
-              code={project.pathStatus}
+              description={projectPathDescription(project.pathStatus)}
             />
           ) : null}
           {applyMutation.isError &&
@@ -303,6 +325,16 @@ export function ProjectDetailPage() {
                     const initialUnmanaged =
                       target.diagnosticCode ===
                       "PROJECT_TARGET_INITIAL_UNMANAGED";
+                    const diagnosticPresentation = target.diagnosticCode
+                      ? presentTargetDiagnostic(
+                          target.status,
+                          target.diagnosticCode,
+                          {
+                            tool: target.tool,
+                            artifactKind: target.artifactKind,
+                          },
+                        )
+                      : null;
                     return (
                       <article
                         key={`${target.tool}-${target.artifactKind}`}
@@ -330,9 +362,10 @@ export function ProjectDetailPage() {
                           <p className="text-muted-foreground mt-2 text-xs">
                             该目标由外部维护，本项目暂无需要写入的项目级配置；全局配置持续继承。
                           </p>
-                        ) : target.diagnosticCode ? (
-                          <p className="mt-2 text-xs">
-                            诊断：{target.diagnosticCode}
+                        ) : diagnosticPresentation ? (
+                          <p className="text-muted-foreground mt-2 text-xs">
+                            {diagnosticPresentation.description}{" "}
+                            {diagnosticPresentation.nextStep}
                           </p>
                         ) : null}
                         <ExternalChangeActions
@@ -414,8 +447,21 @@ export function ProjectDetailPage() {
             {writerBlocked ? (
               <BlockingState
                 title="存在未完成的写入或回滚失败"
-                description="有同步正在进行或回滚失败，请先在恢复点中处理。"
-                code={interruptedQuery.data?.status ?? "WRITE_IN_PROGRESS"}
+                description={`${
+                  presentPreviewCode(
+                    interruptedQuery.data?.status === "rollback_failed"
+                      ? "ROLLBACK_FAILED"
+                      : "WRITE_IN_PROGRESS",
+                    "error",
+                  ).description
+                } ${
+                  presentPreviewCode(
+                    interruptedQuery.data?.status === "rollback_failed"
+                      ? "ROLLBACK_FAILED"
+                      : "WRITE_IN_PROGRESS",
+                    "error",
+                  ).nextStep
+                }`}
               />
             ) : null}
             <ProjectNativeResources

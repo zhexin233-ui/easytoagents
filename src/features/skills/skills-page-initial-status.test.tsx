@@ -110,7 +110,7 @@ describe("全局 Skills 检测与复制导入", () => {
     fireEvent.click(screen.getByRole("button", { name: "复制所选项（1）" }));
     const dialog = screen.getByRole("dialog");
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "已复制到中央库，但列表刷新失败：DATABASE_ERROR：中央列表暂不可读",
+      "已复制到中央库，但列表刷新失败：中央列表暂不可读 请稍后重试；若持续发生，请重新打开应用。 请重新检测后再确认。",
     );
     expect(
       within(dialog).getByRole("button", { name: "复制所选项（1）" }),
@@ -197,10 +197,14 @@ describe("Skills 首次目标状态展示", () => {
 
   it.each([
     ["external_non_owned_change", "EXTERNAL_NON_OWNED_CHANGE", "非受管变更"],
-    ["external_owned_change", "CENTRAL_SKILL_CONTENT_CHANGED", "受管内容冲突"],
-    ["parse_error", "SKILL_PARSE_ERROR", "格式错误"],
+    [
+      "external_owned_change",
+      "CENTRAL_SKILL_CONTENT_CHANGED",
+      "中央 Skill 内容已变化",
+    ],
+    ["parse_error", "SKILL_PARSE_ERROR", "Skill 格式错误"],
     ["permission_denied", "PERMISSION_DENIED", "权限不足"],
-    ["target_type_changed", "TARGET_TYPE_CHANGED", "目标类型变化"],
+    ["target_type_changed", "TARGET_TYPE_CHANGED", "目标类型已变化"],
   ] as const)(
     "真实 %s 继续展示原有诊断，不覆盖为首次目录",
     async (status, diagnosticCode, label) => {
@@ -218,7 +222,7 @@ describe("Skills 首次目标状态展示", () => {
       });
       renderPage();
       expect(await screen.findByText(label)).toBeVisible();
-      expect(screen.getByText(diagnosticCode)).toBeVisible();
+      expect(screen.queryByText(diagnosticCode)).not.toBeInTheDocument();
       expect(screen.queryByText("未纳入同步管理")).not.toBeInTheDocument();
       expect(screen.queryByText("空目录，待配置")).not.toBeInTheDocument();
     },

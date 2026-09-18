@@ -104,7 +104,7 @@ describe("SkillsPage", () => {
       within(dialog).getByRole("button", { name: "复制到中央库" }),
     );
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "PARSE_ERROR：SKILL.md frontmatter 不合法",
+      "SKILL.md frontmatter 不合法 请修复格式后重新检测。",
     );
     expect(
       within(dialog).getByDisplayValue("/isolated/source/broken"),
@@ -200,7 +200,7 @@ describe("SkillsPage", () => {
       within(dialog).getByRole("button", { name: "复制到中央库" }),
     );
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "NOT_FOUND：未找到 GitHub Skill 目录",
+      "未找到 GitHub Skill 目录 请重新扫描后再试。",
     );
     fireEvent.change(input, {
       target: { value: "https://github.com/owner/repo/tree/main/fixed" },
@@ -234,7 +234,7 @@ describe("SkillsPage", () => {
       within(dialog).getByRole("button", { name: "复制到中央库" }),
     );
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "Skill 已导入，列表刷新失败：DATABASE_ERROR：中央列表暂不可读",
+      "Skill 已导入，列表刷新失败：中央列表暂不可读 请稍后重试；若持续发生，请重新打开应用。。请关闭后重试查看；为避免重复导入，本次链接不能再次提交。",
     );
     expect(
       within(dialog).getByLabelText("GitHub Skill 目录链接"),
@@ -267,24 +267,30 @@ describe("SkillsPage", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "内容预览" }));
     const contentAlert = await screen.findByText(
-      "内容预览失败：CONFLICT：中央 Skill 已变化",
+      "内容预览失败：中央 Skill 已变化 请检查冲突并重新检测后再试。",
     );
     expect(contentAlert).toHaveAttribute("role", "alert");
     expect(contentAlert).toHaveAttribute("aria-atomic", "true");
     expect(
-      screen.getAllByText("内容预览失败：CONFLICT：中央 Skill 已变化"),
+      screen.getAllByText(
+        "内容预览失败：中央 Skill 已变化 请检查冲突并重新检测后再试。",
+      ),
     ).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "移出中央库" }));
     const deleteAlert = await screen.findByText(
-      "移出中央库失败：CONFLICT：中央 Skill 已变化",
+      "移出中央库失败：中央 Skill 已变化 请检查冲突并重新检测后再试。",
     );
     expect(deleteAlert).toHaveAttribute("role", "alert");
     expect(deleteAlert).toHaveAttribute("aria-atomic", "true");
     expect(
-      screen.getAllByText("移出中央库失败：CONFLICT：中央 Skill 已变化"),
+      screen.getAllByText(
+        "移出中央库失败：中央 Skill 已变化 请检查冲突并重新检测后再试。",
+      ),
     ).toHaveLength(1);
     expect(
-      screen.getByText("内容预览失败：CONFLICT：中央 Skill 已变化"),
+      screen.getByText(
+        "内容预览失败：中央 Skill 已变化 请检查冲突并重新检测后再试。",
+      ),
     ).toHaveAttribute("role", "alert");
   });
   it("内容预览和移出中央库进行中时保留图标按钮状态语义", async () => {
@@ -371,7 +377,7 @@ describe("SkillsPage", () => {
     "CENTRAL_SKILL_TYPE_CHANGED",
     "CENTRAL_SKILL_PATH_CHANGED",
     "CENTRAL_SKILL_INVALID",
-  ] as const)("其他中央诊断 %s 不显示同步更改", async (diagnosticCode) => {
+  ] as const)("其他中央诊断 %s 不显示同步更改", (diagnosticCode) => {
     vi.mocked(commands.listSkills).mockResolvedValue({
       status: "ok",
       data: [
@@ -383,7 +389,7 @@ describe("SkillsPage", () => {
       ],
     });
     renderPage();
-    expect(await screen.findByText(diagnosticCode)).toBeVisible();
+    expect(screen.queryByText(diagnosticCode)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "同步更改" }),
     ).not.toBeInTheDocument();

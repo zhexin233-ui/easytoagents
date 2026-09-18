@@ -12,6 +12,7 @@ import {
   invalidateEnvironmentDependents,
 } from "@/lib/environment-api";
 import { profileErrorText, unwrapResult } from "@/lib/rpc";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 import { toolMetadata } from "@/lib/tool-metadata";
 import { cn } from "@/lib/utils";
 
@@ -130,7 +131,13 @@ function toolInstallationText(tool: ToolInstallationDto): string {
     ? ` ${tool.installationVersion}`
     : "";
   const diagnostic = tool.installationProbeDiagnostic
-    ? `（${tool.installationProbeDiagnostic}）`
-    : "";
-  return `${label}：${AVAILABILITY_TEXT[tool.availability]}${version}${diagnostic}`;
+    ? presentTargetDiagnostic(
+        tool.availability === "installed" ? "in_sync" : "failed",
+        tool.installationProbeDiagnostic,
+        { tool: tool.tool },
+      )
+    : null;
+  return `${label}：${AVAILABILITY_TEXT[tool.availability]}${version}${
+    diagnostic ? `（${diagnostic.description} ${diagnostic.nextStep}）` : ""
+  }`;
 }

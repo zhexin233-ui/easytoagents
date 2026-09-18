@@ -13,6 +13,10 @@ import { useEnabledTools } from "@/components/use-enabled-tools";
 import { agentsQueryOptions } from "@/lib/agents-api";
 import { dashboardSummaryQueryOptions } from "@/lib/dashboard-api";
 import { profileErrorText } from "@/lib/profile-api";
+import {
+  presentPreviewCode,
+  presentSyncRunError,
+} from "@/lib/diagnostic-presentations";
 import { toolMetadata } from "@/lib/tool-metadata";
 
 const OnboardingWizard = lazy(() =>
@@ -63,15 +67,22 @@ export function DashboardPage() {
           />
         ) : null}
 
-        {dashboardQuery.data?.interruptedRun ? (
-          <BlockingState
-            title="检测到未完成的写入或恢复"
-            description="新的 Apply/Restore 已被阻止。请先在恢复点中处理。"
-            code={`${dashboardQuery.data.interruptedRun.status} · ${dashboardQuery.data.interruptedRun.runId}`}
-            actionLabel="打开恢复入口"
-            onAction={() => setRestoreOpen(true)}
-          />
-        ) : null}
+        {dashboardQuery.data?.interruptedRun
+          ? (() => {
+              const interruptedPresentation = presentPreviewCode(
+                "WRITE_IN_PROGRESS",
+                "error",
+              );
+              return (
+                <BlockingState
+                  title="检测到未完成的写入或恢复"
+                  description={`${interruptedPresentation.description} ${interruptedPresentation.nextStep}`}
+                  actionLabel="打开恢复入口"
+                  onAction={() => setRestoreOpen(true)}
+                />
+              );
+            })()
+          : null}
 
         {dashboardQuery.data?.needsOnboarding ? (
           <EmptyState
@@ -143,25 +154,40 @@ export function DashboardPage() {
                 最近同步
               </h2>
               <div className="mt-3 divide-y">
-                {dashboardQuery.data.recentSyncRuns.map((run) => (
-                  <article
-                    key={run.id}
-                    className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-3 px-1 py-2.5 text-sm"
-                  >
-                    <div>
-                      <p className="font-medium">
-                        {run.kind} · {run.scope}
-                      </p>
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        {run.startedAt}
-                      </p>
-                    </div>
-                    <span className="bg-muted rounded-full px-2 py-1 text-xs">
-                      {run.status}
-                      {run.errorCode ? ` · ${run.errorCode}` : ""}
-                    </span>
-                  </article>
-                ))}
+                {dashboardQuery.data.recentSyncRuns.map((run) =>
+                  (() => {
+                    const errorPresentation = presentSyncRunError(
+                      run.errorCode,
+                    );
+                    return (
+                      <article
+                        key={run.id}
+                        className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-3 px-1 py-2.5 text-sm"
+                      >
+                        <div>
+                          <p className="font-medium">
+                            {run.kind} · {run.scope}
+                          </p>
+                          <p className="text-muted-foreground mt-1 text-xs">
+                            {run.startedAt}
+                          </p>
+                          {errorPresentation ? (
+                            <p className="text-warning mt-1 text-xs">
+                              {errorPresentation.description}{" "}
+                              {errorPresentation.nextStep}
+                            </p>
+                          ) : null}
+                        </div>
+                        <span className="bg-muted rounded-full px-2 py-1 text-xs">
+                          {run.status}
+                          {errorPresentation
+                            ? ` · ${errorPresentation.label}`
+                            : ""}
+                        </span>
+                      </article>
+                    );
+                  })(),
+                )}
                 {dashboardQuery.data.recentSyncRuns.length === 0 ? (
                   <p className="text-muted-foreground py-2.5 text-sm">
                     尚无同步记录。

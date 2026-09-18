@@ -23,6 +23,7 @@ import {
   providerCandidateStatusText,
   providerModelText,
 } from "@/features/tool-profiles/provider-text";
+import { presentDiagnosticReason } from "@/lib/diagnostic-presentations";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { toolMetadata } from "@/lib/tool-metadata";
 
@@ -102,7 +103,16 @@ export function ProviderImportDialog({
             只接管到中央档案并建立受管基线，原生文件内容保持不变。
           </p>
           <code className="block text-xs break-all">{preview.targetPath}</code>
-          {preview.message ? <p role="status">{preview.message}</p> : null}
+          {preview.message ? (
+            <p role="status">
+              {
+                presentDiagnosticReason(preview.message, {
+                  tool,
+                  artifactKind: "provider",
+                }).description
+              }
+            </p>
+          ) : null}
           {error ? (
             <p role="alert" className="text-destructive">
               {error} 请重新检测后再确认。

@@ -33,6 +33,7 @@ import {
   toolMetadata,
 } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 import { McpFormDialog } from "@/features/mcp/mcp-form-dialog";
 import {
   createMcpInput,
@@ -429,7 +430,15 @@ export function McpPage() {
                 const presentation = globalTargetStatusPresentation(
                   status.status,
                   status.diagnosticCode,
+                  { tool: status.tool, artifactKind: "mcp" },
                 );
+                const diagnosticPresentation = status.diagnosticCode
+                  ? presentTargetDiagnostic(
+                      status.status,
+                      status.diagnosticCode,
+                      { tool: status.tool, artifactKind: "mcp" },
+                    )
+                  : null;
                 return (
                   <article
                     key={status.tool}
@@ -453,9 +462,9 @@ export function McpPage() {
                         {presentation.description}
                       </p>
                     ) : null}
-                    {status.diagnosticCode ? (
+                    {diagnosticPresentation ? (
                       <p className="text-warning mt-2 text-xs">
-                        诊断码：<code>{status.diagnosticCode}</code>
+                        {diagnosticPresentation.nextStep}
                       </p>
                     ) : null}
                     <ExternalChangeActions

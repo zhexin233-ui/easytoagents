@@ -732,7 +732,7 @@ describe("OnboardingWizard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "应用全部预览" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "ATOMIC_WRITE_FAILED：提示词应用失败",
+      "向导操作未完成提示词应用失败 请检查权限并从恢复点恢复后重试。",
     );
     expect(commands.applyProfilePreview).toHaveBeenNthCalledWith(1, {
       previewId: syncPreview.previewId,

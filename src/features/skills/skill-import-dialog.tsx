@@ -22,6 +22,10 @@ import {
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import {
+  presentDiagnosticReason,
+  presentTargetDiagnostic,
+} from "@/lib/diagnostic-presentations";
 import { skillImportQueryOptions } from "@/lib/skills-api";
 import { toneClass } from "@/lib/tone-class";
 import { toolMetadata } from "@/lib/tool-metadata";
@@ -146,6 +150,12 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
       mode === "copy"
         ? candidate.status === "importable"
         : candidate.takeoverEligible;
+    const reasonPresentation = candidate.reason
+      ? presentDiagnosticReason(candidate.reason, {
+          tool: props.tool,
+          artifactKind: "skill",
+        })
+      : null;
     return (
       <article
         key={candidate.candidateId}
@@ -192,8 +202,10 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               : "中央已有相同内容，将复用。"}
           </p>
         ) : null}
-        {candidate.reason ? (
-          <p className="text-warning mt-2 text-xs">{candidate.reason}</p>
+        {reasonPresentation ? (
+          <p className="text-warning mt-2 text-xs">
+            {reasonPresentation.description}
+          </p>
         ) : null}
       </article>
     );
@@ -286,11 +298,35 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                         {sourceStatusLabels[source.status]}
                       </p>
                       {source.message ? (
-                        <p className="mt-2">{source.message}</p>
+                        <p className="mt-2">
+                          {
+                            presentDiagnosticReason(source.message, {
+                              tool: props.tool,
+                              artifactKind: "skill",
+                            }).description
+                          }
+                        </p>
                       ) : null}
                       {source.diagnosticCode ? (
                         <p className="text-warning mt-2 text-xs">
-                          诊断码：<code>{source.diagnosticCode}</code>
+                          {
+                            presentTargetDiagnostic(
+                              source.status === "unavailable"
+                                ? "failed"
+                                : "missing",
+                              source.diagnosticCode,
+                              { tool: props.tool, artifactKind: "skill" },
+                            ).description
+                          }{" "}
+                          {
+                            presentTargetDiagnostic(
+                              source.status === "unavailable"
+                                ? "failed"
+                                : "missing",
+                              source.diagnosticCode,
+                              { tool: props.tool, artifactKind: "skill" },
+                            ).nextStep
+                          }
                         </p>
                       ) : null}
                     </article>
@@ -298,7 +334,12 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
                 </div>
                 {preview.message ? (
                   <p role="status" className="text-sm">
-                    {preview.message}
+                    {
+                      presentDiagnosticReason(preview.message, {
+                        tool: props.tool,
+                        artifactKind: "skill",
+                      }).description
+                    }
                   </p>
                 ) : null}
                 {!importable?.length && !takeoverCandidates?.length ? (

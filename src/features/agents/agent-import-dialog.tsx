@@ -20,6 +20,10 @@ import { Button } from "@/components/ui/button";
 import { useDialogFocus } from "@/components/use-dialog-focus";
 import { agentImportQueryOptions } from "@/lib/agents-api";
 import { profileErrorText, unwrapResult } from "@/lib/rpc";
+import {
+  presentDiagnosticReason,
+  presentTargetDiagnostic,
+} from "@/lib/diagnostic-presentations";
 import { toolMetadata } from "@/lib/tool-metadata";
 
 interface AgentImportDialogProps {
@@ -176,7 +180,15 @@ function AgentImportPreview({
   return (
     <>
       <code className="block text-xs break-all">{preview.directoryPath}</code>
-      {preview.message ? <p role="status">{preview.message}</p> : null}
+      {preview.message ? (
+        <p role="status">
+          {
+            presentDiagnosticReason(preview.message, {
+              artifactKind: "agent",
+            }).description
+          }
+        </p>
+      ) : null}
       <div className="space-y-3">
         {preview.candidates.map((candidate) => (
           <AgentImportCandidateCard
@@ -199,6 +211,9 @@ function AgentImportCandidateCard({
   onToggle,
 }: AgentImportCandidateCardProps) {
   const importable = candidate.importable;
+  const reasonPresentation = candidate.reason
+    ? presentDiagnosticReason(candidate.reason, { artifactKind: "agent" })
+    : null;
   return (
     <article className="rounded-lg border p-4 text-sm">
       <label className="flex items-start gap-2 font-medium">
@@ -232,11 +247,22 @@ function AgentImportCandidateCard({
       ) : null}
       {!importable && candidate.diagnosticCode ? (
         <p role="alert" className="text-destructive mt-2 text-xs break-all">
-          诊断：{candidate.diagnosticCode}
-          {candidate.reason ? ` · ${candidate.reason}` : ""}
+          {
+            presentTargetDiagnostic("failed", candidate.diagnosticCode, {
+              artifactKind: "agent",
+            }).description
+          }{" "}
+          {
+            presentTargetDiagnostic("failed", candidate.diagnosticCode, {
+              artifactKind: "agent",
+            }).nextStep
+          }
+          {reasonPresentation ? ` ${reasonPresentation.description}` : ""}
         </p>
-      ) : candidate.reason ? (
-        <p className="text-warning mt-2 text-xs">{candidate.reason}</p>
+      ) : reasonPresentation ? (
+        <p className="text-warning mt-2 text-xs">
+          {reasonPresentation.description}
+        </p>
       ) : null}
     </article>
   );

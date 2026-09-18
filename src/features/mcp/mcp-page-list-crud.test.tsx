@@ -499,10 +499,14 @@ describe("McpPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
 
-    const alert = await screen.findByText("CONFLICT：MCP 已变化");
+    const alert = await screen.findByText(
+      "MCP 已变化 请检查冲突并重新检测后再试。",
+    );
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveAttribute("aria-atomic", "true");
-    expect(screen.getAllByText("CONFLICT：MCP 已变化")).toHaveLength(1);
+    expect(
+      screen.getAllByText("MCP 已变化 请检查冲突并重新检测后再试。"),
+    ).toHaveLength(1);
   });
   it("分配切换自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({

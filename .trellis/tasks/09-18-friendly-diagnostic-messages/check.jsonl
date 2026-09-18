@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"失败、阻断、加载状态的可访问性和文字说明检查。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验证所有目标状态页面使用共享 presentation，且不改变现有同步动作语义。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"验证 RPC 稳定码、静态中文消息、脱敏和后端契约未被破坏。"}
+{"file":".trellis/tasks/09-18-friendly-diagnostic-messages/implement.md","reason":"按实施清单执行全量页面迁移、测试和代码审计。"}

@@ -39,6 +39,7 @@ import {
 } from "@/lib/agents-api";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 import { profileErrorText, unwrapResult } from "@/lib/rpc";
 import {
   AGENT_TOOLS,
@@ -646,7 +647,14 @@ function AgentStatusCard({
   const presentation = globalTargetStatusPresentation(
     status.aggregateStatus,
     diagnosticCode,
+    { tool: status.tool, artifactKind: "agent" },
   );
+  const diagnosticPresentation = diagnosticCode
+    ? presentTargetDiagnostic(status.aggregateStatus, diagnosticCode, {
+        tool: status.tool,
+        artifactKind: "agent",
+      })
+    : null;
   const hasFiles = status.files.length > 0;
   return (
     <article className="hover:bg-muted/50 px-1 py-3 text-sm">
@@ -683,9 +691,9 @@ function AgentStatusCard({
           {presentation.description}
         </p>
       ) : null}
-      {diagnosticCode ? (
+      {diagnosticPresentation ? (
         <p className="text-warning mt-2 text-xs">
-          诊断码：<code>{diagnosticCode}</code>
+          {diagnosticPresentation.nextStep}
         </p>
       ) : null}
       <ExternalChangeActions
@@ -732,7 +740,13 @@ function AgentFileStatusRow({
   const presentation = globalTargetStatusPresentation(
     file.status,
     file.diagnosticCode,
+    { artifactKind: "agent" },
   );
+  const diagnosticPresentation = file.diagnosticCode
+    ? presentTargetDiagnostic(file.status, file.diagnosticCode, {
+        artifactKind: "agent",
+      })
+    : null;
   return (
     <div className="bg-muted/40 rounded-control border px-3 py-2 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -746,10 +760,8 @@ function AgentFileStatusRow({
       {presentation.description ? (
         <p className="text-muted-foreground mt-2">{presentation.description}</p>
       ) : null}
-      {file.diagnosticCode ? (
-        <p className="text-warning mt-2">
-          诊断码：<code>{file.diagnosticCode}</code>
-        </p>
+      {diagnosticPresentation ? (
+        <p className="text-warning mt-2">{diagnosticPresentation.nextStep}</p>
       ) : null}
     </div>
   );

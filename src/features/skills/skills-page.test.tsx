@@ -236,7 +236,7 @@ describe("SkillsPage", () => {
     });
     renderPage();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "CONFLICT：隔离冲突",
+      "隔离冲突 请检查冲突并重新检测后再试。",
     );
     cleanup();
     vi.mocked(commands.listGlobalSkillTargetStatuses).mockResolvedValue({
@@ -252,9 +252,9 @@ describe("SkillsPage", () => {
       ],
     });
     renderPage();
+    expect(await screen.findByText("中央 Skill 内容已变化")).toBeVisible();
     expect(
-      await screen.findByText("CENTRAL_SKILL_CONTENT_CHANGED"),
-    ).toBeVisible();
-    expect(screen.getByText("external_owned_change")).toBeVisible();
+      screen.queryByText("CENTRAL_SKILL_CONTENT_CHANGED"),
+    ).not.toBeInTheDocument();
   });
 });

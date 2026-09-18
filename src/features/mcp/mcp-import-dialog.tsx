@@ -17,6 +17,7 @@ import {
   DialogOverlay,
 } from "@/components/ui/dialog";
 import { useDialogFocus } from "@/components/use-dialog-focus";
+import { presentDiagnosticReason } from "@/lib/diagnostic-presentations";
 import { mcpImportQueryOptions } from "@/lib/mcp-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { toolMetadata } from "@/lib/tool-metadata";
@@ -82,7 +83,16 @@ export function McpImportDialog(props: McpImportDialogProps) {
               <code className="block text-xs break-all">
                 {preview.targetPath}
               </code>
-              {preview.message ? <p role="status">{preview.message}</p> : null}
+              {preview.message ? (
+                <p role="status">
+                  {
+                    presentDiagnosticReason(preview.message, {
+                      tool: props.tool,
+                      artifactKind: "mcp",
+                    }).description
+                  }
+                </p>
+              ) : null}
               {preview.candidates.length > 0 && !preview.previewId ? (
                 <p role="status">没有可导入项。</p>
               ) : null}
@@ -128,7 +138,12 @@ export function McpImportDialog(props: McpImportDialogProps) {
                     ) : null}
                     {candidate.reason ? (
                       <p className="text-warning mt-2 text-xs">
-                        {candidate.reason}
+                        {
+                          presentDiagnosticReason(candidate.reason, {
+                            tool: props.tool,
+                            artifactKind: "mcp",
+                          }).description
+                        }
                       </p>
                     ) : null}
                     {candidate.redactedProjection !== null ? (

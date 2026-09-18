@@ -46,6 +46,7 @@ import {
   toolMetadata,
 } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 import {
   globalSkillStatusesQueryOptions,
@@ -285,6 +286,17 @@ export function SkillsPage() {
               const isAdoptingSkill =
                 adoptMutation.isPending &&
                 adoptMutation.variables?.id === skill.id;
+              const skillDiagnosticPresentation = skill.diagnosticCode
+                ? presentTargetDiagnostic(
+                    skill.status === "invalid"
+                      ? "failed"
+                      : skill.status === "missing"
+                        ? "missing"
+                        : "in_sync",
+                    skill.diagnosticCode,
+                    { artifactKind: "skill" },
+                  )
+                : null;
               const skillActions = (
                 <div className="flex min-w-0 flex-wrap gap-2">
                   <Button
@@ -375,9 +387,10 @@ export function SkillsPage() {
                           {skill.status} · hash {skill.contentHash.slice(0, 12)}
                           …
                         </p>
-                        {skill.diagnosticCode ? (
-                          <p className="text-destructive mt-1 text-xs break-all">
-                            {skill.diagnosticCode}
+                        {skillDiagnosticPresentation ? (
+                          <p className="text-destructive mt-1 text-xs">
+                            {skillDiagnosticPresentation.description}{" "}
+                            {skillDiagnosticPresentation.nextStep}
                           </p>
                         ) : null}
                       </div>
@@ -451,7 +464,15 @@ export function SkillsPage() {
                 const presentation = globalTargetStatusPresentation(
                   status.status,
                   status.diagnosticCode,
+                  { tool: status.tool, artifactKind: "skill" },
                 );
+                const diagnosticPresentation = status.diagnosticCode
+                  ? presentTargetDiagnostic(
+                      status.status,
+                      status.diagnosticCode,
+                      { tool: status.tool, artifactKind: "skill" },
+                    )
+                  : null;
                 return (
                   <article
                     key={status.tool}
@@ -473,9 +494,9 @@ export function SkillsPage() {
                         {presentation.description}
                       </p>
                     ) : null}
-                    {status.diagnosticCode ? (
+                    {diagnosticPresentation ? (
                       <p className="text-warning mt-2 text-xs">
-                        诊断码：<code>{status.diagnosticCode}</code>
+                        {diagnosticPresentation.nextStep}
                       </p>
                     ) : null}
                     <ExternalChangeActions

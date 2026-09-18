@@ -428,7 +428,9 @@ describe("McpPage", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "确认导入所选项（1）" }),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent("STALE_PREVIEW");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "配置已变化 请重新检测并生成预览后再应用。 请重新检测后再确认。",
+    );
     expect(
       screen.getByRole("button", { name: "确认导入所选项（1）" }),
     ).toBeDisabled();
@@ -472,7 +474,9 @@ describe("McpPage", () => {
     });
     renderPage();
     fireEvent.click(await globalButton("检测并导入已有 MCP"));
-    expect(await screen.findByRole("alert")).toHaveTextContent("PARSE_ERROR");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "原生配置无法解析 请修复格式后重新检测。 请重新检测后再确认。",
+    );
     expect(
       screen.getByRole("button", { name: "确认导入所选项（0）" }),
     ).toBeDisabled();

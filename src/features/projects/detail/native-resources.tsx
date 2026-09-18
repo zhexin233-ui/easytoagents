@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/empty-state";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 import { projectNativeResourcesQueryOptions } from "@/lib/projects-api";
 import type { ProjectResourceKind } from "@/lib/projects-api";
 
@@ -179,11 +180,20 @@ function NativeResourceRow({
               禁用时间：{resource.disabledAt}
             </p>
           ) : null}
-          {resource.diagnosticCodes.map((code) => (
-            <p key={code} className="text-xs">
-              诊断：{code}
-            </p>
-          ))}
+          {resource.diagnosticCodes.map((code) => {
+            const presentation = presentTargetDiagnostic(
+              resource.state === "conflict"
+                ? "failed"
+                : "external_non_owned_change",
+              code,
+              { tool: resource.tool, artifactKind: resource.artifactKind },
+            );
+            return (
+              <p key={code} className="text-xs">
+                {presentation.description} {presentation.nextStep}
+              </p>
+            );
+          })}
           {resource.state === "missing" ? (
             <p className="text-muted-foreground text-xs">
               资源已被外部移除，且没有可恢复的禁用快照。
@@ -238,7 +248,16 @@ function AgentSummary({ resource }: { resource: ProjectNativeResourceDto }) {
       ) : null}
       {parseError ? (
         <p className="text-xs">
-          解析失败：<code>{parseError}</code>
+          {
+            presentTargetDiagnostic("failed", parseError, {
+              artifactKind: "agent",
+            }).description
+          }{" "}
+          {
+            presentTargetDiagnostic("failed", parseError, {
+              artifactKind: "agent",
+            }).nextStep
+          }
         </p>
       ) : null}
       <p className="text-muted-foreground text-xs">

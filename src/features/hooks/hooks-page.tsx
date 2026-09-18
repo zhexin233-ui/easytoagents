@@ -30,6 +30,7 @@ import { useImportDialogState } from "@/features/sync/use-import-dialog-state";
 import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
+import { presentTargetDiagnostic } from "@/lib/diagnostic-presentations";
 import {
   globalHookStatusesQueryOptions,
   hooksKeys,
@@ -250,8 +251,15 @@ export function HooksPage() {
     ? globalTargetStatusPresentation(
         toolStatus.status,
         toolStatus.diagnosticCode,
+        { tool: toolStatus.tool, artifactKind: "hook" },
       )
     : undefined;
+  const toolDiagnosticPresentation = toolStatus?.diagnosticCode
+    ? presentTargetDiagnostic(toolStatus.status, toolStatus.diagnosticCode, {
+        tool: toolStatus.tool,
+        artifactKind: "hook",
+      })
+    : null;
 
   return (
     <>
@@ -469,9 +477,9 @@ export function HooksPage() {
                   {toolPresentation.description}
                 </p>
               ) : null}
-              {toolStatus.diagnosticCode ? (
+              {toolDiagnosticPresentation ? (
                 <p className="text-warning mt-2 text-xs">
-                  诊断码：<code>{toolStatus.diagnosticCode}</code>
+                  {toolDiagnosticPresentation.nextStep}
                 </p>
               ) : null}
               <ExternalChangeActions

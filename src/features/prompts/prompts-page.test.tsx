@@ -267,7 +267,7 @@ describe("PromptsPage", () => {
     fillPromptForm(dialog);
     fireEvent.submit(within(dialog).getByRole("form"));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "INVALID_INPUT：档案输入无效",
+      "档案输入无效 请修正输入后重试。",
     );
     expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
     expect(within(dialog).getByLabelText("Markdown 正文")).toHaveValue(
@@ -335,10 +335,14 @@ describe("PromptsPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
 
-    const alert = await screen.findByText("CONFLICT：提示词已变化");
+    const alert = await screen.findByText(
+      "提示词已变化 请检查冲突并重新检测后再试。",
+    );
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveAttribute("aria-atomic", "true");
-    expect(screen.getAllByText("CONFLICT：提示词已变化")).toHaveLength(1);
+    expect(
+      screen.getAllByText("提示词已变化 请检查冲突并重新检测后再试。"),
+    ).toHaveLength(1);
     confirmSpy.mockRestore();
   });
 
@@ -369,11 +373,15 @@ describe("PromptsPage", () => {
     await waitFor(() =>
       expect(commands.previewPromptSync).toHaveBeenCalledWith("claude"),
     );
-    const alert = await screen.findByText(/DATABASE_ERROR：提示词预览暂不可用/);
+    const alert = await screen.findByText(
+      /同步失败：claude：提示词预览暂不可用 请稍后重试；若持续发生，请重新打开应用。/,
+    );
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveAttribute("aria-atomic", "true");
     expect(
-      screen.getAllByText(/DATABASE_ERROR：提示词预览暂不可用/),
+      screen.getAllByText(
+        /同步失败：claude：提示词预览暂不可用 请稍后重试；若持续发生，请重新打开应用。/,
+      ),
     ).toHaveLength(1);
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
@@ -403,12 +411,14 @@ describe("PromptsPage", () => {
     expect(screen.getAllByText("未发现可导入的已有提示词。")).toHaveLength(1);
 
     fireEvent.click(codexButton);
-    const alert = await screen.findByText("PARSE_ERROR：已有提示词无法解析");
+    const alert = await screen.findByText(
+      "已有提示词无法解析 请修复格式后重新检测。",
+    );
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveAttribute("aria-atomic", "true");
-    expect(screen.getAllByText("PARSE_ERROR：已有提示词无法解析")).toHaveLength(
-      1,
-    );
+    expect(
+      screen.getAllByText("已有提示词无法解析 请修复格式后重新检测。"),
+    ).toHaveLength(1);
     expect(screen.getByText("未发现可导入的已有提示词。")).toHaveAttribute(
       "role",
       "status",
@@ -479,12 +489,14 @@ describe("PromptsPage", () => {
       await screen.findByRole("button", { name: "确认无损导入" }),
     );
 
-    const alert = await screen.findByText("STALE_PREVIEW：导入预览已过期");
+    const alert = await screen.findByText(
+      "导入预览已过期 请重新检测并生成预览后再应用。",
+    );
     expect(alert).toHaveAttribute("role", "alert");
     expect(alert).toHaveAttribute("aria-atomic", "true");
-    expect(screen.getAllByText("STALE_PREVIEW：导入预览已过期")).toHaveLength(
-      1,
-    );
+    expect(
+      screen.getAllByText("导入预览已过期 请重新检测并生成预览后再应用。"),
+    ).toHaveLength(1);
     expect(screen.getByText("发现已有提示词")).toBeVisible();
   });
 
@@ -798,20 +810,22 @@ describe("PromptsPage", () => {
       await screen.findByRole("button", { name: "Claude 全局已分配" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "DATABASE_ERROR：提示词预览暂不可用",
+      "同步失败：claude：提示词预览暂不可用 请稍后重试；若持续发生，请重新打开应用。",
     );
     expect(
-      screen.getAllByText(/DATABASE_ERROR：提示词预览暂不可用/),
+      screen.getAllByText(
+        /同步失败：claude：提示词预览暂不可用 请稍后重试；若持续发生，请重新打开应用。/,
+      ),
     ).toHaveLength(1);
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(
-        screen.getByText(/ATOMIC_WRITE_FAILED：提示词应用失败/),
+        screen.getByText(/提示词应用失败 请检查权限并从恢复点恢复后重试。/),
       ).toHaveAttribute("role", "alert"),
     );
     expect(
-      screen.getAllByText(/ATOMIC_WRITE_FAILED：提示词应用失败/),
+      screen.getAllByText(/提示词应用失败 请检查权限并从恢复点恢复后重试。/),
     ).toHaveLength(1);
     confirmSpy.mockRestore();
   });

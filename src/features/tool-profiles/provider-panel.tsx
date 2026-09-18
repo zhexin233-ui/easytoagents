@@ -26,6 +26,7 @@ import {
   providerModelText,
 } from "@/features/tool-profiles/provider-text";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
+import { presentDiagnosticReason } from "@/lib/diagnostic-presentations";
 import {
   profileErrorText,
   profileKeys,
@@ -305,7 +306,15 @@ export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
         : tool === "opencode"
           ? "未检测到可导入渠道。请确认配置中的默认模型（model）引用了自定义 provider，且该渠道包含名称、npm 和 baseURL；内置渠道暂不支持导入。"
           : "未检测到可导入的已有渠道配置。";
-      notify({ kind: "success", message: preview.message ?? fallback });
+      notify({
+        kind: "success",
+        message: preview.message
+          ? presentDiagnosticReason(preview.message, {
+              tool,
+              artifactKind: "provider",
+            }).description
+          : fallback,
+      });
     },
   });
 

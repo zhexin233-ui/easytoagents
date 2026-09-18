@@ -420,7 +420,7 @@ describe("ToolProfilesPage", () => {
     fillProfileForm(dialog);
     fireEvent.submit(within(dialog).getByRole("form"));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "INVALID_INPUT：档案输入无效",
+      "档案输入无效 请修正输入后重试。",
     );
     expect(within(dialog).getByLabelText("名称")).toHaveValue("新草稿");
     expect(within(dialog).getByLabelText("API Key（默认遮罩）")).toHaveValue(
@@ -1091,10 +1091,12 @@ describe("ToolProfilesPage", () => {
     fireEvent.click(activateButton);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "POLICY_BLOCKED：宿主策略禁止生成预览",
+      "同步失败：claude：宿主策略禁止生成预览 请调整策略后重新检测。",
     );
     expect(
-      screen.getAllByText(/POLICY_BLOCKED：宿主策略禁止生成预览/),
+      screen.getAllByText(
+        /同步失败：claude：宿主策略禁止生成预览 请调整策略后重新检测。/,
+      ),
     ).toHaveLength(1);
     await waitFor(() => expect(listProviderProfiles).toHaveBeenCalledTimes(2));
   });
@@ -1126,7 +1128,7 @@ describe("ToolProfilesPage", () => {
     });
     fireEvent.click(within(section).getByRole("button", { name: "创建渠道" }));
     expect(await within(section).findByRole("alert")).toHaveTextContent(
-      "INVALID_INPUT：输入内容无效",
+      "输入内容无效 请修正输入后重试。",
     );
   });
 
@@ -1468,7 +1470,7 @@ describe("ToolProfilesPage", () => {
     expect(within(dialog).getByLabelText("导入 gemini")).toBeEnabled();
     expect(within(dialog).getByText(/已纳入管理/)).toBeVisible();
     expect(
-      within(dialog).getByText(/配置无效 · 缺少接入地址或 API Key/),
+      within(dialog).getByText(/配置无效 · .*缺少接入地址或 API Key/),
     ).toBeVisible();
   });
 

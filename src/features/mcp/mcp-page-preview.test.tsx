@@ -286,7 +286,9 @@ describe("McpPage", () => {
     });
     renderPage();
     expect(await screen.findByText("非受管变更")).toBeVisible();
-    expect(screen.getByText("EXTERNAL_NON_OWNED_CHANGE")).toBeVisible();
+    expect(
+      screen.queryByText("EXTERNAL_NON_OWNED_CHANGE"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("未纳入同步管理")).not.toBeInTheDocument();
     expect(screen.queryByText("空目录，待配置")).not.toBeInTheDocument();
     expect(await globalButton("以中央配置覆盖")).toBeEnabled();
@@ -394,7 +396,7 @@ describe("McpPage", () => {
     });
     fireEvent.submit(within(dialog).getByRole("form"));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "CONFLICT：MCP 名称已存在",
+      "MCP 名称已存在 请检查冲突并重新检测后再试。",
     );
     expect(within(dialog).getByLabelText("名称")).toHaveValue("冲突草稿");
     expect(within(dialog).getByLabelText("Command")).toHaveValue("npx");

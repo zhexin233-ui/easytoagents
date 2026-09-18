@@ -28,6 +28,7 @@ import {
 } from "@/features/tool-profiles/provider-text";
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { profileErrorText, profileKeys, unwrapResult } from "@/lib/profile-api";
+import { presentPreviewCode } from "@/lib/diagnostic-presentations";
 import { appSettingsQueryOptions } from "@/lib/settings-api";
 import { toneClass } from "@/lib/tone-class";
 import {
@@ -679,7 +680,10 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                   className={`text-warning list-disc rounded-lg border p-4 pl-9 text-sm ${toneClass("warning")}`}
                 >
                   {previewWarnings.map((warning, index) => (
-                    <li key={`${warning}-${index}`}>{warning}</li>
+                    <li key={`${warning}-${index}`}>
+                      {presentPreviewCode(warning, "warning").description}{" "}
+                      {presentPreviewCode(warning, "warning").nextStep}
+                    </li>
                   ))}
                 </ul>
               ) : null}
@@ -712,13 +716,29 @@ function OnboardingWizardContent({ onClose }: { onClose: () => void }) {
                             role="alert"
                             className="text-destructive mt-2 text-xs"
                           >
-                            阻止应用：{target.errorCode}
+                            {
+                              presentPreviewCode(target.errorCode, "error")
+                                .description
+                            }{" "}
+                            {
+                              presentPreviewCode(target.errorCode, "error")
+                                .nextStep
+                            }
                           </p>
                         ) : null}
                         {target.warningCodes.length > 0 ? (
                           <ul className="text-warning mt-2 list-disc pl-5 text-xs">
                             {target.warningCodes.map((warning) => (
-                              <li key={warning}>{warning}</li>
+                              <li key={warning}>
+                                {
+                                  presentPreviewCode(warning, "warning")
+                                    .description
+                                }{" "}
+                                {
+                                  presentPreviewCode(warning, "warning")
+                                    .nextStep
+                                }
+                              </li>
                             ))}
                           </ul>
                         ) : null}

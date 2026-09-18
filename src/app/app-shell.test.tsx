@@ -357,7 +357,7 @@ describe("AppShell 侧边栏设置入口", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "保存名称" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "CONFLICT：项目已被其他操作更新",
+      "项目已被其他操作更新 请检查冲突并重新检测后再试。",
     );
     expect(input).toHaveValue("冲突后的名称");
     expect(dialog).toBeInTheDocument();
@@ -477,7 +477,7 @@ describe("AppShell 侧边栏设置入口", () => {
 
     expect(
       await screen.findByText(
-        /移除项目“侧栏项目”失败：CONFLICT：项目已被其他操作更新/,
+        /移除项目“侧栏项目”失败：项目已被其他操作更新 请检查冲突并重新检测后再试。/,
       ),
     ).toBeInTheDocument();
     expect(

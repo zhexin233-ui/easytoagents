@@ -24,11 +24,15 @@ describe("profileErrorText", () => {
           },
         }),
       ),
-    ).toBe("CONFLICT：该资源仍有项目分配，不能直接创建重复的全局分配");
+    ).toBe(
+      "该资源仍有项目分配，不能直接创建重复的全局分配 请检查冲突并重新检测后再试。",
+    );
   });
 
   it("缺少 details.reason 时回退到通用 message", () => {
-    expect(profileErrorText(rpcError({}))).toBe("CONFLICT：检测到配置冲突");
+    expect(profileErrorText(rpcError({}))).toBe(
+      "检测到配置冲突 请检查冲突并重新检测后再试。",
+    );
   });
 
   it("details.reason 不是字符串时回退到通用 message", () => {
@@ -36,7 +40,7 @@ describe("profileErrorText", () => {
       profileErrorText(
         rpcError({ details: { reason: { code: "[REDACTED]" } } }),
       ),
-    ).toBe("CONFLICT：检测到配置冲突");
+    ).toBe("检测到配置冲突 请检查冲突并重新检测后再试。");
   });
 
   it("NOT_FOUND 的专用文案优先于 details.reason", () => {
@@ -55,6 +59,9 @@ describe("profileErrorText", () => {
 
   it("普通 Error 直接展示 message，未知值返回兜底文案", () => {
     expect(profileErrorText(new Error("网络中断"))).toBe("网络中断");
+    expect(profileErrorText(new Error("FUTURE_RPC_CODE"))).toBe(
+      "操作失败，请重新扫描后再试。",
+    );
     expect(profileErrorText({})).toBe("操作失败，请重新扫描后再试。");
     expect(profileErrorText(null)).toBeNull();
   });

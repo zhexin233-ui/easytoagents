@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"目标状态、阻断动作、诊断展示和跨页面复用约束。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"共享 registry 的 Record、生成绑定和未知码 fallback 类型约束。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"稳定 ErrorCode、静态中文 message、details 脱敏和 RPC 兼容边界。"}
+{"file":".trellis/tasks/09-18-friendly-diagnostic-messages/research.md","reason":"本任务盘点的用户可见诊断码、现有映射与迁移入口。"}

@@ -92,4 +92,68 @@ describe("ExternalChangeActions", () => {
       action: "adopt_native",
     });
   });
+
+  it("阻止原因码使用中文解释，不把机器码作为主文案", async () => {
+    vi.mocked(commands.prepareExternalChangePlan).mockResolvedValue(
+      okResult(
+        externalPlan({
+          canAdoptNative: false,
+          adoptBlockedReason: "NATIVE_ADOPTION_UNAVAILABLE",
+          canOverwriteCentral: false,
+          overwriteBlockedReason: "FUTURE_OVERWRITE_REASON",
+        }),
+      ),
+    );
+
+    renderWithProviders(
+      <ExternalChangeActions
+        artifactKind="agent"
+        tool="claude"
+        status="external_owned_change"
+      />,
+    );
+
+    expect(
+      await screen.findByText(/当前原生内容不满足安全采纳条件/),
+    ).toBeVisible();
+    expect(screen.getByText(/目标状态需要重新检测/)).toBeVisible();
+    expect(
+      screen.queryByText("NATIVE_ADOPTION_UNAVAILABLE"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("FUTURE_OVERWRITE_REASON"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("点击时计划变为阻止也不会把未来原因码通知给用户", async () => {
+    vi.mocked(commands.prepareExternalChangePlan)
+      .mockResolvedValueOnce(okResult(externalPlan()))
+      .mockResolvedValueOnce(
+        okResult(
+          externalPlan({
+            canOverwriteCentral: false,
+            overwriteBlockedReason: "FUTURE_OVERWRITE_REASON",
+          }),
+        ),
+      );
+
+    renderWithProviders(
+      <ExternalChangeActions
+        artifactKind="agent"
+        tool="claude"
+        status="external_owned_change"
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "以中央配置覆盖" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "目标状态需要重新检测",
+    );
+    expect(
+      screen.queryByText("FUTURE_OVERWRITE_REASON"),
+    ).not.toBeInTheDocument();
+  });
 });
