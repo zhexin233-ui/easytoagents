@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/09-17-force-native-config-overwrite/research/current-behavior.md","reason":"按证据清单核验所有旧确认入口、阻断点、测试与文案均被覆盖。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"复核 ownership、并发、快照、回滚、Skill 目录/链接和项目资源不变量。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"复核真实错误继续 fail closed，且不会被误当成可覆盖漂移。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核所有页面统一直接执行、通知、query invalidation 与特殊流程行为。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"复核 mutation 链、卸载/重渲染、错误与一次 stale 重试。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 Preview/Apply 跨层协议、精确 previewId 和边界一致性。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查没有新增第二套原生写入或重复页面级生命周期。"}

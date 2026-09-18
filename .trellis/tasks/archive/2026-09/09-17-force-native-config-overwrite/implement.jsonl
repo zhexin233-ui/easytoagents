@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/09-17-force-native-config-overwrite/research/current-behavior.md","reason":"提供现行前后端确认、漂移阻断、Skill takeover 与项目原生资源的精确证据和改动边界。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束持久化 Preview、ownership、快照、journal、回滚、Skill takeover 和项目原生资源安全合同。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"保留稳定错误、恢复动作、权限/解析/路径失败与敏感信息边界。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"定位并改写 direct/preview-confirm、共享同步 hook、特殊流程确认和通知测试合同。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"约束 React Query mutation 生命周期、失效顺序与共享 hook 行为。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"约束 persisted Preview → Apply 跨层序列与 STALE_PREVIEW 有界重试。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"要求复用唯一同步/快照/回滚内核并避免多页面复制执行逻辑。"}
