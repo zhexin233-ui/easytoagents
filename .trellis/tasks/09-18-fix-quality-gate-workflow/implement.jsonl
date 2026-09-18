@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Rust backend quality, Clippy cleanliness, and validation conventions apply to the two source-level lint fixes."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Confirms the ownership and boundaries of the skills library and sync/apply Rust modules being edited."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared pre-development thinking and pre-modification guidance for a minimal, behavior-preserving change."}

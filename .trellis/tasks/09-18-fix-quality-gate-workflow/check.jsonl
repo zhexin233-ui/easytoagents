@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality-check review must confirm the Rust lint cleanup preserves fail-closed behavior and does not widen scope."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Final review should ensure the caller cleanup does not alter AppError propagation or RPC/error contracts."}
+{"file":".trellis/spec/guides/index.md","reason":"Provides the shared quality and code-reuse checklist used for final verification."}

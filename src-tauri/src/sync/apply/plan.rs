@@ -67,7 +67,7 @@ fn build_target_work<'a>(
                 return Err(AppError::conflict("gitExclude", "Git exclude 不是普通文件"));
             }
         };
-        let rendered = render_local_exclude(&existing, patterns.into_iter())?;
+        let rendered = render_local_exclude(&existing, patterns)?;
         if rendered != existing {
             let owner_index = work
                 .iter_mut()

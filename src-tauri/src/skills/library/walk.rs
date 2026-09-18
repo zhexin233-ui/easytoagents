@@ -667,7 +667,7 @@ fn hash_record(hasher: &mut Sha256, kind: u8, path: &str, payload: &[u8]) {
 }
 
 fn hash_file_record(hasher: &mut Sha256, path: &str, mode: u32, bytes: &[u8]) {
-    hasher.update([b'F']);
+    hasher.update(b"F");
     hasher.update((path.len() as u64).to_be_bytes());
     hasher.update(path.as_bytes());
     // 中央库统一私有权限，但可执行性是 Skill 语义的一部分，必须纳入 hash。
