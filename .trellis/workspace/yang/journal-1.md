@@ -1814,3 +1814,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 73: 修复 GitHub 质量门 Clippy 失败
+
+**Date**: 2026-09-18
+**Task**: 修复 GitHub 质量门 Clippy 失败
+**Branch**: `main`
+
+### Summary
+
+定位 GitHub 质量门 run #20/#21 的两个 Rust Clippy 错误，分别修复字节字符串表达式和多余 IntoIterator 转换；pnpm check、绑定检查及 Rust 全量检查均通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `feb1f16` | (see git log) |
+
+### Status
+
+[OK] **Completed**
