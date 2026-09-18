@@ -1793,3 +1793,24 @@ C1-C6：journal 追加式 JSONL 与单次 fsync（兼容旧格式）、PathState
 ### Status
 
 [OK] **Completed**
+
+
+## Session 72: 完成原生配置强制覆盖与 Provider 本地复现修复
+
+**Date**: 2026-09-18
+**Task**: 完成原生配置强制覆盖与 Provider 本地复现修复
+**Branch**: `codex/force-native-config-overwrite`
+
+### Summary
+
+完成六类资源统一 ExternalChangePlan、原生采纳与中央覆盖事务链路；修复 OpenCode Provider 首次无 baseline 时误报 CONFLICT 的本地复现，保留稳定 ID 不匹配时的匹配/导入保护。全量 pnpm check 通过，提交并推送 codex/force-native-config-overwrite。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3e9dcea` | (see git log) |
+
+### Status
+
+[OK] **Completed**

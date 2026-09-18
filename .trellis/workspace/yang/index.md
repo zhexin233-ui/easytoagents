@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 71
-- **Last Active**: 2026-09-15
+- **Total Sessions**: 72
+- **Last Active**: 2026-09-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1795 | Active |
+| `journal-1.md` | ~1816 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -30,6 +30,7 @@
 
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 72 | 2026-09-18 | 完成原生配置强制覆盖与 Provider 本地复现修复 | `3e9dcea` | `codex/force-native-config-overwrite` |
 | 71 | 2026-09-15 | Provider 按原生内容接管（手改 models.json 后一键收敛漂移） | `ab86b99`, `d2c84f5`, `84e0da2` | `main` |
 | 70 | 2026-09-15 | 修复 Pi 渠道导入：多 provider 检测与 models 元数据保真 | `992de1e`, `2c8e3e1`, `3e22558`, `842f7af` | `main` |
 | 69 | 2026-09-15 | 修复 Pi 渠道入口与接管检测体验 | `bb355e9` | `main` |
