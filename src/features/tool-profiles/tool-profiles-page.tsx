@@ -1,25 +1,21 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
-import {
-  commands,
-  type AdoptProviderNativeResultDto,
-  type ReadoptProviderTargetResultDto,
-  type Tool,
-} from "@/bindings/commands";
+import { commands, type SyncScopeDto, type Tool } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { PageHeader } from "@/components/page-header";
+import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
-import { useNotify } from "@/components/use-notify";
+import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
 import { ProviderPanel } from "@/features/tool-profiles/provider-panel";
 import {
   profileErrorText,
+  globalProfileTargetStatusesQueryOptions,
   profileKeys,
   toolProfileStatusQueryOptions,
 } from "@/lib/profile-api";
-import { appSettingsQueryOptions } from "@/lib/settings-api";
+import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import { toneClass } from "@/lib/tone-class";
 import { toolMetadata } from "@/lib/tool-metadata";
 
@@ -43,23 +39,15 @@ function installationProbeDiagnosticText(code: string): string {
 
 export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const metadata = toolMetadata(tool);
+  const title = metadata.label;
   const statusQuery = useQuery(toolProfileStatusQueryOptions(tool));
-  const settingsQuery = useQuery(appSettingsQueryOptions());
-  const directApply = settingsQuery.data?.applyMode === "direct";
-  const { notify } = useNotify();
-  const {
-    openPreview,
-    requestPreview,
-    applyMutation,
-    readoptMutation,
-    adoptNativeMutation,
-    closePreview,
-  } = useSyncPreviewFlow<
-    ReadoptProviderTargetResultDto,
-    AdoptProviderNativeResultDto
-  >({
+  const targetStatusesQuery = useQuery(
+    globalProfileTargetStatusesQueryOptions(tool),
+  );
+  const { requestPreview } = useSyncPreviewFlow({
     artifactKind: "provider",
-    directApply,
     preview: (previewTool) => commands.previewProviderSync(previewTool),
     apply: ({ previewId, tool: previewTool }) =>
       commands.applyProfilePreview({
@@ -70,55 +58,13 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
     invalidate: async () => {
       await queryClient.invalidateQueries({ queryKey: profileKeys.all });
     },
-    readopt: (previewTool, targetPath) => {
-      if (!targetPath) {
-        throw new Error("重新接管 Provider 目标缺少路径。");
-      }
-      return commands.readoptProviderTarget({
-        tool: previewTool,
-        targetPath,
-      });
-    },
-    adoptNative: (previewTool, targetPath, rowVersions) => {
-      if (!targetPath) {
-        throw new Error("按原生内容接管 Provider 目标缺少路径。");
-      }
-      return commands.adoptProviderNative({
-        tool: previewTool,
-        targetPath,
-        rowVersions,
-      });
-    },
     messages: {
       previewFailed: "生成渠道预览失败。",
       applyFailed: "应用渠道预览失败。",
-      readoptFailed: "重新接管渠道目标失败。",
-      adoptNativeFailed: "按原生内容接管渠道失败。",
       applied: (result) =>
         `已应用 ${result.appliedTargets} 个目标，可从快照恢复。`,
     },
-    onReadopted: (_result, previewTool) => {
-      notify({
-        kind: "success",
-        message: "已以当前内容重新接管渠道目标；正在重新生成预览。",
-      });
-      requestPreview(previewTool, directApply);
-    },
-    onAdoptedNative: (result, previewTool) => {
-      notify({
-        kind: "success",
-        message:
-          result.adopted.length > 0
-            ? `已按原生内容接管 ${result.adopted.join("、")}；正在重新生成预览。`
-            : "没有需要接管的漂移渠道；正在重新生成预览。",
-      });
-      requestPreview(previewTool, directApply);
-    },
   });
-
-  const metadata = toolMetadata(tool);
-  const title = metadata.label;
-  const applyError = profileErrorText(applyMutation.error);
 
   // Provider 与提示词均不支持的工具整页 fail closed；Cursor 这类「仅 Provider
   // 不支持」的工具仍进入正常布局（状态区 + 全局提示词入口），但不渲染 Provider 面板。
@@ -202,6 +148,65 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               ) : null}
             </section>
           ) : null}
+          {targetStatusesQuery.data?.map((target) => {
+            const presentation = globalTargetStatusPresentation(
+              target.status,
+              target.diagnosticCode,
+            );
+            const artifactLabel =
+              target.artifactKind === "provider" ? "Provider" : "提示词";
+            return (
+              <section
+                key={`${target.artifactKind}-${target.tool}`}
+                className="bg-card rounded-lg border p-4 text-sm"
+                aria-label={`${title} ${artifactLabel}原生状态`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-semibold">{artifactLabel}原生状态</h2>
+                  <SyncStatusBadge
+                    status={target.status}
+                    label={presentation.label}
+                    tone={presentation.tone}
+                  />
+                </div>
+                <code className="mt-2 block text-xs break-all">
+                  {target.targetPath ?? "目标路径不可用"}
+                </code>
+                {presentation.description ? (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    {presentation.description}
+                  </p>
+                ) : null}
+                {target.diagnosticCode ? (
+                  <p className="text-warning mt-2 text-xs">
+                    诊断码：<code>{target.diagnosticCode}</code>
+                  </p>
+                ) : null}
+                <ExternalChangeActions
+                  artifactKind={target.artifactKind}
+                  tool={target.tool}
+                  status={target.status}
+                  onInvalidate={async () => {
+                    await Promise.all([
+                      queryClient.invalidateQueries({
+                        queryKey: profileKeys.all,
+                      }),
+                      queryClient.invalidateQueries({
+                        queryKey: profileKeys.targetStatuses(tool),
+                      }),
+                    ]);
+                  }}
+                  onMatchOrImport={
+                    target.artifactKind === "prompt"
+                      ? () => {
+                          void navigate("/prompts");
+                        }
+                      : undefined
+                  }
+                />
+              </section>
+            );
+          })}
           {statusQuery.isPending ? (
             <p role="status" className="bg-card rounded-lg border p-4 text-sm">
               正在检测工具配置状态…
@@ -215,22 +220,15 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
               {profileErrorText(statusQuery.error)}
             </p>
           ) : null}
-          {applyError ? (
-            <p
-              role="alert"
-              className={`rounded-lg border p-4 text-sm ${toneClass("destructive")}`}
-            >
-              {applyError}
-            </p>
-          ) : null}
         </div>
 
         <div>
           {metadata.capabilities.provider ? (
             <ProviderPanel
               tool={tool}
-              directApply={directApply}
-              onPreview={() => requestPreview(tool, directApply)}
+              onPreview={(scopes: readonly SyncScopeDto[]) =>
+                requestPreview(scopes)
+              }
             />
           ) : null}
           {!metadata.capabilities.provider &&
@@ -256,41 +254,6 @@ export function ToolProfilesPage({ tool }: ToolProfilesPageProps) {
             </section>
           ) : null}
         </div>
-
-        <ChangePreviewDialog
-          preview={openPreview?.plan ?? null}
-          tool={openPreview?.tool ?? tool}
-          artifactKind="provider"
-          applying={applyMutation.isPending}
-          readopting={readoptMutation.isPending}
-          onReadopt={(targetPath) => {
-            if (openPreview) {
-              readoptMutation.mutate({
-                tool: openPreview.tool,
-                targetPath,
-              });
-            }
-          }}
-          adoptingNative={adoptNativeMutation.isPending}
-          onAdoptNative={(targetPath, rowVersions) => {
-            if (openPreview) {
-              adoptNativeMutation.mutate({
-                tool: openPreview.tool,
-                targetPath,
-                rowVersions,
-              });
-            }
-          }}
-          onClose={closePreview}
-          onApply={() => {
-            if (openPreview) {
-              applyMutation.mutate({
-                previewId: openPreview.plan.previewId,
-                tool: openPreview.tool,
-              });
-            }
-          }}
-        />
       </main>
     </>
   );

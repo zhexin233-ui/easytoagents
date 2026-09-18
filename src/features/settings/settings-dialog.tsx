@@ -64,19 +64,7 @@ export function SettingsDialog({
     return null;
   }
 
-  const directApply = settingsQuery.data?.applyMode === "direct";
   const enabledTools = settingsQuery.data?.enabledTools;
-
-  const toggleApplyMode = (nextDirect: boolean) => {
-    const settings = settingsQuery.data;
-    if (!settings) {
-      return;
-    }
-    updateMutation.mutate({
-      applyMode: nextDirect ? "direct" : "preview_confirm",
-      enabledTools: settings.enabledTools,
-    });
-  };
 
   const toggleEnabledTool = (tool: Tool, enabled: boolean) => {
     const settings = settingsQuery.data;
@@ -90,7 +78,6 @@ export function SettingsDialog({
       next.delete(tool);
     }
     updateMutation.mutate({
-      applyMode: settings.applyMode,
       enabledTools: filterEnabledTools(ENABLED_TOOL_ORDER, next),
     });
   };
@@ -132,52 +119,6 @@ export function SettingsDialog({
             </div>
           </section>
 
-          <section aria-labelledby="settings-apply-mode-title">
-            <h3
-              id="settings-apply-mode-title"
-              className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase"
-            >
-              应用方式
-            </h3>
-            {settingsQuery.isPending ? (
-              <p role="status" className="mt-3 text-sm">
-                正在读取设置…
-              </p>
-            ) : null}
-            {settingsQuery.isError ? (
-              <p role="alert" className="text-destructive mt-3 text-sm">
-                {profileErrorText(settingsQuery.error)}
-              </p>
-            ) : null}
-            {updateMutation.isError ? (
-              <p role="alert" className="text-destructive mt-3 text-sm">
-                {profileErrorText(updateMutation.error)}
-              </p>
-            ) : null}
-            {settingsQuery.data ? (
-              <div className="bg-card mt-2 overflow-hidden rounded-lg border">
-                <label className="hover:bg-muted/50 flex min-h-11 items-center justify-between gap-3 px-4 py-2.5">
-                  <span className="min-w-0">
-                    <span className="text-[13px] font-medium">
-                      直接应用（跳过预览确认对话框）
-                    </span>
-                    <span className="text-muted-foreground mt-0.5 block text-xs">
-                      无冲突时跳过确认直接应用，操作后自动同步。每次应用仍会创建快照；有冲突时仍会弹出预览。
-                    </span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    className="shrink-0"
-                    aria-label="直接应用（跳过预览确认对话框）"
-                    checked={directApply}
-                    disabled={updateMutation.isPending}
-                    onChange={(event) => toggleApplyMode(event.target.checked)}
-                  />
-                </label>
-              </div>
-            ) : null}
-          </section>
-
           <section aria-labelledby="settings-tool-probe-title">
             <h3
               id="settings-tool-probe-title"
@@ -205,6 +146,21 @@ export function SettingsDialog({
             <p className="text-muted-foreground mt-2 text-xs">
               关闭的工具不再显示；已有配置不会删除。
             </p>
+            {settingsQuery.isPending ? (
+              <p role="status" className="mt-3 text-sm">
+                正在读取设置…
+              </p>
+            ) : null}
+            {settingsQuery.isError ? (
+              <p role="alert" className="text-destructive mt-3 text-sm">
+                {profileErrorText(settingsQuery.error)}
+              </p>
+            ) : null}
+            {updateMutation.isError ? (
+              <p role="alert" className="text-destructive mt-3 text-sm">
+                {profileErrorText(updateMutation.error)}
+              </p>
+            ) : null}
             {enabledTools ? (
               <div className="bg-card mt-2 overflow-hidden rounded-lg border">
                 {ENABLED_TOOL_ORDER.map((tool) => {

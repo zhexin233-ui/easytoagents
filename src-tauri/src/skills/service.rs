@@ -14,29 +14,33 @@ use uuid::Uuid;
 
 use super::{
     library::{
-        cleanup_failed_import, delete_quarantined_skill, finalize_skill_import,
-        inspect_central_skill, prepare_github_skill_import, prepare_skill_import,
-        quarantine_central_skill, read_central_skill_for_adoption, rename_import_exclusively,
-        restore_quarantined_skill, sync_directory, validate_central_skill_directory,
+        cleanup_failed_import, cleanup_native_skill_entry_swap, copy_skill_tree,
+        delete_quarantined_skill, finalize_skill_import, inspect_central_skill,
+        inspect_skill_takeover_entry, prepare_github_skill_import, prepare_skill_import,
+        quarantine_central_skill, read_central_skill_for_adoption,
+        read_skill_frontmatter_for_adoption, rename_import_exclusively,
+        replace_native_skill_entry_with_central_link, restore_quarantined_skill,
+        rollback_native_skill_entry_swap, sync_directory, validate_central_skill_directory,
+        NativeSkillEntrySwap, SkillTakeoverEntryKind,
     },
-    ApplySkillPreviewInput, DeleteSkillResultDto, ImportSkillInput, PreparedSkillRecord,
-    PreviewSkillSyncInput, SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput,
-    SkillContentPreviewDto, SkillDto, SkillProjectDto, SkillProjectOptionDto,
-    SkillProjectOptionsInput, SkillProjectSelectionState, SkillTargetStatusDto,
-    VersionedSkillInput,
+    AdoptSkillNativeInput, AdoptSkillNativeResultDto, ApplySkillPreviewInput, DeleteSkillResultDto,
+    ImportSkillInput, PreparedSkillRecord, PreviewSkillSyncInput, SetGlobalSkillAssignmentInput,
+    SetProjectSkillAssignmentInput, SkillContentPreviewDto, SkillDto, SkillProjectDto,
+    SkillProjectOptionDto, SkillProjectOptionsInput, SkillProjectSelectionState,
+    SkillTargetStatusDto, VersionedSkillInput,
 };
 use crate::{
     adapters::{
-        canonicalize_project_root, descriptor_allowed_root, find_descriptor,
-        ClaudeCustomizationPolicyProbe, DiscoveryContext, ManagedOwnership, TargetDescriptor,
-        ASSIGNABLE_SKILL_TOOLS,
+        canonicalize_project_root, descriptor_allowed_root, find_descriptor, CapabilityState,
+        ClaudeCustomizationPolicyProbe, DiscoveryContext, ManagedOwnership, ObservedDocument,
+        PolicyState, TargetDescriptor, TargetFormat, TargetTrustState, ASSIGNABLE_SKILL_TOOLS,
     },
     app::AppPaths,
     db::{
         skills::{self as repository, ManagedSkillItemRecord, SkillProjectRecord, SkillRecord},
         Database,
     },
-    domain::{ArtifactKind, ProjectRoot, Scope, SkillStatus, Tool},
+    domain::{ArtifactKind, ProjectRoot, Scope, SkillStatus, SyncScopeDto, TargetType, Tool},
     error::AppError,
     git::inspect_path,
     security::SecretRedactor,
@@ -45,11 +49,11 @@ use crate::{
         SkillManagedArtifact,
     },
     sync::{
-        apply_persisted_preview, assess_drift, build_preview_plan, hash_json,
-        load_persisted_preview, persist_preview, read_directory_target, safe_row_version,
-        scan_target, ApplyResult, ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion,
-        ManagedItemApply, ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest,
-        SkillTakeoverEntry, TargetScan,
+        apply_persisted_preview, build_preview_plan, hash_json, load_persisted_preview,
+        persist_preview, read_directory_target, safe_row_version, scan_target, ApplyResult,
+        ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion, ManagedItemApply,
+        ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest, SkillTakeoverEntry,
+        TargetScan,
     },
 };
 
@@ -98,7 +102,8 @@ pub fn import_skill(
             return Err(error);
         }
     };
-    skill_dto(database, paths, &record)
+    let dto = skill_dto(database, paths, &record)?;
+    Ok(with_affected_sync_scopes(dto, Vec::new()))
 }
 
 pub fn import_downloaded_github_skill(
@@ -121,7 +126,10 @@ pub fn import_downloaded_github_skill(
         frontmatter: prepared.frontmatter.clone(),
     };
     match repository::insert_skill(database, &value) {
-        Ok(record) => skill_dto(database, paths, &record),
+        Ok(record) => {
+            let dto = skill_dto(database, paths, &record)?;
+            Ok(with_affected_sync_scopes(dto, Vec::new()))
+        }
         Err(error) => match repository::get_skill(database, &prepared.id) {
             Ok(record)
                 if record.name == prepared.name
@@ -146,6 +154,7 @@ pub fn adopt_skill_content(
     input: &VersionedSkillInput,
 ) -> Result<SkillDto, AppError> {
     let record = repository::get_skill(database, &input.id)?;
+    let scopes = repository::sync_scopes_for_skill(database, &input.id)?;
     if u32::try_from(record.row_version).ok() != Some(input.row_version) {
         return Err(AppError::conflict("rowVersion", "Skill 已被其他操作修改"));
     }
@@ -159,7 +168,8 @@ pub fn adopt_skill_content(
         ));
     }
     if adopted.content_hash == record.content_hash && record.status == SkillStatus::Ready {
-        return skill_dto(database, paths, &record);
+        let dto = skill_dto(database, paths, &record)?;
+        return Ok(with_affected_sync_scopes(dto, scopes));
     }
     let record = repository::adopt_skill_content(
         database,
@@ -168,7 +178,913 @@ pub fn adopt_skill_content(
         &adopted.content_hash,
         &adopted.frontmatter,
     )?;
-    skill_dto(database, paths, &record)
+    let dto = skill_dto(database, paths, &record)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
+}
+
+/// 将已配对 Skill 目标中的原生目录/外部目录链接安全采纳回中央库。
+///
+/// 这条路径与 `adopt_skill_content` 有意分离：后者读取中央目录并只更新
+/// Skill 内容记录；本函数读取目标入口、把完整 source tree 复制进私有 staging，
+/// 再替换入口、更新中央内容及 managed baseline。调用方通常已经 claim 了同一
+/// ExternalChangePlan，因此这里不调用全局 active-writer 拒绝逻辑。
+pub fn adopt_skill_native(
+    database: &mut Database,
+    paths: &AppPaths,
+    environment: &crate::adapters::ExplicitEnvironment,
+    input: &AdoptSkillNativeInput,
+) -> Result<AdoptSkillNativeResultDto, AppError> {
+    let target_path = validate_native_adoption_target_path(&input.target_path)?;
+    if input.target_id.trim().is_empty() {
+        return Err(AppError::invalid_input(
+            "targetId",
+            "Skill 原生采纳缺少 managed target 身份",
+        ));
+    }
+    let observed_full_hash = input.observed_full_hash.as_deref().ok_or_else(|| {
+        AppError::invalid_input(
+            "observedFullHash",
+            "Skill 原生采纳缺少 ExternalChangePlan observed hash",
+        )
+    })?;
+    if !is_sha256(observed_full_hash) {
+        return Err(AppError::invalid_input(
+            "observedFullHash",
+            "Skill 原生采纳 observed hash 无效",
+        ));
+    }
+    let observed_managed_hash = input.observed_managed_hash.as_deref().ok_or_else(|| {
+        AppError::invalid_input(
+            "observedManagedHash",
+            "Skill 原生采纳缺少 ExternalChangePlan managed hash",
+        )
+    })?;
+    if !is_sha256(observed_managed_hash) {
+        return Err(AppError::invalid_input(
+            "observedManagedHash",
+            "Skill 原生采纳 observed managed hash 无效",
+        ));
+    }
+
+    let project = input
+        .project_id
+        .as_deref()
+        .map(|project_id| repository::get_project(database, project_id))
+        .transpose()?;
+    let expected_scope = if project.is_some() {
+        Scope::Project
+    } else {
+        Scope::Global
+    };
+    let target = repository::find_skill_managed_target(database, input.tool, &target_path)?
+        .ok_or_else(|| AppError::not_found("skillTarget", &target_path))?;
+    if target.id != input.target_id
+        || target.target_path != target_path
+        || target.tool != input.tool
+        || target.scope != expected_scope
+        || target.project_id != input.project_id
+    {
+        return Err(AppError::stale_preview("externalChangePlan", &target_path));
+    }
+    let target_row_version = safe_row_version(target.row_version)?;
+    if target_row_version != input.target_row_version {
+        return Err(AppError::stale_preview("externalChangePlan", &target_path));
+    }
+    if target.baseline_full_hash.is_none()
+        || target.baseline_managed_hash.is_none()
+        || target.baseline_projection_json.is_none()
+    {
+        return Err(AppError::conflict(
+            "skillAdopt",
+            "没有完整 Skill managed baseline，不能直接采纳",
+        ));
+    }
+    let baseline_full_hash = target.baseline_full_hash.as_deref().unwrap_or_default();
+    let baseline_managed_hash = target.baseline_managed_hash.as_deref().unwrap_or_default();
+    let baseline_projection = serde_json::from_str::<Value>(
+        target
+            .baseline_projection_json
+            .as_deref()
+            .unwrap_or_default(),
+    )
+    .map_err(|error| {
+        AppError::conflict("skillAdopt", "Skill managed baseline projection 无效")
+            .with_source(error)
+    })?;
+    if !baseline_projection.is_object()
+        || !is_sha256(baseline_full_hash)
+        || !is_sha256(baseline_managed_hash)
+        || hash_json(&baseline_projection) != baseline_managed_hash
+    {
+        return Err(AppError::conflict(
+            "skillAdopt",
+            "Skill managed baseline 不完整或 hash 不一致",
+        ));
+    }
+
+    let row_versions = parse_native_skill_row_versions(input)?;
+    let mut entity_row_versions = row_versions.clone();
+    if let Some(row_version) =
+        entity_row_versions.remove(&(DatabaseEntityType::ManagedTarget, target.id.clone()))
+    {
+        if row_version != target_row_version {
+            return Err(AppError::stale_preview("externalChangePlan", &target_path));
+        }
+    }
+
+    let project_root = project
+        .as_ref()
+        .map(|value| canonical_project(&value.root_path))
+        .transpose()?;
+    let descriptor = skill_target_descriptor(
+        environment,
+        input.tool,
+        project_root.as_ref(),
+        environment.claude_customization_policy_probe(),
+    )?;
+    validate_native_skill_descriptor(&descriptor, &target, &target_path)?;
+
+    let desired_records = repository::list_assigned_skills(
+        database,
+        input.tool,
+        project.as_ref().map(|value| value.id.as_str()),
+    )?;
+    let inherited_records = if target.scope == Scope::Project {
+        repository::list_assigned_skills(database, input.tool, None)?
+    } else {
+        Vec::new()
+    };
+    validate_ready_records(
+        paths,
+        desired_records.iter().chain(inherited_records.iter()),
+    )?;
+    let existing_items = repository::list_managed_skill_items(database, &target.id)?;
+    if existing_items.is_empty() {
+        return Err(AppError::conflict(
+            "skillAdopt",
+            "没有已配对的 Skill managed item，不能直接采纳",
+        ));
+    }
+    validate_native_skill_identity(
+        &desired_records,
+        &inherited_records,
+        &existing_items,
+        &row_versions,
+    )?;
+    let mut expected_row_versions = BTreeMap::new();
+    if let Some(project) = &project {
+        expected_row_versions.insert(
+            (DatabaseEntityType::Project, project.id.clone()),
+            safe_row_version(project.row_version)?,
+        );
+    }
+    for record in desired_records.iter().chain(inherited_records.iter()) {
+        expected_row_versions.insert(
+            (DatabaseEntityType::Skill, record.id.clone()),
+            safe_row_version(record.row_version)?,
+        );
+    }
+    for item in &existing_items {
+        expected_row_versions.insert(
+            (DatabaseEntityType::ManagedItem, item.id.clone()),
+            safe_row_version(item.row_version)?,
+        );
+    }
+    if entity_row_versions != expected_row_versions {
+        return Err(AppError::stale_preview("externalChangePlan", "rowVersions"));
+    }
+    let ownership = build_skill_ownership(&desired_records, &inherited_records, &existing_items);
+
+    let observed = match scan_target(input.tool.adapter(), &descriptor, &ownership) {
+        TargetScan::Observed(observed) => observed,
+        other => return Err(native_skill_scan_error(other, &target_path)),
+    };
+    if observed.full_hash != observed_full_hash || observed.managed_hash != observed_managed_hash {
+        return Err(AppError::stale_preview(
+            "externalChangePlan",
+            "Skill 原生目标在计划生成后发生了变化",
+        ));
+    }
+    let initial_entries = match observed.document() {
+        ObservedDocument::SymlinkDirectory(entries) => entries.clone(),
+        _ => {
+            return Err(AppError::conflict(
+                "targetType",
+                "Skill 原生目标不是目录链接树",
+            ))
+        }
+    };
+
+    let mut records_by_id = BTreeMap::new();
+    for record in desired_records.iter().chain(inherited_records.iter()) {
+        if records_by_id
+            .insert(record.id.clone(), record.clone())
+            .is_some()
+        {
+            return Err(AppError::conflict(
+                "skillAdopt",
+                "Skill managed identity 存在重复资源",
+            ));
+        }
+        let expected = row_versions.get(&(DatabaseEntityType::Skill, record.id.clone()));
+        if expected != Some(&safe_row_version(record.row_version)?) {
+            return Err(AppError::stale_preview("externalChangePlan", &record.id));
+        }
+    }
+
+    let mut prepared = Vec::new();
+    let mut staging_guard = NativeSkillStagingGuard::new(paths);
+    let mut changed_names = BTreeSet::new();
+    let data_root = paths.data_root().to_path_buf();
+    for item in &existing_items {
+        let record = records_by_id.get(&item.resource_id).ok_or_else(|| {
+            AppError::conflict(
+                "skillAdopt",
+                "Skill managed item 已失去唯一分配配对，请进入应用内匹配",
+            )
+        })?;
+        let central_inspection = inspect_central_skill(
+            paths,
+            &record.id,
+            &record.name,
+            &record.central_path,
+            &record.content_hash,
+            record.status,
+            false,
+        )?;
+        if central_inspection.status != SkillStatus::Ready {
+            return Err(AppError::conflict(
+                "centralSkill",
+                "中央 Skill 内容已变化，不能把该变化误判为原生采纳",
+            ));
+        }
+        let entry_path =
+            validate_native_skill_entry_path(&target_path, &item.external_key, record)?;
+        let inspection = inspect_skill_takeover_entry(&entry_path)?;
+        if inspection.name != record.name {
+            return Err(AppError::conflict(
+                "name",
+                "原生 Skill frontmatter.name 与已配对记录不一致",
+            ));
+        }
+        let resolved = fs::canonicalize(&inspection.resolved).map_err(|error| {
+            AppError::permission(
+                &inspection.resolved.to_string_lossy(),
+                "canonicalize_native_skill_source",
+            )
+            .with_source(error)
+        })?;
+        let central_canonical =
+            fs::canonicalize(Path::new(&record.central_path)).map_err(|error| {
+                AppError::permission(&record.central_path, "canonicalize_central_skill")
+                    .with_source(error)
+            })?;
+        // 正常 native Skill 就是 central symlink。中央私有目录中的其它路径、
+        // staging 或 canonical central 都不是可采纳的“外部 takeover”。
+        if resolved == central_canonical {
+            continue;
+        }
+        if resolved.starts_with(&data_root) {
+            return Err(AppError::conflict(
+                "centralSkill",
+                "原生 Skill 入口解析到了应用私有目录，拒绝越界采纳",
+            ));
+        }
+        let stage = paths
+            .staging()
+            .join(format!("skill-native-tree-{}", Uuid::new_v4()));
+        if let Err(error) = copy_skill_tree(&resolved, &stage, &inspection.content_hash) {
+            cleanup_native_skill_staging(paths, &staging_guard.entries)?;
+            return Err(error);
+        }
+        staging_guard
+            .entries
+            .push((stage.clone(), inspection.content_hash.clone()));
+        let (name, frontmatter) =
+            match read_skill_frontmatter_for_adoption(&stage, &inspection.content_hash) {
+                Ok(value) => value,
+                Err(error) => {
+                    cleanup_native_skill_staging(paths, &staging_guard.entries)?;
+                    return Err(error);
+                }
+            };
+        if name != record.name {
+            cleanup_native_skill_staging(paths, &staging_guard.entries)?;
+            return Err(AppError::conflict(
+                "name",
+                "原生 Skill staging 的 frontmatter.name 已变化",
+            ));
+        }
+        let after_copy = match inspect_skill_takeover_entry(&entry_path) {
+            Ok(value) => value,
+            Err(error) => {
+                cleanup_native_skill_staging(paths, &staging_guard.entries)?;
+                return Err(error);
+            }
+        };
+        if after_copy != inspection {
+            cleanup_native_skill_staging(paths, &staging_guard.entries)?;
+            return Err(AppError::stale_preview(
+                "externalChangePlan",
+                "Skill 原生入口在复制后发生了变化",
+            ));
+        }
+        changed_names.insert(record.name.clone());
+        prepared.push(PreparedNativeSkill {
+            record: record.clone(),
+            item: item.clone(),
+            entry_path,
+            entry_type: inspection.entry_type,
+            fingerprint: inspection.fingerprint,
+            content_hash: inspection.content_hash,
+            staging_path: stage,
+            frontmatter,
+        });
+    }
+
+    if prepared.is_empty() {
+        let baseline_matches = target.baseline_full_hash.as_deref()
+            == Some(observed.full_hash.as_str())
+            && target.baseline_managed_hash.as_deref() == Some(observed.managed_hash.as_str());
+        if baseline_matches {
+            return Ok(native_skill_adoption_result(
+                input.tool,
+                Vec::new(),
+                input.project_id.clone(),
+            ));
+        }
+        return Err(AppError::conflict(
+            "skillAdopt",
+            "变化无法唯一映射到已配对 Skill，请进入应用内匹配",
+        ));
+    }
+
+    let mut central_swaps = Vec::<NativeSkillCentralSwap>::new();
+    let mut entry_swaps = Vec::<NativeSkillEntrySwap>::new();
+    let fs_result = (|| {
+        for prepared_skill in &prepared {
+            let db_frontmatter = serde_json::from_str::<Value>(
+                &prepared_skill.record.frontmatter_json,
+            )
+            .map_err(|error| {
+                AppError::invalid_input("frontmatter", "数据库中的 Skill frontmatter 无效")
+                    .with_source(error)
+            })?;
+            if prepared_skill.content_hash == prepared_skill.record.content_hash
+                && prepared_skill.frontmatter == db_frontmatter
+            {
+                continue;
+            }
+            if central_swaps
+                .iter()
+                .any(|swap| swap.skill_id == prepared_skill.record.id)
+            {
+                continue;
+            }
+            let quarantine = quarantine_central_skill(
+                paths,
+                &prepared_skill.record.id,
+                &prepared_skill.record.name,
+                &prepared_skill.record.central_path,
+                &prepared_skill.record.content_hash,
+            )?
+            .ok_or_else(|| AppError::conflict("centralSkill", "中央 Skill 目录在采纳时缺失"))?;
+            if let Err(error) = rename_import_exclusively(
+                &prepared_skill.staging_path,
+                Path::new(&prepared_skill.record.central_path),
+            ) {
+                if restore_quarantined_skill(
+                    paths,
+                    &quarantine,
+                    &prepared_skill.record.central_path,
+                )
+                .is_err()
+                {
+                    return Err(AppError::rollback_failed(
+                        "skill-native-adopt",
+                        &prepared_skill.record.central_path,
+                        &quarantine.to_string_lossy(),
+                    ));
+                }
+                return Err(error);
+            }
+            central_swaps.push(NativeSkillCentralSwap {
+                skill_id: prepared_skill.record.id.clone(),
+                central_path: PathBuf::from(&prepared_skill.record.central_path),
+                quarantine,
+                old_hash: prepared_skill.record.content_hash.clone(),
+                new_hash: prepared_skill.content_hash.clone(),
+            });
+        }
+        sync_directory(paths.staging())?;
+        for prepared_skill in &prepared {
+            entry_swaps.push(replace_native_skill_entry_with_central_link(
+                paths,
+                &prepared_skill.entry_path,
+                Path::new(&prepared_skill.record.central_path),
+                prepared_skill.entry_type,
+                &prepared_skill.fingerprint,
+                &prepared_skill.content_hash,
+                &prepared_skill.record.name,
+            )?);
+        }
+        Ok::<(), AppError>(())
+    })();
+    if let Err(error) = fs_result {
+        rollback_native_skill_files(
+            paths,
+            &mut entry_swaps,
+            &mut central_swaps,
+            &staging_guard.entries,
+        )?;
+        return Err(error);
+    }
+
+    let mut expected_entries = initial_entries;
+    for prepared_skill in &prepared {
+        expected_entries.insert(
+            prepared_skill.item.external_key.clone(),
+            crate::adapters::DirectoryEntry {
+                target_type: TargetType::Symlink,
+                link_target: Some(prepared_skill.record.central_path.clone()),
+            },
+        );
+    }
+    let expected_entries_json = match serde_json::to_vec(&expected_entries) {
+        Ok(value) => value,
+        Err(error) => {
+            rollback_native_skill_files(
+                paths,
+                &mut entry_swaps,
+                &mut central_swaps,
+                &staging_guard.entries,
+            )?;
+            return Err(
+                AppError::invalid_input("target", "Skill 目标投影无法序列化").with_source(error),
+            );
+        }
+    };
+    let expected_full_hash = crate::sync::hash_bytes(&expected_entries_json);
+    let final_observed = match scan_target(input.tool.adapter(), &descriptor, &ownership) {
+        TargetScan::Observed(observed) => observed,
+        other => {
+            let error = native_skill_scan_error(other, &target_path);
+            rollback_native_skill_files(
+                paths,
+                &mut entry_swaps,
+                &mut central_swaps,
+                &staging_guard.entries,
+            )?;
+            return Err(error);
+        }
+    };
+    let desired_projection = build_desired_projection(&desired_records);
+    if final_observed.full_hash != expected_full_hash
+        || final_observed.managed_hash != hash_json(&desired_projection)
+        || final_observed.managed_projection != desired_projection
+    {
+        let error =
+            AppError::stale_preview("externalChangePlan", "Skill 原生目标在采纳过程中发生了变化");
+        rollback_native_skill_files(
+            paths,
+            &mut entry_swaps,
+            &mut central_swaps,
+            &staging_guard.entries,
+        )?;
+        return Err(error);
+    }
+
+    let mut content_updates = Vec::new();
+    for prepared_skill in &prepared {
+        let db_frontmatter = serde_json::from_str::<Value>(&prepared_skill.record.frontmatter_json)
+            .map_err(|error| {
+                AppError::invalid_input("frontmatter", "数据库中的 Skill frontmatter 无效")
+                    .with_source(error)
+            });
+        let db_frontmatter = match db_frontmatter {
+            Ok(value) => value,
+            Err(error) => {
+                rollback_native_skill_files(
+                    paths,
+                    &mut entry_swaps,
+                    &mut central_swaps,
+                    &staging_guard.entries,
+                )?;
+                return Err(error);
+            }
+        };
+        if prepared_skill.content_hash != prepared_skill.record.content_hash
+            || prepared_skill.frontmatter != db_frontmatter
+        {
+            content_updates.push(repository::NativeSkillContentUpdate {
+                id: prepared_skill.record.id.clone(),
+                row_version: *row_versions
+                    .get(&(DatabaseEntityType::Skill, prepared_skill.record.id.clone()))
+                    .ok_or_else(|| AppError::stale_preview("externalChangePlan", "skillRow"))?,
+                content_hash: prepared_skill.content_hash.clone(),
+                frontmatter: prepared_skill.frontmatter.clone(),
+            });
+        }
+    }
+    let item_updates = existing_items
+        .iter()
+        .map(|item| {
+            let record = records_by_id.get(&item.resource_id).ok_or_else(|| {
+                AppError::conflict("skillAdopt", "Skill managed item 失去资源配对")
+            })?;
+            let projection = json!({
+                "targetType": "symlink",
+                "linkTarget": record.central_path,
+            });
+            Ok(repository::NativeSkillItemUpdate {
+                id: item.id.clone(),
+                target_id: target.id.clone(),
+                resource_id: item.resource_id.clone(),
+                external_key: item.external_key.clone(),
+                row_version: *row_versions
+                    .get(&(DatabaseEntityType::ManagedItem, item.id.clone()))
+                    .ok_or_else(|| AppError::stale_preview("externalChangePlan", "managedItem"))?,
+                item_hash: hash_json(&projection),
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>();
+    let item_updates = match item_updates {
+        Ok(value) => value,
+        Err(error) => {
+            rollback_native_skill_files(
+                paths,
+                &mut entry_swaps,
+                &mut central_swaps,
+                &staging_guard.entries,
+            )?;
+            return Err(error);
+        }
+    };
+    let target_update = repository::NativeSkillTargetUpdate {
+        id: target.id.clone(),
+        tool: target.tool,
+        scope: target.scope,
+        project_id: target.project_id.clone(),
+        target_path: target.target_path.clone(),
+        row_version: target_row_version,
+        full_hash: final_observed.full_hash.clone(),
+        managed_hash: final_observed.managed_hash.clone(),
+        projection: desired_projection,
+        row_versions: input.row_versions.clone(),
+    };
+    if let Err(error) =
+        repository::adopt_native_skill(database, &target_update, &content_updates, &item_updates)
+    {
+        rollback_native_skill_files(
+            paths,
+            &mut entry_swaps,
+            &mut central_swaps,
+            &staging_guard.entries,
+        )?;
+        return Err(error);
+    }
+
+    for swap in &central_swaps {
+        delete_quarantined_skill(paths, &swap.quarantine, &swap.old_hash)?;
+    }
+    for swap in &entry_swaps {
+        cleanup_native_skill_entry_swap(paths, swap)?;
+    }
+    cleanup_native_skill_staging(paths, &staging_guard.entries)?;
+    staging_guard.disarm();
+    Ok(native_skill_adoption_result(
+        input.tool,
+        changed_names.into_iter().collect(),
+        input.project_id.clone(),
+    ))
+}
+
+#[derive(Debug, Clone)]
+struct PreparedNativeSkill {
+    record: SkillRecord,
+    item: ManagedSkillItemRecord,
+    entry_path: PathBuf,
+    entry_type: SkillTakeoverEntryKind,
+    fingerprint: String,
+    content_hash: String,
+    staging_path: PathBuf,
+    frontmatter: Value,
+}
+
+#[derive(Debug, Clone)]
+struct NativeSkillCentralSwap {
+    skill_id: String,
+    central_path: PathBuf,
+    quarantine: PathBuf,
+    old_hash: String,
+    new_hash: String,
+}
+
+/// 采纳准备阶段的 staging 所有权护栏。任何早退（包括第二个 Skill 检查
+/// 失败）都会尽力清理已经复制的私有目录；成功提交后由服务显式 disarm。
+struct NativeSkillStagingGuard<'a> {
+    paths: &'a AppPaths,
+    entries: Vec<(PathBuf, String)>,
+    armed: bool,
+}
+
+impl<'a> NativeSkillStagingGuard<'a> {
+    fn new(paths: &'a AppPaths) -> Self {
+        Self {
+            paths,
+            entries: Vec::new(),
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for NativeSkillStagingGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = cleanup_native_skill_staging(self.paths, &self.entries);
+        }
+    }
+}
+
+fn validate_native_adoption_target_path(path: &str) -> Result<String, AppError> {
+    let path = path.trim();
+    let candidate = Path::new(path);
+    if path.is_empty()
+        || !candidate.is_absolute()
+        || candidate.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir
+                    | std::path::Component::ParentDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(AppError::invalid_input(
+            "targetPath",
+            "Skill 原生目标路径必须是无相对片段的绝对路径",
+        ));
+    }
+    Ok(path.to_owned())
+}
+
+fn parse_native_skill_row_versions(
+    input: &AdoptSkillNativeInput,
+) -> Result<BTreeMap<(DatabaseEntityType, String), u32>, AppError> {
+    let mut result = BTreeMap::new();
+    for row in &input.row_versions {
+        if !matches!(
+            row.entity_type,
+            DatabaseEntityType::Skill
+                | DatabaseEntityType::ManagedTarget
+                | DatabaseEntityType::ManagedItem
+                | DatabaseEntityType::Project
+        ) {
+            return Err(AppError::invalid_input(
+                "rowVersions",
+                "Skill 原生采纳包含不匹配的行版本证据",
+            ));
+        }
+        if result
+            .insert((row.entity_type, row.entity_id.clone()), row.row_version)
+            .is_some()
+        {
+            return Err(AppError::invalid_input(
+                "rowVersions",
+                "Skill 原生采纳包含重复的行版本证据",
+            ));
+        }
+    }
+    Ok(result)
+}
+
+fn validate_native_skill_identity(
+    desired: &[SkillRecord],
+    inherited: &[SkillRecord],
+    items: &[ManagedSkillItemRecord],
+    row_versions: &BTreeMap<(DatabaseEntityType, String), u32>,
+) -> Result<(), AppError> {
+    let records = desired.iter().chain(inherited.iter()).collect::<Vec<_>>();
+    let record_by_id = records
+        .iter()
+        .map(|record| (record.id.as_str(), *record))
+        .collect::<BTreeMap<_, _>>();
+    let mut item_names = BTreeSet::new();
+    let mut item_resources = BTreeSet::new();
+    for item in items {
+        if item.external_key.is_empty()
+            || item.external_key.contains(['/', '\\', '\0'])
+            || item.external_key == "."
+            || item.external_key == ".."
+            || !is_sha256(&item.last_applied_item_hash)
+            || !item_names.insert(item.external_key.clone())
+            || !item_resources.insert(item.resource_id.clone())
+        {
+            return Err(AppError::conflict(
+                "skillAdopt",
+                "Skill managed item 名称或资源 identity 不唯一",
+            ));
+        }
+        let record = record_by_id.get(item.resource_id.as_str()).ok_or_else(|| {
+            AppError::conflict(
+                "skillAdopt",
+                "Skill managed item 已失去当前 assignment 的唯一配对",
+            )
+        })?;
+        if item.external_key != record.name {
+            return Err(AppError::conflict(
+                "name",
+                "Skill managed item external key 与中央名称不一致",
+            ));
+        }
+        if row_versions.get(&(DatabaseEntityType::ManagedItem, item.id.clone()))
+            != Some(&safe_row_version(item.row_version)?)
+        {
+            return Err(AppError::stale_preview("externalChangePlan", "managedItem"));
+        }
+    }
+    let desired_names = desired
+        .iter()
+        .map(|record| record.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if desired_names.len() != items.len()
+        || items
+            .iter()
+            .any(|item| !desired_names.contains(item.external_key.as_str()))
+    {
+        return Err(AppError::conflict(
+            "skillAdopt",
+            "Skill managed items 与当前 assignment 不完整匹配，请进入应用内匹配",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_native_skill_entry_path(
+    target_path: &str,
+    external_key: &str,
+    record: &SkillRecord,
+) -> Result<PathBuf, AppError> {
+    if external_key != record.name
+        || external_key.is_empty()
+        || external_key.contains(['/', '\\', '\0'])
+        || external_key == "."
+        || external_key == ".."
+    {
+        return Err(AppError::conflict(
+            "name",
+            "Skill 原生入口名称不是安全直属名称",
+        ));
+    }
+    let target = Path::new(target_path).join(external_key);
+    if target.parent() != Some(Path::new(target_path))
+        || target.file_name().and_then(|value| value.to_str()) != Some(external_key)
+    {
+        return Err(AppError::conflict(
+            "targetPath",
+            "Skill 原生入口路径不是目标目录直属项",
+        ));
+    }
+    Ok(target)
+}
+
+fn validate_native_skill_descriptor(
+    descriptor: &TargetDescriptor,
+    target: &repository::SkillManagedTargetRecord,
+    target_path: &str,
+) -> Result<(), AppError> {
+    if descriptor.tool != target.tool
+        || descriptor.artifact_kind != ArtifactKind::Skill
+        || descriptor.scope != target.scope
+        || descriptor.path.as_deref() != Some(target_path)
+    {
+        return Err(AppError::stale_preview("externalChangePlan", target_path));
+    }
+    if descriptor.format != TargetFormat::SymlinkDirectory {
+        return Err(AppError::conflict(
+            "targetType",
+            "当前工具的 Skill 目标格式已变化",
+        ));
+    }
+    if descriptor.capability.state != CapabilityState::Supported {
+        return Err(AppError::conflict(
+            "capability",
+            "当前工具不支持安全的 Skill 原生采纳",
+        ));
+    }
+    if descriptor.policy != PolicyState::Allowed {
+        return Err(AppError::conflict(
+            "policy",
+            "当前工具策略不允许 Skill 原生采纳",
+        ));
+    }
+    if matches!(
+        descriptor.trust,
+        TargetTrustState::Unknown | TargetTrustState::Untrusted
+    ) {
+        return Err(AppError::conflict(
+            "trust",
+            "当前项目不具备安全的 Skill 原生采纳信任状态",
+        ));
+    }
+    Ok(())
+}
+
+fn native_skill_scan_error(scan: TargetScan, target_path: &str) -> AppError {
+    match scan {
+        TargetScan::Missing => AppError::conflict("targetPath", "Skill 原生目标已缺失"),
+        TargetScan::TargetTypeChanged(_) => {
+            AppError::conflict("targetType", "Skill 原生目标类型已变化")
+        }
+        TargetScan::PermissionDenied => AppError::permission(target_path, "scan_skill_target"),
+        TargetScan::ParseError => AppError::conflict("targetParse", "Skill 原生目标无法解析"),
+        TargetScan::ManagedItemBaselineMismatch => {
+            AppError::conflict("managedItem", "Skill managed item 基线已变化")
+        }
+        TargetScan::Unavailable => AppError::conflict("capability", "Skill 原生目标不可用"),
+        TargetScan::Failed => AppError::conflict("targetPath", "Skill 原生目标无法安全读取"),
+        TargetScan::Observed(_) => AppError::internal("unexpected observed scan error"),
+    }
+}
+
+fn cleanup_native_skill_staging(
+    paths: &AppPaths,
+    staged_paths: &[(PathBuf, String)],
+) -> Result<(), AppError> {
+    for (path, hash) in staged_paths.iter().rev() {
+        if fs::symlink_metadata(path).is_ok() {
+            crate::skills::library::remove_skill_tree(path, paths.staging(), hash)?;
+        }
+    }
+    Ok(())
+}
+
+fn rollback_native_skill_files(
+    paths: &AppPaths,
+    entry_swaps: &mut Vec<NativeSkillEntrySwap>,
+    central_swaps: &mut Vec<NativeSkillCentralSwap>,
+    staged_paths: &[(PathBuf, String)],
+) -> Result<(), AppError> {
+    let mut failure = None;
+    for swap in entry_swaps.iter().rev() {
+        if let Err(error) = rollback_native_skill_entry_swap(paths, swap) {
+            failure.get_or_insert(error);
+        }
+    }
+    for swap in central_swaps.iter().rev() {
+        let result = (|| {
+            crate::skills::library::remove_skill_tree(
+                &swap.central_path,
+                paths.central_skills(),
+                &swap.new_hash,
+            )?;
+            restore_quarantined_skill(
+                paths,
+                &swap.quarantine,
+                &swap.central_path.to_string_lossy(),
+            )
+        })();
+        if let Err(error) = result {
+            failure.get_or_insert(error);
+        }
+    }
+    if let Err(error) = cleanup_native_skill_staging(paths, staged_paths) {
+        failure.get_or_insert(error);
+    }
+    if let Some(error) = failure {
+        return Err(AppError::rollback_failed(
+            "skill-native-adopt",
+            "skill-native-adopt",
+            &error.to_string(),
+        ));
+    }
+    entry_swaps.clear();
+    central_swaps.clear();
+    Ok(())
+}
+
+fn native_skill_adoption_result(
+    tool: Tool,
+    adopted: Vec<String>,
+    project_id: Option<String>,
+) -> AdoptSkillNativeResultDto {
+    AdoptSkillNativeResultDto {
+        tool,
+        adopted,
+        affected_sync_scopes: Some(vec![SyncScopeDto::new(
+            ArtifactKind::Skill,
+            tool,
+            project_id,
+        )]),
+    }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub fn preview_skill_content(
@@ -207,6 +1123,7 @@ pub fn delete_skill(
     paths: &AppPaths,
     input: &VersionedSkillInput,
 ) -> Result<DeleteSkillResultDto, AppError> {
+    let scopes = repository::sync_scopes_for_skill(database, &input.id)?;
     let record = repository::ensure_skill_deletable(database, &input.id, input.row_version)?;
     let quarantine = quarantine_central_skill(
         paths,
@@ -227,6 +1144,7 @@ pub fn delete_skill(
     Ok(DeleteSkillResultDto {
         id: input.id.clone(),
         deleted: true,
+        affected_sync_scopes: Some(scopes),
     })
 }
 
@@ -242,7 +1160,11 @@ pub fn set_global_skill_assignment(
         input.assigned,
         input.row_version,
     )?;
-    skill_dto(database, paths, &record)
+    let dto = skill_dto(database, paths, &record)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::global(ArtifactKind::Skill, input.tool)],
+    ))
 }
 
 pub fn set_project_skill_assignment(
@@ -259,7 +1181,15 @@ pub fn set_project_skill_assignment(
         input.skill_row_version,
         input.project_row_version,
     )?;
-    skill_dto(database, paths, &record)
+    let dto = skill_dto(database, paths, &record)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::project(
+            ArtifactKind::Skill,
+            input.tool,
+            input.project_id.clone(),
+        )],
+    ))
 }
 
 pub fn list_skill_projects(database: &Database) -> Result<Vec<SkillProjectDto>, AppError> {
@@ -410,7 +1340,7 @@ fn build_prepared_skill_preview(
                 ownership: target.ownership,
                 baseline: target.baseline,
                 scan: target.scan,
-                baseline_mismatched_items: Vec::new(),
+                baseline_mismatched_items: target.baseline_mismatched_items,
                 readopt_available: false,
                 desired_projection: target.desired_projection,
                 row_versions: target.row_versions,
@@ -565,11 +1495,16 @@ pub fn list_global_skill_target_statuses_with_policy_probe(
                 repository::list_managed_skill_items(database, &baseline.target_id)?
             };
             let ownership = build_skill_ownership(&desired, &[], &existing);
-            let scan = verify_managed_item_baselines(
+            let (scan, baseline_mismatched_items) = verify_managed_item_baselines(
                 scan_target(tool.adapter(), descriptor, &ownership),
                 &existing,
             );
-            let assessment = assess_drift(descriptor, &baseline, &scan);
+            let assessment = crate::sync::assess_drift_with_managed_item_mismatches(
+                descriptor,
+                &baseline,
+                &scan,
+                &baseline_mismatched_items,
+            );
             let initial_diagnostic = if baseline.full_hash.is_none()
                 && baseline.managed_hash.is_none()
                 && existing.is_empty()
@@ -638,6 +1573,7 @@ struct PreparedSkillTarget {
     ownership: ManagedOwnership,
     baseline: ManagedTargetBaseline,
     scan: TargetScan,
+    baseline_mismatched_items: Vec<String>,
     desired_projection: Value,
     row_versions: Vec<DatabaseRowVersion>,
     git: Option<crate::git::GitPathStatus>,
@@ -753,7 +1689,7 @@ fn prepare_skill_sync_in_connection(
     }
     let desired_projection = build_desired_projection(&desired_records);
     let ownership = build_skill_ownership(&desired_records, &inherited_records, &existing_items);
-    let scan = verify_managed_item_baselines(
+    let (scan, baseline_mismatched_items) = verify_managed_item_baselines(
         scan_target(input.tool.adapter(), &descriptor, &ownership),
         &existing_items,
     );
@@ -814,6 +1750,7 @@ fn prepare_skill_sync_in_connection(
             ownership,
             baseline,
             scan,
+            baseline_mismatched_items,
             desired_projection,
             row_versions,
             git,
@@ -904,30 +1841,41 @@ fn inherited_projection_is_absent(scan: &TargetScan) -> bool {
 fn verify_managed_item_baselines(
     scan: TargetScan,
     existing: &[ManagedSkillItemRecord],
-) -> TargetScan {
+) -> (TargetScan, Vec<String>) {
     if existing.is_empty() {
-        return scan;
+        return (scan, Vec::new());
     }
-    let matches = match &scan {
-        TargetScan::Observed(observed) => {
-            observed
-                .managed_projection
-                .as_object()
-                .is_some_and(|items| {
-                    existing.iter().all(|item| {
-                        items
-                            .get(&item.external_key)
-                            .is_some_and(|value| hash_json(value) == item.last_applied_item_hash)
+    let mismatched = match &scan {
+        TargetScan::Observed(observed) => observed
+            .managed_projection
+            .as_object()
+            .map(|items| {
+                existing
+                    .iter()
+                    .filter(|item| {
+                        items.get(&item.external_key).map_or(true, |value| {
+                            hash_json(value) != item.last_applied_item_hash
+                        })
                     })
-                })
-        }
-        TargetScan::Missing => false,
-        _ => return scan,
+                    .map(|item| item.external_key.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| {
+                existing
+                    .iter()
+                    .map(|item| item.external_key.clone())
+                    .collect()
+            }),
+        TargetScan::Missing => existing
+            .iter()
+            .map(|item| item.external_key.clone())
+            .collect(),
+        _ => return (scan, Vec::new()),
     };
-    if matches {
-        scan
+    if mismatched.is_empty() {
+        (scan, Vec::new())
     } else {
-        TargetScan::ManagedItemBaselineMismatch
+        (scan, mismatched)
     }
 }
 
@@ -1445,7 +2393,13 @@ fn skill_dto_with_tools(
         row_version: crate::sync::managed_record_row_version::<
             crate::sync::managed::SkillManagedArtifact,
         >(record)?,
+        affected_sync_scopes: None,
     })
+}
+
+fn with_affected_sync_scopes(mut dto: SkillDto, scopes: Vec<SyncScopeDto>) -> SkillDto {
+    dto.affected_sync_scopes = Some(crate::domain::stable_sync_scopes(scopes));
+    dto
 }
 
 fn canonical_project(path: &str) -> Result<ProjectRoot, AppError> {

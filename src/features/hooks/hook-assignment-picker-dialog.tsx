@@ -5,6 +5,7 @@ import {
   commands,
   type HookDto,
   type HookEvent,
+  type SyncScopeDto,
   type Tool,
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,7 @@ interface HookAssignmentPickerDialogProps {
   eventLabel: string;
   hooks: HookDto[];
   onClose: () => void;
-  onAssigned: (message: string) => void;
+  onAssigned: (message: string, scopes: SyncScopeDto[]) => Promise<void> | void;
 }
 
 /// 从中央库选择 Hook 加入指定工具的事件分组。
@@ -52,10 +53,11 @@ export function HookAssignmentPickerDialog(
         }),
       );
     },
-    onSuccess: async (_result, { hook }) => {
+    onSuccess: async (result, { hook }) => {
       await queryClient.invalidateQueries({ queryKey: hooksKeys.all });
-      props.onAssigned(
+      await props.onAssigned(
         `${hook.name} 已加入 ${props.eventLabel} 分组（${props.event}）。`,
+        result.affectedSyncScopes ?? [],
       );
     },
     onError: (mutationError) => {

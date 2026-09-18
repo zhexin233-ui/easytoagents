@@ -802,7 +802,7 @@ fn agents_global_chain_covers_claude_codex_drift_readopt_delete_and_restore() {
     .expect("生成 Agent 漂移预览失败");
     assert_eq!(drift.targets.len(), 1);
     assert_eq!(drift.targets[0].status, SyncStatus::ExternalOwnedChange);
-    assert_eq!(drift.targets[0].change_kind, ChangeKind::Conflict);
+    assert_eq!(drift.targets[0].change_kind, ChangeKind::Update);
     assert!(drift.targets[0].readopt_available);
     readopt_agent_target(
         &mut fixture.database,
@@ -1248,11 +1248,31 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
     )
     .expect("检测受管漂移失败");
     assert_serialized_secrets_absent("受管漂移预览 RPC DTO", &managed_preview);
-    assert_eq!(managed_preview.targets[0].change_kind, ChangeKind::Conflict);
+    assert_eq!(managed_preview.targets[0].change_kind, ChangeKind::Update);
     assert_eq!(
         managed_preview.targets[0].status,
         SyncStatus::ExternalOwnedChange
     );
+    let managed_apply = apply_mcp_preview_with_probes(
+        &fixture.write_operations,
+        &mut fixture.database,
+        &fixture.paths,
+        &fixture.environment,
+        &mut fixture.redactor,
+        &ApplyMcpPreviewInput {
+            preview_id: managed_preview.preview_id.clone(),
+            tool: Tool::Codex,
+            project_id: Some(fixture.project_id.clone()),
+        },
+        &fixture.user_mcp_evidence,
+        &fixture.policy_evidence,
+    )
+    .expect("可读的受管漂移 Preview 应直接应用");
+    restore_cases.push(fixture.restore_case(
+        &managed_apply.run_id,
+        &codex_project_path,
+        fixture.project.clone(),
+    ));
     let conflict_error = apply_mcp_preview_with_probes(
         &fixture.write_operations,
         &mut fixture.database,
@@ -1267,8 +1287,8 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
         &fixture.user_mcp_evidence,
         &fixture.policy_evidence,
     )
-    .expect_err("包含受管漂移的 Preview 不得应用");
-    assert_eq!(conflict_error.code(), ErrorCode::Conflict);
+    .expect_err("同一 persisted Preview 只能消费一次");
+    assert_eq!(conflict_error.code(), ErrorCode::PreviewAlreadyConsumed);
     assert_secrets_absent(
         "RPC error",
         &format!(
@@ -1283,7 +1303,7 @@ fn isolated_full_chain_restores_exact_fixture_and_leaks_no_secret() {
             .parse::<toml_edit::DocumentMut>()
             .unwrap()["mcp_servers"]["phase8-project-stdio"]["command"]
             .as_str(),
-        Some("external-command")
+        Some("phase8-server")
     );
 
     for restore_case in restore_cases.iter().rev() {
@@ -2186,8 +2206,8 @@ fn pi_chain_covers_provider_prompt_mcp_drift_restore_and_fail_closed() {
     .expect("漂移后 Provider 预览失败");
     assert_eq!(
         drifted.targets[0].change_kind,
-        ChangeKind::Conflict,
-        "外部改写受管内容必须成为 Conflict"
+        ChangeKind::Update,
+        "可读的受管漂移应生成可 Apply 的 Update"
     );
     let snapshots = list_snapshots(&fixture.database).expect("列出快照失败");
     let provider_snapshot = snapshots

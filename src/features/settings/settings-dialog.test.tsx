@@ -43,12 +43,6 @@ function renderThemedDialog() {
   return renderWithProviders(<ThemeStateHarness />);
 }
 
-async function applyModeCheckbox() {
-  return screen.findByRole("checkbox", {
-    name: "直接应用（跳过预览确认对话框）",
-  });
-}
-
 describe("SettingsDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -100,69 +94,18 @@ describe("SettingsDialog", () => {
     expect(commands.getAppSettings).not.toHaveBeenCalled();
   });
 
-  it("默认渲染为预览确认模式，勾选后保存 direct 并回读", async () => {
-    vi.mocked(commands.getAppSettings)
-      .mockResolvedValueOnce({
-        status: "ok",
-        data: {
-          applyMode: "preview_confirm",
-          enabledTools: ["claude", "codex"],
-        } satisfies AppSettingsDto,
-      })
-      .mockResolvedValueOnce({
-        status: "ok",
-        data: {
-          applyMode: "direct",
-          enabledTools: ["claude", "codex"],
-        } satisfies AppSettingsDto,
-      });
-    vi.mocked(commands.updateAppSettings).mockResolvedValue({
-      status: "ok",
-      data: {
-        applyMode: "direct",
-        enabledTools: ["claude", "codex"],
-      } satisfies AppSettingsDto,
-    });
-    renderDialog();
-
-    const checkbox = await applyModeCheckbox();
-    expect(checkbox).not.toBeChecked();
-    fireEvent.click(checkbox);
-    await waitFor(() =>
-      expect(commands.updateAppSettings).toHaveBeenCalledWith({
-        applyMode: "direct",
-        enabledTools: ["claude", "codex"],
-      }),
-    );
-    await waitFor(() => expect(checkbox).toBeChecked());
-  });
-
-  it("已开启直接应用时勾选框呈选中态，取消勾选保存 preview_confirm", async () => {
+  it("不再展示应用方式或直接应用开关", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: {
-        applyMode: "direct",
-        enabledTools: ["claude", "codex"],
-      } satisfies AppSettingsDto,
-    });
-    vi.mocked(commands.updateAppSettings).mockResolvedValue({
-      status: "ok",
-      data: {
-        applyMode: "preview_confirm",
-        enabledTools: ["claude", "codex"],
-      } satisfies AppSettingsDto,
+      data: { enabledTools: ["claude", "codex"] } satisfies AppSettingsDto,
     });
     renderDialog();
 
-    const checkbox = await applyModeCheckbox();
-    expect(checkbox).toBeChecked();
-    fireEvent.click(checkbox);
-    await waitFor(() =>
-      expect(commands.updateAppSettings).toHaveBeenCalledWith({
-        applyMode: "preview_confirm",
-        enabledTools: ["claude", "codex"],
-      }),
-    );
+    expect(
+      await screen.findByRole("heading", { name: "启用的工具" }),
+    ).toBeVisible();
+    expect(screen.queryByText("应用方式")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/直接应用/)).not.toBeInTheDocument();
   });
 
   it("设置读取失败时展示错误且不渲染勾选框", async () => {
@@ -183,10 +126,7 @@ describe("SettingsDialog", () => {
   it("点击完成按钮触发 onClose", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: {
-        applyMode: "preview_confirm",
-        enabledTools: ["claude", "codex"],
-      } satisfies AppSettingsDto,
+      data: { enabledTools: ["claude", "codex"] } satisfies AppSettingsDto,
     });
     const onClose = vi.fn();
     renderDialog({ onClose });
@@ -198,10 +138,7 @@ describe("SettingsDialog", () => {
   it("启用的工具区块默认勾选 Claude 与 Codex，Cursor 未勾选", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: {
-        applyMode: "preview_confirm",
-        enabledTools: ["claude", "codex"],
-      } satisfies AppSettingsDto,
+      data: { enabledTools: ["claude", "codex"] } satisfies AppSettingsDto,
     });
     renderDialog();
 
@@ -215,18 +152,14 @@ describe("SettingsDialog", () => {
     expect(screen.getByRole("checkbox", { name: "Cursor" })).not.toBeChecked();
   });
 
-  it("勾选 Cursor 后整包提交 applyMode 与按固定顺序的启用工具", async () => {
+  it("勾选 Cursor 后只提交按固定顺序的启用工具", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: {
-        applyMode: "preview_confirm",
-        enabledTools: ["claude", "codex"],
-      } satisfies AppSettingsDto,
+      data: { enabledTools: ["claude", "codex"] } satisfies AppSettingsDto,
     });
     vi.mocked(commands.updateAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "preview_confirm",
         enabledTools: ["claude", "codex", "cursor"],
       } satisfies AppSettingsDto,
     });
@@ -235,33 +168,27 @@ describe("SettingsDialog", () => {
     fireEvent.click(await screen.findByRole("checkbox", { name: "Cursor" }));
     await waitFor(() =>
       expect(commands.updateAppSettings).toHaveBeenCalledWith({
-        applyMode: "preview_confirm",
         enabledTools: ["claude", "codex", "cursor"],
       }),
     );
   });
 
-  it("取消 Codex 时保持 applyMode 并提交剩余启用工具", async () => {
+  it("取消 Codex 时提交剩余启用工具", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "direct",
         enabledTools: ["claude", "codex", "cursor"],
       } satisfies AppSettingsDto,
     });
     vi.mocked(commands.updateAppSettings).mockResolvedValue({
       status: "ok",
-      data: {
-        applyMode: "direct",
-        enabledTools: ["claude", "cursor"],
-      } satisfies AppSettingsDto,
+      data: { enabledTools: ["claude", "cursor"] } satisfies AppSettingsDto,
     });
     renderDialog();
 
     fireEvent.click(await screen.findByRole("checkbox", { name: "Codex" }));
     await waitFor(() =>
       expect(commands.updateAppSettings).toHaveBeenCalledWith({
-        applyMode: "direct",
         enabledTools: ["claude", "cursor"],
       }),
     );
@@ -273,17 +200,14 @@ describe("SettingsDialog 外观模式切换", () => {
     vi.clearAllMocks();
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: {
-        applyMode: "preview_confirm",
-        enabledTools: ["claude", "codex"],
-      } satisfies AppSettingsDto,
+      data: { enabledTools: ["claude", "codex"] } satisfies AppSettingsDto,
     });
   });
 
   it("默认选中跟随系统，三态按钮均暴露 aria-pressed 与 title", async () => {
     renderDialog();
 
-    await applyModeCheckbox();
+    await screen.findByRole("heading", { name: "启用的工具" });
     expect(screen.getByRole("button", { name: "亮色模式" })).toHaveAttribute(
       "aria-pressed",
       "false",
@@ -303,7 +227,7 @@ describe("SettingsDialog 外观模式切换", () => {
     const onThemePreferenceChange = vi.fn();
     renderDialog({ onThemePreferenceChange });
 
-    await applyModeCheckbox();
+    await screen.findByRole("heading", { name: "启用的工具" });
     fireEvent.click(screen.getByRole("button", { name: "暗色模式" }));
     expect(onThemePreferenceChange).toHaveBeenCalledWith("dark");
   });
@@ -311,7 +235,7 @@ describe("SettingsDialog 外观模式切换", () => {
   it("父组件状态更新后选中态随之切换", async () => {
     renderThemedDialog();
 
-    await applyModeCheckbox();
+    await screen.findByRole("heading", { name: "启用的工具" });
     fireEvent.click(screen.getByRole("button", { name: "暗色模式" }));
     expect(screen.getByRole("button", { name: "暗色模式" })).toHaveAttribute(
       "aria-pressed",

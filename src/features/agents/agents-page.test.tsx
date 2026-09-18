@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands, type AgentDto } from "@/bindings/commands";
 import { AgentsPage } from "@/features/agents/agents-page";
-import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
+import {
+  globalSyncScope,
+  makePreviewPlan,
+  makeTarget,
+  withAffectedSyncScopes,
+} from "@/test/fixtures";
 import { renderWithProviders } from "@/test/render";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
@@ -42,7 +47,6 @@ describe("AgentsPage", () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "preview_confirm",
         enabledTools: ["claude", "codex", "cursor", "zcode", "opencode"],
       },
     });
@@ -71,7 +75,13 @@ describe("AgentsPage", () => {
           directoryPath: "/isolated/home/.codex/agents",
           aggregateStatus: "in_sync",
           diagnosticCode: null,
-          files: [],
+          files: [
+            {
+              targetPath: "/isolated/home/.claude/agents/reviewer.md",
+              status: "external_owned_change",
+              diagnosticCode: "EXTERNAL_OWNED_CHANGE",
+            },
+          ],
         },
         {
           tool: "cursor",
@@ -277,7 +287,6 @@ describe("AgentsPage", () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "direct",
         enabledTools: ["claude", "codex", "cursor", "zcode", "opencode"],
       },
     });
@@ -291,7 +300,10 @@ describe("AgentsPage", () => {
     });
     vi.mocked(commands.setGlobalAgentAssignment).mockResolvedValue({
       status: "ok",
-      data: { ...assignedAgent, globalAssignments: [], rowVersion: 4 },
+      data: withAffectedSyncScopes(
+        { ...assignedAgent, globalAssignments: [], rowVersion: 4 },
+        [globalSyncScope("agent", "claude")],
+      ),
     });
     vi.mocked(commands.previewAgentSync).mockResolvedValue({
       status: "ok",
@@ -324,18 +336,21 @@ describe("AgentsPage", () => {
         projectId: null,
       }),
     );
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
   });
 
   it("直接应用遇到过期预览时会重建一次并继续清理", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "direct",
         enabledTools: ["claude", "codex", "cursor", "zcode", "opencode"],
       },
+    });
+    vi.mocked(commands.setGlobalAgentAssignment).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(
+        { ...agent, globalAssignments: ["claude"], rowVersion: 4 },
+        [globalSyncScope("agent", "claude")],
+      ),
     });
     vi.mocked(commands.previewAgentSync)
       .mockResolvedValueOnce({
@@ -413,7 +428,53 @@ describe("AgentsPage", () => {
     expect(await screen.findByText("1 个工具有特有设置")).toBeVisible();
   });
 
-  it("全局状态可展开文件明细，预览后只通过显式 Apply 写入", async () => {
+  it("全局状态可展开文件明细，外部变化提供应用内双向动作", async () => {
+    vi.mocked(commands.listGlobalAgentTargetStatuses).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          tool: "claude",
+          directoryPath: "/isolated/home/.claude/agents",
+          aggregateStatus: "external_owned_change",
+          diagnosticCode: "EXTERNAL_OWNED_CHANGE",
+          files: [
+            {
+              targetPath: "/isolated/home/.claude/agents/reviewer.md",
+              status: "external_owned_change",
+              diagnosticCode: "EXTERNAL_OWNED_CHANGE",
+            },
+          ],
+        },
+      ],
+    });
+    vi.mocked(commands.prepareExternalChangePlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        previewId: "external-agent-preview",
+        artifactKind: "agent",
+        tool: "claude",
+        projectId: null,
+        status: "external_owned_change",
+        targetPaths: ["/isolated/home/.claude/agents/reviewer.md"],
+        observedFullHashes: ["a".repeat(64)],
+        observedManagedHashes: ["b".repeat(64)],
+        rowVersions: [],
+        redactedDiff: {},
+        canAdoptNative: false,
+        adoptBlockedReason: "无法唯一映射 Agent 字段",
+        canOverwriteCentral: true,
+        overwriteBlockedReason: null,
+      },
+    });
+    vi.mocked(commands.applyExternalChangePlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: "external-agent-run",
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 1,
+      },
+    });
     renderAgents();
     fireEvent.click(
       await screen.findByRole("button", { name: "展开 Claude 文件状态" }),
@@ -423,90 +484,30 @@ describe("AgentsPage", () => {
     ).toBeVisible();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Claude Agents 同步预览" }),
+      await screen.findByRole("button", { name: "以中央配置覆盖" }),
     );
     await waitFor(() =>
-      expect(commands.previewAgentSync).toHaveBeenCalledWith({
+      expect(commands.prepareExternalChangePlan).toHaveBeenCalledWith({
+        artifactKind: "agent",
         tool: "claude",
         projectId: null,
-        excludeFromGit: false,
       }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
     await waitFor(() =>
-      expect(commands.applyAgentPreview).toHaveBeenCalledWith({
-        previewId: "agent-preview-1",
+      expect(commands.applyExternalChangePlan).toHaveBeenCalledWith({
+        previewId: "external-agent-preview",
+        artifactKind: "agent",
         tool: "claude",
         projectId: null,
+        action: "overwrite_central",
       }),
     );
   });
 
-  it("冲突预览按文件重新接管后再次生成预览", async () => {
-    const targetPath = "/isolated/home/.claude/agents/reviewer.md";
-    const conflictedPlan = makePreviewPlan({
-      targets: [
-        makeTarget({
-          descriptor: {
-            ...makeTarget().descriptor,
-            artifactKind: "agent",
-            path: targetPath,
-          },
-          changeKind: "conflict",
-          status: "external_owned_change",
-          readoptAvailable: true,
-          errorCode: "CONFLICT",
-        }),
-      ],
-    });
-    vi.mocked(commands.previewAgentSync)
-      .mockResolvedValueOnce({ status: "ok", data: conflictedPlan })
-      .mockResolvedValueOnce({
-        status: "ok",
-        data: makePreviewPlan({ previewId: "agent-preview-after-readopt" }),
-      });
-    vi.mocked(commands.readoptAgentTarget).mockResolvedValue({
-      status: "ok",
-      data: { targetPath },
-    });
-
-    renderAgents();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Claude Agents 同步预览" }),
-    );
-    expect(
-      await screen.findByRole("button", {
-        name: `以当前内容重新接管 ${targetPath}`,
-      }),
-    ).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: `以当前内容重新接管 ${targetPath}`,
-      }),
-    );
-    await waitFor(() =>
-      expect(commands.readoptAgentTarget).toHaveBeenCalledWith({
-        tool: "claude",
-        projectId: null,
-        targetPath,
-      }),
-    );
-    await waitFor(() =>
-      expect(commands.previewAgentSync).toHaveBeenCalledTimes(2),
-    );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-  });
-
-  it("直接应用模式下已有冲突仍可重新打开预览", async () => {
+  it("外部变化无法唯一映射时提供应用内匹配入口", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "direct",
         enabledTools: ["claude", "codex", "cursor", "zcode", "opencode"],
       },
     });
@@ -528,36 +529,11 @@ describe("AgentsPage", () => {
         },
       ],
     });
-    vi.mocked(commands.previewAgentSync).mockResolvedValue({
-      status: "ok",
-      data: makePreviewPlan({
-        targets: [
-          makeTarget({
-            changeKind: "conflict",
-            status: "external_owned_change",
-            errorCode: "CONFLICT",
-            readoptAvailable: true,
-          }),
-        ],
-      }),
-    });
-
     renderAgents();
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "处理 Claude Agents 同步冲突",
-      }),
-    );
-    await waitFor(() =>
-      expect(commands.previewAgentSync).toHaveBeenCalledWith({
-        tool: "claude",
-        projectId: null,
-        excludeFromGit: false,
-      }),
-    );
     expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+      await screen.findByRole("button", { name: "在应用内匹配/导入" }),
     ).toBeVisible();
+    expect(commands.previewAgentSync).not.toHaveBeenCalled();
   });
 
   it("导入卡片展示将丢弃的字段并发送显式选择", async () => {

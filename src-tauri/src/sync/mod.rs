@@ -4,11 +4,11 @@ mod apply;
 pub(crate) mod managed;
 
 pub use apply::{
-    apply_persisted_preview, delete_snapshots, detect_interrupted_run, list_snapshots,
-    preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent, ApplyFaultInjector,
-    ApplyResult, ApplyTargetInput, DeleteSnapshotsInput, DeleteSnapshotsResultDto,
-    InterruptedRunPlan, ManagedItemApply, NoApplyFault, RestorePreview, SnapshotDeleteFailureDto,
-    SnapshotStorageKind, SnapshotSummary,
+    apply_persisted_preview, claim_preview, delete_snapshots, detect_interrupted_run,
+    list_snapshots, preview_restore, restore_snapshot, ApplyFaultDecision, ApplyFaultEvent,
+    ApplyFaultInjector, ApplyResult, ApplyTargetInput, DeleteSnapshotsInput,
+    DeleteSnapshotsResultDto, InterruptedRunPlan, ManagedItemApply, NoApplyFault, RestorePreview,
+    SnapshotDeleteFailureDto, SnapshotStorageKind, SnapshotSummary,
 };
 
 use std::{
@@ -37,6 +37,10 @@ use crate::{
     security::SecretRedactor,
 };
 
+// Scope 是跨资源 mutation 与前端执行器共用的稳定 RPC 合同；从 sync 模块
+// 重导出，保持现有命令层对同步 DTO 的统一入口。
+pub use crate::domain::SyncScopeDto;
+
 pub const WARNING_EXTERNAL_NON_OWNED_CHANGE: &str = "EXTERNAL_NON_OWNED_CHANGE";
 pub const WARNING_GIT_TRACKED: &str = "GIT_TRACKED";
 pub const WARNING_GIT_IGNORED: &str = "GIT_IGNORED";
@@ -50,10 +54,6 @@ pub const ERROR_CODEX_TRUST_UNKNOWN: &str = "CODEX_TRUST_UNKNOWN";
 pub const ERROR_INCOMPLETE_BASELINE: &str = "INCOMPLETE_MANAGED_BASELINE";
 pub const WARNING_CODEX_PROMPT_OVERRIDE: &str = "CODEX_PROMPT_OVERRIDE_DETECTED";
 pub const WARNING_CODEX_PROMPT_OVERRIDE_UNKNOWN: &str = "CODEX_PROMPT_OVERRIDE_UNKNOWN";
-pub const WARNING_SKILL_TAKEOVER_CONFIRMATION: &str = "SKILL_TAKEOVER_REQUIRES_CONFIRMATION";
-pub const WARNING_PROJECT_NATIVE_RESOURCE_CONFIRMATION: &str =
-    "PROJECT_NATIVE_RESOURCE_REQUIRES_CONFIRMATION";
-
 pub(crate) use managed::managed_record_row_version;
 pub(crate) use managed::safe_row_version;
 
@@ -458,12 +458,62 @@ pub fn assess_drift(
                 true,
                 vec![WARNING_EXTERNAL_NON_OWNED_CHANGE.to_owned()],
             ),
+            // A complete, application-owned baseline is the observation proof
+            // required to replace managed content.  The native document was
+            // read and parsed above, so this is a safe central-intent update;
+            // real read/policy/trust/type failures have already returned from
+            // the branches above and remain non-mergeable.
+            _ if baseline.full_hash.is_some() && baseline.managed_hash.is_some() => assessment(
+                SyncStatus::ExternalOwnedChange,
+                true,
+                vec![ERROR_EXTERNAL_OWNED_CHANGE.to_owned()],
+            ),
             _ => assessment(
                 SyncStatus::ExternalOwnedChange,
                 false,
                 vec![ERROR_EXTERNAL_OWNED_CHANGE.to_owned()],
             ),
         },
+    }
+}
+
+/// 在保留完整 `ObservedTarget` 的同时，把条目级基线不一致纳入漂移分类。
+///
+/// MCP、Hooks、Skills 需要把当前磁盘 observation 交给 Preview/Apply，不能像
+/// 旧实现一样用 `TargetScan::ManagedItemBaselineMismatch` 丢弃 full/managed hash。
+/// 条目 mismatch 仍然是受管内容发生了外部变化的证据：已有完整 target baseline
+/// 时允许走普通覆盖；首次接管或不完整 baseline 仍然 fail closed。`Missing`、解析、
+/// 权限、策略、信任和类型错误沿用 `assess_drift` 的原分类。
+pub fn assess_drift_with_managed_item_mismatches(
+    target: &TargetDescriptor,
+    baseline: &ManagedTargetBaseline,
+    scan: &TargetScan,
+    mismatched_items: &[String],
+) -> DriftAssessment {
+    let assessment = assess_drift(target, baseline, scan);
+    if mismatched_items.is_empty()
+        || !matches!(
+            assessment.status,
+            SyncStatus::InSync | SyncStatus::ExternalNonOwnedChange
+        )
+    {
+        return assessment;
+    }
+
+    let can_merge =
+        assessment.can_merge && baseline.full_hash.is_some() && baseline.managed_hash.is_some();
+    let mut diagnostic_codes = assessment.diagnostic_codes;
+    diagnostic_codes.retain(|code| code != WARNING_EXTERNAL_NON_OWNED_CHANGE);
+    if !diagnostic_codes
+        .iter()
+        .any(|code| code == ERROR_MANAGED_ITEM_BASELINE_MISMATCH)
+    {
+        diagnostic_codes.push(ERROR_MANAGED_ITEM_BASELINE_MISMATCH.to_owned());
+    }
+    DriftAssessment {
+        status: SyncStatus::ExternalOwnedChange,
+        can_merge,
+        diagnostic_codes,
     }
 }
 
@@ -589,6 +639,9 @@ pub struct PreviewTargetPlan {
     pub redacted_diff: Value,
     pub warning_codes: Vec<String>,
     pub baseline_mismatched_items: Vec<String>,
+    /// 旧版本只读的 baseline helper 能力；不再序列化为产品协议。
+    #[specta(skip)]
+    #[serde(skip_serializing)]
     pub readopt_available: bool,
     pub error_code: Option<ErrorCode>,
     pub git: Option<GitPathStatus>,
@@ -610,11 +663,210 @@ pub struct PreviewPlan {
     pub warning_codes: Vec<String>,
 }
 
+/// 被动扫描发现外部变化后的应用内动作计划。
+///
+/// 该 DTO 复用已经持久化的 `PreviewPlan` 作为覆盖动作的证据，不新增一套
+/// 文件写入入口。状态卡先请求本计划，再使用 `preview_id` 调用统一 Apply；
+/// 原生采纳能力则由服务层按资源身份/可逆映射明确声明，不能由前端猜测。
+#[derive(Debug, Clone, PartialEq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalChangePlanDto {
+    pub preview_id: String,
+    pub artifact_kind: ArtifactKind,
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub status: SyncStatus,
+    pub target_paths: Vec<String>,
+    pub observed_full_hashes: Vec<String>,
+    pub observed_managed_hashes: Vec<String>,
+    pub row_versions: Vec<DatabaseRowVersion>,
+    pub redacted_diff: Value,
+    pub can_adopt_native: bool,
+    pub adopt_blocked_reason: Option<String>,
+    /// 是否可以由中央意图覆盖当前原生变化；实际动作仍消费同一持久化 Preview。
+    pub can_overwrite_central: bool,
+    pub overwrite_blocked_reason: Option<String>,
+}
+
+/// 外部变化计划的明确授权动作。
+///
+/// 两个动作都必须先消费同一份带 observation/hash/row-version 证据的计划；
+/// 其中 `AdoptNative` 仅对服务端证明可无损映射的六类资源目标开放；无法唯一
+/// 映射的资源仍必须进入各自的匹配/导入流程。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalChangeAction {
+    AdoptNative,
+    OverwriteCentral,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalChangePlanInput {
+    pub artifact_kind: ArtifactKind,
+    pub tool: Tool,
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyExternalChangePlanInput {
+    pub preview_id: String,
+    pub artifact_kind: ArtifactKind,
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub action: ExternalChangeAction,
+}
+
+impl ExternalChangePlanDto {
+    pub fn from_preview(plan: &PreviewPlan, artifact_kind: ArtifactKind, tool: Tool) -> Self {
+        let targets = plan
+            .targets
+            .iter()
+            .filter(|target| {
+                target.descriptor.artifact_kind == artifact_kind && target.descriptor.tool == tool
+            })
+            .collect::<Vec<_>>();
+        let status = targets
+            .iter()
+            .map(|target| target.status)
+            .max_by_key(|status| external_status_priority(*status))
+            .unwrap_or(SyncStatus::InSync);
+        let target_paths = targets
+            .iter()
+            .filter_map(|target| target.descriptor.path.clone())
+            .collect::<Vec<_>>();
+        let observed_full_hashes = targets
+            .iter()
+            .filter_map(|target| target.current_full_hash.clone())
+            .collect::<Vec<_>>();
+        let observed_managed_hashes = targets
+            .iter()
+            .filter_map(|target| target.current_managed_hash.clone())
+            .collect::<Vec<_>>();
+        let row_versions = targets
+            .iter()
+            .flat_map(|target| target.row_versions.iter().cloned())
+            .fold(
+                BTreeMap::<(DatabaseEntityType, String), DatabaseRowVersion>::new(),
+                |mut rows, row| {
+                    rows.entry((row.entity_type, row.entity_id.clone()))
+                        .or_insert(row);
+                    rows
+                },
+            )
+            .into_values()
+            .collect::<Vec<_>>();
+        let redacted_diff = Value::Array(
+            targets
+                .iter()
+                .map(|target| target.redacted_diff.clone())
+                .collect(),
+        );
+        let overwrite_allowed = !targets.is_empty()
+            && targets.iter().all(|target| {
+                matches!(
+                    target.status,
+                    SyncStatus::ExternalOwnedChange | SyncStatus::ExternalNonOwnedChange
+                ) && target.change_kind != ChangeKind::Conflict
+                    && target.error_code.is_none()
+            });
+        let overwrite_blocked_reason = if overwrite_allowed {
+            None
+        } else if targets.is_empty() {
+            Some("NO_EXTERNAL_CHANGE_TARGET".to_owned())
+        } else {
+            targets
+                .iter()
+                .find_map(|target| {
+                    target
+                        .error_code
+                        .map(|code| code.as_str().to_owned())
+                        .or_else(|| target.warning_codes.first().cloned())
+                })
+                .or_else(|| Some("NO_EXTERNAL_CHANGE_TARGET".to_owned()))
+        };
+        // 只有完整的 ExternalOwnedChange 证据才允许进入资源专用原生采纳执行器；
+        // 执行器还会再次校验身份、权限、格式、hash 与 row-version，不能把
+        // baseline-only readopt 冒充采纳。
+        let can_adopt_native = !targets.is_empty()
+            && targets.iter().all(|target| {
+                target.status == SyncStatus::ExternalOwnedChange
+                    && target.change_kind != ChangeKind::Conflict
+                    && target.descriptor.path.is_some()
+                    && target.current_full_hash.is_some()
+                    && target.current_managed_hash.is_some()
+                    && target.error_code.is_none()
+            });
+        let adopt_blocked_reason = if can_adopt_native {
+            None
+        } else {
+            Some("MATCH_OR_IMPORT_REQUIRED".to_owned())
+        };
+        Self {
+            preview_id: plan.preview_id.clone(),
+            artifact_kind,
+            tool,
+            project_id: plan.project_id.clone(),
+            status,
+            target_paths,
+            observed_full_hashes,
+            observed_managed_hashes,
+            row_versions,
+            redacted_diff,
+            can_adopt_native,
+            adopt_blocked_reason,
+            can_overwrite_central: overwrite_allowed,
+            overwrite_blocked_reason,
+        }
+    }
+}
+
+fn external_status_priority(status: SyncStatus) -> u8 {
+    match status {
+        SyncStatus::Failed
+        | SyncStatus::ParseError
+        | SyncStatus::PermissionDenied
+        | SyncStatus::PolicyBlocked
+        | SyncStatus::Untrusted
+        | SyncStatus::TargetTypeChanged => 6,
+        SyncStatus::ExternalOwnedChange => 5,
+        SyncStatus::ExternalNonOwnedChange => 4,
+        SyncStatus::Missing => 3,
+        SyncStatus::InSync => 1,
+    }
+}
+
 pub fn build_preview_plan(
     scope: Scope,
     project_id: Option<String>,
     requests: Vec<PreviewTargetRequest>,
     redactor: &SecretRedactor,
+) -> Result<PreviewPlan, AppError> {
+    build_preview_plan_internal(scope, project_id, requests, redactor, false)
+}
+
+/// 构建 Provider 档案同步 Preview 的内部变体。
+///
+/// Provider 的中央意图已经明确（存在生效档案）时，即使历史上还没有完整
+/// `managed_targets` 基线，也可以基于当前已成功解析的文档和 codec selector
+/// ownership 生成一次中央覆盖 Preview。这个例外只用于档案同步；通用资源仍由
+/// `build_preview_plan` 对空/不完整基线保持 fail closed。
+pub(crate) fn build_profile_preview_plan(
+    scope: Scope,
+    project_id: Option<String>,
+    requests: Vec<PreviewTargetRequest>,
+    redactor: &SecretRedactor,
+) -> Result<PreviewPlan, AppError> {
+    build_preview_plan_internal(scope, project_id, requests, redactor, true)
+}
+
+fn build_preview_plan_internal(
+    scope: Scope,
+    project_id: Option<String>,
+    requests: Vec<PreviewTargetRequest>,
+    redactor: &SecretRedactor,
+    allow_initial_provider_overwrite: bool,
 ) -> Result<PreviewPlan, AppError> {
     if (scope == Scope::Global && project_id.is_some())
         || (scope == Scope::Project && project_id.is_none())
@@ -645,7 +897,43 @@ pub fn build_preview_plan(
                 "Preview 包含其他 scope 的目标",
             ));
         }
-        let mut assessment = assess_drift(&request.descriptor, &request.baseline, &request.scan);
+        let mut assessment = assess_drift_with_managed_item_mismatches(
+            &request.descriptor,
+            &request.baseline,
+            &request.scan,
+            &request.baseline_mismatched_items,
+        );
+        if allow_initial_provider_overwrite
+            && request.descriptor.artifact_kind == ArtifactKind::Provider
+            && request.baseline.full_hash.is_none()
+            && request.baseline.managed_hash.is_none()
+            && !projection_is_empty(&request.desired_projection)
+            && validate_managed_ownership(&request.descriptor, &request.ownership).is_ok()
+            && matches!(
+                assessment.status,
+                SyncStatus::ExternalOwnedChange | SyncStatus::ExternalNonOwnedChange
+            )
+        {
+            if let TargetScan::Observed(observed) = &request.scan {
+                // 当前投影已经等于中央意图时，把首次扫描收敛为 no-op；否则仅
+                // 对已成功解析且 ownership 由 Provider codec 证明的 selector
+                // 生成可覆盖的中性 warning。未知 selector/字段仍由 adapter
+                // 的 render 保留，不因缺少历史 baseline 而扩大写入范围。
+                assessment = if observed.managed_hash == hash_json(&request.desired_projection) {
+                    DriftAssessment {
+                        status: SyncStatus::InSync,
+                        can_merge: true,
+                        diagnostic_codes: Vec::new(),
+                    }
+                } else {
+                    DriftAssessment {
+                        status: SyncStatus::ExternalNonOwnedChange,
+                        can_merge: true,
+                        diagnostic_codes: vec![WARNING_EXTERNAL_NON_OWNED_CHANGE.to_owned()],
+                    }
+                };
+            }
+        }
         if request.hook_initial_adopt
             && assessment.status == SyncStatus::ExternalOwnedChange
             && request.baseline.full_hash.is_none()
@@ -713,12 +1001,9 @@ pub fn build_preview_plan(
             }
         }
         if takeover_allows_merge {
-            // 显式接管证据已覆盖冲突，预览只保留需要用户确认的接管提示。
+            // Explicit takeover evidence only widens the ownership proof for
+            // the selected Skill entries.  It is not a UI confirmation step.
             warning_codes.retain(|code| code != ERROR_EXTERNAL_OWNED_CHANGE);
-            warning_codes.push(WARNING_SKILL_TAKEOVER_CONFIRMATION.to_owned());
-        }
-        if native_allows_merge {
-            warning_codes.push(WARNING_PROJECT_NATIVE_RESOURCE_CONFIRMATION.to_owned());
         }
         match request.descriptor.prompt_override {
             PromptOverrideState::Present | PromptOverrideState::Unknown => {

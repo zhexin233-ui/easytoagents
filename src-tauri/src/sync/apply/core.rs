@@ -1049,7 +1049,7 @@ fn mutation_may_have_changed_target(target: &JournalTarget) -> bool {
     target.after_fingerprint.is_some() || target.phase.may_have_changed_target()
 }
 
-fn claim_preview(
+pub fn claim_preview(
     database: &mut Database,
     preview_id: &str,
     journal_path: &Path,

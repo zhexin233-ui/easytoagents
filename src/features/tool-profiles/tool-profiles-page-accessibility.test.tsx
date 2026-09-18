@@ -78,7 +78,6 @@ const preview: PreviewPlan = makePreviewPlan({
       },
       warningCodes: [],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,
@@ -96,7 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
+    data: { enabledTools: ["claude", "codex"] },
   });
   vi.mocked(commands.listProviderProfiles).mockResolvedValue({
     status: "ok",
@@ -118,6 +117,10 @@ beforeEach(() => {
       newSessionNotice: "新会话生效",
       bearerTokenWarning: null,
     },
+  });
+  vi.mocked(commands.listGlobalProfileTargetStatuses).mockResolvedValue({
+    status: "ok",
+    data: [],
   });
   vi.mocked(commands.discoverProviderImport).mockResolvedValue({
     status: "ok",

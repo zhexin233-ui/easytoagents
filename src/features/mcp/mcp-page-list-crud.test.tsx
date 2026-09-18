@@ -11,7 +11,12 @@ import { commands, type McpImportPreviewDto } from "@/bindings/commands";
 import { centralListLayoutStorageKeys } from "@/components/use-persisted-central-list-layout";
 import { McpPage } from "@/features/mcp/mcp-page";
 import { renderWithProviders } from "@/test/render";
-import { makeMcpServer, makeMcpPreview } from "@/test/fixtures";
+import {
+  globalSyncScope,
+  makeMcpServer,
+  makeMcpPreview,
+  withAffectedSyncScopes,
+} from "@/test/fixtures";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/bindings/commands")>();
@@ -144,7 +149,6 @@ beforeEach(() => {
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
     data: {
-      applyMode: "preview_confirm",
       enabledTools: ["claude", "codex", "cursor"],
     },
   });
@@ -427,7 +431,6 @@ describe("McpPage", () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "preview_confirm",
         enabledTools: ["claude", "codex"],
       },
     });
@@ -470,12 +473,12 @@ describe("McpPage", () => {
       }),
     );
     const status = await screen.findByText(
-      "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
+      "中央 MCP 已删除；该条目未分配到任何工具，无需同步清理。",
     );
     expect(status).toHaveAttribute("role", "status");
     expect(
       screen.getAllByText(
-        "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
+        "中央 MCP 已删除；该条目未分配到任何工具，无需同步清理。",
       ),
     ).toHaveLength(1);
   });
@@ -501,10 +504,10 @@ describe("McpPage", () => {
     expect(alert).toHaveAttribute("aria-atomic", "true");
     expect(screen.getAllByText("CONFLICT：MCP 已变化")).toHaveLength(1);
   });
-  it("直接应用模式下分配切换自动同步并 Apply", async () => {
+  it("分配切换自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     const assignedServer = makeMcpServer({
       ...server,
@@ -520,7 +523,9 @@ describe("McpPage", () => {
       .mockResolvedValue({ status: "ok", data: [updatedServer] });
     vi.mocked(commands.setGlobalMcpAssignment).mockResolvedValue({
       status: "ok",
-      data: updatedServer,
+      data: withAffectedSyncScopes(updatedServer, [
+        globalSyncScope("mcp", "codex"),
+      ]),
     });
     renderPage();
 
@@ -541,9 +546,7 @@ describe("McpPage", () => {
         projectId: null,
       }),
     );
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
   });
   it("编辑弹窗中敏感字段的 label 通过生成 id 关联输入框，而不是按文案推断", async () => {

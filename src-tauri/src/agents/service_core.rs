@@ -36,7 +36,8 @@ pub fn create_agent(
     )?;
     let id = Uuid::new_v4().to_string();
     let record = repository::insert_agent(database, &id, &value)?;
-    agent_dto(database, &record)
+    let dto = agent_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(dto, Vec::new()))
 }
 
 pub fn update_agent(
@@ -50,7 +51,9 @@ pub fn update_agent(
         input.enabled,
     )?;
     let record = repository::update_agent(database, &input.id, input.row_version, &value)?;
-    agent_dto(database, &record)
+    let scopes = repository::sync_scopes_for_agent(database, &input.id)?;
+    let dto = agent_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
 }
 
 pub fn set_agent_enabled(
@@ -59,17 +62,21 @@ pub fn set_agent_enabled(
     enabled: bool,
 ) -> Result<AgentDto, AppError> {
     let record = repository::set_agent_enabled(database, &input.id, input.row_version, enabled)?;
-    agent_dto(database, &record)
+    let scopes = repository::sync_scopes_for_agent(database, &input.id)?;
+    let dto = agent_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
 }
 
 pub fn delete_agent(
     database: &mut Database,
     input: &VersionedAgentInput,
 ) -> Result<DeleteAgentResultDto, AppError> {
+    let scopes = repository::sync_scopes_for_agent(database, &input.id)?;
     repository::delete_agent(database, &input.id, input.row_version)?;
     Ok(DeleteAgentResultDto {
         id: input.id.clone(),
         deleted: true,
+        affected_sync_scopes: Some(scopes),
     })
 }
 
@@ -102,7 +109,12 @@ pub fn set_agent_tool_settings(
             input.row_version,
         )?,
     };
-    agent_dto(database, &record)
+    let scopes = repository::sync_scopes_for_agent(database, &input.agent_id)?
+        .into_iter()
+        .filter(|scope| scope.tool == input.tool)
+        .collect();
+    let dto = agent_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
 }
 
 /// 分配 / 预览前的作用域门禁：ZCode 项目级官方明示不支持，服务层在任何
@@ -145,7 +157,11 @@ pub fn set_global_agent_assignment(
         input.assigned,
         input.row_version,
     )?;
-    agent_dto(database, &record)
+    let dto = agent_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::global(ArtifactKind::Agent, input.tool)],
+    ))
 }
 
 pub fn set_project_agent_assignment(
@@ -165,7 +181,15 @@ pub fn set_project_agent_assignment(
         input.agent_row_version,
         input.project_row_version,
     )?;
-    agent_dto(database, &record)
+    let dto = agent_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::project(
+            ArtifactKind::Agent,
+            input.tool,
+            input.project_id.clone(),
+        )],
+    ))
 }
 
 pub fn list_agent_projects(database: &Database) -> Result<Vec<AgentProjectDto>, AppError> {
@@ -677,21 +701,27 @@ fn prepare_agents_sync(
             &ManagedOwnership::WholeDocument,
         );
         let mut desired_projection = projection;
-        if baseline.full_hash.is_none() && baseline.managed_hash.is_none() {
-            if let TargetScan::Observed(observed) = &scan {
-                if agent_observed_matches_central(
-                    input.tool,
-                    &file_descriptor,
-                    record,
-                    settings,
-                    observed,
-                ) {
-                    baseline = adopt_initial_agent_baseline(database, &baseline, observed)?;
-                    // 首次导入/分配沿用原文件的完整投影，避免直接应用模式把未知
-                    // 字段或原有排版当作冲突后直接抹掉；后续中央编辑再使用上面的
-                    // 确定性中央投影。
-                    desired_projection = observed.managed_projection.clone();
-                }
+        if let TargetScan::Observed(observed) = &scan {
+            let observed_matches_central = agent_observed_matches_central(
+                input.tool,
+                &file_descriptor,
+                record,
+                settings,
+                observed,
+                baseline.full_hash.is_none() && baseline.managed_hash.is_none(),
+            );
+            if baseline.full_hash.is_none()
+                && baseline.managed_hash.is_none()
+                && observed_matches_central
+            {
+                baseline = adopt_initial_agent_baseline(database, &baseline, observed)?;
+            }
+            // 对已经有完整基线的原生文件，如果其可映射交集仍与中央意图
+            // 一致，也沿用当前观察到的整文件投影。这样采纳后的合法原生
+            // 排版不会在下一次 Preview 被误生成一个 Update；一旦中央字段
+            // 或白名单设置不同，则回到确定性的中央投影。
+            if observed_matches_central {
+                desired_projection = observed.managed_projection.clone();
             }
         }
         let assessment = assess_drift(&file_descriptor, &baseline, &scan);

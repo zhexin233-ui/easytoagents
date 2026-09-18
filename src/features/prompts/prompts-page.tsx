@@ -11,9 +11,9 @@ import {
   commands,
   type PromptImportPreviewDto,
   type PromptProfileDto,
+  type SyncScopeDto,
   type Tool,
 } from "@/bindings/commands";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import {
   CentralList,
   CentralListCard,
@@ -38,7 +38,6 @@ import {
   toolProfileStatusQueryOptions,
   unwrapResult,
 } from "@/lib/profile-api";
-import { appSettingsQueryOptions } from "@/lib/settings-api";
 import { toneClass } from "@/lib/tone-class";
 import {
   PROFILE_TOOLS,
@@ -46,8 +45,41 @@ import {
   toolMetadata,
 } from "@/lib/tool-metadata";
 
-interface PromptSaveVariables {
-  globalTools: Tool[];
+function isSyncScope(value: unknown): value is SyncScopeDto {
+  if (typeof value !== "object" || value === null) return false;
+  if (
+    !("artifactKind" in value) ||
+    !("tool" in value) ||
+    !("projectId" in value)
+  ) {
+    return false;
+  }
+  return (
+    (value.artifactKind === "provider" ||
+      value.artifactKind === "prompt" ||
+      value.artifactKind === "mcp" ||
+      value.artifactKind === "skill" ||
+      value.artifactKind === "hook" ||
+      value.artifactKind === "agent") &&
+    (value.tool === "claude" ||
+      value.tool === "codex" ||
+      value.tool === "cursor" ||
+      value.tool === "zcode" ||
+      value.tool === "opencode" ||
+      value.tool === "pi") &&
+    (value.projectId === null || typeof value.projectId === "string")
+  );
+}
+
+/** 中央 mutation 结果附带后端签发的精确同步范围；列表响应没有此字段。 */
+function affectedSyncScopes(result: object): SyncScopeDto[] {
+  if (
+    !("affectedSyncScopes" in result) ||
+    !Array.isArray(result.affectedSyncScopes)
+  ) {
+    return [];
+  }
+  return result.affectedSyncScopes.filter(isSyncScope);
 }
 
 export function PromptsPage() {
@@ -63,8 +95,6 @@ export function PromptsPage() {
   const statusQueryByTool = new Map(
     PROFILE_TOOLS.map((tool, index) => [tool, statusQueries[index]] as const),
   );
-  const settingsQuery = useQuery(appSettingsQueryOptions());
-  const directApply = settingsQuery.data?.applyMode === "direct";
   const tools = filterEnabledTools(PROFILE_TOOLS, enabledTools);
   const [listLayout, setListLayout] = usePersistedCentralListLayout("prompts");
   const [editing, setEditing] = useState<PromptProfileDto | null>(null);
@@ -80,11 +110,7 @@ export function PromptsPage() {
     await queryClient.invalidateQueries({ queryKey: profileKeys.prompts });
   };
 
-  const saveMutation = useMutation<
-    PromptProfileDto,
-    Error,
-    PromptSaveVariables
-  >({
+  const saveMutation = useMutation<PromptProfileDto, Error, void>({
     mutationFn: async () =>
       editing
         ? unwrapResult(
@@ -96,23 +122,24 @@ export function PromptsPage() {
             }),
           )
         : unwrapResult(await commands.createPromptProfile({ name, body })),
-    onSuccess: async (_result, { globalTools }) => {
+    onSuccess: async (result) => {
       await refresh();
       setEditing(null);
       setName("");
       setBody("");
       setFormOpen(false);
-      if (directApply && globalTools.length > 0) {
+      const scopes = affectedSyncScopes(result);
+      if (scopes.length > 0) {
         notify({
           kind: "success",
           message: "中央提示词档案已保存；正在自动同步已分配工具。",
         });
-        for (const tool of globalTools) requestPreview(tool, true);
+        await requestPreview(scopes);
         return;
       }
       notify({
         kind: "success",
-        message: "中央提示词档案已保存，原生文件尚未修改。",
+        message: "中央提示词档案已保存；未分配工具不会写入原生配置。",
       });
     },
     onSettled: () => {
@@ -154,17 +181,21 @@ export function PromptsPage() {
           rowVersion: profile.rowVersion,
         }),
       ),
-    onSuccess: async (_result, { tool }) => {
+    onSuccess: async (result) => {
       await refresh();
-      if (!directApply) {
+      const scopes = affectedSyncScopes(result);
+      if (scopes.length > 0) {
         notify({
           kind: "success",
-          message:
-            "全局启用已更新；这只改变中央配置，原生全局文件尚未写入。请在该工具卡片预览全局同步并确认应用。",
+          message: "提示词启用范围已更新；正在自动同步原生配置。",
         });
+        await requestPreview(scopes);
         return;
       }
-      requestPreview(tool, true);
+      notify({
+        kind: "success",
+        message: "提示词启用范围已更新；没有受影响的原生配置。",
+      });
     },
     onError: (error) => {
       notify({
@@ -174,15 +205,8 @@ export function PromptsPage() {
     },
   });
 
-  const {
-    openPreview,
-    requestPreview,
-    previewMutation,
-    applyMutation,
-    closePreview,
-  } = useSyncPreviewFlow({
+  const { requestPreview } = useSyncPreviewFlow({
     artifactKind: "prompt",
-    directApply,
     preview: (tool) => commands.previewPromptSync(tool),
     apply: ({ previewId, tool }) =>
       commands.applyProfilePreview({
@@ -207,21 +231,20 @@ export function PromptsPage() {
           rowVersion: profile.rowVersion,
         }),
       ),
-    onSuccess: async (_result, profile) => {
+    onSuccess: async (result) => {
       await refresh();
-      if (directApply && profile.globalTools.length > 0) {
+      const scopes = affectedSyncScopes(result);
+      if (scopes.length > 0) {
         notify({
           kind: "success",
           message: "中央提示词已删除；正在自动清理已接管文件。",
         });
-        for (const tool of profile.globalTools) requestPreview(tool, true);
+        await requestPreview(scopes);
         return;
       }
       notify({
         kind: "success",
-        message: directApply
-          ? "中央提示词已删除；该档案未分配到任何工具，无需清理。"
-          : "中央提示词已删除；生成新预览后才会清理已接管文件。",
+        message: "中央提示词已删除；该档案未分配到任何工具，无需清理。",
       });
     },
     onError: (error) => {
@@ -285,7 +308,7 @@ export function PromptsPage() {
     event.preventDefault();
     if (submitGuard.isInFlight() || saveMutation.isPending) return;
     if (!submitGuard.begin()) return;
-    saveMutation.mutate({ globalTools: editing?.globalTools ?? [] });
+    saveMutation.mutate();
   };
 
   return (
@@ -536,18 +559,6 @@ export function PromptsPage() {
                       >
                         检测并导入已有提示词
                       </Button>
-                      {!directApply ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={previewMutation.isPending}
-                          onClick={() => requestPreview(tool, directApply)}
-                        >
-                          {previewMutation.isPending
-                            ? "正在生成…"
-                            : `预览 ${toolLabel} 全局同步`}
-                        </Button>
-                      ) : null}
                     </div>
                   </article>
                 );
@@ -559,11 +570,7 @@ export function PromptsPage() {
         <FormDialog
           open={formOpen}
           title={`${editing ? "编辑" : "新增"}提示词`}
-          description={
-            directApply
-              ? "保存只更新中央提示词档案；已分配工具会按直接应用模式自动同步。"
-              : "保存只更新中央提示词档案，不会修改原生文件。"
-          }
+          description="保存中央提示词档案后，已分配工具会自动同步；未分配工具不会写入原生配置。"
           submitLabel={editing ? "保存编辑" : "创建提示词"}
           pending={saveMutation.isPending}
           error={profileErrorText(saveMutation.error)}
@@ -601,22 +608,6 @@ export function PromptsPage() {
             />
           </div>
         </FormDialog>
-
-        <ChangePreviewDialog
-          preview={openPreview?.plan ?? null}
-          tool={openPreview?.tool ?? "claude"}
-          artifactKind="prompt"
-          applying={applyMutation.isPending}
-          onClose={closePreview}
-          onApply={() => {
-            if (openPreview) {
-              applyMutation.mutate({
-                previewId: openPreview.plan.previewId,
-                tool: openPreview.tool,
-              });
-            }
-          }}
-        />
       </main>
     </>
   );

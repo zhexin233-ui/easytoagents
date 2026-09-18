@@ -1,89 +1,66 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import {
   type AppError,
   type ApplyResult,
   type ArtifactKind,
-  type DatabaseRowVersion,
   type PreviewPlan,
   type Result,
+  type SyncScopeDto,
   type Tool,
 } from "@/bindings/commands";
 import { useNotify } from "@/components/use-notify";
-import { canAutoApplyPreview } from "@/lib/settings-api";
 import {
   ProfileRpcError,
   profileErrorText,
   unwrapResult,
 } from "@/lib/profile-api";
 
-export interface OpenSyncPreview {
-  plan: PreviewPlan;
-  tool: Tool;
+export interface SyncScopeFailure {
+  scope: SyncScopeDto;
+  error: unknown;
 }
 
-export interface SyncPreviewFlowOptions<
-  TReadopt = never,
-  TAdoptNative = never,
-> {
+export interface SyncScopeRunResult {
+  status: "success" | "partial_failure" | "failure";
+  scopes: SyncScopeDto[];
+  succeeded: SyncScopeDto[];
+  failures: SyncScopeFailure[];
+  appliedTargets: number;
+  snapshotCount: number;
+}
+
+export interface SyncPreviewFlowOptions {
   artifactKind: ArtifactKind;
-  preview: (tool: Tool) => Promise<Result<PreviewPlan, AppError>>;
+  /** `projectId` is the exact scope returned by the central mutation. */
+  preview: (
+    tool: Tool,
+    projectId?: string | null,
+  ) => Promise<Result<PreviewPlan, AppError>>;
   apply: (input: {
     previewId: string;
     tool: Tool;
+    projectId?: string | null;
   }) => Promise<Result<ApplyResult, AppError>>;
-  readopt?: (
-    tool: Tool,
-    targetPath?: string,
-  ) => Promise<Result<TReadopt, AppError>>;
-  /**
-   * 把原生目标当前内容写回中央档案并刷新基线（与 readopt 的区别：后者只改基线）。
-   * `rowVersions` 来自用户所看预览，服务端据此做乐观并发校验。
-   */
-  adoptNative?: (
-    tool: Tool,
-    targetPath: string | undefined,
-    rowVersions: DatabaseRowVersion[],
-  ) => Promise<Result<TAdoptNative, AppError>>;
   invalidate: () => Promise<void>;
   messages: {
     previewFailed: string;
     applyFailed: string;
     applied: (result: ApplyResult) => string;
     empty?: string;
-    readoptFailed?: string;
-    adoptNativeFailed?: string;
+    partialFailed?: (failures: SyncScopeFailure[]) => string;
+    failed?: (failures: SyncScopeFailure[]) => string;
   };
-  directApply: boolean;
-  onReadopted?: (result: TReadopt, tool: Tool) => Promise<void> | void;
-  onAdoptedNative?: (result: TAdoptNative, tool: Tool) => Promise<void> | void;
 }
 
-interface PreviewRequest {
-  tool: Tool;
-  autoApply: boolean;
-  staleRetry?: number;
+interface ScopePreviewRequest {
+  scope: SyncScopeDto;
 }
 
 interface ApplyRequest {
   previewId: string;
-  tool: Tool;
-  retryOnStale?: boolean;
-}
-
-type ReadoptRequest =
-  | {
-      tool: Tool;
-      targetPath?: string;
-    }
-  // 保留旧的单目标调用形式；Agents 需要额外传入 targetPath。
-  | Tool;
-
-interface AdoptNativeRequest {
-  tool: Tool;
-  targetPath?: string;
-  rowVersions: DatabaseRowVersion[];
+  scope: SyncScopeDto;
 }
 
 function isStalePreviewError(error: unknown): boolean {
@@ -92,200 +69,261 @@ function isStalePreviewError(error: unknown): boolean {
   );
 }
 
+function scopeKey(scope: SyncScopeDto): string {
+  return `${scope.artifactKind}\u0000${scope.tool}\u0000${scope.projectId ?? ""}`;
+}
+
+const STABLE_ARTIFACT_ORDER: readonly ArtifactKind[] = [
+  "provider",
+  "prompt",
+  "mcp",
+  "skill",
+  "hook",
+  "agent",
+];
+
+const STABLE_TOOL_ORDER: readonly Tool[] = [
+  "claude",
+  "codex",
+  "cursor",
+  "zcode",
+  "opencode",
+  "pi",
+];
+
+function compareStableValues<T extends string>(
+  left: T,
+  right: T,
+  order: readonly T[],
+): number {
+  const leftIndex = order.indexOf(left);
+  const rightIndex = order.indexOf(right);
+  if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+/** Scope 的唯一排序入口；不要在页面按 DTO 中的 globalTools 猜测项目范围。 */
+export function stableSyncScopes(
+  scopes: readonly SyncScopeDto[],
+): SyncScopeDto[] {
+  const unique = new Map<string, SyncScopeDto>();
+  for (const scope of scopes) {
+    unique.set(scopeKey(scope), scope);
+  }
+  return [...unique.values()].sort((left, right) => {
+    const artifact = compareStableValues(
+      left.artifactKind,
+      right.artifactKind,
+      STABLE_ARTIFACT_ORDER,
+    );
+    if (artifact !== 0) return artifact;
+    const tool = compareStableValues(left.tool, right.tool, STABLE_TOOL_ORDER);
+    if (tool !== 0) return tool;
+    if (left.projectId === right.projectId) return 0;
+    if (left.projectId === null) return -1;
+    if (right.projectId === null) return 1;
+    return left.projectId < right.projectId ? -1 : 1;
+  });
+}
+
+function canApplyPreview(plan: PreviewPlan): boolean {
+  return (
+    plan.targets.length > 0 &&
+    plan.targets.every(
+      (target) => target.changeKind !== "conflict" && target.errorCode === null,
+    )
+  );
+}
+
+function scopeLabel(scope: SyncScopeDto): string {
+  return `${scope.tool}${scope.projectId ? `/${scope.projectId}` : ""}`;
+}
+
+function isSyncScopeArray(
+  input: readonly SyncScopeDto[] | SyncScopeDto | Tool,
+): input is readonly SyncScopeDto[] {
+  return Array.isArray(input);
+}
+
 /**
- * Owns the persisted preview lifecycle shared by global and project resource
- * pages. A page supplies only typed RPC callbacks and invalidation; this hook
- * never turns CRUD success into an implicit native write.
+ * Persisted preview lifecycle for all central and project assignment flows.
+ * Each request consumes the exact returned scope, serializes scopes, and
+ * rebuilds a stale preview at most once. The queue promise is returned so the
+ * originating mutation can await all native writes before reporting success.
  */
-export function useSyncPreviewFlow<TReadopt = never, TAdoptNative = never>(
-  options: SyncPreviewFlowOptions<TReadopt, TAdoptNative>,
-) {
+export function useSyncPreviewFlow(options: SyncPreviewFlowOptions) {
   const { notify } = useNotify();
-  const [openPreview, setOpenPreview] = useState<OpenSyncPreview | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
-    // React StrictMode 在开发环境会执行一次 setup → cleanup → setup。
-    // 第二次 setup 必须恢复挂载状态，否则后续直接 Apply 会被误判为卸载。
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
   }, []);
 
-  const closePreview = () => setOpenPreview(null);
-  const openPersistedPreview = (plan: PreviewPlan, tool: Tool) =>
-    setOpenPreview({ plan, tool });
+  const previewMutation = useMutation({
+    mutationFn: async ({ scope }: ScopePreviewRequest) =>
+      unwrapResult(await options.preview(scope.tool, scope.projectId)),
+  });
 
   const applyMutation = useMutation({
-    mutationFn: async ({ previewId, tool }: ApplyRequest) =>
-      unwrapResult(await options.apply({ previewId, tool })),
-    onSuccess: async (result) => {
-      if (!mountedRef.current) return;
-      closePreview();
-      await options.invalidate();
-      if (!mountedRef.current) return;
-      notify({ kind: "success", message: options.messages.applied(result) });
-    },
-    onError: (error, variables) => {
-      // Direct mode retries one stale preview with a fresh persisted plan;
-      // suppress the intermediate error and report only a failed retry.
-      if (variables.retryOnStale && isStalePreviewError(error)) {
-        return;
-      }
-      if (!mountedRef.current) return;
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? options.messages.applyFailed,
-      });
-    },
+    mutationFn: async ({ previewId, scope }: ApplyRequest) =>
+      unwrapResult(
+        await options.apply({
+          previewId,
+          tool: scope.tool,
+          projectId: scope.projectId,
+        }),
+      ),
   });
 
   const submitPersistedPreview = async (
     plan: PreviewPlan,
-    tool: Tool,
-    autoApply: boolean,
+    scopeOrTool: SyncScopeDto | Tool,
     staleRetry = 0,
-  ) => {
-    if (plan.targets.length === 0) {
-      closePreview();
-      if (options.messages.empty) {
-        notify({ kind: "success", message: options.messages.empty });
-      }
-      return;
+  ): Promise<ApplyResult | null> => {
+    const scope: SyncScopeDto =
+      typeof scopeOrTool === "string"
+        ? {
+            artifactKind: options.artifactKind,
+            tool: scopeOrTool,
+            projectId: null,
+          }
+        : scopeOrTool;
+    if (plan.targets.length === 0) return null;
+    if (!canApplyPreview(plan)) {
+      throw new Error(options.messages.applyFailed);
     }
-    if (options.directApply && autoApply && canAutoApplyPreview(plan)) {
-      // Keep the preview → Apply chain alive until the native write has
-      // completed. This matters when a central-list mutation invalidates and
-      // rerenders the page while direct mode is applying a deletion preview.
-      try {
-        await applyMutation.mutateAsync({
-          previewId: plan.previewId,
-          tool,
-          retryOnStale: staleRetry === 0,
-        });
-      } catch (error) {
-        if (
-          staleRetry === 0 &&
-          isStalePreviewError(error) &&
-          mountedRef.current
-        ) {
-          // A query invalidation or environment refresh can make the persisted
-          // plan stale between Preview and Apply. Rebuild once in the same
-          // mutation chain so two central-list changes cannot leave cleanup
-          // work stranded in an old preview.
-          await previewMutation
-            .mutateAsync({ tool, autoApply, staleRetry: 1 })
-            .catch(() => undefined);
-        }
+    try {
+      return await applyMutation.mutateAsync({
+        previewId: plan.previewId,
+        scope,
+      });
+    } catch (error) {
+      if (staleRetry === 0 && isStalePreviewError(error)) {
+        const freshPlan = unwrapResult(
+          await options.preview(scope.tool, scope.projectId),
+        );
+        return submitPersistedPreview(freshPlan, scope, 1);
       }
-      return;
+      throw error;
     }
-    setOpenPreview({ plan, tool });
   };
 
-  const previewMutation = useMutation({
-    mutationFn: async ({ tool, autoApply, staleRetry = 0 }: PreviewRequest) => {
-      const plan = unwrapResult(await options.preview(tool));
-      // 将 Apply 保持在 mutation promise 内。React Query 在重新渲染时可能替换
-      // observer 回调；持久化预览链不能依赖 observer 级别的 onSuccess 仍被保留。
-      await submitPersistedPreview(plan, tool, autoApply, staleRetry);
-      return { tool, plan };
-    },
-    onError: (error) => {
-      if (!mountedRef.current) return;
-      notify({
-        kind: "error",
-        message: profileErrorText(error) ?? options.messages.previewFailed,
-      });
-    },
-  });
+  const executeScope = async (scope: SyncScopeDto) => {
+    const plan = await previewMutation.mutateAsync({ scope });
+    const result = await submitPersistedPreview(plan, scope);
+    return { plan, result };
+  };
 
-  const readoptMutation = useMutation({
-    mutationFn: async (request: ReadoptRequest) => {
-      if (!options.readopt) {
-        throw new Error("当前预览不支持重新接管。");
-      }
-      const { tool, targetPath } =
-        typeof request === "string" ? { tool: request } : request;
-      return unwrapResult(await options.readopt(tool, targetPath));
-    },
-    onSuccess: async (result, request) => {
-      if (!mountedRef.current) return;
-      closePreview();
-      await options.invalidate();
-      if (!mountedRef.current) return;
-      const tool = typeof request === "string" ? request : request.tool;
-      await options.onReadopted?.(result, tool);
-    },
-    onError: (error) => {
-      if (!mountedRef.current) return;
-      notify({
-        kind: "error",
-        message:
-          profileErrorText(error) ??
-          options.messages.readoptFailed ??
-          "重新接管目标失败。",
-      });
-    },
-  });
+  const previewQueueRef = useRef(
+    Promise.resolve<SyncScopeRunResult>({
+      status: "success",
+      scopes: [],
+      succeeded: [],
+      failures: [],
+      appliedTargets: 0,
+      snapshotCount: 0,
+    }),
+  );
 
-  const adoptNativeMutation = useMutation({
-    mutationFn: async ({
-      tool,
-      targetPath,
-      rowVersions,
-    }: AdoptNativeRequest) => {
-      if (!options.adoptNative) {
-        throw new Error("当前预览不支持按原生内容接管。");
-      }
-      return unwrapResult(
-        await options.adoptNative(tool, targetPath, rowVersions),
-      );
-    },
-    onSuccess: async (result, request) => {
-      if (!mountedRef.current) return;
-      closePreview();
-      await options.invalidate();
-      if (!mountedRef.current) return;
-      await options.onAdoptedNative?.(result, request.tool);
-    },
-    onError: (error) => {
-      if (!mountedRef.current) return;
-      notify({
-        kind: "error",
-        message:
-          profileErrorText(error) ??
-          options.messages.adoptNativeFailed ??
-          "按原生内容接管渠道失败。",
-      });
-    },
-  });
-
-  const previewQueueRef = useRef(Promise.resolve());
-  const requestPreview = (tool: Tool, autoApply: boolean): void => {
-    // Serialize preview → Apply chains. TanStack mutations can run multiple
-    // calls concurrently, but each persisted preview claims the same mutable
-    // database state; concurrent calls otherwise leave an older plan behind.
+  const requestPreview = (
+    input: readonly SyncScopeDto[] | SyncScopeDto | Tool,
+  ): Promise<SyncScopeRunResult> => {
+    const requested: SyncScopeDto[] =
+      typeof input === "string"
+        ? [
+            {
+              artifactKind: options.artifactKind,
+              tool: input,
+              projectId: null,
+            },
+          ]
+        : isSyncScopeArray(input)
+          ? [...input]
+          : [input];
+    const scopes = stableSyncScopes(
+      requested.filter((scope) => scope.artifactKind === options.artifactKind),
+    );
     const queued = previewQueueRef.current
       .catch(() => undefined)
-      .then(() =>
-        previewMutation.mutateAsync({ tool, autoApply }).then(() => undefined),
-      )
-      .catch(() => undefined);
+      .then(async () => {
+        const succeeded: SyncScopeDto[] = [];
+        const failures: SyncScopeFailure[] = [];
+        let appliedTargets = 0;
+        let snapshotCount = 0;
+
+        for (const scope of scopes) {
+          try {
+            const { result } = await executeScope(scope);
+            succeeded.push(scope);
+            if (result) {
+              appliedTargets += result.appliedTargets;
+              snapshotCount += result.snapshotCount;
+            }
+          } catch (error) {
+            failures.push({ scope, error });
+          }
+        }
+
+        if (scopes.length > 0) {
+          await options.invalidate();
+        }
+
+        const status =
+          failures.length === 0
+            ? "success"
+            : succeeded.length === 0
+              ? "failure"
+              : "partial_failure";
+        const result: SyncScopeRunResult = {
+          status,
+          scopes,
+          succeeded,
+          failures,
+          appliedTargets,
+          snapshotCount,
+        };
+
+        if (!mountedRef.current || scopes.length === 0) return result;
+        if (failures.length > 0) {
+          const failureSummary = failures
+            .map(({ scope, error }) => {
+              const detail = profileErrorText(error);
+              return `${scopeLabel(scope)}：${detail ?? options.messages.previewFailed}`;
+            })
+            .join("；");
+          const message =
+            status === "partial_failure"
+              ? (options.messages.partialFailed?.(failures) ??
+                `部分同步失败：${failureSummary}`)
+              : (options.messages.failed?.(failures) ??
+                `同步失败：${failureSummary}`);
+          notify({ kind: "error", message });
+        } else if (appliedTargets > 0) {
+          notify({
+            kind: "success",
+            message: options.messages.applied({
+              runId: "",
+              status: "succeeded",
+              appliedTargets,
+              snapshotCount,
+            }),
+          });
+        } else if (options.messages.empty) {
+          notify({ kind: "success", message: options.messages.empty });
+        }
+        return result;
+      });
     previewQueueRef.current = queued;
-    void queued;
+    return queued;
   };
 
   return {
-    openPreview,
     requestPreview,
     previewMutation,
     applyMutation,
-    readoptMutation,
-    adoptNativeMutation,
-    closePreview,
-    openPersistedPreview,
     submitPersistedPreview,
   };
 }

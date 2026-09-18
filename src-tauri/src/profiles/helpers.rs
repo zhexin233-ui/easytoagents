@@ -174,7 +174,19 @@ fn provider_dto(record: &ProviderProfileRecord) -> Result<ProviderProfileDto, Ap
         pi: pi_provider_summary(record.tool, &config),
         is_active: record.is_active,
         row_version: safe_row_version(record.row_version)?,
+        affected_sync_scopes: None,
     })
+}
+
+/// Provider 只有全局投影。单投影工具只在生效档案变更时返回该 scope；Pi 的
+/// `models.json` 会合并全部中央档案，因此任何 Pi 档案的增删改都必须触发同步。
+/// 列表/详情 DTO 不携带 scopes，避免把读模型误当成 mutation 结果。
+fn provider_global_scopes(tool: Tool, active: bool) -> Vec<SyncScopeDto> {
+    if active || tool == Tool::Pi {
+        vec![SyncScopeDto::global(ArtifactKind::Provider, tool)]
+    } else {
+        Vec::new()
+    }
 }
 
 fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError> {
@@ -204,7 +216,31 @@ fn prompt_dto(record: &PromptProfileRecord) -> Result<PromptProfileDto, AppError
         global_tools,
         imported_from_path: record.imported_from_path.clone(),
         row_version: safe_row_version(record.row_version)?,
+        affected_sync_scopes: None,
     })
+}
+
+fn prompt_global_scopes(record: &PromptProfileRecord) -> Vec<SyncScopeDto> {
+    let mut scopes = Vec::new();
+    if record.is_active_claude {
+        scopes.push(SyncScopeDto::global(ArtifactKind::Prompt, Tool::Claude));
+    }
+    if record.is_active_codex {
+        scopes.push(SyncScopeDto::global(ArtifactKind::Prompt, Tool::Codex));
+    }
+    if record.is_active_zcode {
+        scopes.push(SyncScopeDto::global(ArtifactKind::Prompt, Tool::Zcode));
+    }
+    if record.is_active_cursor {
+        scopes.push(SyncScopeDto::global(ArtifactKind::Prompt, Tool::Cursor));
+    }
+    if record.is_active_opencode {
+        scopes.push(SyncScopeDto::global(ArtifactKind::Prompt, Tool::Opencode));
+    }
+    if record.is_active_pi {
+        scopes.push(SyncScopeDto::global(ArtifactKind::Prompt, Tool::Pi));
+    }
+    scopes
 }
 
 fn parse_stored_provider_config(

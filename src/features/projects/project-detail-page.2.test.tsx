@@ -18,6 +18,7 @@ import {
   preview,
   mcpOptions,
   hookOptions,
+  skillOptions,
   skillPreview,
   renderPage,
   setupMocks,
@@ -208,7 +209,6 @@ describe("ProjectDetailPage", () => {
       vi.mocked(commands.getAppSettings).mockResolvedValue({
         status: "ok",
         data: {
-          applyMode: "preview_confirm",
           enabledTools: [sourceTool, "opencode"],
         },
       });
@@ -322,7 +322,7 @@ describe("ProjectDetailPage", () => {
     });
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm", enabledTools: ["codex"] },
+      data: { enabledTools: ["codex"] },
     });
     await act(async () => {
       await client.invalidateQueries({ queryKey: ["settings"] });
@@ -477,81 +477,97 @@ describe("ProjectDetailPage", () => {
     ).not.toBeChecked();
   });
 
-  it("切换组合会清理消息与预览 mutation，并忽略旧组合的迟到结果", async () => {
+  it("切换资源视图会清理消息，并忽略旧组合的迟到空结果", async () => {
     const delayedPreview =
       createDeferred<Awaited<ReturnType<typeof commands.previewMcpSync>>>();
-    vi.mocked(commands.previewMcpSync)
-      .mockResolvedValueOnce({
-        status: "ok",
-        data: { ...preview, targets: [] },
-      })
-      .mockReturnValueOnce(delayedPreview.promise);
+    vi.mocked(commands.setProjectMcpAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        id: mcpOptions[1]!.mcpId,
+        name: "项目 MCP",
+        transport: "stdio",
+        command: "fixture",
+        args: [],
+        url: null,
+        headerNames: [],
+        envNames: [],
+        redactedExtra: {},
+        enabled: true,
+        globalTools: [],
+        rowVersion: 5,
+        affectedSyncScopes: [
+          { artifactKind: "mcp", tool: "claude", projectId: project.id },
+        ],
+      },
+    });
+    vi.mocked(commands.previewMcpSync).mockReturnValueOnce(
+      delayedPreview.promise,
+    );
     renderPage();
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Claude MCP 同步预览" }),
+      await screen.findByRole("button", { name: "项目 MCP MCP 项目追加" }),
     );
-    expect(
-      await screen.findByText(
-        "该项目只有全局继承 MCP，不需要创建项目配置文件。",
-      ),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(commands.previewMcpSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: project.id,
+        excludeFromGit: false,
+      }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
     expect(
-      screen.queryByText("该项目只有全局继承 MCP，不需要创建项目配置文件。"),
+      screen.queryByText("项目原生配置已通过持久化预览应用并完成写后验证。"),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "管理项目 MCP" }));
-    const claudePreviewButton = await screen.findByRole("button", {
-      name: "Claude MCP 同步预览",
-    });
-    fireEvent.click(claudePreviewButton);
-    await waitFor(() => expect(claudePreviewButton).toBeDisabled());
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "管理 Codex 项目资源" }),
-    );
-    const codexPreviewButton = await screen.findByRole("button", {
-      name: "Codex MCP 同步预览",
-    });
-    expect(codexPreviewButton).toBeEnabled();
 
     await act(async () => {
-      delayedPreview.resolve({ status: "ok", data: preview });
+      delayedPreview.resolve({
+        status: "ok",
+        data: { ...preview, targets: [] },
+      });
       await delayedPreview.promise;
     });
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
 
-  it("旧组合的迟到 Apply 不会关闭当前组合的新预览或写入旧消息", async () => {
+  it("旧组合的迟到 Apply 不会写入当前组合消息", async () => {
     const delayedApply =
       createDeferred<Awaited<ReturnType<typeof commands.applyMcpPreview>>>();
+    vi.mocked(commands.setProjectMcpAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        id: mcpOptions[1]!.mcpId,
+        name: "项目 MCP",
+        transport: "stdio",
+        command: "fixture",
+        args: [],
+        url: null,
+        headerNames: [],
+        envNames: [],
+        redactedExtra: {},
+        enabled: true,
+        globalTools: [],
+        rowVersion: 5,
+        affectedSyncScopes: [
+          { artifactKind: "mcp", tool: "claude", projectId: project.id },
+        ],
+      },
+    });
     vi.mocked(commands.applyMcpPreview).mockReturnValueOnce(
       delayedApply.promise,
     );
     renderPage();
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Claude MCP 同步预览" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "应用这份预览" }),
+      await screen.findByRole("button", { name: "项目 MCP MCP 项目追加" }),
     );
     await waitFor(() =>
       expect(commands.applyMcpPreview).toHaveBeenCalledTimes(1),
     );
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     fireEvent.click(
       screen.getByRole("button", { name: "管理 Codex 项目资源" }),
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Codex MCP 同步预览" }),
-    );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeInTheDocument();
 
     await act(async () => {
       delayedApply.resolve({
@@ -566,21 +582,76 @@ describe("ProjectDetailPage", () => {
       await delayedApply.promise;
     });
     expect(
-      screen.getByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeInTheDocument();
-    expect(
       screen.queryByText("项目原生配置已通过持久化预览应用并完成写后验证。"),
     ).not.toBeInTheDocument();
   });
 
-  it("平台切换后 MCP 与 Skill 预览和 Apply 都使用当前 Codex 目标", async () => {
+  it("平台切换后 MCP 与 Skill 自动同步都使用当前 Codex 目标", async () => {
+    vi.mocked(commands.listMcpProjectOptions).mockResolvedValue({
+      status: "ok",
+      data: mcpOptions,
+    });
+    vi.mocked(commands.listSkillProjectOptions).mockResolvedValue({
+      status: "ok",
+      data: skillOptions,
+    });
+    vi.mocked(commands.setProjectMcpAssignment).mockImplementation((input) =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          id: mcpOptions[1]!.mcpId,
+          name: "项目 MCP",
+          transport: "stdio",
+          command: "fixture",
+          args: [],
+          url: null,
+          headerNames: [],
+          envNames: [],
+          redactedExtra: {},
+          enabled: true,
+          globalTools: [],
+          rowVersion: 5,
+          affectedSyncScopes: [
+            {
+              artifactKind: "mcp",
+              tool: input.tool,
+              projectId: input.projectId,
+            },
+          ],
+        },
+      }),
+    );
+    vi.mocked(commands.setProjectSkillAssignment).mockImplementation((input) =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          id: skillOptions[1]!.skillId,
+          name: "项目 Skill",
+          sourcePath: "/isolated/source/project-skill",
+          centralPath: "/isolated/private/project-skill",
+          contentHash: "c".repeat(64),
+          description: "项目测试 Skill",
+          status: "ready",
+          diagnosticCode: null,
+          globalTools: [],
+          rowVersion: 7,
+          affectedSyncScopes: [
+            {
+              artifactKind: "skill",
+              tool: input.tool,
+              projectId: input.projectId,
+            },
+          ],
+        },
+      }),
+    );
     renderPage();
     fireEvent.click(
       await screen.findByRole("button", { name: "管理 Codex 项目资源" }),
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Codex MCP 同步预览" }),
+      await screen.findByRole("button", { name: "项目 MCP MCP 项目追加" }),
     );
     await waitFor(() =>
       expect(commands.previewMcpSync).toHaveBeenCalledWith({
@@ -589,9 +660,6 @@ describe("ProjectDetailPage", () => {
         excludeFromGit: false,
       }),
     );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "应用这份预览" }),
-    );
     await waitFor(() =>
       expect(commands.applyMcpPreview).toHaveBeenCalledWith({
         previewId: preview.previewId,
@@ -599,15 +667,9 @@ describe("ProjectDetailPage", () => {
         projectId: project.id,
       }),
     );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-      ).not.toBeInTheDocument(),
-    );
-
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Codex Skills 同步预览" }),
+      await screen.findByRole("button", { name: "项目 Skill Skill 项目追加" }),
     );
     await waitFor(() =>
       expect(commands.previewSkillSync).toHaveBeenCalledWith({
@@ -615,9 +677,6 @@ describe("ProjectDetailPage", () => {
         projectId: project.id,
         excludeFromGit: false,
       }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "应用这份预览" }),
     );
     await waitFor(() =>
       expect(commands.applySkillPreview).toHaveBeenCalledWith({

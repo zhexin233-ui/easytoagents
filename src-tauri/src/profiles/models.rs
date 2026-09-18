@@ -11,7 +11,7 @@ use crate::{
         PolicyState, PromptOverrideState, TargetCapability, ToolAvailabilityState,
         CLAUDE_RESERVED_ENV_KEYS,
     },
-    domain::{ArtifactKind, ArtifactName, Tool},
+    domain::{ArtifactKind, ArtifactName, SyncScopeDto, Tool},
     error::AppError,
     security::env_entry_is_manageable,
 };
@@ -151,6 +151,10 @@ pub struct ProviderProfileDto {
     pub pi: Option<PiProviderSummaryDto>,
     pub is_active: bool,
     pub row_version: u32,
+    /// 仅中央 mutation 返回；列表/详情响应省略该字段。
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -202,6 +206,10 @@ pub struct PromptProfileDto {
     pub global_tools: Vec<Tool>,
     pub imported_from_path: Option<String>,
     pub row_version: u32,
+    /// 仅中央 mutation 返回；列表响应省略该字段。
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 /// 候选的可导入性：只有 `importable` 可以在界面上勾选。
@@ -267,10 +275,25 @@ pub struct ConfirmProviderImportInput {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AdoptProviderNativeInput {
+    /// 统一 ExternalChangePlan 采纳动作的 run id；仅用于让仓储层排除当前
+    /// 已 claim 的写者，旧的内部调用可留空并继续检查其它 active writer。
+    #[specta(skip)]
+    #[serde(skip)]
+    pub preview_id: Option<String>,
     pub tool: Tool,
+    /// 统一 ExternalChangePlan 绑定的 managed target 身份与行版本。
+    #[specta(skip)]
+    #[serde(skip)]
+    pub target_id: String,
+    #[specta(skip)]
+    #[serde(skip)]
+    pub target_row_version: u32,
     pub target_path: String,
     /// 用户所看预览绑定的行版本；缺少漂移渠道的条目或已过期都会拒绝。
     pub row_versions: Vec<crate::sync::DatabaseRowVersion>,
+    /// 外部变化计划观察到的完整 hash；再次读取目标后必须一致，避免把
+    /// 计划生成后发生的第三方修改误当成用户已授权的内容。
+    pub observed_full_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -279,6 +302,43 @@ pub struct AdoptProviderNativeResultDto {
     pub tool: Tool,
     /// 被采纳的原生渠道显示名；未漂移的渠道不会出现在这里。
     pub adopted: Vec<String>,
+    /// 原生采纳会更新中央档案；范围由工具目标唯一确定。
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
+}
+
+/// 被动扫描后按原生 Prompt 正文更新中央档案所需的 Preview 证据。
+///
+/// `target_id`/`target_row_version` 与 `row_versions` 中的 Prompt 档案版本都
+/// 来自同一份 `ExternalChangePlan`。调用方不能只传目标路径或重新读取当前
+/// row_version，否则旧页面可能把另一个窗口刚编辑的中央档案静默覆盖。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptPromptNativeInput {
+    pub tool: Tool,
+    pub target_id: String,
+    pub target_row_version: u32,
+    pub target_path: String,
+    /// 用户所看预览绑定的唯一 active Prompt 档案行版本。
+    pub row_versions: Vec<crate::sync::DatabaseRowVersion>,
+    /// 外部变化计划观察到的完整目标 hash；消费前必须重新扫描并一致。
+    pub observed_full_hash: Option<String>,
+    /// 受管正文 projection 的 hash；与完整 hash 一起防止只做 baseline-only
+    /// readopt，也让消费动作绑定到同一份 observed document。
+    pub observed_managed_hash: Option<String>,
+}
+
+/// Prompt 原生采纳结果。正文不回传到 RPC；前端只需要稳定身份和受影响范围
+/// 去刷新中央档案及同步状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptPromptNativeResultDto {
+    pub tool: Tool,
+    pub adopted: Vec<String>,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -286,6 +346,10 @@ pub struct AdoptProviderNativeResultDto {
 pub struct ProviderImportResultDto {
     pub tool: Tool,
     pub imported_count: u32,
+    /// 导入并启用渠道时返回精确的全局 Provider 目标；未形成有效投影时为空。
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 /// Pi 渠道的只读摘要：让用户看到导入确实保留了 API 格式与模型列表，
@@ -362,11 +426,27 @@ pub struct ToolProfileStatusDto {
     pub bearer_token_warning: Option<String>,
 }
 
+/// Provider/Prompt 全局目标的只读现场状态。该 DTO 只描述扫描结果，不能作为
+/// Apply 证据；需要执行动作时必须重新请求 `ExternalChangePlan`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileTargetStatusDto {
+    pub artifact_kind: crate::domain::ArtifactKind,
+    pub tool: Tool,
+    pub target_path: Option<String>,
+    pub status: crate::domain::SyncStatus,
+    pub diagnostic_code: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteProfileResultDto {
     pub id: String,
     pub deleted: bool,
+    /// 删除前捕获的范围，用于清理已生效的原生投影。
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

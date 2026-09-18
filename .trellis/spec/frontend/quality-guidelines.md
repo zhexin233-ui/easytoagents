@@ -6,11 +6,12 @@
 
 ## Overview
 
-Feature pages consume generated Tauri commands through typed API helpers. Native
-configuration writes are always represented by a persisted preview and confirmed in
-the shared change dialog, unless the user opted into the direct-apply mode below.
-Skill takeover preparation and project-native disable/restore are hard exceptions:
-they always open `ChangePreviewDialog` and never auto-Apply.
+Feature pages consume generated Tauri commands through typed API helpers. Accepted
+central mutations return backend-computed `affectedSyncScopes`; the shared
+`useSyncPreviewFlow` serializes a persisted Preview → Apply chain for every scope.
+The persisted Preview remains transaction evidence, but it is not a user-facing
+confirmation step. Skill takeover and project-native disable/restore consume their
+prepared Preview immediately after the user's explicit primary action.
 
 Prompt is global-only. The frontend must not render project Prompt assignment,
 PromptFile management, or project Prompt preview/apply controls; project
@@ -22,10 +23,10 @@ read-only Hook and Agent-file observations.
 - Direct `invoke` calls in feature components, hand-built RPC payload casts, or local
   copies of generated DTO types.
 - Rendering API keys, bearer tokens, native secret extensions, or unredacted diffs.
-- Applying a Provider/Prompt change from a CRUD success handler without a persisted
-  preview dialog.
-- Auto-applying a project-native disable/restore preview because `applyMode` is
-  `"direct"`.
+- Applying a Provider/Prompt change from a CRUD success handler without the shared
+  persisted Preview → Apply executor and the backend-returned scope list.
+- Writing a native target directly from a status card, CRUD callback, or import
+  callback without an observed `ExternalChangePlan` or a persisted Preview.
 - Collapsing loading, empty, RPC error, policy-blocked, override, and conflict states
   into one generic message.
 - Navigating with `window.location.assign("#/...")` or a raw `<a href="#/...">`.
@@ -48,8 +49,9 @@ read-only Hook and Agent-file observations.
 - Use TanStack Query keys/options from `src/lib/profile-api.ts`. Invalidate the source
   tool after CRUD and the target tool after cross-tool copy.
 - Keep API key inputs `type="password"`; editing defaults to `SecretUpdate::Keep`.
-- Show path, change/status, plan and target warnings, conflicts, and redacted diff in
-  `ChangePreviewDialog`. Disable Apply for blocked targets and restore focus on close.
+- Show path, status, diagnostic, redacted diff, and available actions in the shared
+  status-card components. `ExternalChangeActions` may execute only an exact persisted
+  plan whose observed hash, descriptor, ownership, and row versions still match.
 - Give loading text `role="status"`, failures `role="alert"`, and each empty list one
   explicit next action.
 
@@ -84,32 +86,32 @@ read-only Hook and Agent-file observations.
 
 - No raw `invoke`, payload assertion, or secret-bearing UI state was introduced.
 - Mutations invalidate every affected query key, including a copied target tool.
-- Dialog focus, Escape/close behavior, blocked Apply, and accessible state semantics
-  remain intact.
+- Status-card action focus, blocked-action semantics, exact plan consumption, and
+  accessible loading/error states remain intact.
 
 ## Scenario: Typed Provider/Prompt profile pages
 
 ### 1. Scope / Trigger
 
 - Trigger: any Claude/Codex Provider or Prompt form, mutation, query key, status
-  notice, import preview, or shared change-preview dialog change.
+  scan, ExternalChangePlan action, import preview, or scope-executor change.
 
 ### 2. Signatures
 
 - Feature code imports `commands`, `Tool`, `ProviderProfileDto`,
   `PromptProfileDto`, and `PreviewPlan` from generated bindings.
-- `ProviderPanel` and `PromptPanel` emit `(PreviewPlan) => void`; the page owns
-  the open preview and calls `commands.applyProfilePreview` with its exact ID,
-  tool, and artifact kind.
+- `ProviderPanel` and `PromptPanel` return typed mutation inputs; the page hands
+  the backend result's `affectedSyncScopes` to `useSyncPreviewFlow`, which calls
+  `previewProfileSync` and `applyProfilePreview` with each exact scope and ID.
 - Provider edits send `SecretUpdate` as `keep`, `clear`, or `replace`; activation
   and deletion send the displayed row version.
 
 ### 3. Contracts
 
-- CRUD success only invalidates central-intent queries and shows a no-native-write
-  notice. Activation may request a persisted preview but never applies implicitly.
-  Because activation commits before preview generation, its query must also be
-  invalidated when preview generation fails; the UI must not retain the old active row.
+- CRUD and activation commit central intent, invalidate it, and immediately execute
+  every returned scope. Because activation commits before Preview generation, its
+  query must also be invalidated when a scope fails; the UI must not retain the old
+  active row. A no-op scope is a successful no-write result.
 - API-key inputs are passwords and list DTOs expose only `apiKeyConfigured`.
 - `options.authKind` (`api_key` | `official_login`) is the only credential-source
   discriminator. Claude/Codex forms offer both kinds as radios on create and render
@@ -131,8 +133,9 @@ read-only Hook and Agent-file observations.
 - Import previews (provider panel and onboarding wizard) render `authKind` as the
   credential source and list `skippedEnvKeys` by name when non-empty; values never
   reach the UI.
-- The shared dialog renders target path, change/status, plan/target warnings,
-  conflicts, and only `redactedDiff`; blocked targets disable Apply.
+- Status cards render target path, change/status, plan warnings, and only
+  `redactedDiff`; `ExternalChangeActions` disables actions when the plan reports a
+  blocked target or a stale observation.
 - Claude host-policy and Codex override/unknown states remain distinct, and all
   successful prompt/provider switches state that new sessions normally apply them.
 - Provider/Prompt preview can legitimately fail before native reads when there is no
@@ -162,11 +165,11 @@ read-only Hook and Agent-file observations.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: edit a masked Provider, keep the secret, activate with its row version,
-  review the persisted preview, and explicitly apply it.
+- Good: edit a masked Provider, keep the secret, and observe the returned scope
+  finish Preview → Apply in the same mutation chain.
 - Base: create/edit/delete central intent and refresh only affected query keys.
-- Bad: call raw `invoke`, cast an ad-hoc payload, render a stored secret, silently
-  apply after CRUD, or merge blocked/unknown states into a generic failure.
+- Bad: call raw `invoke`, cast an ad-hoc payload, render a stored secret, skip the
+  returned scope, or merge blocked/unknown states into a generic failure.
 
 ### 6. Tests Required
 
@@ -235,8 +238,10 @@ const result = unwrapResult(
 - Project and option loading, failure, and empty states are distinct and accessible.
   Codex trust prevents an obviously blocked preview in the UI, while the backend still
   rechecks current native trust.
-- Apply consumes the exact persisted MCP preview ID, tool, and project identity through
-  `ChangePreviewDialog`; CRUD and assignment success never apply implicitly.
+- Every accepted CRUD and assignment result passes its exact
+  `affectedSyncScopes` to the shared executor. Apply consumes the persisted MCP
+  preview ID, tool, and project identity for each scope; project-only assignments
+  are not inferred from the global list DTO.
 
 ### 4. Validation & Error Matrix
 
@@ -246,18 +251,18 @@ const result = unwrapResult(
 | Global inherited project option | Read-only inherited label; no disable/remove mutation |
 | Disabled MCP | Distinct disabled label independent of assignment state |
 | Project/options pending, error, or empty | Separate accessible state for each query |
-| Codex project not trusted | Disable obvious preview action; backend remains authoritative |
-| Preview has zero targets | Show no-write explanation; do not open an Apply dialog |
-| Conflict/error target | Show codes and keep Apply disabled |
+| Codex project not trusted | Disable the status action; backend remains authoritative |
+| Preview has zero targets | Show no-write explanation; do not call Apply |
+| Conflict/error target | Show codes and keep the scope blocked |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: edit an MCP while keeping sensitive values, assign it to a trusted project,
-  inspect a non-empty redacted preview, and apply its exact preview ID.
-- Base: central CRUD/assignment invalidates MCP query keys and displays a no-native-
-  write notice.
-- Bad: render secret values, let a project disable an inherited item, open Apply for
-  an empty preview, or synthesize a payload outside generated bindings.
+  and let the exact returned project scope finish Preview → Apply.
+- Base: central CRUD/assignment invalidates MCP keys and reports a no-op or a
+  structured partial-scope result.
+- Bad: render secret values, let a project disable an inherited item, apply an empty
+  scope, or synthesize a payload outside generated bindings.
 
 ### 6. Tests Required
 
@@ -294,9 +299,8 @@ const update: UpdateMcpServerInput = {
 
 ### 1. Scope / Trigger
 
-- Trigger: Skills import/list/content/delete/status UI, drifted central-content
-  adoption, global/project assignment, query keys, or Skills preview/apply behavior
-  changes.
+- Trigger: Skills import/list/content/delete/status UI, external target actions,
+  global/project assignment, query keys, or Skills scope-execution behavior changes.
 
 ### 2. Signatures
 
@@ -305,19 +309,21 @@ const update: UpdateMcpServerInput = {
 - Directory import calls `commands.importSkill({ sourcePath })` after an explicit native
   directory selection. Preview/apply calls `commands.previewSkillSync(...)` and then
   consumes the returned ID with `commands.applySkillPreview(...)`.
-- Drifted central content uses `commands.adoptSkillContent({ id, rowVersion })` after a
-  `useDialogFocus` confirmation; it is not Preview/Apply.
+- Central content mutations use their typed row-version command and refresh the
+  status/query family; native-target actions always require an observed
+  `ExternalChangePlan` before they can write.
 - Native discovery copy uses `commands.confirmSkillImport({ previewId, candidateIds })`;
   exact formal-root takeover uses the separate
-  `commands.prepareSkillTakeover({ previewId, candidateIds })` and consumes only the
-  returned `SkillTakeoverPreviewResultDto.plan` through the normal Apply command.
+  `commands.prepareSkillTakeover({ previewId, candidateIds })` and immediately
+  consumes only the returned `SkillTakeoverPreviewResultDto.plan` through the typed
+  Apply command.
 
 ### 3. Contracts
 
 - Import, content preview, deletion, assignments, status, and sync have separate
-  accessible pending/error/empty/conflict feedback. Central CRUD and assignment success
-  invalidate the entire Skills key family because versions, inheritance, and statuses
-  can change together; none applies native writes implicitly.
+  accessible pending/error/empty/block feedback. Central CRUD and assignment success
+  invalidate the entire Skills key family and execute every returned scope; no page
+  guesses project scopes from the global list.
 - `SkillsPage` owns central-library import/content/delete, global tool assignment,
   status, and global preview/apply only. Project option queries, project assignment,
   and project-scoped preview/apply belong to `ProjectDetailPage`; do not reintroduce a
@@ -327,33 +333,27 @@ const update: UpdateMcpServerInput = {
   current tool and project identity.
 - The ordinary list renders only the safe description and status diagnostics, never an
   arbitrary frontmatter object or Skill body. Full `SKILL.md` appears only after the
-  explicit content-preview command in a closable, Escape-aware dialog.
-- 「同步更改」is shown only when `skill.diagnosticCode === "CENTRAL_SKILL_CONTENT_CHANGED"`
-  (list and grid), as an icon button matching the other central-card actions
-  (`size-8`, `aria-label` / `title`, no visible label). Clicking it opens a
-  `useDialogFocus` confirmation asking whether to adopt the current central files as
-  authority; primary action is 「是」, secondary is
-  「取消」. Escape, close, and cancel send no RPC and restore trigger focus. Confirm
-  sends the `id` / `rowVersion` captured when the dialog opened, locks close/resubmit
-  while pending, invalidates `skillKeys.all` on success, and never opens
-  `ChangePreviewDialog` or calls `previewSkillSync` / `applySkillPreview`. Success copy
-  must say the app record was updated and tool-directory links were not rewritten.
+  explicit content-preview command in a closable, Escape-aware surface.
+- `CENTRAL_SKILL_CONTENT_CHANGED` remains an inline diagnostic. A native external
+  change renders `ExternalChangeActions`; its buttons consume the exact plan and
+  observed hash, never raw file content. Central-content adoption still captures the
+  displayed row version and refreshes `skillKeys.all` on success.
 - Global assignments remain visually distinct. A global inherited project option is
   checked, read-only, and cannot invoke project assignment. A currently selected invalid
   project item can still be unselected so users can recover.
-- Codex untrusted projects visibly disable project preview; backend trust remains
+- Codex untrusted projects visibly disable project actions; backend trust remains
   authoritative. A zero-target inheritance preview shows a no-write explanation and
-  never opens Apply. Non-empty plans use `ChangePreviewDialog`, which blocks conflicts
-  and applies the exact persisted preview/tool/project identity.
+  never calls Apply. Non-empty plans consume the exact persisted preview/tool/project
+  identity through the scope executor, which blocks unsafe targets.
 - `SkillImportDialog` renders “复制到中央库” and “接管正式目录” as separate groups
   with independent, initially empty selection sets. Copy candidates and takeover
   candidates never share a submit payload. Takeover preparation locks the modal like
-  copy confirmation, invalidates the Skills family, closes the import dialog, and opens
-  exactly the returned persisted plan; it never calls Apply itself.
+  copy confirmation, invalidates the Skills family, closes the import dialog, and
+  immediately applies exactly the returned persisted plan.
 - Takeover copy must explain that an external symlink target is untouched and a real
-  directory receives a complete private tree snapshot before replacement. A successful
-  preparation message says review/apply is still required, not that native takeover
-  already succeeded.
+  directory receives a complete private tree snapshot before replacement. A
+  successful preparation message is followed by an in-app Apply result; no second
+  confirmation or folder hand-off is allowed.
 
 ### 4. Validation & Error Matrix
 
@@ -363,14 +363,12 @@ const update: UpdateMcpServerInput = {
 | Skills/status/projects/options pending or empty | Independent status or explicit next-action message |
 | Invalid/missing central Skill | Diagnostic visible; new assignment disabled, existing assignment removable |
 | `CENTRAL_SKILL_CONTENT_CHANGED` | Show icon button named 「同步更改」; other central diagnostics must not |
-| Adopt confirm open / cancel / Escape | No RPC; restore trigger focus |
-| Adopt confirm 「是」 | Exact `{ id, rowVersion }`; pending lock; success notify + query family refresh |
-| Adopt failure / stale version | Error notify; do not replay the old `rowVersion`; diagnostic remains until a fresh list read |
+| Central-content row-version change | Error notify; do not replay the old version; diagnostic remains until a fresh list read |
 | Global inherited project option | Read-only inherited label; no project mutation |
 | Codex project untrusted | Trust alert and disabled project preview |
-| Empty persisted preview | No-write message; no Apply dialog |
-| Conflict target | Exact diagnostic/redacted plan; Apply disabled |
-| Exact takeover candidate | Select only in takeover group; prepare exact candidate IDs; always open returned preview |
+| Empty persisted preview | No-write message; no Apply call |
+| Conflict/blocked target | Exact diagnostic/redacted plan; action disabled |
+| Exact takeover candidate | Select only in takeover group; prepare exact candidate IDs; immediately apply returned plan |
 | Takeover preparation stale/error | Keep dialog and structured alert locked against token reuse until explicit rescan |
 
 ### 5. Good/Base/Bad Cases
@@ -382,9 +380,8 @@ const update: UpdateMcpServerInput = {
   keep independent accessible feedback and invalidate the Skills query family without
   writing a native target implicitly.
 - Bad: render arbitrary frontmatter/body in the ordinary list, allow a project to toggle
-  inherited state, apply an empty/blocked preview, lose dialog focus, bypass generated
-  bindings with raw `invoke` or an asserted payload, or route 「同步更改」 through
-  `window.confirm`, content preview, or `ChangePreviewDialog`.
+  inherited state, apply an empty/blocked plan, bypass generated bindings with raw
+  `invoke` or an asserted payload, or write from a status card without a plan.
 
 ### 6. Tests Required
 
@@ -397,13 +394,10 @@ const update: UpdateMcpServerInput = {
   trust, zero-target preview, and exact persisted preview ID/tool/project consumption.
 - Assert that fixture Skill bodies and private frontmatter markers are absent from the
   ordinary rendered page and appear only in the explicit content preview when requested.
-- Assert copy/takeover grouping, independent selections and exact payloads. Under both
-  apply modes, takeover preparation must leave `applySkillPreview` uncalled until the
-  user activates `ChangePreviewDialog` Apply.
-- Assert 「同步更改」 icon-button visibility (`size-8`, `title`, hidden svg, no
-  visible label), no RPC on open/cancel/Escape, exact adopt payload,
-  success notify without Preview/Apply, and failure notify with the diagnostic still
-  visible.
+- Assert copy/takeover grouping, independent selections and exact payloads. Takeover
+  preparation must consume `applySkillPreview` immediately with the exact returned ID.
+- Assert external-change action visibility, redacted summaries, exact plan/action
+  payloads, stale-hash blocking, success refresh, and failure diagnostics.
 
 ### 7. Wrong vs Correct
 
@@ -470,9 +464,8 @@ const adopted = unwrapResult(
   disable/restore action and show "Agent 文件暂不支持临时禁用与恢复。".
   Prompt/Rules files are not queried, listed, or managed. Native `safeSummary` and
   diagnostics never render MCP secrets.
-- Native disable/restore always call `previewProjectNativeResourceAction` then open
-  `ChangePreviewDialog`. `applyMode: "direct"` must not call
-  `applyProjectNativeResourcePreview` until the user confirms. Success invalidates
+- Native disable/restore always call `previewProjectNativeResourceAction` and then
+  consume the exact returned plan immediately. Success invalidates
   `projectKeys.detail`, `projectKeys.nativeResources(project, tool, artifactKind)`,
   MCP, Skill, and recovery query families together.
 - `active` shows disable; `disabled` shows restore and `disabledAt`; `missing` is
@@ -503,10 +496,10 @@ const adopted = unwrapResult(
   preview. A persisted skip choice must not disable an otherwise available Provider/Prompt
   checkbox; selecting Provider/Prompt clears skip so users can recover without first
   toggling skip off.
-- `ChangePreviewDialog`, `SyncStatusBadge`, `BlockingState`, and
-  `SnapshotRestoreDialog` own the shared status language. Dialogs have labels,
-  descriptions, modal semantics, Escape handling, focus trapping/restoration, and
-  clear stale state when reopened. Color is never the only status signal.
+- `ExternalChangeActions`, `SyncStatusBadge`, `BlockingState`, and
+  `SnapshotRestoreDialog` own the shared status language. Action surfaces expose
+  labels, descriptions, disabled states, and stale-plan feedback. Color is never the
+  only status signal.
 - When one backend status carries materially different diagnostics, one shared UI helper
   owns the diagnostic-aware label, description, badge tone, and action availability.
   Feature pages consume that presentation instead of parsing diagnostic codes locally;
@@ -527,7 +520,7 @@ const adopted = unwrapResult(
 | Inherited MCP/Skill option | Checked/read-only text; no project mutation path |
 | Policy/trust/parse/permission/drift/external-name block | Distinct text/code and `BlockingState`; never imply synchronized |
 | Assignment success | Invalidate project, MCP, and Skill key families together |
-| Native disable/restore preview | Open `ChangePreviewDialog`; zero Apply calls until confirm, including `applyMode: "direct"` |
+| Native disable/restore intent | Consume the exact prepared plan; zero writes when the plan is empty or blocked |
 | Native Apply success | Invalidate project, native-resources, MCP, Skill, and recovery keys |
 | Project has disabled/conflict native resources | Disable remove; show an actionable restore hint |
 | Active writer / `rollback_failed` on project detail | Global block; do not present native restore as writable |
@@ -540,7 +533,7 @@ const adopted = unwrapResult(
 | Persisted onboarding skip plus newly available import | Provider/Prompt checkbox remains enabled; selecting it clears skip |
 | All tools skipped | Call typed completion only; no preview/apply command |
 | Empty or blocked persisted preview | Explain no-write/block; do not expose enabled Apply |
-| Dialog close/Escape/reopen | Trap and restore focus; clear stale preview/mutation state |
+| Status action failure/stale | Keep the diagnostic visible, invalidate status, and offer an in-app retry |
 | Non-restorable metadata-only directory snapshot | Disabled restore action; deletion remains explicit and available |
 | Directory-tree restore preview | Show storage type and post-restore drift warning before executing restore |
 
@@ -566,9 +559,9 @@ const adopted = unwrapResult(
   Git-exclude checkbox. Parameterize capability fallbacks: switching from Hook on each
   Hook-capable tool to OpenCode must hide Hook, select MCP, issue no OpenCode Hook
   options query, and render none of the Hook-only error/empty/controls UI.
-- Assert the native-resources heading appears above 中央追加; disable/restore with
-  `applyMode: "direct"` opens `ChangePreviewDialog` and does not call Apply until
-  confirm; MCP fixture secrets never appear in rendered native copy.
+- Assert the native-resources heading appears above 中央追加; disable/restore
+  consumes the exact prepared plan without a second confirmation; MCP fixture
+  secrets never appear in rendered native copy.
 - Agents view must query `artifactKind: "agent"`, render Agent-file display name,
   file name, description or the redacted-description notice, and the read-only
   explanation without rendering disable/restore or "不可操作" controls.
@@ -580,8 +573,8 @@ const adopted = unwrapResult(
   an item becomes centrally active, fully/partially managed item filtering,
   redacted discovery/preview rendering, exact preview ID Apply, partial-success retry
   that submits only remaining preview IDs, and no implicit native write command.
-- Cover dialog label/modal attributes, Tab containment, Escape, focus restoration,
-  blocked Apply, and snapshot-list restoration after closing a preview and reopening.
+- Cover status-action labels, blocked/stale actions, in-app retry, and snapshot-list
+  restoration after a failed or completed operation.
 - Cover payload-file, metadata-only, and directory-tree labels; disabled legacy
   directory restore; directory-tree drift warning; deletion of both restorable and
   non-restorable rows.
@@ -616,175 +609,116 @@ projectAssignmentMutation.mutate(input);
 
 ---
 
-## Scenario: Direct-apply mode and central-page operation notifications
+## Scenario: 统一 Preview → Apply 与外部变化动作
 
 ### 1. Scope / Trigger
 
-- Trigger: any change to global MCP/Skills sync buttons, project MCP/Skill
-  append buttons, Provider/Prompt sync and activate buttons, central-list
-  assignment or enable toggles, `src/lib/settings-api.ts`, or the settings page
-  apply-mode toggle. The notification rules also trigger when an MCP, Skills,
-  or Prompts central-page mutation adds or changes transient operation feedback.
+- Trigger: any central Provider/Prompt/MCP/Skill/Hook/Agent mutation, project
+  assignment, Skill takeover, project-native disable/restore, status-card action,
+  focus/environment rescan, or operation notification change.
 
 ### 2. Signatures
 
-- `appSettingsQueryOptions()` (`src/lib/settings-api.ts`) reads the backend
-  singleton; pages derive `directApply = settingsQuery.data?.applyMode === "direct"`.
-- `canAutoApplyPreview(plan)` mirrors the `ChangePreviewDialog` Apply-enabled
-  condition: at least one target, no `conflict` changeKind, no `errorCode`.
-- `NotifyProvider` owns a `Notification[]` queue and `NotifyViewport` renders
-  it once from `AppShell`. `useNotify()` returns `{ notification, notify,
-  clear }`; `notification` is the newest item for compatibility, while
-  `notify({ kind, message })` appends a queue item. `kind` is exactly
-  `"success" | "error"`, and each item lives for 3,000 ms.
-- Central-page previews use page-only `autoApply: boolean` to decide whether a
-  safe plan continues into Apply. Apply needs no notification flag; neither
-  concept enters generated RPC inputs.
+- Every accepted central mutation returns `affectedSyncScopes: SyncScopeDto[]`.
+  `useSyncPreviewFlow` accepts these scopes, stable-deduplicates them, and runs one
+  typed Preview → Apply chain per scope.
+- A scope Preview is persisted and carries `previewId`, descriptor/ownership,
+  observed full and managed hashes, row versions, redacted diff, and target status.
+  Apply receives only the exact generated input and `previewId`.
+- Passive status queries use read-only `scanTarget`/status DTOs. When a target is
+  `external_owned_change` or `external_non_owned_change`, `ExternalChangeActions`
+  prepares an `ExternalChangePlan`; it exposes “以中央配置覆盖” only when that
+  capability is true, and exposes “采纳原生更改” only for an owned target whose
+  native-adoption capability is true.
+- `AppShell` listens for window focus and environment-ready events, throttles them,
+  and invalidates only the visible route's status family. It does not start a watcher
+  or background poll.
 
 ### 3. Contracts
 
-- Direct apply still generates a persisted preview first; the preview is
-  auto-confirmed only when `canAutoApplyPreview` is true. Conflicts, errors, or
-  blocked targets fall back to opening the preview dialog with Apply disabled.
-- Explicit Skill takeover is a hard exception to auto-confirmation: the plan returned by
-  `prepareSkillTakeover` always opens `ChangePreviewDialog`, even when direct mode is
-  enabled and `canAutoApplyPreview(plan)` is true. This exception applies only to the
-  takeover preparation path; ordinary Skills sync retains normal direct-mode behavior.
-- Project-native disable/restore is the same class of exception: preview from
-  `previewProjectNativeResourceAction` always opens `ChangePreviewDialog`. Direct mode
-  must not auto-call `applyProjectNativeResourcePreview`.
-- Project-native rows use a dedicated `nativePreview` mutation because their
-  request carries `resourceId`, `rowVersion`, and `action` rather than a global
-  `Tool`. This is an explicit boundary exception to `useSyncPreviewFlow`, not
-  a second write path: it must still open the shared dialog, consume the exact
-  persisted `previewId`, invalidate the project scope after Apply, and never
-  auto-apply in direct mode.
-- Warnings never block auto-apply (same as the dialog). An empty target list
-  keeps the existing no-op message and must not apply.
-- Settings are backend-owned server state: derive `directApply` from the query,
-  never copy it into local state or localStorage. Missing/unloaded settings
-  behave as `preview_confirm`.
-- The apply itself must keep calling the existing `apply*Preview` command with
-  the exact preview ID; no new write path may be introduced.
-- Under direct mode, central-list intent mutations auto-trigger the affected
-  sync: Skills/MCP global assignment toggles sync that tool, MCP enable/disable
-  syncs every tool in the server's `globalTools`, project assignment checkboxes
-  sync that project+tool, and Provider/Prompt activation (切换并直接应用)
-  previews then auto-applies. MCP save syncs the edited server's current
-  `globalTools` (create has none yet), MCP delete syncs the deleted server's
-  `globalTools` to clean up managed entries, MCP import success syncs the
-  imported tool, and global Prompt save/delete sync the profile's global targets.
-  Prompt operations never select a project or invoke a project-scoped preview/apply.
-  Skill deletion is backend-blocked while assigned and Skills directory import
-  owns its own confirm flow, so neither adds auto-sync.
-- Direct mode hides the manual global-sync buttons entirely (MCP/Skills status
-  cards and the Prompt tool card); default mode keeps 预览/生成全局预览 as the
-  only manual sync entry. The per-tool 检测并导入 buttons render in both modes.
-  Direct-mode notifications announce auto-sync (e.g. 正在自动同步) and must not
-  reference the hidden sync button.
-- The direct-mode branch must run after mutation invalidations so the UI
-  reflects committed intent; the backend preview reads committed DB state.
-- Central MCP/Skills/Prompts mutation successes, terminal no-ops, and page-level
-  failures use shared notification, never persistent `message`, `notice`,
-  `applyMessage`, or aggregate error regions. The provider appends each item,
-  expires it independently after 3,000 ms, and stacks the viewport. Success/no-op
-  uses `status`, failure uses `alert`; render the viewport once.
-- Query, form, and import-dialog errors plus persistent diagnostics stay inline
-  because their correction context must remain visible.
-- Manual/direct preview failures notify. Non-empty manual and conflict/blocked
-  previews open `ChangePreviewDialog`; zero targets notify success without Apply.
-  All manual/automatic Apply results notify.
-- Notify only after required invalidation resolves. MCP readopt notifies before
-  regenerating preview; a later failure replaces that success notification.
-- Every central page's `applyMutation.onSuccess` (MCP, Hooks, Skills, Prompts)
-  closes the preview, awaits the page's query-family refresh, then notifies.
-  Apply changes native target status, so skipping the refresh leaves status
-  cards stale until the next unrelated mutation.
+- The persisted Preview is internal transaction evidence, not a confirmation dialog.
+  Accepted central intent automatically consumes every non-empty safe Preview; empty
+  scopes finish as no-op. Hard blocks and the second stale result remain visible as
+  structured in-app errors with retry.
+- Skill takeover and project-native actions preserve their explicit primary click as
+  the authorization boundary, then immediately consume the exact prepared Preview.
+  They never ask for a second confirmation or send the user to a folder.
+- Central mutations invalidate committed intent before generating scopes. Scope order
+  is stable and execution is serial; one failure does not race or contaminate another
+  target. Final feedback distinguishes success, partial failure, and total failure.
+- “以中央配置覆盖” reuses the ordinary persisted Preview → Apply safety boundary.
+  It rechecks descriptor, ownership, path/type, observation hash, and all row versions
+  before writing; stale returns without a native write and may be re-planned once.
+- “采纳原生更改” updates the uniquely matched central entity and its managed
+  baseline in the same guarded operation. It never performs baseline-only adoption,
+  guesses a renamed/anonymous/unknown item, or exposes secrets. Unmappable targets
+  offer an in-app match/import route with a diagnostic.
+- Selector projections preserve unknown fields; whole-document projections replace
+  only owned documents; symlink projections replace only selected managed names.
+  Parse, permission, policy, trust, unsupported, unsafe path, and target-type errors
+  remain fail-closed.
+- Status cards and actions are non-modal, redacted, keyboard accessible, and show
+  path, diagnostic, capability, pending, stale, and retry states. Query invalidation
+  completes before success notification; no page-level legacy message region is used.
 
-### 4. Tests Required
+### 4. Validation & Error Matrix
 
-- With `applyMode: "direct"`: clean preview auto-applies (exact preview ID
-  asserted) without the dialog; conflicted preview opens the dialog with Apply
-  disabled and never calls apply.
-- With `applyMode: "preview_confirm"` (default): existing preview→confirm
-  behavior is unchanged and central toggles never trigger an implicit sync.
-- Assignment/enable toggles under direct mode assert both the preview command
-  payload and the auto-applied preview ID.
-- Direct mode asserts the manual global-sync buttons are absent on all three
-  pages, and that MCP save/delete/import plus Prompt save/delete auto-trigger
-  the same preview + apply payloads; a conflicted preview from those flows
-  still falls back to the dialog with Apply disabled.
-- A clean takeover plan under direct mode opens the dialog and asserts zero Apply calls
-  until the user explicitly confirms it.
-- A clean project-native disable/restore plan under direct mode opens the dialog and
-  asserts zero `applyProjectNativeResourcePreview` calls until confirm.
-- Settings page: toggle persists both directions and surfaces read failures
-  without rendering the toggle.
-- Apply-success tests on each central page assert the list query was refetched
-  (compare the list command's call count before and after Apply).
-- Shared-notification fake-timer tests cover independent 3,000 ms expiry,
-  stacking, and unmount cleanup. Central-page tests cover representative CRUD, assignment,
-  import/takeover, empty preview, manual/direct Apply, correct role,
-  `aria-atomic="true"`, and single rendering.
-- Deferred invalidation tests assert no early success or MCP replacement preview.
-  Keep form/import errors contextual and `autoApply` out of generated commands.
+| UI condition | Required rendering/behavior |
+| --- | --- |
+| Mutation returns empty scopes | Invalidate intent; show a successful no-op; do not call Apply |
+| Mutation returns multiple scopes | Stable dedupe; serial Preview → Apply; aggregate all outcomes |
+| First stale Preview | Re-plan the same scope once; never blind-write |
+| Second stale / hard block | Stop that scope, keep diagnostic and retry action, report partial/failed result |
+| External owned drift with safe mapping | Show both actions with redacted evidence |
+| External drift without safe mapping | Disable direct adoption; offer in-app matching/import reason |
+| Status action hash/row mismatch | Return stale, invalidate status, and require a fresh plan |
+| Focus/environment-ready | Throttled invalidation of only the visible status family |
+| Project native disable/restore or Skill takeover | Apply exact prepared Preview immediately; preserve snapshots and rollback |
+
+### 5. Good / Base / Bad Cases
+
+- Good: edit the active Provider, receive its global scope, and observe the native
+  target reach in-sync without switching profiles or opening a confirmation surface.
+- Good: a passive scan finds a safe external Provider change; “采纳原生更改” updates
+  the central row and baseline, while “以中央配置覆盖” writes the observed plan.
+- Base: an unassigned create returns no scopes and changes no native file; a project-only
+  assignment returns exactly one project scope.
+- Bad: infer scopes from `globalTools`, auto-write from a status DTO, reuse a stale
+  plan, silently absorb unknown fields, or finish with a folder-hand-off instruction.
+
+### 6. Tests Required
+
+- Assert every six-resource mutation consumes backend scopes, including active Provider
+  edit, project-only assignment, deletion cleanup, Hook add/switch/remove symmetry,
+  empty no-op, stable dedupe, serial order, partial failure, and one bounded stale retry.
+- Assert status pages render redacted external evidence and both action payloads; safe
+  adoption updates the central entity and baseline, coverage preserves unknown fields,
+  stale hash/row versions perform zero writes, and unmappable items route to in-app
+  matching/import.
+- Assert focus, environment-ready, page entry, and explicit rescan refresh only the
+  visible status family and do not create watcher/polling calls.
+- Assert Skill takeover and project-native disable/restore apply exact returned IDs
+  immediately, preserve snapshot/recovery behavior, and never render a second
+  confirmation or hand-off message.
+- Assert query invalidation precedes success notification, and failures remain
+  accessible with `role="alert"` plus an in-app retry.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```tsx
-// Feedback persists and page-only metadata leaks into RPC.
-setMessage("已应用");
-commands.applyMcpPreview({ ...input, notifyResult: true });
+// Status DTO is not an authorization or write plan.
+commands.applyMcpPreview({ previewId: status.targetPath });
 ```
 
 #### Correct
 
 ```tsx
-// Auto-apply stays in preview metadata; Apply receives only typed input.
-previewMutation.mutate({ tool, autoApply: directApply });
-applyMutation.mutate({ input });
-await invalidateMcp();
-notify({ kind: "success", message: "已应用" });
+const scopes = mutationResult.affectedSyncScopes ?? [];
+await requestPreview(scopes);
+// ExternalChangeActions applies only the exact persisted plan after hash/row checks.
 ```
-
----
-
-## Scenario: Conflict readopt in ChangePreviewDialog
-
-### 1. Scope / Trigger
-
-- Trigger: any change to `ChangePreviewDialog` readopt props, the preview plan
-  `baselineMismatchedItems` / `readoptAvailable` fields, or page-level
-  `readoptMcpTarget` / `readoptProviderTarget` wiring.
-
-### 2. Signatures
-
-- `ChangePreviewDialog` takes optional `readopting: boolean` and
-  `onReadopt(targetPath: string) => void`; the button renders only when the target has
-  `readoptAvailable && onReadopt` and sits inside the errorCode block.
-- MCP pages pass their tool/project identity to
-  `commands.readoptMcpTarget({ tool, projectId })`; the Provider profile page passes
-  the exact descriptor path to `commands.readoptProviderTarget({ tool, targetPath })`.
-
-### 3. Contracts
-
-- Mismatched items render as「内容不一致的受管条目：a、b」next to the blocking
-  state; the button explains that re-adoption only moves baselines and does not
-  write files immediately.
-- The MCP page closes the dialog, invalidates, and regenerates the preview
-  automatically (direct-apply mode then continues into Apply). The project page
-  closes the dialog and asks the user to press the sync button again because
-  the preview mutation lives in the child components.
-- Central-page readopt success notifies after invalidation and before preview
-  regeneration; later failures notify error. Project detail keeps local feedback.
-- Provider readopt follows the same close → invalidate → regenerate sequence. It keeps
-  the original `directApply` value: a newly safe Preview auto-applies only in direct
-  mode; preview-confirm mode opens the new dialog and waits for the user. A failed
-  readopt leaves the blocking dialog available for retry or cancel.
-- Skills and Prompt plans still never set `readoptAvailable`; do not expose a readopt
-  button for those ownership kinds until their backends support it.
 
 ---
 
@@ -799,12 +733,11 @@ notify({ kind: "success", message: "已应用" });
 ### 2. Signatures
 
 - Rust (`src-tauri/src/settings.rs`):
-  `AppSettingsDto { apply_mode: ApplyMode, enabled_tools: Vec<Tool> }`,
-  `UpdateAppSettingsInput` mirrors it; both serialize camelCase
-  (`applyMode`, `enabledTools`).
+  `AppSettingsDto { enabled_tools: Vec<Tool> }`; `UpdateAppSettingsInput` mirrors
+  it and serializes `enabledTools`.
 - Storage: `app_settings` KV table, key `enabled_tools`, value is a JSON array
-  string (e.g. `["claude","codex"]`); `apply_mode` key unchanged. One command
-  `update_app_settings` writes BOTH keys in a single `Immediate` transaction.
+  string (e.g. `["claude","codex"]`). The historical `apply_mode` key may remain
+  unread, and `update_app_settings` writes only enabled tools.
 - Frontend shared surface: `DEFAULT_ENABLED_TOOLS` and
   `filterEnabledTools<T extends Tool>(tools, enabled: ReadonlySet<Tool>)` in
   `src/lib/tool-metadata.ts`; `useEnabledTools(): ReadonlySet<Tool>` in
@@ -814,14 +747,13 @@ notify({ kind: "success", message: "已应用" });
 ### 3. Contracts
 
 - Defaults: missing `enabled_tools` key → `["claude","codex"]` (Cursor off by
-  default, it is opt-in). Missing `apply_mode` → `preview_confirm`. Defaults
-  resolve per key; never written back implicitly.
+  default, it is opt-in). The default is resolved without an implicit write.
 - Filtering is display-layer only: assignments (`globalTools`), syncs, and
   stored data for disabled tools stay untouched; profile routes `/claude`
   `/codex` stay reachable. The settings dialog description must keep saying so.
 - Toggle submissions are whole-DTO read-modify-write: the dialog always sends
-  `{ applyMode, enabledTools }`; `enabledTools` is normalized to canonical
-  order `claude → codex → cursor` via `filterEnabledTools(ENABLED_TOOL_ORDER, next)`.
+  `{ enabledTools }`; the list is normalized to canonical order
+  `claude → codex → cursor` via `filterEnabledTools(ENABLED_TOOL_ORDER, next)`.
 - Every tool-icon render site must derive visibility at render time from
   `useEnabledTools()`: top-bar links, central-list assignment icon groups
   (prompts/MCP/Skills), 全局目标状态 status cards, dashboard tool cards,
@@ -859,8 +791,8 @@ notify({ kind: "success", message: "已应用" });
 
 - Rust `settings::tests`: per-key defaults, both-key round-trip, reopen
   durability, bogus JSON and unknown-tool values → `DatabaseError`.
-- `settings-dialog.test`: default checked states, toggle payload carries full
-  `{ applyMode, enabledTools }` in canonical order.
+- `settings-dialog.test`: default checked states and toggle payload carrying
+  `{ enabledTools }` in canonical order.
 - One hide-assertion per surface: app-shell (top bar), mcp/skills (icon column
   + status card), dashboard (tool card), project-detail and hooks page
   (`activeTool` fallback when the selected tool is disabled — assert the first
@@ -1061,7 +993,7 @@ const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
 ### 2. Signatures
 
 - `agentsQueryOptions()` → `commands.listAgents()`；`globalAgentStatusesQueryOptions()` → `commands.listGlobalAgentTargetStatuses()`。
-- `/agents` 页面使用 `commands.createAgent/updateAgent/setAgentEnabled/deleteAgent`，分配使用 `setGlobalAgentAssignment`，同步使用 `previewAgentSync/applyAgentPreview/readoptAgentTarget`。
+- `/agents` 页面使用 `commands.createAgent/updateAgent/setAgentEnabled/deleteAgent`，分配使用 `setGlobalAgentAssignment`，同步使用 `useSyncPreviewFlow` 消费后端返回的 `affectedSyncScopes`；状态操作使用 `ExternalChangeActions`。
 - 项目页签使用 `agentProjectOptionsQueryOptions(projectId, tool)` 与 `setProjectAgentAssignment`；工具集合必须来自 `PROJECT_AGENT_TOOLS`。
 
 ### 3. Contracts
@@ -1069,9 +1001,9 @@ const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
 - `TOOL_CAPABILITIES` 是唯一能力来源；`AGENT_TOOLS` 包含五个工具，`PROJECT_AGENT_TOOLS` 排除 ZCode。关闭工具时不渲染其 Agents 控件或发起查询。
 - `AGENT_TOOL_SETTINGS_TOOLS` 只来自生成的 `agentToolSettings` 能力位（首期 Claude/Codex）。编辑弹窗通过 `setAgentToolSettings` 串行提交差异，携带最新 `rowVersion`；保存完成后统一刷新 Agents 与 Dashboard 查询。
 - 工具设置表单只允许 Claude `model`/`color`/`tools` 与 Codex `model`/`modelReasoningEffort`/`features`，前端校验字节长度、集合数量和键名格式，但后端仍是最终校验边界。
-- 分配成功只刷新中央意图；默认模式必须打开持久化 Preview 对话框，直接应用模式也只能自动应用无冲突预览。
+- 分配成功刷新中央意图并立即消费后端返回的精确 scope；空 scope 是 no-op，硬阻断保留应用内重试。
 - 导入对话框只显示全局直属文件候选；`retainedFields` 与 `droppedFields` 必须分别明确展示，确认负载携带 `toolSettings`，不改写原生文件、不自动分配；首次分配若交集字段仍一致，后端自动登记当前基线。
-- 全局状态按工具显示聚合状态，能力/策略诊断读取卡片级 `diagnosticCode`，展开可查看每个文件的漂移诊断；Readopt 按目标文件路径触发，不能用目录路径替代。
+- 全局状态按工具显示聚合状态，能力/策略诊断读取卡片级 `diagnosticCode`，展开可查看每个文件的漂移诊断；外部变化动作必须携带目标文件路径、观测 hash 与 row version，不能用目录路径或过期状态替代。
 
 ### 4. Validation & Error Matrix
 
@@ -1079,12 +1011,12 @@ const HOOK_TOOLS = TOOL_CAPABILITIES.filter((item) => item.hooks).map(
 | ---- | -------- |
 | 后端能力为 false（ZCode 项目 Agents） | 不出现在工具切换，不调用项目 Agents 查询/命令 |
 | 名称不符合交集规则 | 表单阻止提交并显示小写字母、数字、连字符与 1–64 长度提示 |
-| 预览状态为 failed/policy/untrusted/conflict | Apply 按钮禁用；诊断码和中文说明可见；直接应用模式下冲突状态仍保留“处理同步冲突”入口 |
+| 预览状态为 failed/policy/untrusted/conflict | 目标动作禁用；诊断码和中文说明可见，并提供刷新/重试入口 |
 | 导入候选不可导入或含 retained/dropped fields | 复选框禁用或分别显示保留/丢弃提示；不可绕过 UI 校验提交 |
 
 ### 5. Good / Base / Bad Cases
 
-- Good：中央 Agent 保存后刷新列表与 Dashboard，分配按钮仅更新意图；用户在状态卡生成预览并确认后文件才变化。
+- Good：中央 Agent 保存后刷新列表与 Dashboard，分配按钮仅更新意图；状态卡先生成持久化计划，用户点击动作后立即消费精确 Preview，文件随 Apply 变化。
 - Base：没有中央 Agent 或没有受管文件时显示可操作空状态，目录探测错误不被渲染成“未接管”。
 - Bad：把 Agents 加入 `MCP_TOOLS` 复用项目原生资源查询、在 ZCode 项目页签发送请求、或导入后自动 Apply。
 
@@ -1107,7 +1039,7 @@ useQuery(projectNativeResourcesQueryOptions(projectId, tool, "agent"));
 #### Correct
 
 ```tsx
-// Agents 使用独立的中央/项目分配查询与持久化 Preview 流程。
+// Agents 使用独立的中央/项目分配查询与持久化 Preview → Apply 流程。
 useQuery(agentProjectOptionsQueryOptions(projectId, tool));
-requestPreview(tool, false); // 先展示 Preview，再由用户确认 Apply
+requestPreview(scopes); // 自动消费持久化 Preview → Apply，不展示二次确认
 ```

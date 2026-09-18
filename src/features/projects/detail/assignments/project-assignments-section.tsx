@@ -1,21 +1,16 @@
 import type { ReactNode } from "react";
 
 import { BlockingState } from "@/components/blocking-state";
-import { Button } from "@/components/ui/button";
 
 export interface ProjectAssignmentsSectionProps<TItem> {
   title: string;
   description: string;
   blocked: string | null;
-  directApply: boolean;
   error: string | null;
   pending: boolean;
   empty: boolean;
   excludeFromGit: boolean;
   onExcludeFromGit: (value: boolean) => void;
-  previewPending: boolean;
-  previewLabel: string;
-  onPreview: () => void;
   items?: readonly TItem[];
   renderItem?: (item: TItem) => ReactNode;
   children?: ReactNode;
@@ -31,23 +26,15 @@ export function ProjectAssignmentsSection<TItem = never>({
   title,
   description,
   blocked,
-  directApply,
   error,
   pending,
   empty,
   excludeFromGit,
   onExcludeFromGit,
-  previewPending,
-  previewLabel,
-  onPreview,
   items,
   renderItem,
   children,
 }: ProjectAssignmentsSectionProps<TItem>) {
-  const actionLabel = directApply
-    ? `直接应用项目 ${title} 同步`
-    : `预览项目 ${title} 同步`;
-
   return (
     <article className="bg-card rounded-lg border p-5">
       <h3 className="font-semibold">{title}</h3>
@@ -92,19 +79,6 @@ export function ProjectAssignmentsSection<TItem = never>({
         />
         <span>新建文件写入 .git/info/exclude（不提交到仓库）</span>
       </label>
-      <Button
-        className="mt-4"
-        variant="outline"
-        aria-label={previewLabel}
-        disabled={Boolean(blocked) || previewPending}
-        onClick={onPreview}
-      >
-        {previewPending
-          ? directApply
-            ? "正在应用…"
-            : "正在生成…"
-          : actionLabel}
-      </Button>
     </article>
   );
 }

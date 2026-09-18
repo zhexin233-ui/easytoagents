@@ -8,7 +8,6 @@ import {
   type AgentToolSettingsDto,
   type AgentImportResultDto,
   type AgentToolTargetStatusDto,
-  type ReadoptAgentTargetResultDto,
   type Tool,
 } from "@/bindings/commands";
 import {
@@ -18,7 +17,6 @@ import {
   CentralListCardFooter,
   CentralListLayoutToggle,
 } from "@/components/central-list-layout";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { FormDialog } from "@/components/form-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -42,7 +40,6 @@ import {
 import { dashboardKeys } from "@/lib/dashboard-api";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
 import { profileErrorText, unwrapResult } from "@/lib/rpc";
-import { appSettingsQueryOptions } from "@/lib/settings-api";
 import {
   AGENT_TOOLS,
   AGENT_TOOL_SETTINGS_TOOLS,
@@ -51,6 +48,7 @@ import {
 } from "@/lib/tool-metadata";
 import { AgentImportDialog } from "@/features/agents/agent-import-dialog";
 import { AgentToolSettingsForm } from "@/features/agents/agent-tool-settings-form";
+import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 import {
   EMPTY_AGENT_TOOL_SETTINGS,
   validateAgentToolSettingsDraft,
@@ -68,7 +66,6 @@ interface AgentFormState {
 
 interface AgentSaveVariables {
   state: AgentFormState;
-  globalTools: Tool[];
 }
 
 const emptyForm: AgentFormState = {
@@ -85,8 +82,6 @@ export function AgentsPage() {
   const queryClient = useQueryClient();
   const agentsQuery = useQuery(agentsQueryOptions());
   const statusesQuery = useQuery(globalAgentStatusesQueryOptions());
-  const settingsQuery = useQuery(appSettingsQueryOptions());
-  const directApply = settingsQuery.data?.applyMode === "direct";
   const enabledTools = useEnabledTools();
   const visibleTools = filterEnabledTools(AGENT_TOOLS, enabledTools);
   const [selectedTool, setSelectedTool] = useState<Tool>("claude");
@@ -135,6 +130,7 @@ export function AgentsPage() {
           }),
         );
       }
+      let affectedSyncScopes = saved.affectedSyncScopes ?? [];
       const previous = current?.toolSettings ?? EMPTY_AGENT_TOOL_SETTINGS;
       for (const tool of AGENT_TOOL_SETTINGS_TOOLS) {
         const before = tool === "claude" ? previous.claude : previous.codex;
@@ -143,31 +139,34 @@ export function AgentsPage() {
             ? state.toolSettings.claude
             : state.toolSettings.codex;
         if (JSON.stringify(before) === JSON.stringify(after)) continue;
-        saved = await setAgentToolSettings({
+        const updated = await setAgentToolSettings({
           agentId: saved.id,
           tool,
           settings: after,
           rowVersion: saved.rowVersion,
         });
+        affectedSyncScopes = [
+          ...affectedSyncScopes,
+          ...(updated.affectedSyncScopes ?? []),
+        ];
+        saved = { ...updated, affectedSyncScopes };
       }
       return saved;
     },
-    onSuccess: async (_updated, { globalTools }) => {
+    onSuccess: async (updated) => {
       await invalidateAgents();
       setForm(null);
-      if (directApply && globalTools.length > 0) {
+      if ((updated.affectedSyncScopes?.length ?? 0) > 0) {
         notify({
           kind: "success",
           message: "中央 Agent 已保存；正在自动同步已分配工具。",
         });
-        for (const tool of globalTools) requestPreview(tool, true);
+        await requestPreview(updated.affectedSyncScopes ?? []);
         return;
       }
       notify({
         kind: "success",
-        message: directApply
-          ? "中央 Agent 已保存；已分配工具会按直接应用模式自动同步。"
-          : "中央 Agent 已保存；原生目录未修改，请在全局目标状态中生成预览并确认应用。",
+        message: "中央 Agent 已保存；未分配工具不会写入原生配置。",
       });
     },
     onSettled: () => saveGuard.end(),
@@ -181,10 +180,9 @@ export function AgentsPage() {
           !agent.enabled,
         ),
       ),
-    onSuccess: async (_result, agent) => {
+    onSuccess: async (result) => {
       await invalidateAgents();
-      if (!directApply) return;
-      for (const tool of agent.globalAssignments) requestPreview(tool, true);
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -202,21 +200,19 @@ export function AgentsPage() {
           rowVersion: agent.rowVersion,
         }),
       ),
-    onSuccess: async (_result, agent) => {
+    onSuccess: async (result) => {
       await invalidateAgents();
-      if (directApply && agent.globalAssignments.length > 0) {
+      if ((result.affectedSyncScopes?.length ?? 0) > 0) {
         notify({
           kind: "success",
           message: "中央 Agent 已删除；正在自动清理旧受管文件。",
         });
-        for (const tool of agent.globalAssignments) requestPreview(tool, true);
+        await requestPreview(result.affectedSyncScopes ?? []);
         return;
       }
       notify({
         kind: "success",
-        message: directApply
-          ? "中央 Agent 已删除；已分配工具会自动清理受管文件。"
-          : "中央 Agent 已删除；仍需生成预览并确认应用后才会清理受管文件。",
+        message: "中央 Agent 已删除；该 Agent 未分配到工具，无需清理。",
       });
     },
     onError: (error) => {
@@ -237,17 +233,9 @@ export function AgentsPage() {
           rowVersion: agent.rowVersion,
         }),
       ),
-    onSuccess: async (_result, variables) => {
+    onSuccess: async (result) => {
       await invalidateAgents();
-      if (!directApply) {
-        notify({
-          kind: "success",
-          message:
-            "全局 Agent 分配已更新；这只改变中央意图，请生成全局预览并确认应用。",
-        });
-        return;
-      }
-      requestPreview(variables.tool, true);
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -257,53 +245,27 @@ export function AgentsPage() {
     },
   });
 
-  const {
-    openPreview,
-    requestPreview,
-    previewMutation,
-    applyMutation,
-    readoptMutation,
-    closePreview,
-  } = useSyncPreviewFlow<ReadoptAgentTargetResultDto>({
+  const { requestPreview } = useSyncPreviewFlow({
     artifactKind: "agent",
-    directApply,
-    preview: (tool) =>
+    preview: (tool, projectId) =>
       commands.previewAgentSync({
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
         excludeFromGit: false,
       }),
-    apply: ({ previewId, tool }) =>
+    apply: ({ previewId, tool, projectId }) =>
       commands.applyAgentPreview({
         previewId,
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
       }),
-    readopt: (tool, targetPath) => {
-      if (!targetPath) {
-        throw new Error("重新接管 Agent 目标缺少文件路径。");
-      }
-      return commands.readoptAgentTarget({
-        tool,
-        projectId: null,
-        targetPath,
-      });
-    },
     invalidate: invalidateAgents,
     messages: {
       previewFailed: "生成 Agents 全局预览失败。",
       applyFailed: "应用 Agents 全局同步失败。",
-      readoptFailed: "重新接管 Agents 目标失败。",
       empty: "当前工具没有需要同步的全局 Agent。",
       applied: (result) =>
         `已应用 ${result.appliedTargets} 个 Agents 目标，并创建 ${result.snapshotCount} 份快照。`,
-    },
-    onReadopted: (_result, tool) => {
-      notify({
-        kind: "success",
-        message: "已以当前内容重新接管 Agent 目标；正在重新生成预览。",
-      });
-      requestPreview(tool, directApply);
     },
   });
 
@@ -321,11 +283,6 @@ export function AgentsPage() {
     if (saveMutation.isPending || !saveGuard.begin()) return;
     saveMutation.mutate({
       state: nextForm,
-      globalTools:
-        nextForm.id === null
-          ? []
-          : (agentsQuery.data?.find((agent) => agent.id === nextForm.id)
-              ?.globalAssignments ?? []),
     });
   };
   const toggleStatus = (tool: Tool) => {
@@ -572,12 +529,10 @@ export function AgentsPage() {
                 <AgentStatusCard
                   key={status.tool}
                   status={status}
-                  directApply={directApply}
                   expanded={statusOpen.has(status.tool)}
-                  previewPending={previewMutation.isPending}
                   onToggle={() => toggleStatus(status.tool)}
                   onImport={() => importDialog.open(status.tool)}
-                  onPreview={() => requestPreview(status.tool, directApply)}
+                  onInvalidate={invalidateAgents}
                 />
               ))}
             </div>
@@ -589,7 +544,6 @@ export function AgentsPage() {
             key={`${form.id ?? "new"}-${formOpenKey(form)}`}
             open
             initialValue={form}
-            directApply={directApply}
             pending={saveMutation.isPending}
             error={profileErrorText(saveMutation.error)}
             onClose={closeForm}
@@ -611,26 +565,6 @@ export function AgentsPage() {
             }}
           />
         ) : null}
-
-        <ChangePreviewDialog
-          preview={openPreview?.plan ?? null}
-          tool={openPreview?.tool ?? activeTool}
-          artifactKind="agent"
-          applying={applyMutation.isPending}
-          readopting={readoptMutation.isPending}
-          onReadopt={(targetPath) => {
-            if (openPreview) {
-              readoptMutation.mutate({
-                tool: openPreview.tool,
-                targetPath,
-              });
-            }
-          }}
-          onClose={closePreview}
-          onApply={(previewId, tool) =>
-            applyMutation.mutate({ previewId, tool })
-          }
-        />
       </main>
     </>
   );
@@ -691,22 +625,18 @@ function AgentToolViewButton({
 
 interface AgentStatusCardProps {
   status: AgentToolTargetStatusDto;
-  directApply: boolean;
   expanded: boolean;
-  previewPending: boolean;
   onToggle: () => void;
   onImport: () => void;
-  onPreview: () => void;
+  onInvalidate: () => Promise<void>;
 }
 
 function AgentStatusCard({
   status,
-  directApply,
   expanded,
-  previewPending,
   onToggle,
   onImport,
-  onPreview,
+  onInvalidate,
 }: AgentStatusCardProps) {
   const label = toolMetadata(status.tool).label;
   const diagnosticCode =
@@ -716,7 +646,6 @@ function AgentStatusCard({
   const presentation = globalTargetStatusPresentation(
     status.aggregateStatus,
     diagnosticCode,
-    { directApply },
   );
   const hasFiles = status.files.length > 0;
   return (
@@ -759,15 +688,18 @@ function AgentStatusCard({
           诊断码：<code>{diagnosticCode}</code>
         </p>
       ) : null}
+      <ExternalChangeActions
+        artifactKind="agent"
+        tool={status.tool}
+        status={status.aggregateStatus}
+        onInvalidate={onInvalidate}
+        onMatchOrImport={onImport}
+      />
       {expanded ? (
         <div className="mt-3 space-y-2" aria-label="Agent 文件状态">
           {hasFiles ? (
             status.files.map((file) => (
-              <AgentFileStatusRow
-                key={file.targetPath}
-                file={file}
-                directApply={directApply}
-              />
+              <AgentFileStatusRow key={file.targetPath} file={file} />
             ))
           ) : (
             <p className="text-muted-foreground text-xs">
@@ -787,26 +719,6 @@ function AgentStatusCard({
         >
           检测并导入已有 Agents
         </Button>
-        {!directApply || status.aggregateStatus === "external_owned_change" ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={previewPending || presentation.previewBlocked}
-            aria-label={
-              directApply
-                ? `处理 ${label} Agents 同步冲突`
-                : `${label} Agents 同步预览`
-            }
-            onClick={onPreview}
-          >
-            {previewPending
-              ? "正在生成…"
-              : directApply
-                ? "处理同步冲突"
-                : "预览全局同步"}
-          </Button>
-        ) : null}
       </div>
     </article>
   );
@@ -814,15 +726,12 @@ function AgentStatusCard({
 
 function AgentFileStatusRow({
   file,
-  directApply,
 }: {
   file: AgentToolTargetStatusDto["files"][number];
-  directApply: boolean;
 }) {
   const presentation = globalTargetStatusPresentation(
     file.status,
     file.diagnosticCode,
-    { directApply },
   );
   return (
     <div className="bg-muted/40 rounded-control border px-3 py-2 text-xs">
@@ -849,7 +758,6 @@ function AgentFileStatusRow({
 interface AgentFormDialogProps {
   open: boolean;
   initialValue: AgentFormState;
-  directApply: boolean;
   pending: boolean;
   error: string | null;
   onClose: () => void;
@@ -859,7 +767,6 @@ interface AgentFormDialogProps {
 function AgentFormDialog({
   open,
   initialValue,
-  directApply,
   pending,
   error,
   onClose,
@@ -896,11 +803,7 @@ function AgentFormDialog({
     <FormDialog
       open={open}
       title={draft.id === null ? "新增 Agent" : "编辑 Agent"}
-      description={
-        directApply
-          ? "保存更新中央 Agent；已分配工具会按直接应用模式自动同步。"
-          : "保存只更新中央 Agent，不会直接修改工具目录。"
-      }
+      description="保存中央 Agent 后，已分配工具会自动同步；未分配工具不会写入原生配置。"
       submitLabel="保存中央意图"
       pending={pending}
       error={error ?? nameError}

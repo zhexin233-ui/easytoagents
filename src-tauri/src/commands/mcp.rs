@@ -149,19 +149,6 @@ pub fn apply_mcp_preview(
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn readopt_mcp_target(
-    state: State<'_, AppState>,
-    input: ReadoptMcpTargetInput,
-) -> Result<ReadoptMcpTargetResultDto, AppError> {
-    with_db(&state, |database| {
-        // 与 apply 互斥：接管期间不允许在途 apply 同时改写基线。
-        let _write_guard = state.lock_write_operations();
-        mcp::readopt_mcp_target(database, &*state.environment()?, &input)
-    })
-}
-
-#[tauri::command(async)]
-#[specta::specta]
 pub fn discover_mcp_import(
     state: State<'_, AppState>,
     tool: crate::domain::Tool,

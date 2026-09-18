@@ -8,7 +8,27 @@ import type {
   ProviderProfileDto,
   PromptProfileDto,
   SkillDto,
+  SyncScopeDto,
 } from "@/bindings/commands";
+
+/**
+ * 为中央 mutation 结果附加后端签发的精确同步范围。
+ *
+ * 生成绑定在后端字段落地前仍可能没有该可选属性；通过 fixture helper
+ * 保持测试可以同时覆盖迁移前后的绑定，而页面只读取返回 DTO 的该字段。
+ */
+export function withAffectedSyncScopes<T extends object>(
+  value: T,
+  scopes: readonly SyncScopeDto[],
+): T & { affectedSyncScopes: SyncScopeDto[] } {
+  return { ...value, affectedSyncScopes: [...scopes] };
+}
+
+export const globalSyncScope = (
+  artifactKind: SyncScopeDto["artifactKind"],
+  tool: SyncScopeDto["tool"],
+): SyncScopeDto => ({ artifactKind, tool, projectId: null });
+
 export const makeSkill = (o: Partial<SkillDto> = {}): SkillDto => ({
   id: "00000000-0000-4000-8000-000000000601",
   name: "fixture-skill",

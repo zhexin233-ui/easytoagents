@@ -17,7 +17,11 @@ import {
 } from "@/bindings/commands";
 import { PromptsPage } from "@/features/prompts/prompts-page";
 import { renderWithProviders } from "@/test/render";
-import { makePromptProfile } from "@/test/fixtures/dtos";
+import {
+  globalSyncScope,
+  makePromptProfile,
+  withAffectedSyncScopes,
+} from "@/test/fixtures/dtos";
 import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
@@ -72,7 +76,6 @@ const promptPreview: PreviewPlan = makePreviewPlan({
       },
       warningCodes: [],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,
@@ -152,7 +155,7 @@ beforeEach(() => {
   );
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
+    data: { enabledTools: ["claude", "codex"] },
   });
   vi.mocked(commands.listPromptProfiles).mockResolvedValue({
     status: "ok",
@@ -220,7 +223,7 @@ describe("PromptsPage", () => {
     fireEvent.click(trigger);
     dialog = screen.getByRole("dialog", { name: "新增提示词" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(dialog).toHaveAccessibleDescription(/保存只更新中央/);
+    expect(dialog).toHaveAccessibleDescription(/已分配工具会自动同步/);
     expect(within(dialog).getByLabelText("名称")).toHaveValue("");
     const submit = within(dialog).getByRole("button", {
       name: "创建提示词",
@@ -286,7 +289,7 @@ describe("PromptsPage", () => {
     });
     vi.mocked(commands.deletePromptProfile).mockResolvedValue({
       status: "ok",
-      data: { id: promptProfile.id, deleted: true },
+      data: withAffectedSyncScopes({ id: promptProfile.id, deleted: true }, []),
     });
     const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     renderPromptsPage();
@@ -303,11 +306,13 @@ describe("PromptsPage", () => {
       "删除中央提示词档案？原生文件不会在此步骤修改。",
     );
     const status = await screen.findByText(
-      "中央提示词已删除；生成新预览后才会清理已接管文件。",
+      "中央提示词已删除；该档案未分配到任何工具，无需清理。",
     );
     expect(status).toHaveAttribute("role", "status");
     expect(
-      screen.getAllByText("中央提示词已删除；生成新预览后才会清理已接管文件。"),
+      screen.getAllByText(
+        "中央提示词已删除；该档案未分配到任何工具，无需清理。",
+      ),
     ).toHaveLength(1);
     confirmSpy.mockRestore();
   });
@@ -337,18 +342,16 @@ describe("PromptsPage", () => {
     confirmSpy.mockRestore();
   });
 
-  it("启用与手动预览失败通知按队列堆叠", async () => {
+  it("启用成功只按后端返回的范围自动同步并反馈错误", async () => {
     vi.mocked(commands.listPromptProfiles).mockResolvedValue({
       status: "ok",
       data: [promptProfile],
     });
     vi.mocked(commands.setGlobalPromptAssignment).mockResolvedValue({
-      status: "error",
-      error: {
-        code: "CONFLICT",
-        message: "全局启用已过期",
-        recoverable: true,
-      },
+      status: "ok",
+      data: withAffectedSyncScopes(promptProfile, [
+        globalSyncScope("prompt", "claude"),
+      ]),
     });
     vi.mocked(commands.previewPromptSync).mockResolvedValue({
       status: "error",
@@ -363,29 +366,16 @@ describe("PromptsPage", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Claude 全局未分配" }),
     );
-    const assignmentAlert = await screen.findByText("CONFLICT：全局启用已过期");
-    expect(assignmentAlert).toHaveAttribute("role", "alert");
-    expect(assignmentAlert).toHaveAttribute("aria-atomic", "true");
-    expect(screen.getAllByText("CONFLICT：全局启用已过期")).toHaveLength(1);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "预览 Claude 全局同步" }),
-    );
     await waitFor(() =>
-      expect(
-        screen.getByText("DATABASE_ERROR：提示词预览暂不可用"),
-      ).toHaveAttribute("role", "alert"),
+      expect(commands.previewPromptSync).toHaveBeenCalledWith("claude"),
     );
+    const alert = await screen.findByText(/DATABASE_ERROR：提示词预览暂不可用/);
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert).toHaveAttribute("aria-atomic", "true");
     expect(
-      screen.getByText("DATABASE_ERROR：提示词预览暂不可用"),
-    ).toHaveAttribute("aria-atomic", "true");
-    expect(
-      screen.getAllByText("DATABASE_ERROR：提示词预览暂不可用"),
+      screen.getAllByText(/DATABASE_ERROR：提示词预览暂不可用/),
     ).toHaveLength(1);
-    expect(screen.getByText("CONFLICT：全局启用已过期")).toHaveAttribute(
-      "role",
-      "alert",
-    );
+    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
   it("检测无结果与检测失败通知按队列分别呈现", async () => {
@@ -503,7 +493,10 @@ describe("PromptsPage", () => {
     const refresh = deferred<void>();
     vi.mocked(commands.createPromptProfile).mockImplementation(async () => {
       await pending.promise;
-      return { status: "ok", data: promptProfile };
+      return {
+        status: "ok",
+        data: withAffectedSyncScopes(promptProfile, []),
+      };
     });
     renderPromptsPage();
     const section = promptSection();
@@ -547,7 +540,7 @@ describe("PromptsPage", () => {
       expect(commands.listPromptProfiles).toHaveBeenCalledTimes(2),
     );
     expect(
-      screen.queryByText("中央提示词档案已保存，原生文件尚未修改。"),
+      screen.queryByText("中央提示词档案已保存；未分配工具不会写入原生配置。"),
     ).not.toBeInTheDocument();
     fireEvent.click(trigger);
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -561,7 +554,9 @@ describe("PromptsPage", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
     expect(
-      await screen.findByText("中央提示词档案已保存，原生文件尚未修改。"),
+      await screen.findByText(
+        "中央提示词档案已保存；未分配工具不会写入原生配置。",
+      ),
     ).toHaveAttribute("role", "status");
     expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
@@ -578,14 +573,17 @@ describe("PromptsPage", () => {
   it("可创建不绑定工具的提示词档案", async () => {
     vi.mocked(commands.createPromptProfile).mockResolvedValue({
       status: "ok",
-      data: {
-        id: "00000000-0000-4000-8000-000000000403",
-        name: "代码审查",
-        body: "# 审查规则",
-        globalTools: [],
-        importedFromPath: null,
-        rowVersion: 1,
-      },
+      data: withAffectedSyncScopes(
+        {
+          id: "00000000-0000-4000-8000-000000000403",
+          name: "代码审查",
+          body: "# 审查规则",
+          globalTools: [],
+          importedFromPath: null,
+          rowVersion: 1,
+        },
+        [],
+      ),
     });
     renderPromptsPage();
     const section = promptSection();
@@ -617,11 +615,11 @@ describe("PromptsPage", () => {
     const card = within(section).getByText("代码审查").closest("article");
     expect(card).toHaveTextContent("未启用");
     const status = await screen.findByText(
-      "中央提示词档案已保存，原生文件尚未修改。",
+      "中央提示词档案已保存；未分配工具不会写入原生配置。",
     );
     expect(status).toHaveAttribute("role", "status");
     expect(
-      screen.getAllByText("中央提示词档案已保存，原生文件尚未修改。"),
+      screen.getAllByText("中央提示词档案已保存；未分配工具不会写入原生配置。"),
     ).toHaveLength(1);
     expect(commands.listPromptProfiles).toHaveBeenCalledTimes(2);
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
@@ -635,6 +633,12 @@ describe("PromptsPage", () => {
     vi.mocked(commands.updatePromptProfile).mockResolvedValue({
       status: "ok",
       data: { ...promptProfile, name: "更新后的提示词", body: "# 新规则" },
+    });
+    vi.mocked(commands.setGlobalPromptAssignment).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(promptProfile, [
+        globalSyncScope("prompt", "codex"),
+      ]),
     });
     vi.mocked(commands.applyProfilePreview).mockResolvedValue({
       status: "ok",
@@ -687,26 +691,9 @@ describe("PromptsPage", () => {
         rowVersion: promptProfile.rowVersion,
       }),
     );
-    // 预览确认模式下图标只更新中央配置；预览由工具卡片的同步按钮发起。
-    expect(commands.previewPromptSync).not.toHaveBeenCalled();
-    const assignmentStatus =
-      await screen.findByText(/全局启用已更新；这只改变中央配置/);
-    expect(assignmentStatus).toHaveAttribute("role", "status");
-    expect(
-      screen.getAllByText(/全局启用已更新；这只改变中央配置/),
-    ).toHaveLength(1);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "预览 Codex 全局同步" }),
-    );
     await waitFor(() =>
       expect(commands.previewPromptSync).toHaveBeenCalledWith("codex"),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    const listCallsBeforeApply = vi.mocked(commands.listPromptProfiles).mock
-      .calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
     await waitFor(() =>
       expect(commands.applyProfilePreview).toHaveBeenCalledWith({
         previewId: promptPreview.previewId,
@@ -714,23 +701,13 @@ describe("PromptsPage", () => {
         artifactKind: "prompt",
       }),
     );
-    const applyStatus =
-      await screen.findByText("已应用 1 个目标，可从快照恢复。");
-    expect(applyStatus).toHaveAttribute("role", "status");
-    expect(screen.getAllByText("已应用 1 个目标，可从快照恢复。")).toHaveLength(
-      1,
-    );
-    // 应用成功后与其它中央页面一致地刷新提示词列表。
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
-      vi.mocked(commands.listPromptProfiles).mock.calls.length,
-    ).toBeGreaterThan(listCallsBeforeApply);
+      await screen.findByText("已应用 1 个目标，可从快照恢复。"),
+    ).toHaveAttribute("role", "status");
   });
 
-  it("直接应用模式下编辑已分配提示词保存后自动同步并 Apply", async () => {
-    vi.mocked(commands.getAppSettings).mockResolvedValue({
-      status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
-    });
+  it("编辑已分配提示词按返回范围立即同步并 Apply", async () => {
     const assignedProfile: PromptProfileDto = makePromptProfile({
       ...promptProfile,
       globalTools: ["claude"],
@@ -741,7 +718,9 @@ describe("PromptsPage", () => {
     });
     vi.mocked(commands.updatePromptProfile).mockResolvedValue({
       status: "ok",
-      data: assignedProfile,
+      data: withAffectedSyncScopes(assignedProfile, [
+        globalSyncScope("prompt", "claude"),
+      ]),
     });
     vi.mocked(commands.applyProfilePreview).mockResolvedValue({
       status: "ok",
@@ -754,9 +733,6 @@ describe("PromptsPage", () => {
     });
     renderPromptsPage();
 
-    expect(
-      screen.queryByRole("button", { name: "直接应用 Claude 全局同步" }),
-    ).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
     const dialog = screen.getByRole("dialog", { name: "编辑提示词" });
     fireEvent.click(within(dialog).getByRole("button", { name: "保存编辑" }));
@@ -770,19 +746,13 @@ describe("PromptsPage", () => {
         artifactKind: "prompt",
       }),
     );
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
       await screen.findByText("已应用 1 个目标，可从快照恢复。"),
     ).toHaveAttribute("role", "status");
   });
 
-  it("直接应用模式下自动同步的预览与 Apply 失败通知按队列堆叠", async () => {
-    vi.mocked(commands.getAppSettings).mockResolvedValue({
-      status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
-    });
+  it("自动同步的预览与 Apply 失败通知按队列堆叠", async () => {
     const assignedProfile: PromptProfileDto = makePromptProfile({
       ...promptProfile,
       globalTools: ["claude"],
@@ -793,11 +763,15 @@ describe("PromptsPage", () => {
     });
     vi.mocked(commands.setGlobalPromptAssignment).mockResolvedValue({
       status: "ok",
-      data: assignedProfile,
+      data: withAffectedSyncScopes(assignedProfile, [
+        globalSyncScope("prompt", "claude"),
+      ]),
     });
     vi.mocked(commands.deletePromptProfile).mockResolvedValue({
       status: "ok",
-      data: { id: assignedProfile.id, deleted: true },
+      data: withAffectedSyncScopes({ id: assignedProfile.id, deleted: true }, [
+        globalSyncScope("prompt", "claude"),
+      ]),
     });
     vi.mocked(commands.previewPromptSync)
       .mockResolvedValueOnce({
@@ -827,17 +801,17 @@ describe("PromptsPage", () => {
       "DATABASE_ERROR：提示词预览暂不可用",
     );
     expect(
-      screen.getAllByText("DATABASE_ERROR：提示词预览暂不可用"),
+      screen.getAllByText(/DATABASE_ERROR：提示词预览暂不可用/),
     ).toHaveLength(1);
 
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(
-        screen.getByText("ATOMIC_WRITE_FAILED：提示词应用失败"),
+        screen.getByText(/ATOMIC_WRITE_FAILED：提示词应用失败/),
       ).toHaveAttribute("role", "alert"),
     );
     expect(
-      screen.getAllByText("ATOMIC_WRITE_FAILED：提示词应用失败"),
+      screen.getAllByText(/ATOMIC_WRITE_FAILED：提示词应用失败/),
     ).toHaveLength(1);
     confirmSpy.mockRestore();
   });

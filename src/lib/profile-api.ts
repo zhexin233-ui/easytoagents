@@ -1,6 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 
-import { commands, type Tool } from "@/bindings/commands";
+import {
+  commands,
+  type ArtifactKind,
+  type ProfileTargetStatusDto,
+  type Tool,
+} from "@/bindings/commands";
 import { unwrapResult } from "@/lib/rpc";
 
 // 通用 RPC 解包与错误文案已迁到 `@/lib/rpc`；这里 re-export 以兼容既有导入方。
@@ -15,6 +20,8 @@ export const profileKeys = {
   status: (tool: Tool) => [...profileKeyBase, tool, "status"] as const,
   officialLogin: (tool: Tool) =>
     [...profileKeyBase, tool, "official-login"] as const,
+  targetStatuses: (tool: Tool) =>
+    [...profileKeyBase, tool, "target-statuses"] as const,
 };
 
 export function providerProfilesQueryOptions(tool: Tool) {
@@ -51,4 +58,24 @@ export function toolProfileStatusQueryOptions(tool: Tool) {
     queryFn: async () =>
       unwrapResult(await commands.getToolProfileStatus(tool)),
   });
+}
+
+/** Provider/Prompt 的只读现场扫描；执行动作时仍须重新签发 ExternalChangePlan。 */
+export function globalProfileTargetStatusesQueryOptions(
+  tool: Tool,
+  artifactKind?: ArtifactKind,
+) {
+  const options = {
+    queryKey: profileKeys.targetStatuses(tool),
+    queryFn: async () =>
+      unwrapResult(await commands.listGlobalProfileTargetStatuses(tool)),
+    staleTime: 5_000,
+  };
+  return artifactKind
+    ? {
+        ...options,
+        select: (statuses: ProfileTargetStatusDto[]) =>
+          statuses.filter((item) => item.artifactKind === artifactKind),
+      }
+    : options;
 }

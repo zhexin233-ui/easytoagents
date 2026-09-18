@@ -357,5 +357,10 @@ pub fn confirm_provider_import(
     Ok(ProviderImportResultDto {
         tool: preview.tool,
         imported_count: u32::try_from(imported.len()).unwrap_or(u32::MAX),
+        affected_sync_scopes: Some(if imported.is_empty() {
+            Vec::new()
+        } else {
+            vec![SyncScopeDto::global(ArtifactKind::Provider, preview.tool)]
+        }),
     })
 }

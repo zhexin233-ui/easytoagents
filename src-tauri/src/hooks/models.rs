@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::{
-    domain::{ArtifactName, HookEvent, SyncStatus, Tool, TrustStatus},
+    domain::{ArtifactName, HookEvent, SyncScopeDto, SyncStatus, Tool, TrustStatus},
     error::AppError,
     security::contains_detectable_secret,
 };
+
+use crate::sync::DatabaseRowVersion;
 
 const MAX_COMMAND_BYTES: usize = 4000;
 const MAX_MATCHER_BYTES: usize = 500;
@@ -52,6 +54,9 @@ pub struct VersionedHookInput {
 pub struct DeleteHookResultDto {
     pub id: String,
     pub deleted: bool,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 /// 全局分配上的生效事件（可因工具而异）。
@@ -75,6 +80,9 @@ pub struct HookDto {
     pub script_name: Option<String>,
     pub global_assignments: Vec<HookGlobalAssignmentDto>,
     pub row_version: u32,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 /// 分配时 `event` 为生效事件（可不同于中央建议事件）；取消分配时忽略。
@@ -156,6 +164,33 @@ pub struct ApplyHookPreviewInput {
     pub preview_id: String,
     pub tool: Tool,
     pub project_id: Option<String>,
+}
+
+/// 被动扫描后按原生 Hook 内容更新中央记录所需的 Preview 证据。
+///
+/// 该输入只在命令层由已持久化的 `ExternalChangePlan` 填充；服务层仍会重新
+/// 扫描目标、核对 descriptor/ownership、事件分配和完整 hash。未携带完整目标
+/// 证据时，采纳必须 fail closed，不能退化成 baseline-only readopt。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdoptHookNativeInput {
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub target_id: String,
+    pub target_row_version: u32,
+    pub target_path: String,
+    pub row_versions: Vec<DatabaseRowVersion>,
+    pub observed_full_hash: Option<String>,
+    pub observed_managed_hash: Option<String>,
+}
+
+/// Hook 原生采纳结果。只返回稳定的中央 Hook 身份，不回传原生命令或脚本内容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptHookNativeResultDto {
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub adopted: Vec<String>,
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]

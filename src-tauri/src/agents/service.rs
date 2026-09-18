@@ -23,11 +23,12 @@ use uuid::Uuid;
 
 use super::{
     models::{tool_settings_dto, validate_agent_definition, validate_agent_tool_settings},
-    AgentDto, AgentProjectDto, AgentProjectOptionDto, AgentProjectOptionsInput,
-    AgentToolTargetStatusDto, ApplyAgentPreviewInput, CreateAgentInput, DeleteAgentResultDto,
-    PreviewAgentSyncInput, ReadoptAgentTargetInput, ReadoptAgentTargetResultDto,
-    SetAgentToolSettingsInput, SetGlobalAgentAssignmentInput, SetProjectAgentAssignmentInput,
-    UpdateAgentInput, VersionedAgentInput,
+    AdoptAgentNativeInput, AdoptAgentNativeResultDto, AgentDto, AgentProjectDto,
+    AgentProjectOptionDto, AgentProjectOptionsInput, AgentToolTargetStatusDto,
+    ApplyAgentPreviewInput, CreateAgentInput, DeleteAgentResultDto, PreviewAgentSyncInput,
+    ReadoptAgentTargetInput, ReadoptAgentTargetResultDto, SetAgentToolSettingsInput,
+    SetGlobalAgentAssignmentInput, SetProjectAgentAssignmentInput, UpdateAgentInput,
+    VersionedAgentInput,
 };
 use crate::{
     adapters::{
@@ -41,7 +42,7 @@ use crate::{
         mcp::{self as mcp_repository, McpProjectRecord},
         Database,
     },
-    domain::{ArtifactKind, ProjectRoot, Scope, SyncStatus, Tool},
+    domain::{ArtifactKind, ProjectRoot, Scope, SyncScopeDto, SyncStatus, Tool},
     error::AppError,
     git::inspect_path,
     security::SecretRedactor,
@@ -52,6 +53,11 @@ use crate::{
         NoApplyFault, PreviewPlan, PreviewTargetRequest, TargetScan,
     },
 };
+
+fn with_affected_sync_scopes(mut dto: AgentDto, scopes: Vec<SyncScopeDto>) -> AgentDto {
+    dto.affected_sync_scopes = Some(crate::domain::stable_sync_scopes(scopes));
+    dto
+}
 
 include!("service_core.rs");
 include!("service_native.rs");

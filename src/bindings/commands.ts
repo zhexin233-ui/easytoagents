@@ -28,6 +28,22 @@ async refreshEnvironment() : Promise<Result<EnvironmentStateDto, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async prepareExternalChangePlan(input: ExternalChangePlanInput) : Promise<Result<ExternalChangePlanDto, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_external_change_plan", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyExternalChangePlan(input: ApplyExternalChangePlanInput) : Promise<Result<ApplyResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_external_change_plan", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getDashboardSummary() : Promise<Result<DashboardSummaryDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_dashboard_summary") };
@@ -268,6 +284,14 @@ async getToolProfileStatus(tool: Tool) : Promise<Result<ToolProfileStatusDto, Ap
     else return { status: "error", error: e  as any };
 }
 },
+async listGlobalProfileTargetStatuses(tool: Tool) : Promise<Result<ProfileTargetStatusDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_global_profile_target_statuses", { tool }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async discoverProviderImport(tool: Tool) : Promise<Result<ProviderImportPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("discover_provider_import", { tool }) };
@@ -303,22 +327,6 @@ async confirmPromptImport(input: ConfirmImportInput) : Promise<Result<PromptProf
 async previewProviderSync(tool: Tool) : Promise<Result<PreviewPlan, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_provider_sync", { tool }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async readoptProviderTarget(input: ReadoptProviderTargetInput) : Promise<Result<ReadoptProviderTargetResultDto, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("readopt_provider_target", { input }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async adoptProviderNative(input: AdoptProviderNativeInput) : Promise<Result<AdoptProviderNativeResultDto, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("adopt_provider_native", { input }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -466,14 +474,6 @@ async previewMcpSync(input: PreviewMcpSyncInput) : Promise<Result<PreviewPlan, A
 async applyMcpPreview(input: ApplyMcpPreviewInput) : Promise<Result<ApplyResult, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("apply_mcp_preview", { input }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async readoptMcpTarget(input: ReadoptMcpTargetInput) : Promise<Result<ReadoptMcpTargetResultDto, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("readopt_mcp_target", { input }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -735,14 +735,6 @@ async applyHookPreview(input: ApplyHookPreviewInput) : Promise<Result<ApplyResul
     else return { status: "error", error: e  as any };
 }
 },
-async readoptHookTarget(input: ReadoptHookTargetInput) : Promise<Result<ReadoptHookTargetResultDto, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("readopt_hook_target", { input }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async discoverHookImport(input: DiscoverHookImportInput) : Promise<Result<HookImportPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("discover_hook_import", { input }) };
@@ -871,14 +863,6 @@ async applyAgentPreview(input: ApplyAgentPreviewInput) : Promise<Result<ApplyRes
     else return { status: "error", error: e  as any };
 }
 },
-async readoptAgentTarget(input: ReadoptAgentTargetInput) : Promise<Result<ReadoptAgentTargetResultDto, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("readopt_agent_target", { input }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async discoverAgentImport(input: DiscoverAgentImportInput) : Promise<Result<AgentImportPreviewDto, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("discover_agent_import", { input }) };
@@ -908,17 +892,7 @@ export const HOOK_EVENT_SUPPORT = [{"event":"SessionStart","tool":"claude"},{"ev
 
 /** user-defined types **/
 
-export type AdoptProviderNativeInput = { tool: Tool; targetPath: string;
-/**
- * 用户所看预览绑定的行版本；缺少漂移渠道的条目或已过期都会拒绝。
- */
-rowVersions: DatabaseRowVersion[] }
-export type AdoptProviderNativeResultDto = { tool: Tool;
-/**
- * 被采纳的原生渠道显示名；未漂移的渠道不会出现在这里。
- */
-adopted: string[] }
-export type AgentDto = { id: string; name: string; description: string; prompt: string; enabled: boolean; globalAssignments: Tool[]; toolSettings: AgentToolSettingsDto; rowVersion: number }
+export type AgentDto = { id: string; name: string; description: string; prompt: string; enabled: boolean; globalAssignments: Tool[]; toolSettings: AgentToolSettingsDto; rowVersion: number; affectedSyncScopes?: SyncScopeDto[] | null }
 export type AgentFileTargetStatusDto = { targetPath: string; status: SyncStatus; diagnosticCode: string | null }
 export type AgentImportCandidateDto = { candidateId: string; sourcePath: string;
 /**
@@ -968,14 +942,11 @@ diagnosticCode: string | null; files: AgentFileTargetStatusDto[] }
  */
 export type AppError = { code: ErrorCode; message: string; details?: Partial<{ [key in string]: JsonValue }> | null; recoverable: boolean; action?: RecoveryAction | null }
 export type AppInfoDto = { name: string; version: string }
-export type AppSettingsDto = { applyMode: ApplyMode; enabledTools: Tool[] }
+export type AppSettingsDto = { enabledTools: Tool[] }
 export type ApplyAgentPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
+export type ApplyExternalChangePlanInput = { previewId: string; artifactKind: ArtifactKind; tool: Tool; projectId: string | null; action: ExternalChangeAction }
 export type ApplyHookPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
 export type ApplyMcpPreviewInput = { previewId: string; tool: Tool; projectId: string | null }
-/**
- * 原生配置写入方式：默认保持预览确认，`Direct` 在预览无冲突时跳过确认对话框。
- */
-export type ApplyMode = "preview_confirm" | "direct"
 export type ApplyProfilePreviewInput = { previewId: string; tool: Tool; artifactKind: ArtifactKind }
 export type ApplyProjectNativeResourcePreviewInput = { previewId: string }
 export type ApplyResult = { runId: string; status: string; appliedTargets: number; snapshotCount: number }
@@ -1034,11 +1005,15 @@ export type DashboardSummaryDto = { tools: DashboardToolSummaryDto[]; projectCou
 export type DashboardToolSummaryDto = { tool: Tool; activeProviderName: string | null; activePromptName: string | null; globalMcpCount: number; globalSkillCount: number }
 export type DatabaseEntityType = "provider_profile" | "prompt_profile" | "mcp_server" | "skill" | "hook" | "agent" | "project" | "managed_target" | "managed_item" | "project_native_resource"
 export type DatabaseRowVersion = { entityType: DatabaseEntityType; entityId: string; rowVersion: number }
-export type DeleteAgentResultDto = { id: string; deleted: boolean }
-export type DeleteHookResultDto = { id: string; deleted: boolean }
-export type DeleteMcpResultDto = { id: string; deleted: boolean }
-export type DeleteProfileResultDto = { id: string; deleted: boolean }
-export type DeleteSkillResultDto = { id: string; deleted: boolean }
+export type DeleteAgentResultDto = { id: string; deleted: boolean; affectedSyncScopes?: SyncScopeDto[] | null }
+export type DeleteHookResultDto = { id: string; deleted: boolean; affectedSyncScopes?: SyncScopeDto[] | null }
+export type DeleteMcpResultDto = { id: string; deleted: boolean; affectedSyncScopes?: SyncScopeDto[] | null }
+export type DeleteProfileResultDto = { id: string; deleted: boolean;
+/**
+ * 删除前捕获的范围，用于清理已生效的原生投影。
+ */
+affectedSyncScopes?: SyncScopeDto[] | null }
+export type DeleteSkillResultDto = { id: string; deleted: boolean; affectedSyncScopes?: SyncScopeDto[] | null }
 export type DeleteSnapshotsInput = { snapshotIds: string[] }
 export type DeleteSnapshotsResultDto = { deletedIds: string[]; failures: SnapshotDeleteFailureDto[] }
 export type DiscoverAgentImportInput = { tool: Tool }
@@ -1055,9 +1030,30 @@ export type ErrorCode = "NOT_FOUND" | "INVALID_INPUT" | "PARSE_ERROR" | "PERMISS
  * 工具环境仍在后台探测；只出现在命令边界，永不写入 sync_runs.error_code。
  */
 "ENVIRONMENT_PROBING"
+/**
+ * 外部变化计划的明确授权动作。
+ *
+ * 两个动作都必须先消费同一份带 observation/hash/row-version 证据的计划；
+ * 其中 `AdoptNative` 仅对服务端证明可无损映射的六类资源目标开放；无法唯一
+ * 映射的资源仍必须进入各自的匹配/导入流程。
+ */
+export type ExternalChangeAction = "adopt_native" | "overwrite_central"
+/**
+ * 被动扫描发现外部变化后的应用内动作计划。
+ *
+ * 该 DTO 复用已经持久化的 `PreviewPlan` 作为覆盖动作的证据，不新增一套
+ * 文件写入入口。状态卡先请求本计划，再使用 `preview_id` 调用统一 Apply；
+ * 原生采纳能力则由服务层按资源身份/可逆映射明确声明，不能由前端猜测。
+ */
+export type ExternalChangePlanDto = { previewId: string; artifactKind: ArtifactKind; tool: Tool; projectId: string | null; status: SyncStatus; targetPaths: string[]; observedFullHashes: string[]; observedManagedHashes: string[]; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; canAdoptNative: boolean; adoptBlockedReason: string | null;
+/**
+ * 是否可以由中央意图覆盖当前原生变化；实际动作仍消费同一持久化 Preview。
+ */
+canOverwriteCentral: boolean; overwriteBlockedReason: string | null }
+export type ExternalChangePlanInput = { artifactKind: ArtifactKind; tool: Tool; projectId: string | null }
 export type GitPathStatus = { isRepository: boolean; tracked: boolean; ignored: boolean; ignoredByLocalExclude: boolean }
 export type GitRepositoryStatus = "repository" | "not_repository" | "unavailable"
-export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptName: string | null; globalAssignments: HookGlobalAssignmentDto[]; rowVersion: number }
+export type HookDto = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; scriptName: string | null; globalAssignments: HookGlobalAssignmentDto[]; rowVersion: number; affectedSyncScopes?: SyncScopeDto[] | null }
 /**
  * Hook 的统一事件名（canonical PascalCase）。各工具的原生键可能不同
  * （Cursor 为 camelCase），写入原生文件前必须经
@@ -1104,12 +1100,21 @@ export type McpImportAction = "create" | "reuse"
 export type McpImportCandidateDto = { candidateId: string; name: string; transport: McpTransport | null; status: McpImportCandidateStatus; action: McpImportAction | null; reason: string | null; redactedProjection: JsonValue }
 export type McpImportCandidateStatus = "importable" | "already_managed" | "name_conflict" | "disabled" | "unsupported" | "invalid"
 export type McpImportPreviewDto = { previewId: string | null; tool: Tool; targetPath: string; candidates: McpImportCandidateDto[]; message: string | null }
-export type McpImportResultDto = { tool: Tool; createdCount: number; reusedCount: number; assignedCount: number }
+export type McpImportResultDto = { tool: Tool; createdCount: number; reusedCount: number; assignedCount: number;
+/**
+ * 导入过程中新增全局 assignment 时返回精确的同步目标；全部条目已
+ * 分配时为空，避免前端凭 `tool` 猜测是否需要触发原生同步。
+ */
+affectedSyncScopes?: SyncScopeDto[] | null }
 export type McpProjectDto = { id: string; displayName: string; rootPath: string; codexTrustStatus: TrustStatus; rowVersion: number }
 export type McpProjectOptionDto = { mcpId: string; name: string; enabled: boolean; state: McpProjectSelectionState; selectable: boolean; rowVersion: number }
 export type McpProjectOptionsInput = { projectId: string; tool: Tool }
 export type McpProjectSelectionState = "inherited" | "selected" | "available"
-export type McpServerDto = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headerNames: string[]; envNames: string[]; redactedExtra: JsonValue; enabled: boolean; globalTools: Tool[]; rowVersion: number }
+export type McpServerDto = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headerNames: string[]; envNames: string[]; redactedExtra: JsonValue; enabled: boolean; globalTools: Tool[]; rowVersion: number;
+/**
+ * 仅中央 mutation 返回；列表/详情响应省略该字段。
+ */
+affectedSyncScopes?: SyncScopeDto[] | null }
 export type McpServerInput = { name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: Partial<{ [key in string]: string }>; env: Partial<{ [key in string]: string }>; extra: JsonValue; enabled: boolean }
 export type McpTargetStatusDto = { tool: Tool; projectId: string | null; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type McpTransport = "stdio" | "streamable_http"
@@ -1157,7 +1162,12 @@ export type PreviewMcpSyncInput = { tool: Tool; projectId: string | null; exclud
 export type PreviewPlan = { previewId: string; scope: Scope; projectId: string | null; dbVersion: number; targets: PreviewTargetPlan[]; warningCodes: string[] }
 export type PreviewProjectNativeResourceActionInput = { resourceId: string; rowVersion: number; action: ProjectNativeResourceAction }
 export type PreviewSkillSyncInput = { tool: Tool; projectId: string | null; excludeFromGit: boolean }
-export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; baselineMismatchedItems: string[]; readoptAvailable: boolean; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
+export type PreviewTargetPlan = { targetId: string; descriptor: TargetDescriptor; ownership: ManagedOwnership; changeKind: ChangeKind; status: SyncStatus; currentFullHash: string | null; currentManagedHash: string | null; desiredManagedHash: string; targetRowVersion: number; rowVersions: DatabaseRowVersion[]; redactedDiff: JsonValue; warningCodes: string[]; baselineMismatchedItems: string[]; errorCode: ErrorCode | null; git: GitPathStatus | null; excludeFromGit: boolean }
+/**
+ * Provider/Prompt 全局目标的只读现场状态。该 DTO 只描述扫描结果，不能作为
+ * Apply 证据；需要执行动作时必须重新请求 `ExternalChangePlan`。
+ */
+export type ProfileTargetStatusDto = { artifactKind: ArtifactKind; tool: Tool; targetPath: string | null; status: SyncStatus; diagnosticCode: string | null }
 export type ProjectDto = { id: string; displayName: string; rootPath: string; pathStatus: ProjectPathStatus; gitStatus: GitRepositoryStatus; codexTrustStatus: TrustStatus; claudePolicyStatus: PolicyState; targets: ProjectTargetStatusDto[]; nativeResources: ProjectNativeResourceSummaryDto; lastScannedAt: string | null; rowVersion: number }
 export type ProjectNativeEntryType = "mcp_entry" | "directory" | "symlink" | "hook_entry" | "agent_file"
 export type ProjectNativeResourceAction = "disable" | "restore"
@@ -1170,7 +1180,11 @@ export type ProjectPathStatus = "valid" | "missing" | "permission_denied" | "inv
 export type ProjectTargetStatusDto = { tool: Tool; artifactKind: ArtifactKind; targetPath: string | null; capability: CapabilityState; policy: PolicyState; trust: TargetTrustState; status: SyncStatus; diagnosticCode: string | null }
 export type PromptImportPreviewDto = { previewId: string; tool: Tool; targetPath: string; suggestedName: string; body: string }
 export type PromptOverrideState = "not_applicable" | "not_present" | "present" | "unknown"
-export type PromptProfileDto = { id: string; name: string; body: string; globalTools: Tool[]; importedFromPath: string | null; rowVersion: number }
+export type PromptProfileDto = { id: string; name: string; body: string; globalTools: Tool[]; importedFromPath: string | null; rowVersion: number;
+/**
+ * 仅中央 mutation 返回；列表响应省略该字段。
+ */
+affectedSyncScopes?: SyncScopeDto[] | null }
 export type PromptProfileInput = { name: string; body: string }
 /**
  * 渠道的认证方式：`ApiKey` 走第三方/自定义接入地址加密钥；`OfficialLogin`
@@ -1206,7 +1220,11 @@ export type ProviderImportPreviewDto = {
  * 至少一个可导入候选时由服务端签发的预览 id；否则为空。
  */
 previewId: string | null; tool: Tool; targetPath: string; candidates: ProviderImportCandidateDto[]; message: string | null }
-export type ProviderImportResultDto = { tool: Tool; importedCount: number }
+export type ProviderImportResultDto = { tool: Tool; importedCount: number;
+/**
+ * 导入并启用渠道时返回精确的全局 Provider 目标；未形成有效投影时为空。
+ */
+affectedSyncScopes?: SyncScopeDto[] | null }
 export type ProviderOptionsDto = { authKind: ProviderAuthKind; credentialEnvKey: ClaudeCredentialEnvKey | null; extraEnv: Partial<{ [key in string]: string }>; providerId: string | null; wireApi: string | null; zcodeKind: string | null; opencodeNpm: string | null; opencodeApi: string | null }
 export type ProviderOptionsInput = {
 /**
@@ -1223,20 +1241,12 @@ export type ProviderProfileDto = { id: string; tool: Tool; name: string; apiBase
 /**
  * 仅 Pi 有值：API 格式与模型列表的只读摘要。
  */
-pi: PiProviderSummaryDto | null; isActive: boolean; rowVersion: number }
-export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
-export type ReadoptAgentTargetInput = { tool: Tool; projectId: string | null; targetPath: string }
-export type ReadoptAgentTargetResultDto = { targetPath: string }
-export type ReadoptHookTargetInput = { tool: Tool; projectId: string | null }
-export type ReadoptHookTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
-export type ReadoptMcpTargetInput = { tool: Tool; projectId: string | null }
-export type ReadoptMcpTargetResultDto = { targetPath: string; updatedItemCount: number; removedItemCount: number }
+pi: PiProviderSummaryDto | null; isActive: boolean; rowVersion: number;
 /**
- * 以当前原生 Provider 内容重新接管目标基线；该操作只更新应用数据库，
- * 不会直接写入原生配置文件。
+ * 仅中央 mutation 返回；列表/详情响应省略该字段。
  */
-export type ReadoptProviderTargetInput = { tool: Tool; targetPath: string }
-export type ReadoptProviderTargetResultDto = { targetPath: string }
+affectedSyncScopes?: SyncScopeDto[] | null }
+export type ProviderProfileInput = { tool: Tool; name: string; apiBaseUrl: string; apiKey: string; defaultModel: string; options: ProviderOptionsInput; activate: boolean }
 export type RecentSyncRunDto = { id: string; kind: SyncRunKind; status: SyncRunStatus; scope: Scope; projectId: string | null; startedAt: string; finishedAt: string | null; errorCode: ErrorCode | null }
 export type RecoveryAction = "rescan" | "review_conflict" | "restore" | "fix_permissions"
 export type RegisterProjectInput = { displayName: string; rootPath: string }
@@ -1272,7 +1282,7 @@ export type SetProjectHookAssignmentInput = { projectId: string; tool: Tool; hoo
 export type SetProjectMcpAssignmentInput = { projectId: string; tool: Tool; mcpId: string; assigned: boolean; mcpRowVersion: number; projectRowVersion: number }
 export type SetProjectSkillAssignmentInput = { projectId: string; tool: Tool; skillId: string; assigned: boolean; skillRowVersion: number; projectRowVersion: number }
 export type SkillContentPreviewDto = { id: string; name: string; skillMd: string; files: string[]; contentHash: string; rowVersion: number }
-export type SkillDto = { id: string; name: string; sourcePath: string; centralPath: string; contentHash: string; description: string; status: SkillStatus; diagnosticCode: string | null; globalTools: Tool[]; rowVersion: number }
+export type SkillDto = { id: string; name: string; sourcePath: string; centralPath: string; contentHash: string; description: string; status: SkillStatus; diagnosticCode: string | null; globalTools: Tool[]; rowVersion: number; affectedSyncScopes?: SyncScopeDto[] | null }
 export type SkillImportCandidateDto = { candidateId: string; name: string; description: string; sourcePaths: string[]; status: SkillImportCandidateStatus; reason: string | null; existingSkillId: string | null; takeoverEligible: boolean; takeoverEntryType: SkillTakeoverEntryType | null }
 export type SkillImportCandidateStatus = "importable" | "already_imported" | "name_conflict" | "invalid"
 export type SkillImportPreviewDto = { previewId: string | null; tool: Tool; sources: SkillImportSourceDto[]; candidates: SkillImportCandidateDto[]; message: string | null }
@@ -1295,6 +1305,13 @@ export type SnapshotSummary = { snapshotId: string; runId: string; targetId: str
 export type SymlinkPolicy = "reject" | "managed_children_only"
 export type SyncRunKind = "preview" | "apply" | "restore"
 export type SyncRunStatus = "previewed" | "applying" | "restoring" | "succeeded" | "failed" | "stale" | "rolled_back" | "rollback_failed"
+/**
+ * 中央意图 mutation 影响的一个精确原生同步目标。
+ *
+ * `project_id = None` 代表全局目标；它不代表所有项目目标。只有显式
+ * 项目 assignment 才会产生项目 scope，避免把全局继承误算成项目文件所有权。
+ */
+export type SyncScopeDto = { artifactKind: ArtifactKind; tool: Tool; projectId: string | null }
 /**
  * 原生目标相对最近一次受管基线的状态。
  */
@@ -1359,7 +1376,7 @@ export type ToolProfileStatusDto = { tool: Tool; availability: ToolAvailabilityS
 installationProbeDiagnostic: string | null; providerTargetPath: string | null; promptTargetPath: string | null; providerCapability: TargetCapability; promptCapability: TargetCapability; promptOverride: PromptOverrideState; providerPolicy: PolicyState; newSessionNotice: string; bearerTokenWarning: string | null }
 export type TrustStatus = "unknown" | "trusted" | "untrusted"
 export type UpdateAgentInput = { id: string; name: string; description: string; prompt: string; enabled: boolean; rowVersion: number }
-export type UpdateAppSettingsInput = { applyMode: ApplyMode; enabledTools: Tool[] }
+export type UpdateAppSettingsInput = { enabledTools: Tool[] }
 export type UpdateHookInput = { id: string; name: string; event: HookEvent; matcher: string | null; command: string; timeoutSeconds: number | null; enabled: boolean; rowVersion: number }
 export type UpdateMcpServerInput = { id: string; name: string; transport: McpTransport; command: string | null; args: string[]; url: string | null; headers: SensitiveMapUpdate; env: SensitiveMapUpdate; extra: SensitiveJsonUpdate; enabled: boolean; rowVersion: number }
 export type UpdatePromptProfileInput = { id: string; name: string; body: string; rowVersion: number }

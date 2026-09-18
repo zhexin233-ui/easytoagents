@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   commands,
+  type ExternalChangePlanDto,
   type McpImportPreviewDto,
   type Tool,
 } from "@/bindings/commands";
@@ -160,7 +161,6 @@ beforeEach(() => {
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
     data: {
-      applyMode: "preview_confirm",
       enabledTools: ["claude", "codex", "cursor"],
     },
   });
@@ -202,7 +202,7 @@ describe("McpPage", () => {
   it("直接应用模式下启停已分配 MCP 自动同步其分配工具", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     const assignedServer = makeMcpServer({
       ...server,
@@ -222,7 +222,13 @@ describe("McpPage", () => {
       });
     vi.mocked(commands.setMcpEnabled).mockResolvedValue({
       status: "ok",
-      data: { ...assignedServer, enabled: false },
+      data: {
+        ...assignedServer,
+        enabled: false,
+        affectedSyncScopes: [
+          { artifactKind: "mcp", tool: "claude", projectId: null },
+        ],
+      },
     });
     renderPage();
 
@@ -244,9 +250,6 @@ describe("McpPage", () => {
     const status = await screen.findByText(/已应用 1 个 MCP 目标/);
     expect(status).toHaveAttribute("role", "status");
     expect(screen.getAllByText(/已应用 1 个 MCP 目标/)).toHaveLength(1);
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
   });
   it("MCP 非受管变更保留共享状态原义，不使用 Skills 首次目录文案", async () => {
     vi.mocked(commands.listGlobalMcpTargetStatuses).mockResolvedValueOnce({
@@ -261,12 +264,33 @@ describe("McpPage", () => {
         },
       ],
     });
+    const plan: ExternalChangePlanDto = {
+      previewId: "external-mcp-preview",
+      artifactKind: "mcp",
+      tool: "claude",
+      projectId: null,
+      status: "external_non_owned_change",
+      targetPaths: ["/isolated/home/.claude.json"],
+      observedFullHashes: ["a".repeat(64)],
+      observedManagedHashes: ["b".repeat(64)],
+      rowVersions: [],
+      redactedDiff: {},
+      canAdoptNative: false,
+      adoptBlockedReason: "MATCH_OR_IMPORT_REQUIRED",
+      canOverwriteCentral: true,
+      overwriteBlockedReason: null,
+    };
+    vi.mocked(commands.prepareExternalChangePlan).mockResolvedValue({
+      status: "ok",
+      data: plan,
+    });
     renderPage();
     expect(await screen.findByText("非受管变更")).toBeVisible();
     expect(screen.getByText("EXTERNAL_NON_OWNED_CHANGE")).toBeVisible();
     expect(screen.queryByText("未纳入同步管理")).not.toBeInTheDocument();
     expect(screen.queryByText("空目录，待配置")).not.toBeInTheDocument();
-    expect(await globalButton("生成全局预览")).toBeEnabled();
+    expect(await globalButton("以中央配置覆盖")).toBeEnabled();
+    expect(await globalButton("在应用内匹配/导入")).toBeEnabled();
     expect(commands.previewMcpSync).not.toHaveBeenCalled();
   });
   it("默认隐藏表单，新增与编辑可取消、关闭和 Escape 清理草稿并恢复焦点", async () => {
@@ -284,7 +308,9 @@ describe("McpPage", () => {
 
     let dialog = screen.getByRole("dialog", { name: "新增 MCP" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(dialog).toHaveAccessibleDescription(/保存只更新中央 MCP/);
+    expect(dialog).toHaveAccessibleDescription(
+      /保存中央 MCP 后，已分配工具会自动同步/,
+    );
     const submit = within(dialog).getByRole("button", { name: "保存中央意图" });
     const nameInput = within(dialog).getByLabelText("名称");
     expect(nameInput).toHaveFocus();
@@ -442,9 +468,7 @@ describe("McpPage", () => {
       expect(commands.listMcpServers).toHaveBeenCalledTimes(2),
     );
     expect(
-      screen.queryByText(
-        "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
-      ),
+      screen.queryByText("中央 MCP 已保存；未分配工具不会写入原生配置。"),
     ).not.toBeInTheDocument();
     fireEvent.click(trigger);
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -458,9 +482,7 @@ describe("McpPage", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
     expect(
-      await screen.findByText(
-        "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
-      ),
+      await screen.findByText("中央 MCP 已保存；未分配工具不会写入原生配置。"),
     ).toHaveAttribute("role", "status");
     expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
@@ -524,13 +546,11 @@ describe("McpPage", () => {
       await screen.findByRole("heading", { name: server.name }),
     ).toBeVisible();
     const status = await screen.findByText(
-      "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+      "中央 MCP 已保存；未分配工具不会写入原生配置。",
     );
     expect(status).toHaveAttribute("role", "status");
     expect(
-      screen.getAllByText(
-        "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
-      ),
+      screen.getAllByText("中央 MCP 已保存；未分配工具不会写入原生配置。"),
     ).toHaveLength(1);
     expect(commands.listMcpServers).toHaveBeenCalledTimes(2);
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();

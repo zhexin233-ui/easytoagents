@@ -7,7 +7,11 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings/commands";
-import { makeSkill } from "@/test/fixtures";
+import {
+  globalSyncScope,
+  makeSkill,
+  withAffectedSyncScopes,
+} from "@/test/fixtures";
 import {
   deferred,
   preview,
@@ -234,32 +238,34 @@ describe("SkillsPage", () => {
     expect(commands.listSkillProjectOptions).not.toHaveBeenCalled();
     expect(commands.setProjectSkillAssignment).not.toHaveBeenCalled();
   });
-  it("使用持久化 previewId Apply Skills 链接计划", async () => {
-    renderPage();
-    const section = screen
-      .getByRole("heading", { name: "全局目标状态" })
-      .closest("section");
-    const card = section
-      ? (await within(section).findByText("Claude")).closest("article")
-      : null;
-    if (!card) throw new Error("未找到 Claude Skills 状态卡");
-    expect(within(card).getByText("待初始化")).toHaveClass("bg-amber-50");
-    expect(
-      within(card).getByText("尚未写入受管目标；生成预览会在确认后初始化。"),
-    ).toBeVisible();
-    const previewButton = within(card).getByRole("button", {
-      name: "预览全局同步",
+  it("全局分配完成后立即消费持久化 previewId", async () => {
+    vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(skill, [globalSyncScope("skill", "codex")]),
     });
-    expect(previewButton).toBeEnabled();
-    fireEvent.click(previewButton);
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Codex 全局未分配" }),
+    );
+    await waitFor(() =>
+      expect(commands.setGlobalSkillAssignment).toHaveBeenCalledWith({
+        tool: "codex",
+        skillId: skill.id,
+        assigned: true,
+        rowVersion: skill.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewSkillSync).toHaveBeenCalledWith({
+        tool: "codex",
+        projectId: null,
+        excludeFromGit: false,
+      }),
+    );
     await waitFor(() =>
       expect(commands.applySkillPreview).toHaveBeenCalledWith({
         previewId: preview.previewId,
-        tool: "claude",
+        tool: "codex",
         projectId: null,
       }),
     );
@@ -267,10 +273,10 @@ describe("SkillsPage", () => {
     expect(status).toHaveAttribute("role", "status");
     expect(screen.getAllByText(/已应用 1 个 Skills 目标/)).toHaveLength(1);
   });
-  it("直接应用模式下全局目标状态卡隐藏手动同步按钮", async () => {
+  it("全局目标状态卡只保留检测与导入入口", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     renderPage();
     const section = screen
@@ -299,19 +305,22 @@ describe("SkillsPage", () => {
     expect(commands.previewSkillSync).not.toHaveBeenCalled();
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
   });
-  it("直接应用模式下分配自动同步的预览与 Apply 失败通知按队列堆叠", async () => {
+  it("分配自动同步的预览与 Apply 失败通知按队列堆叠", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.listSkills).mockResolvedValue({
       status: "ok",
       data: [skill],
     });
-    vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
-      status: "ok",
-      data: skill,
-    });
+    vi.mocked(commands.setGlobalSkillAssignment).mockImplementation(
+      ({ tool }) =>
+        Promise.resolve({
+          status: "ok",
+          data: withAffectedSyncScopes(skill, [globalSyncScope("skill", tool)]),
+        }),
+    );
     vi.mocked(commands.previewSkillSync)
       .mockResolvedValueOnce({
         status: "error",
@@ -338,34 +347,33 @@ describe("SkillsPage", () => {
       "DATABASE_ERROR：Skills 预览暂不可用",
     );
     expect(
-      screen.getAllByText("DATABASE_ERROR：Skills 预览暂不可用"),
+      screen.getAllByText(/DATABASE_ERROR：Skills 预览暂不可用/),
     ).toHaveLength(1);
     fireEvent.click(
       await screen.findByRole("button", { name: "Claude 全局已分配" }),
     );
     await waitFor(() =>
       expect(
-        screen.getByText("ATOMIC_WRITE_FAILED：Skills 应用失败"),
+        screen.getByText(/ATOMIC_WRITE_FAILED：Skills 应用失败/),
       ).toHaveAttribute("role", "alert"),
     );
     expect(
-      screen.getAllByText("ATOMIC_WRITE_FAILED：Skills 应用失败"),
+      screen.getAllByText(/ATOMIC_WRITE_FAILED：Skills 应用失败/),
     ).toHaveLength(1);
   });
-  it("全局空目标预览只提示无需写入，不展示可 Apply 的对话框", async () => {
+  it("全局空目标自动同步只提示无需写入", async () => {
     vi.mocked(commands.previewSkillSync).mockResolvedValue({
       status: "ok",
       data: { ...preview, targets: [] },
     });
+    vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(skill, [globalSyncScope("skill", "codex")]),
+    });
     renderPage();
-    const section = screen
-      .getByRole("heading", { name: "全局目标状态" })
-      .closest("section");
-    const card = section
-      ? (await within(section).findByText("Claude")).closest("article")
-      : null;
-    if (!card) throw new Error("未找到 Claude Skills 状态卡");
-    fireEvent.click(within(card).getByRole("button", { name: "预览全局同步" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Codex 全局未分配" }),
+    );
     const status = await screen.findByText(
       "当前工具没有需要同步的全局 Skill。",
     );
@@ -373,16 +381,12 @@ describe("SkillsPage", () => {
     expect(
       screen.getAllByText("当前工具没有需要同步的全局 Skill。"),
     ).toHaveLength(1);
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
   });
   it("被关闭的工具从平台图标列与状态卡中消失", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "preview_confirm",
         enabledTools: ["claude", "codex"],
       },
     });
@@ -405,7 +409,7 @@ describe("SkillsPage", () => {
     ["Codex", "codex", true, ["claude", "codex"]],
     ["Cursor", "cursor", true, ["claude", "cursor"]],
   ] as const)(
-    "%s 全局分配更新中央配置并刷新列表与目标，不隐式预览或 Apply",
+    "%s 全局分配更新中央配置并自动 Preview → Apply",
     async (toolLabel, tool, assigned, updatedTools) => {
       const updatedSkill = makeSkill({
         ...skill,
@@ -417,7 +421,9 @@ describe("SkillsPage", () => {
         .mockResolvedValue({ status: "ok", data: [updatedSkill] });
       vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
         status: "ok",
-        data: updatedSkill,
+        data: withAffectedSyncScopes(updatedSkill, [
+          globalSyncScope("skill", tool),
+        ]),
       });
       vi.mocked(commands.listGlobalSkillTargetStatuses)
         .mockResolvedValueOnce({
@@ -471,13 +477,11 @@ describe("SkillsPage", () => {
         }),
       );
       const status = await screen.findByText(
-        "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
+        "已应用 1 个 Skills 目标，并创建 2 份快照。",
       );
       expect(status).toHaveAttribute("role", "status");
       expect(
-        screen.getAllByText(
-          "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
-        ),
+        screen.getAllByText("已应用 1 个 Skills 目标，并创建 2 份快照。"),
       ).toHaveLength(1);
       const updatedButton = await screen.findByRole("button", {
         name: `${toolLabel} 全局${assigned ? "已分配" : "未分配"}`,
@@ -494,11 +498,19 @@ describe("SkillsPage", () => {
       expect(updatedButton.querySelector("img")).not.toBeNull();
       expect(updatedButton.querySelector("svg")).toBeNull();
       await waitFor(() => {
-        expect(commands.listSkills).toHaveBeenCalledTimes(2);
-        expect(commands.listGlobalSkillTargetStatuses).toHaveBeenCalledTimes(2);
+        expect(commands.listSkills).toHaveBeenCalledTimes(3);
+        expect(commands.listGlobalSkillTargetStatuses).toHaveBeenCalledTimes(3);
       });
-      expect(commands.previewSkillSync).not.toHaveBeenCalled();
-      expect(commands.applySkillPreview).not.toHaveBeenCalled();
+      expect(commands.previewSkillSync).toHaveBeenCalledWith({
+        tool,
+        projectId: null,
+        excludeFromGit: false,
+      });
+      expect(commands.applySkillPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool,
+        projectId: null,
+      });
     },
   );
 });

@@ -7,9 +7,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        apply_mcp_preview_with_probes, create_mcp_server, get_mcp_server, list_mcp_project_options,
-        preview_mcp_sync_with_probes, readopt_mcp_target, set_global_mcp_assignment,
-        set_project_mcp_assignment, update_mcp_server,
+        adopt_mcp_native, apply_mcp_preview_with_probes, create_mcp_server, get_mcp_server,
+        list_mcp_project_options, preview_mcp_sync_with_probes, readopt_mcp_target,
+        set_global_mcp_assignment, set_project_mcp_assignment, update_mcp_server,
     };
     use crate::{
         adapters::{
@@ -26,6 +26,7 @@ mod tests {
             SetGlobalMcpAssignmentInput, SetProjectMcpAssignmentInput, UpdateMcpServerInput,
         },
         security::SecretRedactor,
+        sync::load_persisted_preview,
     };
 
     const HEADER_SECRET: &str = "Bearer phase5-header-secret";
@@ -638,10 +639,8 @@ enabled = true
             &policy,
         )
         .unwrap();
-        assert_eq!(blocked.targets[0].change_kind.as_str(), "conflict");
-        assert!(blocked.targets[0]
-            .warning_codes
-            .contains(&crate::sync::ERROR_MANAGED_ITEM_BASELINE_MISMATCH.to_owned()));
+        assert_eq!(blocked.targets[0].change_kind.as_str(), "delete");
+        assert!(blocked.targets[0].error_code.is_none());
         assert_eq!(
             drifted["mcpServers"]["renamed-http"]["url"],
             "https://external.example.test/rpc"
@@ -2333,7 +2332,7 @@ enabled = true
             &policy,
         )
         .unwrap();
-        assert_eq!(conflicted.targets[0].change_kind.as_str(), "conflict");
+        assert_eq!(conflicted.targets[0].change_kind.as_str(), "update");
         assert!(conflicted.targets[0].readopt_available);
         assert_eq!(
             conflicted.targets[0].baseline_mismatched_items,
@@ -2461,7 +2460,7 @@ enabled = true
             &policy,
         )
         .unwrap();
-        assert_eq!(conflicted.targets[0].change_kind.as_str(), "conflict");
+        assert_eq!(conflicted.targets[0].change_kind.as_str(), "add");
         assert_eq!(
             conflicted.targets[0].baseline_mismatched_items,
             vec!["managed-a".to_owned()]
@@ -2544,5 +2543,306 @@ enabled = true
         )
         .unwrap_err();
         assert_eq!(error.code(), ErrorCode::Conflict);
+    }
+
+    fn setup_managed_claude(
+        fixture: &mut Fixture,
+        redactor: &mut SecretRedactor,
+        name: &str,
+    ) -> crate::mcp::McpServerDto {
+        let created =
+            create_mcp_server(&mut fixture.database, redactor, &stdio_input(name)).unwrap();
+        set_global_mcp_assignment(
+            &mut fixture.database,
+            redactor,
+            &SetGlobalMcpAssignmentInput {
+                tool: Tool::Claude,
+                mcp_id: created.id.clone(),
+                assigned: true,
+                row_version: created.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let user_probe = ConservativeClaudeUserMcpProbe;
+        let preview = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &user_probe,
+            &policy,
+        )
+        .unwrap();
+        apply_mcp_preview_with_probes(
+            &std::sync::Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            redactor,
+            &ApplyMcpPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &user_probe,
+            &policy,
+        )
+        .unwrap();
+        get_mcp_server(&fixture.database, redactor, &created.id).unwrap()
+    }
+
+    fn mcp_adoption_input(database: &Database, preview_id: &str) -> super::AdoptMcpNativeInput {
+        let persisted = load_persisted_preview(database, preview_id).unwrap();
+        assert_eq!(persisted.items.len(), 1);
+        let item = &persisted.items[0];
+        super::AdoptMcpNativeInput {
+            preview_id: persisted.preview_id,
+            tool: item.envelope.descriptor.tool,
+            project_id: persisted.project_id,
+            target_id: item.target_id.clone(),
+            target_path: item.target_path.clone(),
+            status: item.status,
+            descriptor: item.envelope.descriptor.clone(),
+            ownership: item.envelope.ownership.clone(),
+            observed_full_hash: item.envelope.current_full_hash.clone(),
+            observed_managed_hash: item.envelope.current_managed_hash.clone(),
+            target_row_version: item.envelope.target_row_version,
+            row_versions: item.envelope.row_versions.clone(),
+        }
+    }
+
+    #[test]
+    fn native_mcp_adoption_updates_central_and_returns_to_in_sync() {
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        let central = setup_managed_claude(&mut fixture, &mut redactor, "native-adopt");
+        let native_path = fixture.home.join(".claude.json");
+        let mut native: Value = serde_json::from_slice(&fs::read(&native_path).unwrap()).unwrap();
+        native["mcpServers"]["native-adopt"]["args"] = json!(["-y", "adopted-server"]);
+        fs::write(&native_path, serde_json::to_vec_pretty(&native).unwrap()).unwrap();
+
+        let policy = fixture.allowed_policy();
+        let user_probe = ConservativeClaudeUserMcpProbe;
+        let preview = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &user_probe,
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(preview.targets[0].status, SyncStatus::ExternalOwnedChange);
+        let adoption = mcp_adoption_input(&fixture.database, &preview.preview_id);
+        let target_id = adoption.target_id.clone();
+        let result = adopt_mcp_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            adoption,
+        )
+        .unwrap();
+        assert_eq!(result.adopted_item_count, 1);
+        assert_eq!(result.updated_server_count, 1);
+
+        let after = get_mcp_server(&fixture.database, &redactor, &central.id).unwrap();
+        assert_eq!(
+            after.args,
+            vec!["-y".to_owned(), "adopted-server".to_owned()]
+        );
+        let assignments: i64 = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM mcp_global_assignments WHERE mcp_id = ?1",
+                [&central.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(assignments, 1, "采纳不能重建或删除既有 assignment");
+        let target_status: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT last_status FROM managed_targets WHERE id = ?1",
+                [&target_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(target_status, "in_sync");
+
+        let recovered = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &user_probe,
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(recovered.targets[0].status, SyncStatus::InSync);
+    }
+
+    #[test]
+    fn native_mcp_adoption_rejects_stale_hash_without_changing_central() {
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        let central = setup_managed_claude(&mut fixture, &mut redactor, "native-stale");
+        let native_path = fixture.home.join(".claude.json");
+        let mut first: Value = serde_json::from_slice(&fs::read(&native_path).unwrap()).unwrap();
+        first["mcpServers"]["native-stale"]["args"] = json!(["-y", "first-observation"]);
+        fs::write(&native_path, serde_json::to_vec_pretty(&first).unwrap()).unwrap();
+        let policy = fixture.allowed_policy();
+        let user_probe = ConservativeClaudeUserMcpProbe;
+        let preview = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &user_probe,
+            &policy,
+        )
+        .unwrap();
+        let adoption = mcp_adoption_input(&fixture.database, &preview.preview_id);
+        let before = get_mcp_server(&fixture.database, &redactor, &central.id).unwrap();
+
+        let mut second = first;
+        second["mcpServers"]["native-stale"]["args"] = json!(["-y", "second-observation"]);
+        fs::write(&native_path, serde_json::to_vec_pretty(&second).unwrap()).unwrap();
+        let error = adopt_mcp_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            adoption,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::StalePreview);
+        assert_eq!(
+            get_mcp_server(&fixture.database, &redactor, &central.id).unwrap(),
+            before,
+            "完整 hash 过期时中央配置必须保持不变"
+        );
+    }
+
+    #[test]
+    fn native_mcp_adoption_rolls_back_and_redacts_unsupported_fields() {
+        let mut fixture = Fixture::new();
+        let mut redactor = SecretRedactor::default();
+        let central = setup_managed_claude(&mut fixture, &mut redactor, "native-rollback");
+        let native_path = fixture.home.join(".claude.json");
+        let mut native: Value = serde_json::from_slice(&fs::read(&native_path).unwrap()).unwrap();
+        native["mcpServers"]["native-rollback"]["args"] = json!(["-y", "rollback-server"]);
+        fs::write(&native_path, serde_json::to_vec_pretty(&native).unwrap()).unwrap();
+        let policy = fixture.allowed_policy();
+        let user_probe = ConservativeClaudeUserMcpProbe;
+        let preview = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &user_probe,
+            &policy,
+        )
+        .unwrap();
+        let adoption = mcp_adoption_input(&fixture.database, &preview.preview_id);
+        let target_id = adoption.target_id.clone();
+        let before = get_mcp_server(&fixture.database, &redactor, &central.id).unwrap();
+        let before_item_hash: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT last_applied_item_hash FROM managed_items WHERE target_id = ?1",
+                [&target_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        fixture
+            .database
+            .connection()
+            .execute_batch(&format!(
+                "CREATE TRIGGER reject_native_mcp_target BEFORE UPDATE OF baseline_full_hash
+                 ON managed_targets WHEN NEW.id = '{}'
+                 BEGIN SELECT RAISE(ABORT, 'fixture rollback'); END;",
+                target_id
+            ))
+            .unwrap();
+        let rollback_error = adopt_mcp_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            adoption,
+        )
+        .unwrap_err();
+        assert_eq!(rollback_error.code(), ErrorCode::DatabaseError);
+        assert_eq!(
+            get_mcp_server(&fixture.database, &redactor, &central.id).unwrap(),
+            before,
+            "目标基线更新失败时中央记录也必须回滚"
+        );
+        let after_item_hash: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT last_applied_item_hash FROM managed_items WHERE target_id = ?1",
+                [&target_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after_item_hash, before_item_hash);
+        fixture
+            .database
+            .connection()
+            .execute_batch("DROP TRIGGER reject_native_mcp_target")
+            .unwrap();
+
+        native["mcpServers"]["native-rollback"]["env_http_headers"] =
+            json!({"TOKEN": "native-header-secret"});
+        fs::write(&native_path, serde_json::to_vec_pretty(&native).unwrap()).unwrap();
+        let unsupported_preview = preview_mcp_sync_with_probes(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            &PreviewMcpSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &user_probe,
+            &policy,
+        )
+        .unwrap();
+        let unsupported = mcp_adoption_input(&fixture.database, &unsupported_preview.preview_id);
+        let error = adopt_mcp_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            unsupported,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        assert!(!serde_json::to_string(&error)
+            .unwrap()
+            .contains("native-header-secret"));
     }
 }

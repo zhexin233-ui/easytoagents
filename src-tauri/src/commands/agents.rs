@@ -153,19 +153,6 @@ pub fn apply_agent_preview(
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn readopt_agent_target(
-    state: State<'_, AppState>,
-    input: agents::ReadoptAgentTargetInput,
-) -> Result<agents::ReadoptAgentTargetResultDto, AppError> {
-    with_db(&state, |database| {
-        // 与 apply 互斥：接管期间不允许在途 apply 同时改写基线。
-        let _write_guard = state.lock_write_operations();
-        agents::readopt_agent_target(database, &*state.environment()?, &input)
-    })
-}
-
-#[tauri::command(async)]
-#[specta::specta]
 pub fn discover_agent_import(
     state: State<'_, AppState>,
     input: agents::DiscoverAgentImportInput,

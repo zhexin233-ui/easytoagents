@@ -73,11 +73,12 @@ artifact_kind, scope)` directly at the discovery call site. Adapters must not wr
   code. `domain::tests::tool_literal_dispatch_only_lives_in_domain` scans the crate
   and fails on any other `"claude" => ...` literal dispatch.
 - Keep cross-resource synchronization contracts in typed helpers: `ManagedArtifact`
-  owns row-version collection, readopt item hashing, and target-status projection;
+  owns row-version collection, baseline reconciliation hashing, and target-status
+  projection;
   `ProviderCodec` owns tool-specific Provider ownership, rendering, and discovery.
   Services may retain RPC-specific DTO wrappers, but must not duplicate the shared
   projection algorithm.
-- When matching a managed Hook item during readopt, parse the canonical event name
+- When matching a managed Hook item during baseline reconciliation, parse the canonical event name
   and convert it with `HookEvent::native_key(tool)` before looking up the native
   event tree. Cursor stores camelCase event keys while the central record uses the
   stable PascalCase value.
@@ -101,6 +102,96 @@ artifact_kind, scope)` directly at the discovery call site. Adapters must not wr
   asserting that fixture secrets have zero matches, so an empty audit cannot pass.
 - Verify Git inspection neither executes repository hooks nor modifies `.gitignore`,
   `.git/info/exclude`, the index, or worktree files.
+
+## Scenario: Initial Provider profile preview without a baseline
+
+### 1. Scope / Trigger
+
+- Trigger: a global Provider profile exists in central intent, but its native target
+  has never completed a full/managed baseline (for example, an existing OpenCode
+  `opencode.json` was discovered before the first successful Apply).
+- This exception is for Provider profile synchronization only. It must not widen
+  ordinary MCP, Skill, Hook, Agent, Prompt, or project-native Apply semantics.
+
+### 2. Signatures
+
+- `profiles::preview_provider_sync(database, environment, redactor, tool)` delegates
+  the profile target to `sync::build_profile_preview_plan`.
+- `sync::build_profile_preview_plan(scope, project_id, requests, redactor)` is the
+  profile-only variant of `build_preview_plan`; its request still carries the
+  `TargetDescriptor`, `ManagedTargetBaseline`, `TargetScan`, ownership evidence,
+  desired projection, and row-version evidence.
+- `profiles::list_global_profile_target_statuses(database, environment, tool)` is
+  read-only and skips an unowned Provider when both central intent and baseline are
+  absent.
+
+### 3. Contracts
+
+- Initial Provider central overwrite is eligible only when the baseline hash pair is
+  both `NULL`, the scan is an `Observed` document, the Provider codec validates
+  ownership, and the central desired projection is non-empty.
+- If the observed managed projection already equals the desired projection, Preview
+  settles to `InSync`; otherwise it is `ExternalNonOwnedChange` with
+  `EXTERNAL_NON_OWNED_CHANGE` and `can_merge = true`.
+- Preview remains read-only against the native file. Central overwrite consumes the
+  persisted preview and renders only Provider-owned selectors; unknown roots and
+  fields remain preserved.
+- This path never grants `can_adopt_native`. A Provider with a different stable
+  native ID (for example central `easytoagents_*` versus native `ccgo`) remains
+  `MATCH_OR_IMPORT_REQUIRED` and must use the application match/import flow.
+- Once a complete baseline exists, ordinary dual-hash drift rules apply again;
+  managed drift is `ExternalOwnedChange` and only a persisted, evidence-checked
+  overwrite may proceed.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Empty baseline pair + observed parseable Provider + valid ownership + non-empty central projection | `ExternalNonOwnedChange`, mergeable central overwrite |
+| Empty baseline pair + observed managed projection already equals central projection | `InSync`, no write required |
+| Stable native Provider ID cannot be mapped to a central profile | `can_adopt_native = false`, `MATCH_OR_IMPORT_REQUIRED` |
+| Parse, permission, policy, trust, target-type, or ownership failure | Preserve the fail-closed error/status; never mark mergeable |
+| Incomplete baseline (only one hash present) | Preserve ordinary fail-closed drift behavior |
+| No central Provider intent and no baseline during passive status scan | Skip the unowned Provider status; retain Provider import as the entry point |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an OpenCode file contains an unknown `ccgo` entry, central intent contains
+  one valid Provider, and the first Preview enables central overwrite while
+  preserving `ccgo` and other unmanaged roots.
+- Base: the first Preview finds no central Provider intent; status scanning is
+  silent for that unowned target and Provider discovery/import lists it instead.
+- Bad: infer a stable ID match from a single candidate, enable native adoption for
+  an unmapped Provider, or treat an incomplete baseline as proof of ownership.
+
+### 6. Tests Required
+
+- Provider service test: first OpenCode Preview with an unknown native provider,
+  central overwrite, preservation of unmanaged fields, and subsequent `InSync`.
+- Provider service test: stable-ID mismatch keeps native adoption blocked with
+  `MATCH_OR_IMPORT_REQUIRED`.
+- Provider service test: status scan with no central intent and no baseline skips
+  the unowned Provider without an RPC error.
+- Regression coverage must run Provider/Sync tests, `pnpm bindings:check`, and the
+  full `pnpm check` before changing the exception.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Empty baseline is treated as ordinary managed ownership, so an external
+// Provider becomes a CONFLICT and central overwrite is disabled forever.
+let plan = build_preview_plan(scope, project_id, requests, redactor)?;
+```
+
+#### Correct
+
+```rust
+// Only the global Provider profile path gets the narrowly-scoped initial exception;
+// all other resources retain the ordinary fail-closed planner.
+let plan = build_profile_preview_plan(scope, project_id, requests, redactor)?;
+```
 
 ---
 
@@ -233,8 +324,10 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
   wrappers only map resource-specific fields or status diagnostics.
 - Adapter codecs must not depend on Profiles database records or read process
   environment; Profiles retains orchestration, validation, redaction, and persistence.
-- Readopt is one SQLite `IMMEDIATE` transaction. A missing target clears its baseline
-  and managed items; an observed target refreshes both hashes and each surviving item.
+- Baseline reconciliation is one SQLite `IMMEDIATE` transaction and is an internal
+  helper only. A missing target clears its baseline and managed items; an observed
+  target refreshes both hashes and each surviving item. Product-level native adoption
+  must update the matched central entity as well and is never baseline-only.
 - Canonical Hook events are converted to the target's native key before projection
   lookup, including Cursor's camelCase event names.
 
@@ -243,8 +336,8 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
 | Condition                                          | Required result                                                      |
 | -------------------------------------------------- | -------------------------------------------------------------------- |
 | Resource/item row version exceeds `u32`            | Stable invalid-input error; preview is not persisted                 |
-| Item is absent from an observed projection         | Remove only that managed item during readopt                         |
-| Target is missing or unreadable during readopt     | Clear baseline/items or return conflict; never write a native target |
+| Item is absent from an observed projection         | Remove only that managed item during reconciliation                   |
+| Target is missing or unreadable during reconciliation | Clear baseline/items or return conflict; never write a native target |
 | Cursor Hook canonical event has no native mapping  | Treat the item as absent; no guessed event key                       |
 | Cursor Provider codec requested                    | Explicit unsupported error and zero native reads/writes              |
 | Sync SQL operation affects an unexpected row count | Preserve the existing database/stale error operation                 |
@@ -262,7 +355,8 @@ let preview = build_preview_plan(scope, project_id, requests, &redactor)?;
 
 - Unit-test each ManagedArtifact hash path, including Cursor canonical-to-native Hook
   conversion and duplicate-claim protection.
-- Test MCP/Skill/Hook preview row-version collection and readopt missing/drifted cases.
+- Test MCP/Skill/Hook preview row-version collection and reconciliation of
+  missing/drifted cases; test ExternalChangePlan adoption separately.
 - Test each Provider codec ownership/render/discovery contract and Cursor unsupported.
 - Run generated binding checks and the full backend/frontend quality gate after any
   helper signature or descriptor field change.
@@ -469,27 +563,28 @@ ProviderImportResultDto`; Prompt keeps the single-candidate
 - Native synchronization is a separate two-step contract:
   `preview_{provider,prompt}_sync(tool) -> PreviewPlan`, then
   `apply_profile_preview(ApplyProfilePreviewInput) -> ApplyResult`.
-- Provider conflict recovery adds a typed baseline-only command:
-  `readopt_provider_target(ReadoptProviderTargetInput { tool, target_path }) ->
-ReadoptProviderTargetResultDto { target_path }`.
+- Passive drift exposes an `ExternalChangePlan` carrying the exact target path,
+  ownership, observed full/managed hashes, row versions, redacted diff, and
+  `canAdoptNative` / `canOverwriteCentral` capabilities. Actions consume the plan
+  through typed commands; baseline reconciliation remains internal.
 
 ### 3. Contracts
 
 - Profile names are unique per tool with `NOCASE` semantics. Update, activation,
   and deletion require the caller's `row_version`; active-row changes and the
   one-active-per-tool invariant are committed in one `IMMEDIATE` transaction.
-- Provider and Prompt CRUD change only SQLite central intent. Native discovery is
-  read-only, stores a redacted import preview, and rescans the full hash before a
-  confirmation atomically adopts the profile and baseline.
-- Provider readopt resolves the descriptor from the explicit environment and requires
-  `target_path` to exactly equal the canonical descriptor path. It scans with the same
-  Provider codec ownership as Preview, then updates only the target's full/managed
-  hashes in one SQLite `IMMEDIATE` transaction. `Observed` refreshes hashes, `Missing`
-  clears them, and parse/permission/type/path-safety failures return a recoverable
-  conflict. It never writes the native file, central profile rows, or a Preview.
-- A successful Provider readopt does not make the old conflict Preview consumable. The
-  caller must invalidate affected queries and persist a fresh Preview; Apply continues
-  to enforce Preview status, target identity, hashes, and every bound row version.
+- Provider and Prompt CRUD change SQLite central intent, return affected scopes, and
+  immediately execute safe persisted Previews. Native discovery is read-only, stores
+  redacted evidence, and rescans the full hash before an import or action.
+- Provider native adoption resolves the descriptor from the explicit environment,
+  requires the plan path to exactly equal the canonical descriptor path, and uses the
+  same Provider codec ownership as Preview. It updates the uniquely matched central
+  profile and managed baseline under the plan's row-version/hash guard. Missing,
+  parse, permission, type, and path-safety failures remain recoverable in-app errors;
+  no native write occurs for a failed plan.
+- A consumed plan cannot be replayed. Apply and adoption both enforce plan status,
+  target identity, hashes, and every bound row version; a changed observation returns
+  `STALE_PREVIEW` and leaves central/native state untouched.
 - Claude Provider ownership always includes the four reserved env keys
   (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
   `ANTHROPIC_MODEL`) plus the union of previous and desired profile-declared env
@@ -555,10 +650,10 @@ ReadoptProviderTargetResultDto { target_path }`.
 | Extra env with reserved key, NUL/newline, or credential-looking non-numeric value | `INVALID_INPUT`                                                                                      |
 | Claude host evidence unknown, malformed, or present                               | policy-blocked preview; zero external writes                                                         |
 | Import target hash changes before confirmation                                    | `STALE_PREVIEW`; preserve target                                                                     |
-| Native target changes after sync preview                                          | `STALE_PREVIEW`/conflict; preserve target                                                            |
-| Provider readopt path is empty, cross-tool, or no longer canonical                | `INVALID_INPUT`; no baseline change                                                                  |
-| Provider readopt target is malformed, unreadable, unsafe, or type-changed         | recoverable `CONFLICT`; native target and baseline are preserved                                     |
-| Apply receives the pre-readopt conflict Preview                                   | `CONFLICT`/`STALE_PREVIEW`; no native write                                                          |
+| Native target changes after sync preview                                          | `STALE_PREVIEW`; preserve target and allow one fresh plan                                             |
+| ExternalChangePlan path is empty, cross-tool, or no longer canonical              | `INVALID_INPUT`; no central/native change                                                            |
+| ExternalChangePlan target is malformed, unreadable, unsafe, or type-changed       | recoverable `CONFLICT`; central/native target and baseline are preserved                            |
+| Apply/adopt receives a consumed or mismatched plan                                | `CONFLICT`/`STALE_PREVIEW`; no native write                                                          |
 
 ### 5. Good/Base/Bad Cases
 
@@ -567,9 +662,9 @@ ReadoptProviderTargetResultDto { target_path }`.
   Phase 3 engine while unrelated native fields remain byte/semantically intact.
 - Base: CRUD changes only SQLite central intent and returns a masked DTO; native
   files are unchanged until a separate preview is consumed.
-- Good recovery: readopt an externally changed, readable Provider target, verify the
-  native bytes and central row version are unchanged, then apply only a newly persisted
-  Preview.
+- Good recovery: inspect a readable Provider ExternalChangePlan, choose native adoption
+  or central overwrite, and verify the selected action updates only the observed,
+  uniquely matched target before the next scan reports in-sync.
 - Bad: a stale activation, host-managed Claude setting, reserved Codex provider,
   credential-bearing URL, secret extension value, or changed import target fails
   closed without an external write.
@@ -588,8 +683,8 @@ ReadoptProviderTargetResultDto { target_path }`.
 - Search serialized import previews, sync previews, RPC DTOs, `sync_items`, and journals
   for every fixture key/token/header; expected matches are zero.
 - Provider drift tests must cover exact-path validation, unreadable/parse failure with
-  unchanged baseline, old Preview rejection, a new Preview ID after readopt, and the
-  complete readopt → Preview → Apply chain without secret-bearing output.
+  unchanged baseline, consumed-plan rejection, stale hash/row versions with zero
+  writes, and both ExternalChangePlan actions without secret-bearing output.
 - Regenerate and check Specta bindings whenever a profile command or DTO changes.
 
 ### 7. Wrong vs Correct
@@ -610,21 +705,20 @@ let preview = preview_provider_sync(database, context, tool)?;
 let result = apply_profile_preview(state, preview.preview_id, tool, ArtifactKind::Provider)?;
 ```
 
-For conflict recovery, do not write the native target from the readopt handler:
+For external-change handling, do not write the native target from a status scan:
 
 #### Wrong
 
 ```rust
-readopt_provider_target(input)?;
-fs::write(input.target_path, desired_json)?; // readopt is not Apply
+let plan = scan_external_change(input)?;
+fs::write(plan.target_path, desired_json)?; // status scan is not an authorized action
 ```
 
 #### Correct
 
 ```rust
-readopt_provider_target(database, environment, &input)?;
-let fresh = preview_provider_sync(database, environment, &mut redactor, input.tool)?;
-apply_profile_preview(/* exact fresh.preview_id and identity */)?;
+let plan = prepare_external_change_plan(database, environment, &input)?;
+apply_external_change_plan(/* exact plan.preview_id, action, and identity */)?;
 ```
 
 ### Scenario: Global-only Prompt profiles
@@ -1380,48 +1474,99 @@ let status = state.official_logins().status(&context, &redactor, Tool::Codex)?;
   `AppState::environment_state()` in `app::tests`; frontend covers the button, the
   `environment-ready` invalidation, and the probing retry predicate.
 
-## Scenario: Baseline re-adoption for externally rewritten managed targets
+## Scenario: ExternalChangePlan 与 managed-item 基线
 
 ### 1. Scope / Trigger
 
-- Trigger: any change to `verify_managed_item_baselines`, `readopt_mcp_target`,
-  `PreviewTargetRequest.readopt_available` / `baseline_mismatched_items`, or the
-  preview conflict classification for managed-item targets.
+- Trigger: any change to `verify_managed_item_baselines`, managed-item projection,
+  drift assessment, status-only scans, `ExternalChangePlan` persistence, or the
+  Provider/Prompt/MCP/Skill/Hook/Agent external-change action commands.
 
 ### 2. Signatures
 
-- `verify_managed_item_baselines` returns `(TargetScan, Vec<String>)`; the vec
-  lists external keys whose on-disk hash diverges from
-  `managed_items.last_applied_item_hash` (or that vanished from disk; a missing
-  target file lists every managed key).
-- `readopt_mcp_target(database, environment, input)` refreshes BOTH baseline
-  levels: `managed_targets.baseline_full_hash/baseline_managed_hash` and every
-  `managed_items.last_applied_item_hash`.
+- `verify_managed_item_baselines` returns `(TargetScan, Vec<String>)`; the vec lists
+  external keys whose on-disk hash diverges from
+  `managed_items.last_applied_item_hash` (or vanished from disk). It is an internal
+  reconciliation helper and never an RPC authorization surface.
+- `ExternalChangePlanDto` binds artifact kind, tool/project scope, descriptor/path,
+  ownership, observed full/managed hashes, redacted diff, participating row versions,
+  `can_adopt_native`, `can_overwrite_central`, and stable blocked reasons.
+- `prepare_external_change_plan` persists the exact evidence; `apply_external_change_plan`
+  consumes it with `ExternalChangeAction::{AdoptNative, OverwriteCentral}`. Every
+  Provider/Prompt/MCP/Skill/Hook/Agent adoption executor must pass the plan's observed
+  hash and row-version evidence and update the matched central entity; resource-specific
+  identity and lossless-mapping checks remain the final capability boundary.
 
 ### 3. Contracts
 
-- Re-adoption only mutates baseline rows. Central records, assignments, and
-  native files must not change; row_version bumps come from the existing
-  triggers and invalidate older persisted previews naturally.
-- Ownership used to rescan must be built from the current central intent with
-  the same construction as `prepare_mcp_sync`, otherwise the next preview
-  immediately re-flags the target as externally changed.
-- `TargetScan::Missing` clears item rows and nulls both target hashes (the
-  schema requires both NULL or both set); the next preview returns to the
-  mergeable "missing, create" state.
-- Parse/permission/target-type/failed scans refuse re-adoption with a stable
-  conflict error; capability/policy/trust blocks never set
-  `readopt_available`.
-- The command takes the `write_operations` mutex so an in-flight apply cannot
-  interleave with baseline rewrites.
+- Status scans are read-only: they do not create managed identity rows, mutate central
+  records, refresh baselines, or write native files. They may report
+  `ExternalOwnedChange` with redacted evidence.
+- Central intent mutations default to `OverwriteCentral`; the ordinary persisted
+  Preview → Apply engine still owns descriptor, ownership, path/type, row-version,
+  hash, single-writer, snapshot, journal, and rollback checks.
+- `AdoptNative` is allowed only for a unique, lossless managed identity. It updates the
+  central entity, participating managed item, and target baseline under one guarded
+  operation. Renames, anonymous entries, unknown fields, ambiguous matches, and secret
+  values remain blocked and route to an in-app match/import flow.
+- Any change after plan creation returns `STALE_PREVIEW` and performs zero writes. A
+  caller may re-plan the same scope once; a second stale result is terminal for that
+  scope. Consumed plans cannot be replayed.
+- The internal baseline helper may clear missing targets or refresh surviving item
+  hashes, but it is never presented as native adoption and never replaces the action
+  contract.
 
-### 4. Tests Required
+### 4. Validation & Error Matrix
 
-- Conflict preview carries the mismatched external keys and
-  `readopt_available=true`; after re-adoption the next preview is mergeable and
-  apply rewrites central intent.
-- Missing-file re-adoption returns to the mergeable missing state.
-- Unreadable targets refuse with a stable error and central rows are untouched.
+| Condition | Required result |
+| --- | --- |
+| Safe owned drift with complete observation | Non-conflict plan with overwrite/adopt capability |
+| Unmanaged-only drift | Warning/no-op or deterministic merge; preserve unmanaged fields |
+| Parse/permission/policy/trust/unsupported/type/path error | Stable blocked plan; zero writes |
+| Missing or incomplete baseline | Explicit missing/blocked state; no guessed ownership |
+| Plan hash, descriptor, ownership, or row version changed | `STALE_PREVIEW`; zero writes |
+| Adopt match is non-unique or lossy | In-app match/import capability; never guess |
+| Plan already consumed | `CONFLICT`; no second mutation |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a managed MCP item changes on disk; the plan contains a redacted item diff,
+  central overwrite safely updates the observed target, and native adoption updates the
+  unique central item plus baseline so the next scan is in-sync.
+- Base: a selector target preserves unknown fields, a whole-document target replaces
+  only the owned document, and a symlink target changes only selected managed names.
+- Bad: treating status DTOs as write authorization, refreshing only baseline rows while
+  calling it adoption, accepting a stale plan, or serializing a token/header in the diff.
+
+### 6. Tests Required
+
+- Cover all six artifact kinds for read-only status scans, redacted plan serialization,
+  safe overwrite, unique native adoption, unmappable match/import fallback, and
+  central-entity/item/baseline consistency.
+- Cover missing, incomplete, parse, permission, policy, trust, unsupported, unsafe path,
+  target-type, stale hash, stale row-version, duplicate claim, and consumed-plan cases;
+  assert zero native writes on every blocked path.
+- Cover selector unknown-field preservation, whole-document replacement, symlink sibling
+  protection, snapshot/journal creation, rollback, and staging cleanup for adoption.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// 现场扫描不是授权，也不能只刷新基线冒充采纳。
+scan_target(&descriptor)?;
+db::update_managed_baseline(database, target_id)?;
+fs::write(path, desired)?;
+```
+
+#### Correct
+
+```rust
+let plan = prepare_external_change_plan(database, environment, scope)?;
+apply_external_change_plan(database, environment, plan.id, action)?;
+// Apply rechecks hashes/rows and adoption updates the matched central entity.
+```
 
 ---
 
@@ -1692,8 +1837,9 @@ descriptionRedacted: true, fileName, parseError? }`. Hook and Agent display data
 - Good: register a fixture project, list native MCP/Skill items, persist a disable
   preview, confirm Apply, rescan still shows `disabled` with restore, then restore
   siblings/tree/bytes without rewriting unrelated entries.
-- Base: register/rescan never writes project files. `applyMode: "direct"` still
-  only creates a persisted preview; Apply waits for explicit confirm.
+- Base: register/rescan never writes project files. An explicit project-native
+  disable/restore click consumes its persisted Preview immediately; passive rescan
+  remains read-only.
 - Bad: auto-import to the central library, treat empty-baseline identity as
   ownership, observe or auto-Apply a project Prompt/Rules file, leak MCP secrets
   into `safeSummary`, skip `snapshot_is_referenced` in a new cleanup path, or
@@ -1802,10 +1948,12 @@ hooks: [{type:"command", command, timeout?}]}]}}`; zcode
 - Initial target with empty hooks subtree (`hook_initial_adopt == true`,
   NULL/NULL baseline) → assessed as mergeable `ExternalNonOwnedChange` with
   diagnostic `HOOK_TARGET_INITIAL_EMPTY_HOOKS`, never Conflict.
-- Initial target with non-empty hooks subtree → stays `ExternalOwnedChange`
-  (readopt_available) until the user imports or readopts.
-- Readopt relocates items by (event, matcher) group + unclaimed entry; groups
-  gone → item removed. Empty hash match alone must NOT be treated as removal.
+- Initial target with non-empty hooks subtree → stays `ExternalOwnedChange` with a
+  plan capability only when each item is uniquely representable; otherwise expose
+  an in-app match/import reason.
+- Baseline reconciliation relocates items by (event, matcher) group + unclaimed
+  entry; groups gone → item removed. Empty hash match alone must NOT be treated as
+  removal. Native adoption additionally updates the matched central Hook entity.
 
 ### 5. Good/Base/Bad Cases
 
@@ -1825,7 +1973,7 @@ hooks: [{type:"command", command, timeout?}]}]}}`; zcode
   mutual-exclusion triggers.
 - `tests/hooks_e2e.rs` — four-tool Preview → Apply with native coexistence
   assertions (claude env preserved, codex description preserved, zcode
-  `mcp.servers` preserved), snapshot ledger, external drift → readopt → in_sync.
+  `mcp.servers` preserved), snapshot ledger, external drift → plan action → in_sync.
 - `src/features/hooks/hooks-page.test.tsx` — assignment disabled for
   event-unsupported tool, preview → apply argument contract.
 
@@ -1843,7 +1991,7 @@ if hashes.contains(&item.last_applied_item_hash) { updated += 1 } else { removed
 
 ```rust
 // 外部键自带 (event, matcher) 定位信息；接管时按分组认领未匹配条目，
-// 刷新 last_applied_item_hash，保持与 MCP readopt 相同的语义。
+// 内部刷新 last_applied_item_hash；产品采纳还必须更新中央 Hook 实体。
 let mut groups = native_group_hashes(observed, events_root(tool));
 let relocated = if let [event, _identity, matcher] = parts.as_slice() {
     groups.get_mut(&(event.to_owned(), matcher.to_owned()))
@@ -1968,7 +2116,7 @@ event}]`.
   repeated rendering.
 - E2E: Claude and Codex settings → persisted Preview(Update) → Apply → native fields;
   clear settings → Preview(Update) → Apply → intersection-only bytes; also cover
-  drift/readopt/disable/restore.
+  drift/plan-action/disable/restore.
 - Cross-layer: regenerate/check bindings, frontend form payload/validation/badge and
   import presentation tests, full Rust/TypeScript quality gates.
 

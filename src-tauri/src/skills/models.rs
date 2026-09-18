@@ -5,7 +5,7 @@ use serde_json::Value;
 use specta::Type;
 
 use crate::{
-    domain::{SkillStatus, SyncStatus, Tool, TrustStatus},
+    domain::{SkillStatus, SyncScopeDto, SyncStatus, Tool, TrustStatus},
     sync::{PreviewPlan, SkillTakeoverEntryType},
 };
 
@@ -38,6 +38,38 @@ pub struct VersionedSkillInput {
     pub row_version: u32,
 }
 
+/// 将已存在的 Skill managed target 中可唯一配对的原生目录采纳回中央库。
+///
+/// 该合同与 Prompt/Hook/Agent 的外部变化动作保持一致：调用方必须先消费同一份
+/// ExternalChangePlan，传入目标身份、目标行版本、managed item/资源行版本和双
+/// observed hash。它不接受 preview id，也不复用中央内容采纳（后者不会复制原生
+/// 目录或更新 target projection）。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptSkillNativeInput {
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub target_id: String,
+    pub target_row_version: u32,
+    pub target_path: String,
+    /// Preview 绑定的中央 Skill、项目和 managed item 行版本；目标行版本单独传入，
+    /// 若调用方同时携带目标行也必须与 `target_id/target_row_version` 一致。
+    pub row_versions: Vec<crate::sync::DatabaseRowVersion>,
+    pub observed_full_hash: Option<String>,
+    pub observed_managed_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptSkillNativeResultDto {
+    pub tool: Tool,
+    /// 实际更新了中央 source tree 的 Skill 名称；没有变化的条目不会重复报告。
+    pub adopted: Vec<String>,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDto {
@@ -51,6 +83,9 @@ pub struct SkillDto {
     pub diagnostic_code: Option<String>,
     pub global_tools: Vec<Tool>,
     pub row_version: u32,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -69,6 +104,9 @@ pub struct SkillContentPreviewDto {
 pub struct DeleteSkillResultDto {
     pub id: String,
     pub deleted: bool,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]

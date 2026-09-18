@@ -6,7 +6,7 @@
 
 复制导入只创建私有中央副本，不自动创建 assignment、managed target/item、同步历史或原生链接。原文件、目录、链接文本和权限不变；复制成功不能声称原安装已受管。之后用户主动同步时，同名外部安装仍受原有冲突保护。中央副本被用户改写并出现 `CENTRAL_SKILL_CONTENT_CHANGED` 时，用 `adopt_skill_content` 把当前中央文件采纳为权威内容；不得从来源重拷、不得改写工具目录符号链接、不得走 Preview/Apply。未采纳前内容预览、同步和删除仍阻断。
 
-显式接管是独立流程：只处理当前工具**正式全局目标根的直属精确同名入口**，且该外部符号链接或真实目录的完整树 hash 必须与一个 Ready 中央副本一致。接管准备可以创建/复用全局 assignment，但只能生成持久化预览；只有用户随后确认 Apply 才能替换入口。兼容来源（`*.agents`）、项目目标、不同内容、中央私有链接和内置集合永远不能借此绕过普通冲突保护。
+显式接管是独立流程：只处理当前工具**正式全局目标根的直属精确同名入口**，且该外部符号链接或真实目录的完整树 hash 必须与一个 Ready 中央副本一致。接管准备可以创建/复用全局 assignment，成功后立即消费同一持久化 Preview 完成 Apply；不再要求第二次确认。兼容来源（`*.agents`）、项目目标、不同内容、中央私有链接和内置集合永远不能借此绕过普通冲突保护。
 
 ## 2. 命令与存储签名
 
@@ -100,8 +100,8 @@ Pi 的全局来源 kind 为 `pi_agent_global`，其路径由显式环境的
    `pi_agent_global`；复制继续调用 `confirm_skill_import`，接管继续调用
    `prepare_skill_takeover`，不增加 Pi 专用命令。
 3. **Contracts**：来源根只能由启动时捕获的
-   `ExplicitEnvironment::pi_agent_dir()/skills` 派生。复制只创建中央副本；接管准备只返回
-   持久化 `PreviewPlan`，Apply 仍需用户用精确 `preview_id` 确认。
+   `ExplicitEnvironment::pi_agent_dir()/skills` 派生。复制只创建中央副本；接管准备返回
+   持久化 `PreviewPlan` 后由服务端立即消费精确 `preview_id` 完成 Apply。
 4. **Validation & Error Matrix**：未映射/不支持/策略阻断 → `unavailable` 且不读候选；
    缺失根 → `missing`；空根 → `empty`；入口 basename 与 frontmatter `name` 不同、非直属、
    指向已知 Ready 中央副本或 hash/身份 stale → 不提供接管资格或在准备时拒绝。
@@ -112,7 +112,7 @@ Pi 的全局来源 kind 为 `pi_agent_global`，其路径由显式环境的
    副作用、同名外链与目录的 Preview→Apply、中央链接排除，以及确认前来源变化失败。
 7. **Wrong vs Correct**：错误做法是看到 `<pi_agent_dir>/skills` 下存在同 hash 目录就自动
    接管；正确做法是先验证直属 basename、frontmatter name、完整树 hash、入口与中央身份，
-   再生成持久化 Preview，并等待显式 Apply。
+   再生成并立即消费精确的持久化 Preview；用户的“接管所选项”主操作仍是授权边界。
 
 Cursor 的同步目标只允许 `$HOME/.cursor/skills` 或登记项目的
 `<root>/.cursor/skills`；`$HOME/.agents/skills` 对 Cursor 也仅是导入来源（kind
@@ -152,7 +152,7 @@ hash、入口类型、no-follow 身份指纹、中央 Skill ID/path/hash 都写�
 `PreviewPlan`；持久化预览 envelope 额外保存服务端构造的 `SkillTakeoverEntry`，客户端
 不能重建或修改这些证据。接管允许覆盖的唯一首次冲突是：目标无任何 baseline/item，
 before 投影中的每个被替换名称都有精确接管证据，desired 对应中央路径，其他未知兄弟
-完全不变。预览必须带 `SKILL_TAKEOVER_REQUIRES_CONFIRMATION` 警告。
+完全不变。预览保留完整接管 evidence、hash、row version 与回滚信息，但不再添加确认 warning。
 
 项目原生 Skill 禁用/恢复复用同一套完整树 digest、no-follow 身份和 `sync` Apply，但
 `central_skills_root` 为 `None`。回滚外部 symlink 入口必须走
@@ -201,9 +201,9 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 默认不勾选，只有 importable 可选。确认同步上锁，禁关闭/取消/重扫/双提交。失败后必须新扫描；重扫清空旧选择和错误。成功仅失效 `skillKeys.all`，等待列表刷新再关闭并恢复焦点。若确认成功但列表刷新失败，明确显示已复制，不能再次提交旧令牌。不得隐式调用 assignment、同步 preview 或 Apply。
 
 对话框必须把“复制到中央库”和“接管正式目录”分区展示并维护独立选择。接管按钮只调用
-`prepareSkillTakeover`，成功后由 `SkillsPage` 打开返回的 `ChangePreviewDialog`；即使用户
-偏好是 `direct` 也禁止自动 Apply。接管准备期间与列表刷新期间沿用同一模态锁和焦点
-约束。文案必须说明外链源不变、目录会先形成完整树快照，并明确准备成功仍需审阅 Apply。
+`prepareSkillTakeover`，成功后由 `SkillsPage` 立即消费返回的持久化 Preview。接管准备期间
+与列表刷新期间沿用同一模态锁和焦点约束。文案必须说明外链源不变、目录会先形成完整树快照，
+并明确准备成功后会在应用内完成 Apply。
 
 未分配 Skills 的初始诊断必须同时满足：通用状态 `external_non_owned_change`、两个 baseline hash 都空、existing managed items 和 desired assignments 都空、成功扫描为 `ObservedDocument::SymlinkDirectory`。
 
@@ -214,10 +214,10 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 | 无 desired、目标缺失                                                    | 保留 missing / 待初始化                                         |
 | 无 desired，满足未分配初始条件，目录无条目                              | `SKILL_TARGET_INITIAL_EMPTY` / 空目录，待配置                   |
 | 无 desired，满足未分配初始条件，目录有条目                              | `SKILL_TARGET_INITIAL_UNMANAGED` / 未纳入同步管理               |
-| 有 desired，满足首次待同步全部条件，目标缺失或有可合并的非受管目录内容 | `SKILL_TARGET_INITIAL_SYNC_PENDING` / 已分配，待预览并确认同步 |
+| 有 desired，满足首次待同步全部条件，目标缺失或有可合并的非受管目录内容 | `SKILL_TARGET_INITIAL_SYNC_PENDING` / 已分配，待自动同步 |
 | 完整/半基线、existing managed items、受管漂移、损坏或策略/权限错误      | 不覆盖原状态/诊断/阻断                                          |
 
-仅生成过同步预览的 target 行不等于有 baseline。目录条目数不能当作合法技能数量，`.DS_Store` 等未知兄弟必须保留但不计为 Skill。共享展示 helper 必须同时匹配 status 与专用诊断；pending 只匹配 `missing` / `external_non_owned_change`，不能更改通用漂移算法、预览/Apply 冲突或 MCP 映射。分配成功反馈必须说明只更新中央意图、仍需显式预览和 Apply，且不得隐式调用二者。
+仅生成过同步预览的 target 行不等于有 baseline。目录条目数不能当作合法技能数量，`.DS_Store` 等未知兄弟必须保留但不计为 Skill。共享展示 helper 必须同时匹配 status 与专用诊断；pending 只匹配 `missing` / `external_non_owned_change`，不能更改通用漂移算法、预览/Apply 冲突或 MCP 映射。分配成功反馈必须说明只更新中央意图；后续主操作生成的同步 Preview 由服务端自动消费，不得隐式调用未授权的 assignment 或导入。
 
 ## 4. 验证与错误矩阵
 
@@ -253,12 +253,14 @@ SQLite 和文件系统没有跨资源原子事务。进程在 finalize 后、com
 - Base：只有 `.system` 或候选均已导入，显示原因，没有可确认令牌，不复制、不分配。
 - Bad：Claude 链接绕到 Codex `.system`、来源在确认中变化或第二项 SQL 失败，不能导入内置或留下可见半批次。
 - Good：中央 Skill 已分配、Claude 目录只有 `.DS_Store`、Codex/Cursor 目标缺失时，
-  三张工具卡片显示“已分配，待同步”；用户显式 Preview/Apply 后分别创建受管链接
-  并保留 `.DS_Store`。
+  三张工具卡片显示“已分配，待同步”；用户的分配主操作完成后由服务端自动消费
+  Preview/Apply，分别创建受管链接并保留 `.DS_Store`。
 - Bad：仅看到 desired assignment 就覆盖半基线、同名外部目录或中央副本损坏的真实诊断，或分配成功后自动 Apply。
-- Good：Cursor 正式目录中 `one` 外链与 Ready 中央副本完全一致；用户在接管分区勾选，审阅带警告预览后 Apply，外部目标保持原 inode/内容。
+- Good：Cursor 正式目录中 `one` 外链与 Ready 中央副本完全一致；用户在接管分区勾选
+  后，服务端自动消费持久化 Preview/Apply，外部目标保持原 inode/内容。
 - Base：真实目录接管后可从 `directory_tree` 恢复点恢复；恢复后显示为外部漂移，用户自行决定是否再次接管。
-- Bad：因为设置了 direct 就跳过接管预览，或把 `.agents/skills` 中的兼容别名当成可接管正式入口。
+- Bad：因为设置了旧 direct 选项就绕过接管证据，或把 `.agents/skills` 中的兼容别名当成
+  可接管正式入口。
 - Good：用户改了已导入的中央 `SKILL.md` 后点「同步更改」，记录恢复 Ready，工具目录符号链接不变。
 - Bad：把「同步更改」做成从来源重拷、改写 symlink，或在 hash 漂移时通过内容预览 RPC 返回正文。
 - Good：输入公开单 Skill `tree` URL，所有资源按同一 commit SHA 下载并复制进中央库；`source_path` 保存服务端规范化 URL，assignment/managed/sync 表保持不变。
@@ -314,10 +316,10 @@ let evidence = library::resolve_skill_source_excluding(root, entry, &excluded)?;
 由固定 `raw.githubusercontent.com/{owner}/{repo}/{commit}/{path}` 边界自行逐段编码构造，
 禁重定向并在网络结束后才获取数据库锁。
 
-错误：把 `already_imported` 一律视为无操作，或在 direct 模式下直接替换正式目录入口。
+错误：把 `already_imported` 一律视为无操作，或绕过持久化 Preview 直接替换正式目录入口。
 
 正确：只有服务端私有证据证明“正式直属入口 + 同名同 hash 中央副本”时显示接管；准备
-命令只返回持久化预览，前端无条件交给 `ChangePreviewDialog`，Apply 再完成入口替换。
+命令返回持久化 Preview，前端立即消费精确 `previewId`，由 Apply 完成入口替换。
 
 错误：为避免“非受管变更”看起来像故障，只要 `desired` 非空就把目标显示为待同步。
 

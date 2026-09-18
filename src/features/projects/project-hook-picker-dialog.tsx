@@ -6,6 +6,7 @@ import {
   type HookEvent,
   type HookProjectOptionDto,
   type ProjectDto,
+  type SyncScopeDto,
   type Tool,
 } from "@/bindings/commands";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ interface ProjectHookPickerDialogProps {
   eventLabel: string;
   options: HookProjectOptionDto[];
   onClose: () => void;
-  onAssigned: (message: string) => void;
+  onAssigned: (message: string, scopes: SyncScopeDto[]) => Promise<void> | void;
 }
 
 /// 从中央库选择 Hook 追加到项目的指定事件分组。
@@ -49,10 +50,11 @@ export function ProjectHookPickerDialog(props: ProjectHookPickerDialogProps) {
           projectRowVersion: props.project.rowVersion,
         }),
       ),
-    onSuccess: async (_result, { option }) => {
+    onSuccess: async (result, { option }) => {
       await invalidateProjectScope(queryClient, ["project", "hook"]);
-      props.onAssigned(
+      await props.onAssigned(
         `${option.name} 已加入项目 ${props.eventLabel} 分组（${props.event}）。`,
+        result.affectedSyncScopes ?? [],
       );
     },
     onError: (mutationError) => {

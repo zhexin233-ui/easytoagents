@@ -3,8 +3,8 @@
 use crate::{
     db::{column_tool, sync::reject_active_writer as reject_active_writer_on, Database},
     domain::{
-        validate_global_assignment, validate_project_assignment, EntityId, SkillStatus, Tool,
-        TrustStatus,
+        stable_sync_scopes, validate_global_assignment, validate_project_assignment, ArtifactKind,
+        EntityId, SkillStatus, SyncScopeDto, Tool, TrustStatus,
     },
     error::AppError,
     skills::PreparedSkillRecord,
@@ -40,6 +40,57 @@ pub struct ManagedSkillItemRecord {
     pub external_key: String,
     pub last_applied_item_hash: String,
     pub row_version: i64,
+}
+
+/// 按原生目标路径定位的 Skill managed target。原生采纳还会核对输入携带的
+/// target id、tool、scope/project 与目标行版本，不能只按工具名或路径猜测。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SkillManagedTargetRecord {
+    pub id: String,
+    pub tool: Tool,
+    pub scope: crate::domain::Scope,
+    pub project_id: Option<String>,
+    pub target_path: String,
+    pub baseline_full_hash: Option<String>,
+    pub baseline_managed_hash: Option<String>,
+    pub baseline_projection_json: Option<String>,
+    pub row_version: i64,
+}
+
+/// 已完成文件树校验后的中央 Skill 更新；内容、item 与 target 必须由同一个
+/// SQLite IMMEDIATE 事务提交，避免只刷新 baseline 冒充原生采纳。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NativeSkillContentUpdate {
+    pub id: String,
+    pub row_version: u32,
+    pub content_hash: String,
+    pub frontmatter: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeSkillItemUpdate {
+    pub id: String,
+    pub target_id: String,
+    pub resource_id: String,
+    pub external_key: String,
+    pub row_version: u32,
+    pub item_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NativeSkillTargetUpdate {
+    pub id: String,
+    pub tool: Tool,
+    pub scope: crate::domain::Scope,
+    pub project_id: Option<String>,
+    pub target_path: String,
+    pub row_version: u32,
+    pub full_hash: String,
+    pub managed_hash: String,
+    pub projection: Value,
+    /// 在同一事务中复核的中央/项目/managed 行版本；目标行版本单独绑定在
+    /// `row_version`，但若 Preview 携带目标行也必须指向同一目标。
+    pub row_versions: Vec<crate::sync::DatabaseRowVersion>,
 }
 
 pub fn list_skills(database: &Database) -> Result<Vec<SkillRecord>, AppError> {
@@ -306,6 +357,44 @@ pub fn global_tools_for_all_skills(
         grouped.entry(skill_id).or_default().push(tool);
     }
     Ok(grouped)
+}
+
+/// 返回 Skill 当前所有显式 assignment 对应的同步 scope。
+pub fn sync_scopes_for_skill(
+    database: &Database,
+    skill_id: &str,
+) -> Result<Vec<SyncScopeDto>, AppError> {
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached(
+            "SELECT tool, NULL FROM skill_global_assignments WHERE skill_id = ?1
+             UNION ALL
+             SELECT tool, project_id FROM skill_project_assignments WHERE skill_id = ?1
+             UNION ALL
+             SELECT target.tool, target.project_id
+             FROM managed_items AS item
+             JOIN managed_targets AS target ON target.id = item.target_id
+             WHERE item.resource_kind = 'skill' AND item.resource_id = ?1
+             ORDER BY tool, project_id",
+        )
+        .map_err(|error| {
+            AppError::database(&path, "prepare_skill_sync_scopes").with_source(error)
+        })?;
+    let scopes = statement
+        .query_map([skill_id], |row| {
+            Ok(SyncScopeDto::new(
+                ArtifactKind::Skill,
+                column_tool(row, 0)?,
+                row.get(1)?,
+            ))
+        })
+        .map_err(|error| AppError::database(&path, "query_skill_sync_scopes").with_source(error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            AppError::database(&path, "decode_skill_sync_scopes").with_source(error)
+        })?;
+    Ok(stable_sync_scopes(scopes))
 }
 
 /// 通用的 `SELECT id, row_version FROM <table> WHERE id IN (...)`。
@@ -687,6 +776,283 @@ pub(crate) fn list_managed_skill_items_from_connection(
     Ok(items)
 }
 
+/// 按完整 `(tool, artifact_kind, target_path)` 查询 Skill 目标。
+///
+/// 数据库的唯一索引还包含 scope/project；这里显式拒绝同一工具下存在多个
+/// 同路径 Skill target 的异常状态，避免把一个计划误应用到另一条 scope。
+pub(crate) fn find_skill_managed_target(
+    database: &Database,
+    tool: Tool,
+    target_path: &str,
+) -> Result<Option<SkillManagedTargetRecord>, AppError> {
+    let database_path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached(
+            "SELECT id, tool, scope, project_id, target_path,
+                    baseline_full_hash, baseline_managed_hash,
+                    baseline_projection_json, row_version
+             FROM managed_targets
+             WHERE tool = ?1 AND artifact_kind = 'skill' AND target_path = ?2
+             ORDER BY scope, project_id, id",
+        )
+        .map_err(|error| {
+            AppError::database(&database_path, "prepare_find_skill_managed_target")
+                .with_source(error)
+        })?;
+    let rows = statement
+        .query_map(params![tool.as_str(), target_path], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, i64>(8)?,
+            ))
+        })
+        .map_err(|error| {
+            AppError::database(&database_path, "query_find_skill_managed_target").with_source(error)
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            AppError::database(&database_path, "decode_find_skill_managed_target")
+                .with_source(error)
+        })?;
+    let row = match rows.as_slice() {
+        [] => return Ok(None),
+        [row] => row,
+        _ => {
+            return Err(AppError::conflict(
+                "targetPath",
+                "Skill 原生目标路径对应多个 managed target，不能安全采纳",
+            ))
+        }
+    };
+    let parsed_tool = Tool::from_stable_str(&row.1)
+        .ok_or_else(|| AppError::invalid_input("targetTool", "数据库中的 Skill 目标工具无效"))?;
+    let scope = crate::domain::Scope::from_stable_str(&row.2).ok_or_else(|| {
+        AppError::invalid_input("targetScope", "数据库中的 Skill 目标 scope 无效")
+    })?;
+    if parsed_tool != tool {
+        return Err(AppError::conflict(
+            "targetTool",
+            "Skill 目标工具与采纳输入不一致",
+        ));
+    }
+    Ok(Some(SkillManagedTargetRecord {
+        id: row.0.clone(),
+        tool: parsed_tool,
+        scope,
+        project_id: row.3.clone(),
+        target_path: row.4.clone(),
+        baseline_full_hash: row.5.clone(),
+        baseline_managed_hash: row.6.clone(),
+        baseline_projection_json: row.7.clone(),
+        row_version: row.8,
+    }))
+}
+
+/// 在已完成文件树和 target 观察校验后，一次性提交 Skill 原生采纳。
+///
+/// 这条仓储入口故意不调用 `reject_active_writer`：外部变化动作在命令层先
+/// claim 了同一份 persisted preview，active writer 正是该 preview 本身。所有
+/// 行版本仍在本事务中 CAS 校验；因此未 claim 的直接调用也只能在没有其它写者
+/// 时成功，而不会绕过单写者或 stale 保护。
+pub(crate) fn adopt_native_skill(
+    database: &mut Database,
+    target: &NativeSkillTargetUpdate,
+    contents: &[NativeSkillContentUpdate],
+    items: &[NativeSkillItemUpdate],
+) -> Result<(), AppError> {
+    EntityId::parse(&target.id)?;
+    if let Some(project_id) = target.project_id.as_deref() {
+        EntityId::parse(project_id)?;
+    }
+    if !is_sha256(&target.full_hash) || !is_sha256(&target.managed_hash) {
+        return Err(AppError::invalid_input(
+            "observedHash",
+            "Skill 采纳缺少有效的目标 hash",
+        ));
+    }
+    if !target.projection.is_object() {
+        return Err(AppError::invalid_input(
+            "projection",
+            "Skill 采纳目标投影必须是对象",
+        ));
+    }
+    let projection_json = serde_json::to_string(&target.projection).map_err(|error| {
+        AppError::invalid_input("projection", "Skill 采纳基线无法序列化").with_source(error)
+    })?;
+    let database_path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_adopt_native_skill").with_source(error)
+        })?;
+
+    let actual_target = transaction
+        .query_row(
+            "SELECT tool, artifact_kind, scope, project_id, target_path,
+                    row_version, baseline_full_hash, baseline_managed_hash
+             FROM managed_targets WHERE id = ?1",
+            [&target.id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(&database_path, "verify_adopt_native_skill_target")
+                .with_source(error)
+        })?
+        .ok_or_else(|| AppError::stale_preview("adoptSkillNative", &target.target_path))?;
+    if actual_target.0 != target.tool.as_str()
+        || actual_target.1 != ArtifactKind::Skill.as_str()
+        || actual_target.2 != target.scope.as_str()
+        || actual_target.3 != target.project_id
+        || actual_target.4 != target.target_path
+        || u32::try_from(actual_target.5).ok() != Some(target.row_version)
+        || actual_target.6.is_none() != actual_target.7.is_none()
+    {
+        return Err(AppError::stale_preview(
+            "adoptSkillNative",
+            &target.target_path,
+        ));
+    }
+    if actual_target.6.is_none() {
+        return Err(AppError::conflict(
+            "skillAdopt",
+            "没有完整 Skill managed baseline，不能直接采纳",
+        ));
+    }
+    verify_native_skill_row_versions(&transaction, target, &database_path)?;
+
+    let mut content_ids = std::collections::BTreeSet::new();
+    for content in contents {
+        EntityId::parse(&content.id)?;
+        if !content_ids.insert(content.id.as_str()) {
+            return Err(AppError::invalid_input(
+                "rowVersions",
+                "Skill 采纳包含重复的 Skill 内容更新",
+            ));
+        }
+        if !is_sha256(&content.content_hash) || !content.frontmatter.is_object() {
+            return Err(AppError::invalid_input(
+                "skillContent",
+                "Skill 采纳内容或 frontmatter 无效",
+            ));
+        }
+        let frontmatter_json = serde_json::to_string(&content.frontmatter).map_err(|error| {
+            AppError::invalid_input("frontmatter", "Skill frontmatter 无法序列化")
+                .with_source(error)
+        })?;
+        let updated = transaction
+            .execute(
+                "UPDATE skills
+                 SET content_hash = ?2, frontmatter_json = ?3, status = 'ready'
+                 WHERE id = ?1 AND row_version = ?4",
+                params![
+                    content.id,
+                    content.content_hash,
+                    frontmatter_json,
+                    content.row_version
+                ],
+            )
+            .map_err(|error| map_skill_write_error(error, &database_path, "adopt_native_skill"))?;
+        if updated != 1 {
+            return Err(AppError::stale_preview("adoptSkillNative", &content.id));
+        }
+    }
+
+    let mut item_ids = std::collections::BTreeSet::new();
+    for item in items {
+        EntityId::parse(&item.id)?;
+        EntityId::parse(&item.target_id)?;
+        EntityId::parse(&item.resource_id)?;
+        if item.target_id != target.id || !item_ids.insert(item.id.as_str()) {
+            return Err(AppError::invalid_input(
+                "rowVersions",
+                "Skill 采纳包含不匹配或重复的 managed item",
+            ));
+        }
+        if !is_sha256(&item.item_hash) {
+            return Err(AppError::invalid_input(
+                "itemHash",
+                "Skill 采纳缺少有效的 managed item hash",
+            ));
+        }
+        let updated = transaction
+            .execute(
+                "UPDATE managed_items
+                 SET last_applied_item_hash = ?2
+                 WHERE id = ?1 AND target_id = ?3 AND resource_kind = 'skill'
+                   AND resource_id = ?4 AND external_key = ?5 AND row_version = ?6",
+                params![
+                    item.id,
+                    item.item_hash,
+                    item.target_id,
+                    item.resource_id,
+                    item.external_key,
+                    item.row_version
+                ],
+            )
+            .map_err(|error| {
+                AppError::database(&database_path, "adopt_native_skill_item").with_source(error)
+            })?;
+        if updated != 1 {
+            return Err(AppError::stale_preview("adoptSkillNative", &item.id));
+        }
+    }
+
+    let updated = transaction
+        .execute(
+            "UPDATE managed_targets
+             SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
+                 baseline_projection_json = ?4, last_status = 'in_sync'
+             WHERE id = ?1 AND tool = ?5 AND artifact_kind = 'skill'
+               AND scope = ?6 AND ifnull(project_id, '') = ifnull(?7, '')
+               AND target_path = ?8 AND row_version = ?9",
+            params![
+                target.id,
+                target.full_hash,
+                target.managed_hash,
+                projection_json,
+                target.tool.as_str(),
+                target.scope.as_str(),
+                target.project_id,
+                target.target_path,
+                target.row_version,
+            ],
+        )
+        .map_err(|error| {
+            AppError::database(&database_path, "adopt_native_skill_target").with_source(error)
+        })?;
+    if updated != 1 {
+        return Err(AppError::stale_preview(
+            "adoptSkillNative",
+            &target.target_path,
+        ));
+    }
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_adopt_native_skill").with_source(error)
+    })?;
+    Ok(())
+}
+
 fn verify_row_version(
     transaction: &rusqlite::Connection,
     table: &str,
@@ -797,4 +1163,81 @@ fn map_skill_write_error(
         AppError::database(database_path, operation)
     };
     app_error.with_source(error)
+}
+
+fn verify_native_skill_row_versions(
+    transaction: &rusqlite::Transaction<'_>,
+    target: &NativeSkillTargetUpdate,
+    database_path: &str,
+) -> Result<(), AppError> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut project_seen = false;
+    for row in &target.row_versions {
+        if !matches!(
+            row.entity_type,
+            crate::sync::DatabaseEntityType::Skill
+                | crate::sync::DatabaseEntityType::Project
+                | crate::sync::DatabaseEntityType::ManagedTarget
+                | crate::sync::DatabaseEntityType::ManagedItem
+        ) {
+            return Err(AppError::invalid_input(
+                "rowVersions",
+                "Skill 原生采纳包含不匹配的数据库行版本",
+            ));
+        }
+        EntityId::parse(&row.entity_id)?;
+        let key = (row.entity_type, row.entity_id.clone());
+        if !seen.insert(key) {
+            return Err(AppError::invalid_input(
+                "rowVersions",
+                "Skill 原生采纳包含重复的数据库行版本",
+            ));
+        }
+        if row.entity_type == crate::sync::DatabaseEntityType::ManagedTarget {
+            if row.entity_id != target.id || row.row_version != target.row_version {
+                return Err(AppError::stale_preview(
+                    "adoptSkillNative",
+                    &target.target_path,
+                ));
+            }
+            continue;
+        }
+        if row.entity_type == crate::sync::DatabaseEntityType::Project {
+            if target.project_id.as_deref() != Some(row.entity_id.as_str()) {
+                return Err(AppError::stale_preview(
+                    "adoptSkillNative",
+                    &target.target_path,
+                ));
+            }
+            project_seen = true;
+        }
+        let table = match row.entity_type {
+            crate::sync::DatabaseEntityType::Skill => "skills",
+            crate::sync::DatabaseEntityType::Project => "projects",
+            crate::sync::DatabaseEntityType::ManagedItem => "managed_items",
+            crate::sync::DatabaseEntityType::ManagedTarget => unreachable!(),
+            _ => unreachable!(),
+        };
+        let actual = crate::db::sync::load_row_version(
+            transaction,
+            table,
+            &row.entity_id,
+            database_path,
+            "verify_adopt_native_skill_row_version",
+        )?;
+        if actual.and_then(|value| u32::try_from(value).ok()) != Some(row.row_version) {
+            return Err(AppError::stale_preview("adoptSkillNative", &row.entity_id));
+        }
+    }
+    if target.project_id.is_some() && !project_seen {
+        return Err(AppError::stale_preview(
+            "adoptSkillNative",
+            &target.target_path,
+        ));
+    }
+    Ok(())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

@@ -144,19 +144,6 @@ pub fn apply_hook_preview(
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn readopt_hook_target(
-    state: State<'_, AppState>,
-    input: ReadoptHookTargetInput,
-) -> Result<ReadoptHookTargetResultDto, AppError> {
-    with_db(&state, |database| {
-        // 与 apply 互斥：接管期间不允许在途 apply 同时改写基线。
-        let _write_guard = state.lock_write_operations();
-        hooks::readopt_hook_target(database, &*state.environment()?, &input)
-    })
-}
-
-#[tauri::command(async)]
-#[specta::specta]
 pub fn discover_hook_import(
     state: State<'_, AppState>,
     input: DiscoverHookImportInput,

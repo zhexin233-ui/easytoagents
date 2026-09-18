@@ -68,6 +68,8 @@ pub(crate) enum SkillTakeoverEntryKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SkillTakeoverInspection {
+    /// `SKILL.md` frontmatter 中的稳定 identity；接管动作不得仅凭目录名猜测。
+    pub name: String,
     pub entry_type: SkillTakeoverEntryKind,
     pub fingerprint: String,
     pub content_hash: String,

@@ -260,7 +260,7 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
             ) : null}
             {takeover.isPending ? (
               <p role="status" className="text-sm">
-                正在生成预览…
+                正在接管所选 Skill…
               </p>
             ) : null}
             {preview ? (
@@ -404,8 +404,8 @@ export function SkillImportDialog(props: SkillImportDialogProps) {
               }}
             >
               {takeover.isPending
-                ? "正在生成预览…"
-                : `预览接管所选项（${selectedTakeoverCandidateIds.length}）`}
+                ? "正在接管…"
+                : `接管所选项（${selectedTakeoverCandidateIds.length}）`}
             </Button>
           </DialogFooter>
         </form>

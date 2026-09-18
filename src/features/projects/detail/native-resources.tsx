@@ -90,7 +90,7 @@ export function ProjectNativeResources({
           项目原生资源
         </h2>
         <p className="text-muted-foreground mt-1 text-xs">
-          禁用与恢复始终需要确认预览。
+          禁用与恢复会先生成一次性安全预览，然后立即应用并保留恢复快照。
         </p>
       </div>
       {nativeQuery.isPending ? (
@@ -191,7 +191,7 @@ function NativeResourceRow({
           ) : null}
           {resource.state === "conflict" ? (
             <p className="text-muted-foreground text-xs">
-              生效位置被重新占用或发生外部变化。恢复材料已保留，请先处理冲突。
+              生效位置被重新占用或发生外部变化。恢复材料已保留，目标状态恢复后可重试。
             </p>
           ) : null}
         </div>

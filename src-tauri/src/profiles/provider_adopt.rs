@@ -14,6 +14,8 @@ fn match_native_provider<'a>(
     provider_id: Option<&str>,
 ) -> Option<&'a DiscoveredProvider> {
     if let Some(provider_id) = provider_id {
+        // 一旦中央档案已有稳定 provider id，就不能因为当前恰好只有一份
+        // 档案/原生条目而把不同 id 猜成同一渠道；这类重绑必须走应用内匹配/导入。
         return native
             .iter()
             .find(|entry| entry.provider_id.as_deref() == Some(provider_id));
@@ -36,6 +38,12 @@ pub fn adopt_provider_native(
     input: AdoptProviderNativeInput,
 ) -> Result<AdoptProviderNativeResultDto, AppError> {
     ensure_profile_capability(input.tool, ArtifactKind::Provider)?;
+    if input.target_id.trim().is_empty() {
+        return Err(AppError::invalid_input(
+            "targetId",
+            "Provider 接管缺少受管目标身份",
+        ));
+    }
     if input.target_path.trim().is_empty() {
         return Err(AppError::invalid_input(
             "targetPath",
@@ -59,12 +67,21 @@ pub fn adopt_provider_native(
         return Ok(AdoptProviderNativeResultDto {
             tool: input.tool,
             adopted: Vec::new(),
+            affected_sync_scopes: Some(Vec::new()),
         });
     }
     let observed_full_hash = native
         .first()
         .map(|entry| entry.full_hash.clone())
         .unwrap_or_default();
+    if let Some(expected) = input.observed_full_hash.as_deref() {
+        if expected != observed_full_hash {
+            return Err(AppError::stale_preview(
+                "externalChangePlan",
+                "Provider 原生目标在计划生成后发生了变化",
+            ));
+        }
+    }
     let profiles = repository::list_provider_profiles(database, input.tool)?;
 
     let mut adoptions = Vec::new();
@@ -135,6 +152,7 @@ pub fn adopt_provider_native(
         return Ok(AdoptProviderNativeResultDto {
             tool: input.tool,
             adopted: Vec::new(),
+            affected_sync_scopes: Some(Vec::new()),
         });
     }
 
@@ -156,15 +174,24 @@ pub fn adopt_provider_native(
         .collect();
     crate::db::provider_imports::adopt_native_providers(
         database,
-        input.tool,
-        &input.target_path,
-        &observed_full_hash,
-        &baseline,
-        &adoptions,
-        &expected_versions,
+        crate::db::provider_imports::NativeProviderAdoptionRequest {
+            tool: input.tool,
+            target_path: &input.target_path,
+            observed_full_hash: &observed_full_hash,
+            baseline_projection: &baseline,
+            adoptions: &adoptions,
+            expected_versions: &expected_versions,
+            current_run_id: input.preview_id.as_deref(),
+            target_id: &input.target_id,
+            target_row_version: input.target_row_version,
+        },
     )?;
     Ok(AdoptProviderNativeResultDto {
         tool: input.tool,
         adopted: adopted_names,
+        affected_sync_scopes: Some(vec![SyncScopeDto::global(
+            ArtifactKind::Provider,
+            input.tool,
+        )]),
     })
 }

@@ -11,7 +11,11 @@ import {
 import { PromptsPage } from "@/features/prompts/prompts-page";
 import { centralListLayoutStorageKeys } from "@/components/use-persisted-central-list-layout";
 import { renderWithProviders } from "@/test/render";
-import { makePromptProfile } from "@/test/fixtures/dtos";
+import {
+  globalSyncScope,
+  makePromptProfile,
+  withAffectedSyncScopes,
+} from "@/test/fixtures/dtos";
 import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
@@ -66,7 +70,6 @@ const promptPreview: PreviewPlan = makePreviewPlan({
       },
       warningCodes: [],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,
@@ -121,7 +124,7 @@ beforeEach(() => {
   );
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
+    data: { enabledTools: ["claude", "codex"] },
   });
   vi.mocked(commands.listPromptProfiles).mockResolvedValue({
     status: "ok",
@@ -142,11 +145,7 @@ afterEach(() => {
 });
 
 describe("PromptsPage", () => {
-  it("直接应用模式下删除已分配提示词自动同步清理并 Apply", async () => {
-    vi.mocked(commands.getAppSettings).mockResolvedValue({
-      status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
-    });
+  it("删除已分配提示词按返回范围自动同步清理并 Apply", async () => {
     const assignedProfile: PromptProfileDto = makePromptProfile({
       ...promptProfile,
       globalTools: ["claude"],
@@ -157,7 +156,9 @@ describe("PromptsPage", () => {
     });
     vi.mocked(commands.deletePromptProfile).mockResolvedValue({
       status: "ok",
-      data: { id: assignedProfile.id, deleted: true },
+      data: withAffectedSyncScopes({ id: assignedProfile.id, deleted: true }, [
+        globalSyncScope("prompt", "claude"),
+      ]),
     });
     vi.mocked(commands.applyProfilePreview).mockResolvedValue({
       status: "ok",
@@ -182,9 +183,6 @@ describe("PromptsPage", () => {
         artifactKind: "prompt",
       }),
     );
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
     expect(
       await screen.findByText("已应用 1 个目标，可从快照恢复。"),
     ).toBeVisible();

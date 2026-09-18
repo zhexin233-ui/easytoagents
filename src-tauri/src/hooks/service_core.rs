@@ -49,7 +49,10 @@ pub fn create_hook(
         None => value,
     };
     match repository::insert_hook(database, &id, &value) {
-        Ok(record) => hook_dto(database, &record),
+        Ok(record) => {
+            let dto = hook_dto(database, &record)?;
+            Ok(with_affected_sync_scopes(dto, Vec::new()))
+        }
         Err(error) => {
             if adopted.is_some() {
                 let _ = fs::remove_dir_all(paths.central_hooks().join(&id));
@@ -69,7 +72,9 @@ pub fn update_hook(database: &mut Database, input: &UpdateHookInput) -> Result<H
         input.enabled,
     )?;
     let record = repository::update_hook(database, &input.id, input.row_version, &value)?;
-    hook_dto(database, &record)
+    let scopes = repository::sync_scopes_for_hook(database, &input.id)?;
+    let dto = hook_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
 }
 
 pub fn set_hook_enabled(
@@ -78,7 +83,9 @@ pub fn set_hook_enabled(
     enabled: bool,
 ) -> Result<HookDto, AppError> {
     let record = repository::set_hook_enabled(database, &input.id, input.row_version, enabled)?;
-    hook_dto(database, &record)
+    let scopes = repository::sync_scopes_for_hook(database, &input.id)?;
+    let dto = hook_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
 }
 
 pub fn delete_hook(
@@ -86,6 +93,7 @@ pub fn delete_hook(
     paths: &AppPaths,
     input: &VersionedHookInput,
 ) -> Result<DeleteHookResultDto, AppError> {
+    let scopes = repository::sync_scopes_for_hook(database, &input.id)?;
     repository::delete_hook(database, &input.id, input.row_version)?;
     // 外键 RESTRICT 保证删除时不存在任何分配（即无原生引用），
     // 中央脚本目录可安全清理；清理失败仅遗留无主文件，不影响正确性。
@@ -93,6 +101,7 @@ pub fn delete_hook(
     Ok(DeleteHookResultDto {
         id: input.id.clone(),
         deleted: true,
+        affected_sync_scopes: Some(scopes),
     })
 }
 
@@ -144,7 +153,11 @@ pub fn set_global_hook_assignment(
         input.assigned,
         input.row_version,
     )?;
-    hook_dto(database, &record)
+    let dto = hook_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::global(ArtifactKind::Hook, input.tool)],
+    ))
 }
 
 pub fn set_project_hook_assignment(
@@ -165,7 +178,15 @@ pub fn set_project_hook_assignment(
         input.hook_row_version,
         input.project_row_version,
     )?;
-    hook_dto(database, &record)
+    let dto = hook_dto(database, &record)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::project(
+            ArtifactKind::Hook,
+            input.tool,
+            input.project_id.clone(),
+        )],
+    ))
 }
 
 pub fn list_hook_projects(database: &Database) -> Result<Vec<HookProjectDto>, AppError> {
@@ -548,8 +569,14 @@ pub(crate) fn assess_hooks_drift(
     baseline: &ManagedTargetBaseline,
     scan: &TargetScan,
     tool: Tool,
+    baseline_mismatched_items: &[String],
 ) -> crate::sync::DriftAssessment {
-    let assessment = assess_drift(descriptor, baseline, scan);
+    let assessment = crate::sync::assess_drift_with_managed_item_mismatches(
+        descriptor,
+        baseline,
+        scan,
+        baseline_mismatched_items,
+    );
     if assessment.status == SyncStatus::ExternalOwnedChange
         && baseline.full_hash.is_none()
         && baseline.managed_hash.is_none()
@@ -597,20 +624,16 @@ fn prepare_hooks_sync(
     .into_iter()
     .filter(|record| record.enabled)
     .collect::<Vec<_>>();
-    let inherited_records = if scope == Scope::Project {
-        repository::list_assigned_hooks(database, input.tool, None)?
-            .into_iter()
-            .filter(|record| record.enabled)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
     let existing_baseline = find_hook_target_baseline(
         database,
         &descriptor,
         project.as_ref().map(|project| project.id.as_str()),
     )?;
-    if desired_records.is_empty() && inherited_records.is_empty() && existing_baseline.is_none() {
+    // Global assignments are loaded by the tool as a separate inherited
+    // layer; they do not create or populate a project hook file. A project
+    // target only exists for explicit project assignments (or to clean up a
+    // previously managed target that still has items).
+    if desired_records.is_empty() && existing_baseline.is_none() {
         return Ok(PreparedHooksSync {
             scope,
             project,
@@ -622,7 +645,7 @@ fn prepare_hooks_sync(
         None => ensure_hook_target(database, &descriptor, project.as_ref())?,
     };
     let existing_items = repository::list_managed_hook_items(database, &baseline.target_id)?;
-    if desired_records.is_empty() && inherited_records.is_empty() && existing_items.is_empty() {
+    if desired_records.is_empty() && existing_items.is_empty() {
         return Ok(PreparedHooksSync {
             scope,
             project,
@@ -643,14 +666,20 @@ fn prepare_hooks_sync(
         && baseline.managed_hash.is_none()
         && match &scan {
             TargetScan::Observed(observed) => initial_adopt_allowed(
-                desired_records.iter().chain(inherited_records.iter()),
+                desired_records.iter(),
                 observed,
                 input.tool,
                 environment.home(),
             ),
             _ => false,
         };
-    let assessment = assess_hooks_drift(&descriptor, &baseline, &scan, input.tool);
+    let assessment = assess_hooks_drift(
+        &descriptor,
+        &baseline,
+        &scan,
+        input.tool,
+        &baseline_mismatched_items,
+    );
     let readopt_available =
         assessment.status == SyncStatus::ExternalOwnedChange && !hook_initial_adopt;
     let (managed_items, remove_managed_item_ids) =
@@ -662,7 +691,7 @@ fn prepare_hooks_sync(
             project
                 .as_ref()
                 .map(|project| (project.id.as_str(), project.row_version)),
-            desired_records.iter().chain(inherited_records.iter()),
+            desired_records.iter(),
             &existing_items,
         )?;
     let git = project_root

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -8,11 +8,11 @@ import {
   type Tool,
 } from "@/bindings/commands";
 import { BlockingState } from "@/components/blocking-state";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ToolIconToggle } from "@/components/tool-icon-toggle";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { Button } from "@/components/ui/button";
+import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 import { useEnabledTools } from "@/components/use-enabled-tools";
 import { useNotify } from "@/components/use-notify";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
@@ -27,7 +27,6 @@ import {
   filterEnabledTools,
   toolMetadata,
 } from "@/lib/tool-metadata";
-import { appSettingsQueryOptions } from "@/lib/settings-api";
 import { cn } from "@/lib/utils";
 import { ProjectNativeResources } from "./native-resources";
 import type { ProjectResourceView } from "./resource-types";
@@ -35,12 +34,6 @@ import { ProjectMcpAssignments } from "./assignments/mcp";
 import { ProjectHookAssignments } from "./assignments/hook";
 import { ProjectSkillAssignments } from "./assignments/skill";
 import { ProjectAgentAssignments } from "./assignments/agent";
-
-interface OpenProjectPreview {
-  plan: PreviewPlan;
-  tool: Tool;
-  artifactKind: ProjectResourceView;
-}
 
 const PROJECT_RESOURCE_VIEWS = [
   {
@@ -79,10 +72,8 @@ export function ProjectDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const projectQuery = useQuery(projectQueryOptions(projectId));
-  const settingsQuery = useQuery(appSettingsQueryOptions());
   const interruptedQuery = useQuery(interruptedRunQueryOptions());
   const writerBlocked = interruptedQuery.data != null;
-  const directApply = settingsQuery.data?.applyMode === "direct";
   const [resourceView, setResourceView] = useState<ProjectResourceView>("mcp");
   const [toolView, setToolView] = useState<Tool>("claude");
   const enabledTools = useEnabledTools();
@@ -108,20 +99,25 @@ export function ProjectDetailPage() {
       : visibleTools;
   const [toolStatusOpen, setToolStatusOpen] = useState(false);
   const viewKey = projectViewKey(projectId, activeTool, activeResourceView);
-  const [openPreview, setOpenPreview] = useState<OpenProjectPreview | null>(
-    null,
-  );
+  // 原生资源 Preview 可能在 keyed 子树卸载后才返回；用 ref 保持当前视图，
+  // 防止晚到结果为过期的工具/资源组合执行动作。
+  const currentViewKeyRef = useRef(viewKey);
+  useLayoutEffect(() => {
+    currentViewKeyRef.current = viewKey;
+  }, [viewKey]);
   const { notify, clear } = useNotify();
   const applyMutation = useMutation({
-    mutationFn: async (preview: OpenProjectPreview) => {
+    mutationFn: async ({ plan }: { plan: PreviewPlan; viewKey: string }) => {
       return unwrapResult(
         await commands.applyProjectNativeResourcePreview({
-          previewId: preview.plan.previewId,
+          previewId: plan.previewId,
         }),
       );
     },
-    onSuccess: async () => {
-      setOpenPreview(null);
+    onSuccess: async (
+      _result,
+      { viewKey: requestViewKey }: { plan: PreviewPlan; viewKey: string },
+    ) => {
       await invalidateProjectScope(queryClient, [
         "project",
         "mcp",
@@ -129,6 +125,7 @@ export function ProjectDetailPage() {
         "hook",
         "agent",
       ]);
+      if (currentViewKeyRef.current !== requestViewKey) return;
       notify({
         kind: "success",
         message: "项目原生配置已通过持久化预览应用并完成写后验证。",
@@ -138,24 +135,47 @@ export function ProjectDetailPage() {
   const changeResourceView = (nextView: ProjectResourceView) => {
     if (nextView === resourceView) return;
     setResourceView(nextView);
-    setOpenPreview(null);
     applyMutation.reset();
     clear();
   };
 
-  // 直接应用模式下仍先生成持久化预览；只有与预览对话框 Apply 可用条件一致
-  // 的无冲突预览才跳过确认，冲突或错误一律回退到人工确认。
+  // 原生资源动作本身就是用户授权边界。Preview 仍提供 hash、row version
+  // 和恢复快照证据，但成功生成后立即由唯一的 Apply 内核消费。
   const handleNativePreview = (
     plan: PreviewPlan,
-    tool: Tool,
-    artifactKind: ProjectResourceView,
+    planTool: Tool,
+    planArtifactKind: ProjectResourceView,
   ) => {
-    setOpenPreview({ plan, tool, artifactKind });
+    if (
+      projectViewKey(projectId, planTool, planArtifactKind) !==
+      currentViewKeyRef.current
+    ) {
+      return;
+    }
+    if (plan.targets.length === 0) {
+      notify({ kind: "success", message: "当前项目原生资源无需变更。" });
+      return;
+    }
+    if (
+      plan.targets.some(
+        (target) =>
+          target.changeKind === "conflict" || target.errorCode !== null,
+      )
+    ) {
+      notify({
+        kind: "error",
+        message: "当前项目原生资源无法安全同步，请重试。",
+      });
+      return;
+    }
+    applyMutation.mutate({
+      plan,
+      viewKey: currentViewKeyRef.current,
+    });
   };
   const changeToolView = (nextTool: Tool) => {
     if (nextTool === toolView) return;
     setToolView(nextTool);
-    setOpenPreview(null);
     applyMutation.reset();
     clear();
   };
@@ -212,7 +232,8 @@ export function ProjectDetailPage() {
               code={project.pathStatus}
             />
           ) : null}
-          {applyMutation.isError ? (
+          {applyMutation.isError &&
+          applyMutation.variables?.viewKey === viewKey ? (
             <BlockingState
               title="应用项目预览失败"
               description={profileErrorText(applyMutation.error) ?? "应用失败"}
@@ -276,6 +297,9 @@ export function ProjectDetailPage() {
                       isProjectResourceKind(target.artifactKind),
                   )
                   .map((target) => {
+                    if (!isProjectResourceKind(target.artifactKind))
+                      return null;
+                    const targetArtifactKind = target.artifactKind;
                     const initialUnmanaged =
                       target.diagnosticCode ===
                       "PROJECT_TARGET_INITIAL_UNMANAGED";
@@ -287,7 +311,7 @@ export function ProjectDetailPage() {
                         <div className="flex items-center justify-between gap-3">
                           <p className="font-medium">
                             {toolLabel(target.tool)} ·{" "}
-                            {artifactLabel(target.artifactKind)}
+                            {artifactLabel(targetArtifactKind)}
                           </p>
                           {initialUnmanaged ? (
                             <SyncStatusBadge
@@ -311,6 +335,21 @@ export function ProjectDetailPage() {
                             诊断：{target.diagnosticCode}
                           </p>
                         ) : null}
+                        <ExternalChangeActions
+                          artifactKind={targetArtifactKind}
+                          tool={target.tool}
+                          projectId={project.id}
+                          status={target.status}
+                          onInvalidate={async () => {
+                            await invalidateProjectScope(queryClient, [
+                              targetArtifactKind,
+                            ]);
+                          }}
+                          onMatchOrImport={() => {
+                            setResourceView(targetArtifactKind);
+                            setToolView(target.tool);
+                          }}
+                        />
                       </article>
                     );
                   })}
@@ -399,51 +438,20 @@ export function ProjectDetailPage() {
               项目追加
             </h2>
             {activeResourceView === "mcp" ? (
-              <ProjectMcpAssignments
-                project={project}
-                tool={activeTool}
-                directApply={directApply}
-                onMessage={(message) => notify({ kind: "success", message })}
-              />
+              <ProjectMcpAssignments project={project} tool={activeTool} />
             ) : activeResourceView === "hook" ? (
               <ProjectHookAssignments
                 project={project}
                 tool={activeTool}
-                directApply={directApply}
                 onMessage={(message) => notify({ kind: "success", message })}
               />
             ) : activeResourceView === "skill" ? (
-              <ProjectSkillAssignments
-                project={project}
-                tool={activeTool}
-                directApply={directApply}
-                onMessage={(message) => notify({ kind: "success", message })}
-              />
+              <ProjectSkillAssignments project={project} tool={activeTool} />
             ) : (
-              <ProjectAgentAssignments
-                project={project}
-                tool={activeTool}
-                directApply={directApply}
-                onMessage={(message) => notify({ kind: "success", message })}
-              />
+              <ProjectAgentAssignments project={project} tool={activeTool} />
             )}
           </section>
         </div>
-
-        <ChangePreviewDialog
-          preview={openPreview?.plan ?? null}
-          tool={openPreview?.tool ?? "claude"}
-          artifactKind={openPreview?.artifactKind ?? "mcp"}
-          applying={applyMutation.isPending}
-          onClose={() => {
-            if (applyMutation.isPending) return;
-            setOpenPreview(null);
-          }}
-          onApply={() => {
-            if (!openPreview) return;
-            applyMutation.mutate(openPreview);
-          }}
-        />
       </main>
     </>
   );

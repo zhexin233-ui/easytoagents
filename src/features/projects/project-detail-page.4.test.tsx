@@ -46,18 +46,60 @@ describe("ProjectDetailPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("Hook 项目预览 Apply 使用 Hook 命令", async () => {
+  it("项目 Hook 追加后自动 Preview → Apply 并使用 Hook 命令", async () => {
+    vi.mocked(commands.setProjectHookAssignment).mockResolvedValue({
+      status: "ok",
+      data: {
+        id: hookOptions[2]!.hookId,
+        name: "available-hook",
+        event: "SessionStart",
+        matcher: null,
+        command: "true",
+        timeoutSeconds: null,
+        enabled: true,
+        scriptName: null,
+        globalAssignments: [],
+        rowVersion: 6,
+        affectedSyncScopes: [
+          { artifactKind: "hook", tool: "claude", projectId: project.id },
+        ],
+      },
+    });
     renderPage();
     fireEvent.click(
       await screen.findByRole("button", { name: "管理项目 Hook" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Claude Hooks 同步预览" }),
+      await screen.findByRole("button", {
+        name: "往项目 会话开始 分组添加 Hook",
+      }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "添加到项目 会话开始（SessionStart）",
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "添加 available-hook 到项目 会话开始",
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.setProjectHookAssignment).toHaveBeenCalledWith({
+        projectId: project.id,
+        tool: "claude",
+        hookId: hookOptions[2]!.hookId,
+        event: "SessionStart",
+        assigned: true,
+        hookRowVersion: 6,
+        projectRowVersion: project.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewHookSync).toHaveBeenCalledWith({
+        tool: "claude",
+        projectId: project.id,
+        excludeFromGit: false,
+      }),
+    );
     await waitFor(() =>
       expect(commands.applyHookPreview).toHaveBeenCalledWith({
         previewId: hookPreview.previewId,

@@ -337,11 +337,6 @@ mod tests {
         .unwrap();
         assert_eq!(takeover.tool, Tool::Pi);
         assert_eq!(takeover.assigned_count, 1);
-        assert!(takeover
-            .plan
-            .warning_codes
-            .iter()
-            .any(|code| code == crate::sync::WARNING_SKILL_TAKEOVER_CONFIRMATION));
         assert_eq!(fs::read_link(&pi_entry).unwrap(), external);
 
         service::apply_skill_preview(
@@ -562,11 +557,6 @@ mod tests {
             .any(|code| code == crate::sync::ERROR_EXTERNAL_OWNED_CHANGE));
         assert_eq!(takeover.assigned_count, 1);
         assert_eq!(takeover.reused_count, 0);
-        assert!(takeover
-            .plan
-            .warning_codes
-            .iter()
-            .any(|code| code == crate::sync::WARNING_SKILL_TAKEOVER_CONFIRMATION));
         assert_eq!(fs::read_link(&cursor_entry).unwrap(), external);
 
         let statuses = service::list_global_skill_target_statuses(

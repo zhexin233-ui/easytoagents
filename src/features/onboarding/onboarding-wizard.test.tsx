@@ -119,7 +119,6 @@ const syncPreview: PreviewPlan = makePreviewPlan({
       redactedDiff: { before: "[REDACTED]", after: "[REDACTED]" },
       warningCodes: [],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,
@@ -155,7 +154,7 @@ describe("OnboardingWizard", () => {
     localStorage.clear();
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.getToolProfileStatus).mockImplementation((tool) =>
       Promise.resolve({
@@ -534,7 +533,6 @@ describe("OnboardingWizard", () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "preview_confirm",
         enabledTools: ["claude", "codex", "cursor", "zcode", "opencode", "pi"],
       },
     });
@@ -610,7 +608,6 @@ describe("OnboardingWizard", () => {
     );
     secondDetectionStarted = true;
     queryClient.setQueryData(["settings"], {
-      applyMode: "preview_confirm",
       enabledTools: ["claude"],
     });
 
@@ -645,7 +642,6 @@ describe("OnboardingWizard", () => {
 
     secondDetectionStarted = true;
     queryClient.setQueryData(["settings"], {
-      applyMode: "preview_confirm",
       enabledTools: ["claude"],
     });
     expect(

@@ -21,15 +21,15 @@ use crate::{
     adapters::{
         canonicalize_project_root, descriptor_allowed_root, descriptor_mcp_container,
         find_descriptor, native_mcp_container, projection_value_at, ClaudeCustomizationPolicyProbe,
-        ClaudeUserMcpCapabilityProbe, DiscoveryContext, ManagedOwnership, TargetDescriptor,
-        ASSIGNABLE_MCP_TOOLS,
+        ClaudeUserMcpCapabilityProbe, DiscoveryContext, ManagedOwnership, ObservedDocument,
+        TargetDescriptor, ASSIGNABLE_MCP_TOOLS,
     },
     app::AppPaths,
     db::{
         mcp::{self as repository, ManagedMcpItemRecord, McpProjectRecord, McpServerRecord},
-        Database,
+        mcp_imports as import_repository, Database,
     },
-    domain::{ArtifactKind, McpTransport, ProjectRoot, Scope, SyncStatus, Tool},
+    domain::{ArtifactKind, McpTransport, ProjectRoot, Scope, SyncScopeDto, SyncStatus, Tool},
     error::AppError,
     git::inspect_path,
     security::{contains_detectable_secret, SecretRedactor},
@@ -80,7 +80,8 @@ pub fn create_mcp_server(
     let value = ValidatedMcpConfiguration::from_create(input)?;
     register_configuration_secrets(redactor, &value);
     let record = repository::insert_mcp_server(database, &value)?;
-    mcp_dto(database, &record, redactor)
+    let dto = mcp_dto(database, &record, redactor)?;
+    Ok(with_affected_sync_scopes(dto, Vec::new()))
 }
 
 pub fn update_mcp_server(
@@ -98,7 +99,9 @@ pub fn update_mcp_server(
     )?;
     register_configuration_secrets(redactor, &value);
     let record = repository::update_mcp_server(database, &input.id, input.row_version, &value)?;
-    mcp_dto(database, &record, redactor)
+    let scopes = repository::sync_scopes_for_mcp(database, &input.id)?;
+    let dto = mcp_dto(database, &record, redactor)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
 }
 
 pub fn set_mcp_enabled(
@@ -108,17 +111,21 @@ pub fn set_mcp_enabled(
     enabled: bool,
 ) -> Result<McpServerDto, AppError> {
     let record = repository::set_mcp_enabled(database, &input.id, input.row_version, enabled)?;
-    mcp_dto(database, &record, redactor)
+    let scopes = repository::sync_scopes_for_mcp(database, &input.id)?;
+    let dto = mcp_dto(database, &record, redactor)?;
+    Ok(with_affected_sync_scopes(dto, scopes))
 }
 
 pub fn delete_mcp_server(
     database: &mut Database,
     input: &VersionedMcpInput,
 ) -> Result<DeleteMcpResultDto, AppError> {
+    let scopes = repository::sync_scopes_for_mcp(database, &input.id)?;
     repository::delete_mcp_server(database, &input.id, input.row_version)?;
     Ok(DeleteMcpResultDto {
         id: input.id.clone(),
         deleted: true,
+        affected_sync_scopes: Some(scopes),
     })
 }
 
@@ -134,7 +141,11 @@ pub fn set_global_mcp_assignment(
         input.assigned,
         input.row_version,
     )?;
-    mcp_dto(database, &record, redactor)
+    let dto = mcp_dto(database, &record, redactor)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::global(ArtifactKind::Mcp, input.tool)],
+    ))
 }
 
 pub fn set_project_mcp_assignment(
@@ -151,7 +162,15 @@ pub fn set_project_mcp_assignment(
         input.mcp_row_version,
         input.project_row_version,
     )?;
-    mcp_dto(database, &record, redactor)
+    let dto = mcp_dto(database, &record, redactor)?;
+    Ok(with_affected_sync_scopes(
+        dto,
+        vec![SyncScopeDto::project(
+            ArtifactKind::Mcp,
+            input.tool,
+            input.project_id.clone(),
+        )],
+    ))
 }
 
 pub fn list_mcp_projects(database: &Database) -> Result<Vec<McpProjectDto>, AppError> {
@@ -425,6 +444,296 @@ pub fn readopt_mcp_target(
     })
 }
 
+/// 外部变化采纳所需的持久化 Preview 证据。该类型不属于 RPC DTO，调用方必须
+/// 从服务端读取的 `PersistedPreviewItem` 填充，不能把脱敏 diff 或客户端猜测
+/// 的配置作为采纳输入。
+#[derive(Debug, Clone)]
+pub struct AdoptMcpNativeInput {
+    pub preview_id: String,
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub target_id: String,
+    pub target_path: String,
+    pub status: SyncStatus,
+    pub descriptor: TargetDescriptor,
+    pub ownership: ManagedOwnership,
+    pub observed_full_hash: Option<String>,
+    pub observed_managed_hash: Option<String>,
+    pub target_row_version: u32,
+    pub row_versions: Vec<DatabaseRowVersion>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdoptMcpNativeResult {
+    pub adopted_item_count: u32,
+    pub updated_server_count: u32,
+}
+
+const MCP_NATIVE_MATCH_OR_IMPORT_REASON: &str = "MATCH_OR_IMPORT_REQUIRED";
+
+fn mcp_native_match_or_import() -> AppError {
+    AppError::invalid_input("mcpAdopt", MCP_NATIVE_MATCH_OR_IMPORT_REASON)
+}
+
+/// 采纳一个已经由 ExternalChangePlan 证明为 `ExternalOwnedChange` 的 MCP 目标。
+///
+/// 只接受严格的 `resource_id` + `external_key` 配对，并要求
+/// `parse_native_item` 的结果重新渲染后与当前原生条目完全一致；这样中央记录
+/// 与原生文档在采纳后仍共享同一个可观察表示，下一次预览才会是 in-sync。
+/// 所有中央写入（MCP、managed item、target baseline）交给同一 IMMEDIATE
+/// 事务完成，绝不调用 `readopt_mcp_target`，也不写原生文件。
+pub fn adopt_mcp_native(
+    database: &mut Database,
+    environment: &crate::adapters::ExplicitEnvironment,
+    redactor: &mut SecretRedactor,
+    input: AdoptMcpNativeInput,
+) -> Result<AdoptMcpNativeResult, AppError> {
+    if input.status == SyncStatus::ExternalNonOwnedChange {
+        // 新增的原生条目不在 managed ownership 内；即使同一目标还有其它
+        // 可采纳条目，也不能在这里静默忽略它。交给应用内匹配/导入流程。
+        return Err(mcp_native_match_or_import());
+    }
+    if input.status != SyncStatus::ExternalOwnedChange {
+        return Err(AppError::stale_preview(
+            &input.preview_id,
+            "mcpNativeStatus",
+        ));
+    }
+    let expected_full_hash = input
+        .observed_full_hash
+        .as_deref()
+        .ok_or_else(|| AppError::stale_preview(&input.preview_id, "mcpNativeFullHash"))?;
+    let expected_managed_hash = input
+        .observed_managed_hash
+        .as_deref()
+        .ok_or_else(|| AppError::stale_preview(&input.preview_id, "mcpNativeManagedHash"))?;
+    if input.tool != input.descriptor.tool
+        || input.descriptor.artifact_kind != ArtifactKind::Mcp
+        || input.descriptor.scope
+            != if input.project_id.is_some() {
+                Scope::Project
+            } else {
+                Scope::Global
+            }
+        || input.descriptor.path.as_deref() != Some(input.target_path.as_str())
+    {
+        return Err(mcp_native_match_or_import());
+    }
+
+    let project = input
+        .project_id
+        .as_deref()
+        .map(|id| repository::get_project(database, id))
+        .transpose()?;
+    let project_root = project
+        .as_ref()
+        .map(|project| canonical_project(&project.root_path))
+        .transpose()?;
+    let current_descriptor = mcp_target_descriptor(
+        environment,
+        input.tool,
+        project_root.as_ref(),
+        environment.claude_user_mcp_probe(),
+        environment.claude_customization_policy_probe(),
+    )?;
+    if current_descriptor != input.descriptor
+        || current_descriptor.path.as_deref() != Some(input.target_path.as_str())
+    {
+        return Err(AppError::stale_preview(
+            &input.preview_id,
+            "mcpNativeDescriptor",
+        ));
+    }
+
+    let observed = match scan_target(input.tool.adapter(), &input.descriptor, &input.ownership) {
+        TargetScan::Observed(observed) => observed,
+        TargetScan::Missing => {
+            return Err(AppError::stale_preview(
+                &input.preview_id,
+                "mcpNativeTarget",
+            ));
+        }
+        TargetScan::ParseError
+        | TargetScan::PermissionDenied
+        | TargetScan::TargetTypeChanged(_)
+        | TargetScan::Failed
+        | TargetScan::Unavailable
+        | TargetScan::ManagedItemBaselineMismatch => return Err(mcp_native_match_or_import()),
+    };
+    if observed.full_hash != expected_full_hash {
+        return Err(AppError::stale_preview(
+            &input.preview_id,
+            "mcpNativeFullHash",
+        ));
+    }
+    if observed.managed_hash != expected_managed_hash {
+        return Err(AppError::stale_preview(
+            &input.preview_id,
+            "mcpNativeManagedHash",
+        ));
+    }
+    let container = native_container(input.tool);
+    let native_items = projection_value_at(&observed.managed_projection, container)
+        .and_then(Value::as_object)
+        .ok_or_else(mcp_native_match_or_import)?;
+    // `managed_projection` 只包含 ownership 选中的 selector。再从完整的已解析
+    // 文档读取一次 MCP 容器，用于发现“只差大小写”的未受管同名条目；否则
+    // `mcpServers/foo` 与 `mcpServers/Foo` 可能被投影成一个条目而被错误采纳。
+    let all_native_items = native_items_from_document(observed.document(), input.tool, container)
+        .ok_or_else(mcp_native_match_or_import)?;
+    let existing_items = repository::list_managed_mcp_items(database, &input.target_id)?;
+    if existing_items.is_empty() {
+        return Err(mcp_native_match_or_import());
+    }
+    let managed_names = existing_items
+        .iter()
+        .map(|item| item.external_key.as_str())
+        .collect::<BTreeSet<_>>();
+    // 项目目标的 ownership 还会选择全局继承名称；若该名称实际出现在项目
+    // 文件中，它与本项目 managed item 的含义发生遮蔽，不能在采纳时默默带入
+    // 基线，否则下一次中央投影不会 in-sync。
+    if native_items
+        .keys()
+        .any(|name| !managed_names.contains(name.as_str()))
+    {
+        return Err(mcp_native_match_or_import());
+    }
+    let records = repository::list_mcp_servers(database)?;
+    let records_by_id = records
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect::<BTreeMap<_, _>>();
+    let mut used_resources = BTreeSet::new();
+    let mut used_external_keys = BTreeSet::new();
+    let mut adoptions = Vec::with_capacity(existing_items.len());
+    for item in &existing_items {
+        if !used_resources.insert(item.resource_id.clone())
+            || !used_external_keys.insert(item.external_key.clone())
+        {
+            return Err(mcp_native_match_or_import());
+        }
+        let record = records_by_id
+            .get(item.resource_id.as_str())
+            .copied()
+            .ok_or_else(mcp_native_match_or_import)?;
+        // resource_id 与 external_key 都是身份合同的一部分；名称重命名、大小写
+        // 替换或把另一份中央 MCP 映射进来都不能由采纳动作猜测。
+        if record.name != item.external_key || !record.enabled {
+            return Err(mcp_native_match_or_import());
+        }
+        let matching_names = native_items
+            .keys()
+            .filter(|name| name.eq_ignore_ascii_case(&item.external_key))
+            .count();
+        let all_matching_names = all_native_items
+            .keys()
+            .filter(|name| name.eq_ignore_ascii_case(&item.external_key))
+            .count();
+        if matching_names != 1 || all_matching_names != 1 {
+            return Err(mcp_native_match_or_import());
+        }
+        let raw = native_items
+            .get(&item.external_key)
+            .ok_or_else(mcp_native_match_or_import)?;
+        register_native_projection_secrets(redactor, raw);
+        let configuration =
+            super::import::parse_native_item(input.tool, &item.external_key, raw, redactor)
+                .map_err(|_| mcp_native_match_or_import())?;
+        if configuration.name != item.external_key
+            || configuration
+                .command
+                .as_deref()
+                .is_some_and(|value| redactor.contains_secret(value))
+            || configuration
+                .url
+                .as_deref()
+                .is_some_and(|value| redactor.contains_secret(value))
+            || configuration
+                .args
+                .iter()
+                .any(|value| redactor.contains_secret(value))
+            || redactor.contains_secret(&configuration.name)
+        {
+            return Err(mcp_native_match_or_import());
+        }
+        register_configuration_secrets(redactor, &configuration);
+        // 严格 round-trip 是“无损”的可执行判据：显式 default（例如 Claude 的
+        // enabled=true）、被适配器规范化的字段和任何未知 transport 都转入
+        // 应用内匹配/导入，而不是采纳后制造下一次漂移。
+        let rendered = native_mcp_item(input.tool, &configuration)
+            .map_err(|_| mcp_native_match_or_import())?;
+        if rendered != *raw {
+            return Err(mcp_native_match_or_import());
+        }
+        let expected_item_row_version = safe_row_version(item.row_version)?;
+        let expected_resource_row_version = records_by_id
+            .get(item.resource_id.as_str())
+            .map(|record| safe_row_version(record.row_version))
+            .transpose()?
+            .ok_or_else(|| AppError::stale_preview(&input.preview_id, "mcpNativeServer"))?;
+        adoptions.push(import_repository::NativeMcpAdoptionItem {
+            id: item.id.clone(),
+            resource_id: item.resource_id.clone(),
+            external_key: item.external_key.clone(),
+            expected_item_row_version,
+            expected_resource_row_version,
+            item_hash: hash_json(raw),
+            configuration,
+        });
+    }
+
+    // 计划的 row_versions 包含中央 MCP 记录（包括项目继承项）、managed item 和
+    // 项目状态。仓储层会在事务内拒绝缺失或不匹配的证据；这里的轻量预检先给出
+    // 稳定的 stale 原因，避免继续解析更多私密字段。
+    for adoption in &adoptions {
+        if !input.row_versions.iter().any(|row| {
+            row.entity_type == crate::sync::DatabaseEntityType::McpServer
+                && row.entity_id == adoption.resource_id
+                && row.row_version == adoption.expected_resource_row_version
+        }) || !input.row_versions.iter().any(|row| {
+            row.entity_type == crate::sync::DatabaseEntityType::ManagedItem
+                && row.entity_id == adoption.id
+                && row.row_version == adoption.expected_item_row_version
+        }) {
+            return Err(AppError::stale_preview(
+                &input.preview_id,
+                "mcpNativeRowVersions",
+            ));
+        }
+    }
+
+    let target = import_repository::NativeMcpAdoptionTarget {
+        preview_id: input.preview_id.clone(),
+        tool: input.tool,
+        scope: input.descriptor.scope,
+        project_id: input.project_id.clone(),
+        target_id: input.target_id,
+        target_path: input.target_path,
+        target_row_version: input.target_row_version,
+        observed_full_hash: observed.full_hash.clone(),
+        observed_managed_hash: observed.managed_hash.clone(),
+        baseline_projection: observed.managed_projection.clone(),
+        expected_row_versions: input.row_versions,
+    };
+    let descriptor = input.descriptor;
+    let ownership = input.ownership;
+    let tool = input.tool;
+    let preview_id = input.preview_id;
+    let expected_full_hash = expected_full_hash.to_owned();
+    let validate_source = || match scan_target(tool.adapter(), &descriptor, &ownership) {
+        TargetScan::Observed(observed) if observed.full_hash == expected_full_hash => Ok(()),
+        TargetScan::Observed(_) => Err(AppError::stale_preview(&preview_id, "mcpNativeFullHash")),
+        TargetScan::Missing => Err(AppError::stale_preview(&preview_id, "mcpNativeTarget")),
+        _ => Err(mcp_native_match_or_import()),
+    };
+    let result =
+        import_repository::adopt_native_mcp(database, &target, &adoptions, validate_source)?;
+    Ok(AdoptMcpNativeResult {
+        adopted_item_count: result.adopted_item_count,
+        updated_server_count: result.updated_server_count,
+    })
+}
+
 pub fn list_global_mcp_target_statuses(
     database: &Database,
     environment: &crate::adapters::ExplicitEnvironment,
@@ -587,7 +896,13 @@ fn prepare_mcp_sync(
     );
     // 重新接管只对「外部改写了受管内容」这一类冲突有意义；策略、信任、解析失败
     // 等其他阻塞状态必须走各自的恢复路径。
-    let readopt_available = crate::sync::assess_drift(&descriptor, &baseline, &scan).status
+    let readopt_available = crate::sync::assess_drift_with_managed_item_mismatches(
+        &descriptor,
+        &baseline,
+        &scan,
+        &baseline_mismatched_items,
+    )
+    .status
         == SyncStatus::ExternalOwnedChange;
     // 项目层只有全局继承项时不拥有任何原生条目。仍扫描继承名称以发现外部同名
     // 冲突，但在目标缺失或这些名称均不存在时，不生成空 `.mcp.json`/TOML 写入。
@@ -718,6 +1033,29 @@ pub(super) fn mcp_target_descriptor(
 /// MCP 条目在原生文件中的容器路径；ZCode 是官方定义的嵌套键 `mcp.servers`。
 pub(super) fn native_container(tool: Tool) -> &'static [&'static str] {
     native_mcp_container(tool)
+}
+
+fn native_items_from_document<'a>(
+    document: &'a ObservedDocument,
+    tool: Tool,
+    container: &[&str],
+) -> Option<&'a Map<String, Value>> {
+    let value = match document {
+        ObservedDocument::Json(value)
+        | ObservedDocument::Jsonc { value, .. }
+        | ObservedDocument::Toml {
+            semantic: value, ..
+        } => value,
+        ObservedDocument::Markdown(_) | ObservedDocument::SymlinkDirectory(_) => return None,
+    };
+    if tool == Tool::Pi {
+        let object = value.as_object()?;
+        return object
+            .get("mcpServers")
+            .or_else(|| object.get("mcp-servers"))
+            .and_then(Value::as_object);
+    }
+    projection_value_at(value, container).and_then(Value::as_object)
 }
 
 #[cfg(test)]
@@ -934,10 +1272,12 @@ fn verify_managed_item_baselines(
         TargetScan::Missing => false,
         _ => return (scan, Vec::new()),
     };
+    // 条目发生漂移时保留完整的 observed document 与 hash。Apply 必须绑定这份
+    // observation，确保第二个写者只能得到 STALE_PREVIEW，而不是被静默覆盖。
     if matches {
         (scan, Vec::new())
     } else {
-        (TargetScan::ManagedItemBaselineMismatch, mismatched)
+        (scan, mismatched)
     }
 }
 
@@ -1101,7 +1441,13 @@ fn mcp_dto_with_tools(
         row_version: crate::sync::managed_record_row_version::<
             crate::sync::managed::McpManagedArtifact,
         >(record)?,
+        affected_sync_scopes: None,
     })
+}
+
+fn with_affected_sync_scopes(mut dto: McpServerDto, scopes: Vec<SyncScopeDto>) -> McpServerDto {
+    dto.affected_sync_scopes = Some(crate::domain::stable_sync_scopes(scopes));
+    dto
 }
 
 pub(super) fn configuration_from_record(

@@ -7,6 +7,7 @@ use crate::{app::AppState, db::Database, error::AppError, security::SecretRedact
 
 pub mod agents;
 pub mod environment;
+pub mod external_changes;
 pub mod hooks;
 pub mod mcp;
 pub mod official_login;
@@ -71,6 +72,10 @@ mod tests {
         ("commands/mod.rs", include_str!("mod.rs")),
         ("commands/agents.rs", include_str!("agents.rs")),
         ("commands/environment.rs", include_str!("environment.rs")),
+        (
+            "commands/external_changes.rs",
+            include_str!("external_changes.rs"),
+        ),
         ("commands/hooks.rs", include_str!("hooks.rs")),
         ("commands/mcp.rs", include_str!("mcp.rs")),
         (

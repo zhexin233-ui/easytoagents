@@ -60,7 +60,7 @@ describe("ProjectDetailPage", () => {
         projectRowVersion: 7,
       }),
     );
-    await waitFor(() => expect(commands.getProject).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(commands.getProject).toHaveBeenCalledTimes(3));
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects"],
     });
@@ -73,27 +73,7 @@ describe("ProjectDetailPage", () => {
       ).toBe(8),
     );
     await waitFor(() =>
-      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(2),
-    );
-
-    vi.mocked(commands.setProjectMcpAssignment).mockClear();
-    fireEvent.click(
-      screen.getByRole("button", { name: "项目 MCP MCP 项目追加" }),
-    );
-    await waitFor(() =>
-      expect(commands.setProjectMcpAssignment).toHaveBeenCalledWith({
-        projectId: project.id,
-        tool: "claude",
-        mcpId: mcpOptions[1]?.mcpId,
-        assigned: true,
-        mcpRowVersion: 4,
-        projectRowVersion: 8,
-      }),
-    );
-    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Claude MCP 同步预览" }),
+      expect(commands.listMcpProjectOptions).toHaveBeenCalledTimes(3),
     );
     await waitFor(() =>
       expect(commands.previewMcpSync).toHaveBeenCalledWith({
@@ -102,10 +82,6 @@ describe("ProjectDetailPage", () => {
         excludeFromGit: false,
       }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
     await waitFor(() =>
       expect(commands.applyMcpPreview).toHaveBeenCalledWith({
         previewId: preview.previewId,
@@ -115,7 +91,7 @@ describe("ProjectDetailPage", () => {
     );
   });
 
-  it("Skill 继承保持只读，项目追加支持 Git exclude、预览与显式 Apply", async () => {
+  it("Skill 继承保持只读，项目追加支持 Git exclude 并自动 Preview → Apply", async () => {
     vi.mocked(commands.getProject)
       .mockResolvedValueOnce({ status: "ok", data: project })
       .mockResolvedValue({
@@ -144,6 +120,15 @@ describe("ProjectDetailPage", () => {
     expect(screen.getByText("只读")).toBeVisible();
     expect(screen.getByText("可追加")).toBeVisible();
 
+    const claudeSection = screen
+      .getByRole("heading", { name: "Claude Skill 项目追加" })
+      .closest("section");
+    if (!claudeSection) throw new Error("未找到 Claude 项目管理列");
+    fireEvent.click(
+      within(claudeSection).getByRole("checkbox", {
+        name: /新建文件写入 .git\/info\/exclude/,
+      }),
+    );
     fireEvent.click(available);
     await waitFor(() =>
       expect(commands.setProjectSkillAssignment).toHaveBeenCalledWith({
@@ -155,7 +140,7 @@ describe("ProjectDetailPage", () => {
         projectRowVersion: 7,
       }),
     );
-    await waitFor(() => expect(commands.getProject).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(commands.getProject).toHaveBeenCalledTimes(3));
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects"],
     });
@@ -168,38 +153,7 @@ describe("ProjectDetailPage", () => {
       ).toBe(8),
     );
     await waitFor(() =>
-      expect(commands.listSkillProjectOptions).toHaveBeenCalledTimes(2),
-    );
-
-    vi.mocked(commands.setProjectSkillAssignment).mockClear();
-    fireEvent.click(
-      screen.getByRole("button", { name: "项目 Skill Skill 项目追加" }),
-    );
-    await waitFor(() =>
-      expect(commands.setProjectSkillAssignment).toHaveBeenCalledWith({
-        projectId: project.id,
-        tool: "claude",
-        skillId: skillOptions[1]?.skillId,
-        assigned: true,
-        skillRowVersion: 6,
-        projectRowVersion: 8,
-      }),
-    );
-    expect(commands.applySkillPreview).not.toHaveBeenCalled();
-
-    const claudeSection = screen
-      .getByRole("heading", { name: "Claude Skill 项目追加" })
-      .closest("section");
-    if (!claudeSection) throw new Error("未找到 Claude 项目管理列");
-    fireEvent.click(
-      within(claudeSection).getByRole("checkbox", {
-        name: /新建文件写入 .git\/info\/exclude/,
-      }),
-    );
-    fireEvent.click(
-      within(claudeSection).getByRole("button", {
-        name: "Claude Skills 同步预览",
-      }),
+      expect(commands.listSkillProjectOptions).toHaveBeenCalledTimes(3),
     );
     await waitFor(() =>
       expect(commands.previewSkillSync).toHaveBeenCalledWith({
@@ -208,10 +162,6 @@ describe("ProjectDetailPage", () => {
         excludeFromGit: true,
       }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
     await waitFor(() =>
       expect(commands.applySkillPreview).toHaveBeenCalledWith({
         previewId: skillPreview.previewId,
@@ -269,7 +219,7 @@ describe("ProjectDetailPage", () => {
     expect(screen.getByText("invalid")).toBeVisible();
   });
 
-  it("MCP 与 Skill 空目标预览只解释无需写入且不开放 Apply", async () => {
+  it("MCP 与 Skill 空目标自动同步只提示无需写入", async () => {
     vi.mocked(commands.previewMcpSync).mockResolvedValue({
       status: "ok",
       data: { ...preview, targets: [] },
@@ -281,29 +231,22 @@ describe("ProjectDetailPage", () => {
     renderPage();
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Claude MCP 同步预览" }),
+      await screen.findByRole("button", { name: "项目 MCP MCP 项目追加" }),
     );
     expect(
       await screen.findByText(
         "该项目只有全局继承 MCP，不需要创建项目配置文件。",
       ),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Claude Skills 同步预览" }),
+      await screen.findByRole("button", { name: "项目 Skill Skill 项目追加" }),
     );
     expect(
       await screen.findByText(
         "该项目只有全局继承 Skills，不需要创建项目链接目录。",
       ),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
     expect(commands.applySkillPreview).not.toHaveBeenCalled();
   });
@@ -319,14 +262,14 @@ describe("ProjectDetailPage", () => {
       await screen.findByRole("button", { name: "管理 Codex 项目资源" }),
     );
     expect(
-      await screen.findByRole("button", { name: "Codex MCP 同步预览" }),
-    ).toBeDisabled();
+      await screen.findByRole("heading", { name: "Codex MCP 项目追加" }),
+    ).toBeVisible();
     expect(screen.getByText(/Codex 项目尚未受信任/)).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "管理项目 Skill" }));
     expect(
-      await screen.findByRole("button", { name: "Codex Skills 同步预览" }),
-    ).toBeDisabled();
+      await screen.findByRole("heading", { name: "Codex Skill 项目追加" }),
+    ).toBeVisible();
     expect(screen.getByText(/Codex 项目尚未受信任/)).toBeVisible();
     expect(commands.previewMcpSync).not.toHaveBeenCalled();
     expect(commands.previewSkillSync).not.toHaveBeenCalled();
@@ -350,10 +293,10 @@ describe("ProjectDetailPage", () => {
     );
   });
 
-  it("直接应用模式下禁用原生资源仍只打开预览，确认后才 Apply", async () => {
+  it("禁用原生资源后直接消费精确 Preview 并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
       status: "ok",
@@ -363,20 +306,19 @@ describe("ProjectDetailPage", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "临时禁用 native-stdio" }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    expect(
-      screen.getByText("PROJECT_NATIVE_RESOURCE_REQUIRES_CONFIRMATION"),
-    ).toBeVisible();
-    expect(commands.applyProjectNativeResourcePreview).not.toHaveBeenCalled();
-    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    await waitFor(() =>
+      expect(commands.previewProjectNativeResourceAction).toHaveBeenCalledWith({
+        resourceId: nativeResource.id,
+        rowVersion: nativeResource.rowVersion,
+        action: "disable",
+      }),
+    );
     await waitFor(() =>
       expect(commands.applyProjectNativeResourcePreview).toHaveBeenCalledWith({
         previewId: nativePreview.previewId,
       }),
     );
+    expect(commands.applyMcpPreview).not.toHaveBeenCalled();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
     expect(screen.queryByText("sk-native-secret")).not.toBeInTheDocument();
   });
@@ -404,10 +346,10 @@ describe("ProjectDetailPage", () => {
     ).toBeDisabled();
   });
 
-  it("已禁用原生资源提供恢复入口且不自动 Apply", async () => {
+  it("已禁用原生资源提供恢复入口并直接 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.listProjectNativeResources).mockResolvedValue({
       status: "ok",
@@ -427,9 +369,20 @@ describe("ProjectDetailPage", () => {
       await screen.findByRole("button", { name: "恢复 native-stdio" }),
     );
     expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
+      await screen.findByRole("heading", { name: "项目原生资源" }),
     ).toBeVisible();
-    expect(commands.applyProjectNativeResourcePreview).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(commands.previewProjectNativeResourceAction).toHaveBeenCalledWith({
+        resourceId: nativeResource.id,
+        rowVersion: nativeResource.rowVersion,
+        action: "restore",
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.applyProjectNativeResourcePreview).toHaveBeenCalledWith({
+        previewId: nativePreview.previewId,
+      }),
+    );
   });
 
   it("Hooks 视图渲染项目原生 Hook 条目且不提供禁用与恢复", async () => {

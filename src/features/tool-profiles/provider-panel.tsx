@@ -7,6 +7,7 @@ import {
   type ProviderAuthKind,
   type ProviderImportPreviewDto,
   type ProviderProfileDto,
+  type SyncScopeDto,
   type Tool,
 } from "@/bindings/commands";
 import { FormDialog } from "@/components/form-dialog";
@@ -36,8 +37,45 @@ import { toolMetadata } from "@/lib/tool-metadata";
 
 interface ProviderPanelProps {
   tool: Tool;
-  directApply: boolean;
-  onPreview: () => void;
+  /** 按中央 mutation 返回的精确范围执行同步；手动入口传入当前工具范围。 */
+  onPreview: (scopes: readonly SyncScopeDto[]) => Promise<unknown>;
+}
+
+function isSyncScope(value: unknown): value is SyncScopeDto {
+  if (typeof value !== "object" || value === null) return false;
+  if (
+    !("artifactKind" in value) ||
+    !("tool" in value) ||
+    !("projectId" in value)
+  ) {
+    return false;
+  }
+  return (
+    (value.artifactKind === "provider" ||
+      value.artifactKind === "prompt" ||
+      value.artifactKind === "mcp" ||
+      value.artifactKind === "skill" ||
+      value.artifactKind === "hook" ||
+      value.artifactKind === "agent") &&
+    (value.tool === "claude" ||
+      value.tool === "codex" ||
+      value.tool === "cursor" ||
+      value.tool === "zcode" ||
+      value.tool === "opencode" ||
+      value.tool === "pi") &&
+    (value.projectId === null || typeof value.projectId === "string")
+  );
+}
+
+/** 中央 mutation 结果附带后端签发的精确同步范围；列表响应没有此字段。 */
+function affectedSyncScopes(result: object): SyncScopeDto[] {
+  if (
+    !("affectedSyncScopes" in result) ||
+    !Array.isArray(result.affectedSyncScopes)
+  ) {
+    return [];
+  }
+  return result.affectedSyncScopes.filter(isSyncScope);
 }
 
 interface ProviderFormState {
@@ -68,11 +106,7 @@ const emptyForm: ProviderFormState = {
   opencodeApi: "openai-compatible",
 };
 
-export function ProviderPanel({
-  tool,
-  directApply,
-  onPreview,
-}: ProviderPanelProps) {
+export function ProviderPanel({ tool, onPreview }: ProviderPanelProps) {
   const queryClient = useQueryClient();
   const enabledTools = useEnabledTools();
   const counterpartTool: Tool = tool === "claude" ? "codex" : "claude";
@@ -137,14 +171,23 @@ export function ProviderPanel({
         }),
       );
     },
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
       await refresh();
       setEditing(null);
       setForm(emptyForm);
       setFormOpen(false);
+      const scopes = affectedSyncScopes(saved);
+      if (scopes.length > 0) {
+        notify({
+          kind: "success",
+          message: "中央渠道档案已保存；正在自动同步受影响配置。",
+        });
+        await onPreview(scopes);
+        return;
+      }
       notify({
         kind: "success",
-        message: "中央渠道档案已保存，原生配置尚未修改。",
+        message: "中央渠道档案已保存；没有受影响的原生配置。",
       });
     },
     onSettled: () => {
@@ -180,10 +223,24 @@ export function ProviderPanel({
           rowVersion: profile.rowVersion,
         }),
       ),
-    onSuccess: onPreview,
-    // 生效档案的中央写入发生在预览之前；即使预览因策略或路径状态失败，
-    // 也必须刷新列表，避免 UI 继续把旧档案显示为生效。
-    onSettled: refresh,
+    onSuccess: async (saved) => {
+      // 生效档案的中央写入发生在预览之前；即使预览因策略或路径状态失败，
+      // 也必须先刷新列表，避免 UI 继续把旧档案显示为生效。
+      await refresh();
+      const scopes = affectedSyncScopes(saved);
+      if (scopes.length > 0) {
+        notify({
+          kind: "success",
+          message: "已切换生效渠道；正在自动同步受影响配置。",
+        });
+        await onPreview(scopes);
+        return;
+      }
+      notify({
+        kind: "success",
+        message: "已切换生效渠道；没有受影响的原生配置。",
+      });
+    },
   });
   const copyMutation = useMutation({
     mutationFn: async (profile: ProviderProfileDto) =>
@@ -214,12 +271,21 @@ export function ProviderPanel({
           rowVersion: profile.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      await refresh();
+      const scopes = affectedSyncScopes(result);
+      if (scopes.length > 0) {
+        notify({
+          kind: "success",
+          message: "中央渠道档案已删除；正在自动清理原生配置。",
+        });
+        await onPreview(scopes);
+        return;
+      }
       notify({
         kind: "success",
-        message: "中央渠道档案已删除；如需清理原生字段，请生成新的渠道预览。",
+        message: "中央渠道档案已删除；没有受影响的原生配置。",
       });
-      await refresh();
     },
   });
   const discoverMutation = useMutation({
@@ -287,8 +353,15 @@ export function ProviderPanel({
           >
             {discoverMutation.isPending ? "正在检测…" : "检测已有配置"}
           </Button>
-          <Button size="sm" onClick={onPreview}>
-            {directApply ? "直接应用渠道同步" : "预览渠道同步"}
+          <Button
+            size="sm"
+            onClick={() => {
+              void onPreview([
+                { artifactKind: "provider", tool, projectId: null },
+              ]);
+            }}
+          >
+            同步当前配置
           </Button>
         </div>
       </div>
@@ -348,7 +421,7 @@ export function ProviderPanel({
                     size="sm"
                     onClick={() => activateMutation.mutate(profile)}
                   >
-                    {directApply ? "切换并直接应用" : "切换并预览"}
+                    切换并同步
                   </Button>
                 ) : null}
                 <Button
@@ -408,7 +481,7 @@ export function ProviderPanel({
       <FormDialog
         open={formOpen}
         title={`${editing ? "编辑" : "新增"} ${toolMetadata(tool).label} 渠道`}
-        description="保存只更新中央渠道档案，不会修改原生配置。"
+        description="保存中央渠道档案后，当前生效档案会自动同步原生配置。"
         submitLabel={editing ? "保存编辑" : "创建渠道"}
         pending={saveMutation.isPending}
         error={profileErrorText(saveMutation.error)}

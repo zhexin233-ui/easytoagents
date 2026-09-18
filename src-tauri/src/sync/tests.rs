@@ -490,7 +490,7 @@ mod tests {
         let owned = scan_target(&ClaudeAdapter, &descriptor, &ownership);
         let owned_assessment = assess_drift(&descriptor, &baseline, &owned);
         assert_eq!(owned_assessment.status, SyncStatus::ExternalOwnedChange);
-        assert!(!owned_assessment.can_merge);
+        assert!(owned_assessment.can_merge);
         assert!(owned_assessment
             .diagnostic_codes
             .contains(&ERROR_EXTERNAL_OWNED_CHANGE.to_owned()));

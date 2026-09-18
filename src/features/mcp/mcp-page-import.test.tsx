@@ -14,7 +14,12 @@ import {
 } from "@/bindings/commands";
 import { McpPage } from "@/features/mcp/mcp-page";
 import { renderWithProviders } from "@/test/render";
-import { makeMcpServer, makeMcpPreview } from "@/test/fixtures";
+import {
+  globalSyncScope,
+  makeMcpServer,
+  makeMcpPreview,
+  withAffectedSyncScopes,
+} from "@/test/fixtures";
 import { toolMetadata } from "@/lib/tool-metadata";
 
 vi.mock("@/bindings/commands", async (importOriginal) => {
@@ -160,7 +165,6 @@ beforeEach(() => {
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
     data: {
-      applyMode: "preview_confirm",
       enabledTools: ["claude", "codex", "cursor"],
     },
   });
@@ -199,10 +203,10 @@ beforeEach(() => {
 });
 
 describe("McpPage", () => {
-  it("直接应用模式下删除已分配 MCP 自动同步清理并 Apply", async () => {
+  it("删除已分配 MCP 自动同步清理并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     const assignedServer = makeMcpServer({
       ...server,
@@ -214,7 +218,9 @@ describe("McpPage", () => {
     });
     vi.mocked(commands.deleteMcpServer).mockResolvedValue({
       status: "ok",
-      data: { id: assignedServer.id, deleted: true },
+      data: withAffectedSyncScopes({ id: assignedServer.id, deleted: true }, [
+        globalSyncScope("mcp", "claude"),
+      ]),
     });
     renderPage();
 
@@ -233,15 +239,13 @@ describe("McpPage", () => {
         projectId: null,
       }),
     );
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
   });
-  it("直接应用模式下自动同步空目标仅提示无需写入", async () => {
+  it("自动同步空目标仅提示无需写入", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     const assignedServer = makeMcpServer({
       ...server,
@@ -253,7 +257,9 @@ describe("McpPage", () => {
     });
     vi.mocked(commands.deleteMcpServer).mockResolvedValue({
       status: "ok",
-      data: { id: assignedServer.id, deleted: true },
+      data: withAffectedSyncScopes({ id: assignedServer.id, deleted: true }, [
+        globalSyncScope("mcp", "claude"),
+      ]),
     });
     vi.mocked(commands.previewMcpSync).mockResolvedValue({
       status: "ok",
@@ -266,15 +272,13 @@ describe("McpPage", () => {
     const status =
       await screen.findByText(/暂无启用且已分配到该工具的中央 MCP/);
     expect(status).toHaveAttribute("role", "status");
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(commands.applyMcpPreview).not.toHaveBeenCalled();
   });
-  it("直接应用模式下导入成功后自动同步导入工具", async () => {
+  it("导入成功后自动同步导入工具", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     vi.mocked(commands.confirmMcpImport).mockResolvedValue({
       status: "ok",
@@ -283,6 +287,7 @@ describe("McpPage", () => {
         createdCount: 1,
         reusedCount: 0,
         assignedCount: 1,
+        affectedSyncScopes: [globalSyncScope("mcp", "claude")],
       },
     });
     renderPage();
@@ -312,16 +317,20 @@ describe("McpPage", () => {
       }),
     );
     expect(await screen.findByText(/已应用 1 个 MCP 目标/)).toBeVisible();
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
   it.each(["claude", "codex", "cursor"] as const)(
-    "按 %s 扫描且只导入明确勾选项，成功后独立生成同步预览",
+    "按 %s 扫描且只导入明确勾选项，成功后自动同步",
     async (tool) => {
       vi.mocked(commands.confirmMcpImport).mockResolvedValue({
         status: "ok",
-        data: { tool, createdCount: 1, reusedCount: 0, assignedCount: 1 },
+        data: {
+          tool,
+          createdCount: 1,
+          reusedCount: 0,
+          assignedCount: 1,
+          affectedSyncScopes: [globalSyncScope("mcp", tool)],
+        },
       });
       renderPage();
       const button = await globalButton("检测并导入已有 MCP", tool);
@@ -375,31 +384,30 @@ describe("McpPage", () => {
           candidateIds: [newCandidateId],
         }),
       );
-      const status =
-        await screen.findByText(/原生配置未改写，请单独生成全局预览/);
+      const status = await screen.findByText(/已应用 1 个 MCP 目标/);
       expect(status).toHaveAttribute("role", "status");
-      expect(
-        screen.getAllByText(/原生配置未改写，请单独生成全局预览/),
-      ).toHaveLength(1);
+      expect(screen.getAllByText(/已应用 1 个 MCP 目标/)).toHaveLength(1);
       await waitFor(() =>
         expect(commands.listMcpServers).toHaveBeenCalledTimes(
-          readsBeforeImport + 1,
+          readsBeforeImport + 2,
         ),
       );
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(commands.createMcpServer).not.toHaveBeenCalled();
-      expect(commands.previewMcpSync).not.toHaveBeenCalled();
-      expect(commands.applyMcpPreview).not.toHaveBeenCalled();
-      expect(commands.discoverMcpImport).toHaveBeenCalledTimes(1);
-      fireEvent.click(await globalButton("生成全局预览", tool));
-      expect(
-        await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-      ).toBeVisible();
       expect(commands.previewMcpSync).toHaveBeenCalledWith({
         tool,
         projectId: null,
         excludeFromGit: false,
       });
+      expect(commands.applyMcpPreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool,
+        projectId: null,
+      });
+      expect(commands.discoverMcpImport).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByRole("button", { name: /预览/ }),
+      ).not.toBeInTheDocument();
     },
   );
 
@@ -451,7 +459,7 @@ describe("McpPage", () => {
         candidateIds: [reusedCandidateId],
       }),
     );
-    await screen.findByText(/原生配置未改写/);
+    await screen.findByText(/已导入/);
   });
   it("扫描失败不伪装为空配置，显式重试后展示缺失说明", async () => {
     vi.mocked(commands.discoverMcpImport).mockResolvedValueOnce({

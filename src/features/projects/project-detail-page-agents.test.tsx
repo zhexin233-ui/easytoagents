@@ -54,6 +54,9 @@ describe("ProjectDetailPage Agents", () => {
         globalAssignments: [],
         toolSettings: { claude: null, codex: null },
         rowVersion: 5,
+        affectedSyncScopes: [
+          { artifactKind: "agent", tool: "claude", projectId: project.id },
+        ],
       },
     });
     vi.mocked(commands.previewAgentSync).mockResolvedValue({
@@ -75,7 +78,7 @@ describe("ProjectDetailPage Agents", () => {
     });
   });
 
-  it("显示项目 Agents、继承只读项并使用精确分配和预览 Apply 命令", async () => {
+  it("显示项目 Agents、继承只读项并在精确分配后自动 Preview → Apply", async () => {
     renderPage();
     fireEvent.click(
       await screen.findByRole("button", { name: "管理项目 Agents" }),
@@ -104,18 +107,12 @@ describe("ProjectDetailPage Agents", () => {
       }),
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Claude Agents 同步预览" }),
-    );
     await waitFor(() =>
       expect(commands.previewAgentSync).toHaveBeenCalledWith({
         tool: "claude",
         projectId: project.id,
         excludeFromGit: false,
       }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "应用这份预览" }),
     );
     await waitFor(() =>
       expect(commands.applyAgentPreview).toHaveBeenCalledWith({

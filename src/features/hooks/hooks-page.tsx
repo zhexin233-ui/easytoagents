@@ -9,7 +9,6 @@ import {
   type Tool,
   type UpdateHookInput,
 } from "@/bindings/commands";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { Field } from "@/components/ui/field";
 import {
@@ -42,7 +41,6 @@ import {
   filterEnabledTools,
   toolMetadata,
 } from "@/lib/tool-metadata";
-import { appSettingsQueryOptions } from "@/lib/settings-api";
 import {
   HOOK_EVENT_GROUPS,
   HOOK_EVENT_OPTIONS,
@@ -51,6 +49,7 @@ import {
 } from "@/features/hooks/hook-events";
 import { HookImportDialog } from "@/features/hooks/hook-import-dialog";
 import { HookAssignmentPickerDialog } from "@/features/hooks/hook-assignment-picker-dialog";
+import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 
 interface HookFormState {
   id: string | null;
@@ -78,8 +77,6 @@ export function HooksPage() {
   const queryClient = useQueryClient();
   const hooksQuery = useQuery(hooksQueryOptions());
   const statusesQuery = useQuery(globalHookStatusesQueryOptions());
-  const settingsQuery = useQuery(appSettingsQueryOptions());
-  const directApply = settingsQuery.data?.applyMode === "direct";
   const enabledTools = useEnabledTools();
   const visibleTools = filterEnabledTools(HOOK_TOOLS, enabledTools);
   const [selectedTool, setActiveTool] = useState<Tool>("claude");
@@ -112,17 +109,16 @@ export function HooksPage() {
       }
       return unwrapResult(await commands.createHook(createInput(state)));
     },
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
       await invalidateHooks();
       setForm(emptyForm);
       setFormError(null);
       setFormOpen(false);
       notify({
         kind: "success",
-        message: directApply
-          ? "中央 Hook 已保存；在下方事件分组添加后自动同步。"
-          : "中央 Hook 已保存；在下方事件分组添加后生成预览再 Apply。",
+        message: "中央 Hook 已保存；已分配工具会自动同步。",
       });
+      await requestPreview(saved.affectedSyncScopes ?? []);
     },
     onSettled: () => {
       submitGuard.end();
@@ -153,8 +149,9 @@ export function HooksPage() {
           !hook.enabled,
         ),
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await invalidateHooks();
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -172,14 +169,13 @@ export function HooksPage() {
           rowVersion: hook.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await invalidateHooks();
       notify({
         kind: "success",
-        message: directApply
-          ? "中央 Hook 已删除；已分配工具会在下次同步时清理条目。"
-          : "中央 Hook 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
+        message: "中央 Hook 已删除；正在自动清理已分配工具中的条目。",
       });
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -210,8 +206,9 @@ export function HooksPage() {
           rowVersion: hook.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await invalidateHooks();
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -221,45 +218,28 @@ export function HooksPage() {
     },
   });
 
-  const {
-    openPreview,
-    requestPreview,
-    previewMutation,
-    applyMutation,
-    readoptMutation,
-    closePreview,
-  } = useSyncPreviewFlow({
+  const { requestPreview } = useSyncPreviewFlow({
     artifactKind: "hook",
-    directApply,
-    preview: (tool) =>
+    preview: (tool, projectId) =>
       commands.previewHookSync({
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
         excludeFromGit: false,
       }),
-    apply: ({ previewId, tool }) =>
+    apply: ({ previewId, tool, projectId }) =>
       commands.applyHookPreview({
         previewId,
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
       }),
-    readopt: (tool) => commands.readoptHookTarget({ tool, projectId: null }),
     invalidate: invalidateHooks,
     messages: {
       previewFailed: "生成 Hooks 全局预览失败。",
       applyFailed: "应用 Hooks 全局同步失败。",
-      readoptFailed: "重新接管 Hooks 目标失败。",
       empty:
         "暂无启用且已分配到该工具的中央 Hook。可先在事件分组中添加，或通过“检测并导入已有 Hooks”纳入已有配置。",
       applied: (result) =>
         `已应用 ${result.appliedTargets} 个 Hooks 目标，并创建 ${result.snapshotCount} 份快照。`,
-    },
-    onReadopted: (result, tool) => {
-      notify({
-        kind: "success",
-        message: `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
-      });
-      requestPreview(tool, directApply);
     },
   });
 
@@ -270,7 +250,6 @@ export function HooksPage() {
     ? globalTargetStatusPresentation(
         toolStatus.status,
         toolStatus.diagnosticCode,
-        { directApply },
       )
     : undefined;
 
@@ -495,6 +474,16 @@ export function HooksPage() {
                   诊断码：<code>{toolStatus.diagnosticCode}</code>
                 </p>
               ) : null}
+              <ExternalChangeActions
+                artifactKind="hook"
+                tool={activeTool}
+                status={toolStatus.status}
+                onInvalidate={invalidateHooks}
+                onMatchOrImport={() => {
+                  if (importDialog.state) return;
+                  importDialog.open(activeTool);
+                }}
+              />
               <Button
                 className="mt-3 mr-2"
                 size="sm"
@@ -506,19 +495,6 @@ export function HooksPage() {
               >
                 检测并导入已有 Hooks
               </Button>
-              {!directApply ? (
-                <Button
-                  className="mt-3"
-                  size="sm"
-                  disabled={
-                    previewMutation.isPending ||
-                    toolPresentation?.previewBlocked
-                  }
-                  onClick={() => requestPreview(activeTool, directApply)}
-                >
-                  {previewMutation.isPending ? "正在生成…" : "生成全局预览"}
-                </Button>
-              ) : null}
             </article>
           ) : null}
           <div className="mt-5 space-y-5">
@@ -620,9 +596,7 @@ export function HooksPage() {
           open={formOpen}
           title={form.id ? "编辑 Hook" : "新增 Hook"}
           description={
-            directApply
-              ? "保存只更新中央 Hook；已分配工具会按直接应用模式自动同步。"
-              : "保存只更新中央 Hook，不会修改原生配置。"
+            "保存中央 Hook 后，已分配工具会自动同步；未分配工具不会写入原生配置。"
           }
           submitLabel="保存中央意图"
           pending={saveMutation.isPending}
@@ -744,7 +718,7 @@ export function HooksPage() {
               await invalidateHooks();
               notify({
                 kind: "success",
-                message: `已导入 ${result.createdCount} 个 Hook 到中央库；在事件分组中添加后生成全局预览。`,
+                message: `已导入 ${result.createdCount} 个 Hook 到中央库；在事件分组中添加后会自动同步。`,
               });
             }}
           />
@@ -757,35 +731,13 @@ export function HooksPage() {
             eventLabel={openPicker.eventLabel}
             hooks={hooksQuery.data ?? []}
             onClose={() => setOpenPicker(null)}
-            onAssigned={(message) => {
+            onAssigned={async (message, scopes) => {
               setOpenPicker(null);
               notify({ kind: "success", message });
-              if (directApply) {
-                requestPreview(activeTool, true);
-              }
+              await requestPreview(scopes);
             }}
           />
         ) : null}
-
-        <ChangePreviewDialog
-          preview={openPreview?.plan ?? null}
-          tool={openPreview?.tool ?? "claude"}
-          artifactKind="hook"
-          applying={applyMutation.isPending}
-          readopting={readoptMutation.isPending}
-          onReadopt={() => {
-            if (openPreview) {
-              readoptMutation.mutate({ tool: openPreview.tool });
-            }
-          }}
-          onClose={closePreview}
-          onApply={(previewId, tool) => {
-            applyMutation.mutate({
-              previewId,
-              tool,
-            });
-          }}
-        />
       </main>
     </>
   );

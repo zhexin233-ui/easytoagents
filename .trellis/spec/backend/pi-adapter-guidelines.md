@@ -189,10 +189,11 @@ ConfirmProviderImportInput { preview_id, items: Vec<ConfirmProviderImportItem { 
   `context_json`/`redacted_preview_json`/`status`/时间戳 + `(status, created_at)` 索引；
   tool 白名单 `claude|codex|zcode|opencode|pi`（Cursor 无 Provider 合同）。
 - `adopt_provider_native(database, environment, redactor, AdoptProviderNativeInput {
-tool, target_path, row_versions }) -> AdoptProviderNativeResultDto { tool, adopted }`。
+  tool, target_path, row_versions }) -> AdoptProviderNativeResultDto { tool, adopted }`。
+  该服务只由统一的 `ExternalChangePlan` 采纳动作调用，不单独暴露 Provider RPC。
 - 生成绑定：`commands.discoverProviderImport(tool)`、
-  `commands.confirmProviderImport({ previewId, items })`、
-  `commands.adoptProviderNative({ tool, targetPath, rowVersions })`。
+  `commands.confirmProviderImport({ previewId, items })`；原生采纳统一使用
+  `commands.prepareExternalChangePlan(...)` 与 `commands.applyExternalChangePlan(...)`。
 
 ### 3. Contracts
 
@@ -222,11 +223,11 @@ suggestedName}]}`，不含投影或凭据；`providerId` 允许为 `null`（Clau
   任一失败整体回滚且预览保持 `previewed`。取到写锁后重新扫描原生文件再提交。
 - **只读摘要**：`ProviderProfileDto.pi` 仅含 `apiFormat` 与 `models[]` 的 `id`/`name`；
   绝不暴露 `apiKey`、`headers`、`modelOverrides` 的值。
-- **按原生内容接管**（`adopt_provider_native`）：只处理**已漂移**的渠道（档案投影 ≠ 原生
-  条目），按原生文件内容改写档案（`apiKey` 原样采纳：明文入库、`$ENV` 保持引用），并在同一
-  `IMMEDIATE` 事务里把目标基线刷新为全部中央渠道投影的并集。与
-  `readopt_provider_target` 的区别：后者只刷新基线、档案保持旧内容，因此下一次 Apply 会把
-  用户手改的原生内容改回去——接管必须同时改档案，否则用户点完仍会被回写。
+- **按原生内容采纳**（`adopt_provider_native`）：只处理**已漂移**的渠道（档案投影 ≠ 原生
+  条目），按 ExternalChangePlan 的唯一匹配改写档案（`apiKey` 原样采纳：明文入库、`$ENV`
+  保持引用），并在同一 `IMMEDIATE` 事务里把目标基线刷新为全部中央渠道投影的并集。仅刷新
+  基线的内部 reconciliation 不得作为用户动作——采纳必须同时改档案，否则用户点完仍会被
+  回写。
   必须按用户所看预览绑定的行版本（`DatabaseEntityType::ProviderProfile`）做乐观校验：缺条目
   报 `INVALID_INPUT`、已过期报 `STALE_PREVIEW`，不得静默覆盖其他窗口的档案编辑。
   配对规则：档案有 `provider_id` 时按 id 匹配；没有稳定原生 key 的 codec（Claude）只在

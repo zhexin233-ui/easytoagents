@@ -175,7 +175,6 @@ export const preview: PreviewPlan = makePreviewPlan({
       redactedDiff: { after: { mcpServers: { "项目 MCP": {} } } },
       warningCodes: ["GIT_TRACKED"],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: {
         isRepository: true,
@@ -228,7 +227,6 @@ export const skillPreview: PreviewPlan = makePreviewPlan({
       },
       warningCodes: [],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: {
         isRepository: true,
@@ -379,7 +377,7 @@ export const hookPreview: PreviewPlan = makePreviewPlan({
 export const nativePreview: PreviewPlan = makePreviewPlan({
   ...preview,
   previewId: "00000000-0000-4000-8000-000000000742",
-  warningCodes: ["PROJECT_NATIVE_RESOURCE_REQUIRES_CONFIRMATION"],
+  warningCodes: [],
   targets: preview.targets.map((target) => ({
     ...target,
     changeKind: "delete",
@@ -423,7 +421,6 @@ export function setupMocks() {
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
     data: {
-      applyMode: "preview_confirm",
       enabledTools: ["claude", "codex", "cursor"],
     },
   });
@@ -449,42 +446,56 @@ export function setupMocks() {
     status: "ok",
     data: hookPreview,
   });
-  vi.mocked(commands.setProjectMcpAssignment).mockResolvedValue({
-    status: "ok",
-    data: {
-      id: mcpOptions[1]?.mcpId ?? "",
-      name: "项目 MCP",
-      transport: "stdio",
-      command: "fixture",
-      args: [],
-      url: null,
-      headerNames: [],
-      envNames: [],
-      redactedExtra: {},
-      enabled: true,
-      globalTools: [],
-      rowVersion: 5,
-    },
-  });
+  vi.mocked(commands.setProjectMcpAssignment).mockImplementation((input) =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        id: mcpOptions[1]?.mcpId ?? "",
+        name: "项目 MCP",
+        transport: "stdio",
+        command: "fixture",
+        args: [],
+        url: null,
+        headerNames: [],
+        envNames: [],
+        redactedExtra: {},
+        enabled: true,
+        globalTools: [],
+        rowVersion: 5,
+        affectedSyncScopes: [
+          { artifactKind: "mcp", tool: input.tool, projectId: input.projectId },
+        ],
+      },
+    }),
+  );
   vi.mocked(commands.previewMcpSync).mockResolvedValue({
     status: "ok",
     data: preview,
   });
-  vi.mocked(commands.setProjectSkillAssignment).mockResolvedValue({
-    status: "ok",
-    data: {
-      id: skillOptions[1]?.skillId ?? "",
-      name: "项目 Skill",
-      sourcePath: "/isolated/source/project-skill",
-      centralPath: "/isolated/private/project-skill",
-      contentHash: "c".repeat(64),
-      description: "项目测试 Skill",
-      status: "ready",
-      diagnosticCode: null,
-      globalTools: [],
-      rowVersion: 7,
-    },
-  });
+  vi.mocked(commands.setProjectSkillAssignment).mockImplementation((input) =>
+    Promise.resolve({
+      status: "ok",
+      data: {
+        id: skillOptions[1]?.skillId ?? "",
+        name: "项目 Skill",
+        sourcePath: "/isolated/source/project-skill",
+        centralPath: "/isolated/private/project-skill",
+        contentHash: "c".repeat(64),
+        description: "项目测试 Skill",
+        status: "ready",
+        diagnosticCode: null,
+        globalTools: [],
+        rowVersion: 7,
+        affectedSyncScopes: [
+          {
+            artifactKind: "skill",
+            tool: input.tool,
+            projectId: input.projectId,
+          },
+        ],
+      },
+    }),
+  );
   vi.mocked(commands.previewSkillSync).mockResolvedValue({
     status: "ok",
     data: skillPreview,

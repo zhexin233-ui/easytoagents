@@ -33,6 +33,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<domain::Tool>()
         .typ::<domain::Scope>()
         .typ::<domain::ArtifactKind>()
+        .typ::<domain::SyncScopeDto>()
         .typ::<domain::SyncStatus>()
         .typ::<domain::ChangeKind>()
         .typ::<domain::SyncRunKind>()
@@ -58,6 +59,10 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<sync::DatabaseRowVersion>()
         .typ::<sync::PreviewTargetPlan>()
         .typ::<sync::PreviewPlan>()
+        .typ::<sync::ExternalChangePlanDto>()
+        .typ::<sync::ExternalChangePlanInput>()
+        .typ::<sync::ApplyExternalChangePlanInput>()
+        .typ::<sync::ExternalChangeAction>()
         .typ::<sync::ApplyResult>()
         .typ::<sync::SnapshotSummary>()
         .typ::<sync::InterruptedRunPlan>()
@@ -80,6 +85,7 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<profiles::ConfirmImportInput>()
         .typ::<profiles::ApplyProfilePreviewInput>()
         .typ::<profiles::ToolProfileStatusDto>()
+        .typ::<profiles::ProfileTargetStatusDto>()
         .typ::<profiles::DeleteProfileResultDto>()
         .typ::<official_login::OfficialLoginPhase>()
         .typ::<official_login::OfficialLoginStatusDto>()
@@ -98,8 +104,6 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<mcp::McpProjectOptionsInput>()
         .typ::<mcp::PreviewMcpSyncInput>()
         .typ::<mcp::ApplyMcpPreviewInput>()
-        .typ::<mcp::ReadoptMcpTargetInput>()
-        .typ::<mcp::ReadoptMcpTargetResultDto>()
         .typ::<mcp::McpTargetStatusDto>()
         .typ::<mcp::McpImportCandidateStatus>()
         .typ::<mcp::McpImportAction>()
@@ -140,8 +144,6 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<hooks::HookProjectOptionsInput>()
         .typ::<hooks::PreviewHookSyncInput>()
         .typ::<hooks::ApplyHookPreviewInput>()
-        .typ::<hooks::ReadoptHookTargetInput>()
-        .typ::<hooks::ReadoptHookTargetResultDto>()
         .typ::<hooks::HookTargetStatusDto>()
         .typ::<hooks::HookImportCandidateStatus>()
         .typ::<hooks::HookImportCandidateDto>()
@@ -167,8 +169,6 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<agents::AgentProjectOptionDto>()
         .typ::<agents::PreviewAgentSyncInput>()
         .typ::<agents::ApplyAgentPreviewInput>()
-        .typ::<agents::ReadoptAgentTargetInput>()
-        .typ::<agents::ReadoptAgentTargetResultDto>()
         .typ::<agents::AgentToolTargetStatusDto>()
         .typ::<agents::AgentFileTargetStatusDto>()
         .typ::<agents::AgentImportCandidateDto>()
@@ -199,7 +199,6 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
         .typ::<overview::SnapshotRestoreInput>()
         .typ::<overview::ApplySnapshotRestoreInput>()
         .typ::<overview::CompleteOnboardingResultDto>()
-        .typ::<settings::ApplyMode>()
         .typ::<settings::AppSettingsDto>()
         .typ::<settings::UpdateAppSettingsInput>()
         .constant("TOOL_CAPABILITIES", domain::tool_capabilities())
@@ -208,6 +207,8 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::get_app_info,
             commands::environment::get_environment_state,
             commands::environment::refresh_environment,
+            commands::external_changes::prepare_external_change_plan,
+            commands::external_changes::apply_external_change_plan,
             commands::overview::get_dashboard_summary,
             commands::overview::complete_onboarding,
             commands::overview::list_snapshots,
@@ -238,13 +239,12 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::profiles::set_global_prompt_assignment,
             commands::profiles::delete_prompt_profile,
             commands::profiles::get_tool_profile_status,
+            commands::profiles::list_global_profile_target_statuses,
             commands::profiles::discover_provider_import,
             commands::profiles::confirm_provider_import,
             commands::profiles::discover_prompt_import,
             commands::profiles::confirm_prompt_import,
             commands::profiles::preview_provider_sync,
-            commands::profiles::readopt_provider_target,
-            commands::profiles::adopt_provider_native,
             commands::profiles::preview_prompt_sync,
             commands::profiles::apply_profile_preview,
             commands::official_login::get_official_login_status,
@@ -263,7 +263,6 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::mcp::list_global_mcp_target_statuses,
             commands::mcp::preview_mcp_sync,
             commands::mcp::apply_mcp_preview,
-            commands::mcp::readopt_mcp_target,
             commands::mcp::discover_mcp_import,
             commands::mcp::confirm_mcp_import,
             commands::skills::list_skills,
@@ -296,7 +295,6 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::hooks::list_global_hook_target_statuses,
             commands::hooks::preview_hook_sync,
             commands::hooks::apply_hook_preview,
-            commands::hooks::readopt_hook_target,
             commands::hooks::discover_hook_import,
             commands::hooks::confirm_hook_import,
             commands::agents::list_agents,
@@ -313,7 +311,6 @@ pub fn create_command_builder<R: tauri::Runtime>() -> Builder<R> {
             commands::agents::list_global_agent_target_statuses,
             commands::agents::preview_agent_sync,
             commands::agents::apply_agent_preview,
-            commands::agents::readopt_agent_target,
             commands::agents::discover_agent_import,
             commands::agents::confirm_agent_import,
         ])

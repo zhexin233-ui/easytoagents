@@ -13,7 +13,7 @@ use super::models::{
     ProviderImportCandidateStatus, ProviderImportPreviewDto, ProviderImportResultDto,
     ProviderOptionsInput, ProviderProfileDto, ProviderProfileInput, ReadoptProviderTargetInput,
     ReadoptProviderTargetResultDto, SecretUpdate, SetGlobalPromptAssignmentInput,
-    StoredProviderConfig, ToolProfileStatusDto, UpdatePromptProfileInput,
+    ProfileTargetStatusDto, StoredProviderConfig, ToolProfileStatusDto, UpdatePromptProfileInput,
     UpdateProviderProfileInput, VersionedProfileInput, CODEX_BEARER_TOKEN_WARNING,
     CODEX_OPENAI_PROVIDER_ID, NEW_SESSION_NOTICE,
 };
@@ -32,15 +32,15 @@ use crate::{
         provider_imports::{NativeProviderAdoption, ProviderImportPreviewRecord},
         Database,
     },
-    domain::{ArtifactKind, ArtifactName, Scope, Tool},
+    domain::{ArtifactKind, ArtifactName, Scope, SyncScopeDto, Tool},
     error::{AppError, ErrorCode},
     git::GitPathStatus,
     security::SecretRedactor,
     sync::{
-        apply_persisted_preview, build_preview_plan, load_persisted_preview, persist_preview,
-        safe_row_version, scan_target, ApplyResult, ApplyTargetInput, DatabaseEntityType,
-        DatabaseRowVersion, ManagedTargetBaseline, NoApplyFault, PreviewPlan, PreviewTargetRequest,
-        TargetScan,
+        apply_persisted_preview, build_profile_preview_plan, load_persisted_preview,
+        persist_preview, safe_row_version, scan_target, ApplyResult, ApplyTargetInput,
+        DatabaseEntityType, DatabaseRowVersion, ManagedTargetBaseline, NoApplyFault, PreviewPlan,
+        PreviewTargetRequest, TargetScan,
     },
 };
 
@@ -111,7 +111,9 @@ pub fn create_provider_profile(
             is_active: input.activate,
         },
     )?;
-    provider_dto(&record)
+    let mut dto = provider_dto(&record)?;
+    dto.affected_sync_scopes = Some(provider_global_scopes(input.tool, input.activate));
+    Ok(dto)
 }
 
 pub fn update_provider_profile(
@@ -182,7 +184,9 @@ pub fn update_provider_profile(
         })?,
         row_version,
     )?;
-    provider_dto(&record)
+    let mut dto = provider_dto(&record)?;
+    dto.affected_sync_scopes = Some(provider_global_scopes(current.tool, current.is_active));
+    Ok(dto)
 }
 
 pub fn copy_provider_profile(
@@ -251,7 +255,9 @@ pub fn copy_provider_profile(
             is_active: input.activate,
         },
     )?;
-    provider_dto(&copied)
+    let mut dto = provider_dto(&copied)?;
+    dto.affected_sync_scopes = Some(provider_global_scopes(input.target_tool, input.activate));
+    Ok(dto)
 }
 
 pub fn set_active_provider_profile(
@@ -260,21 +266,25 @@ pub fn set_active_provider_profile(
     input: &VersionedProfileInput,
 ) -> Result<ProviderProfileDto, AppError> {
     ensure_profile_capability(tool, ArtifactKind::Provider)?;
-    provider_dto(&repository::set_active_provider_profile(
+    let mut dto = provider_dto(&repository::set_active_provider_profile(
         database,
         tool,
         &input.id,
         i64::from(input.row_version),
-    )?)
+    )?)?;
+    dto.affected_sync_scopes = Some(provider_global_scopes(tool, true));
+    Ok(dto)
 }
 
 pub fn delete_provider_profile(
     database: &mut Database,
     input: &VersionedProfileInput,
 ) -> Result<DeleteProfileResultDto, AppError> {
+    let current = repository::get_provider_profile(database, &input.id)?;
     repository::delete_provider_profile(database, &input.id, i64::from(input.row_version))?;
     Ok(DeleteProfileResultDto {
         id: input.id.clone(),
         deleted: true,
+        affected_sync_scopes: Some(provider_global_scopes(current.tool, current.is_active)),
     })
 }

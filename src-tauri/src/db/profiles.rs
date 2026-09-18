@@ -202,6 +202,251 @@ pub fn adopt_imported_prompt(
     get_prompt_profile(database, &profile.id)
 }
 
+/// Prompt 原生采纳的事务输入。服务层负责 descriptor、解析和 Preview 证据的
+/// 复核；数据库层再以 Immediate 事务把中央正文和同一受管目标基线一起提交。
+/// 该结构不包含任何写原生文件的能力，也不允许调用方只刷新 baseline。
+pub(crate) struct NativePromptAdoption {
+    pub tool: Tool,
+    pub profile_id: String,
+    pub profile_row_version: i64,
+    pub target_id: String,
+    pub target_row_version: i64,
+    pub target_path: String,
+    pub observed_full_hash: String,
+    pub observed_managed_hash: String,
+    pub body: String,
+}
+
+/// 原子采纳一个工具的唯一 active Prompt：中央档案正文与 managed target
+/// baseline 必须在同一 SQLite 事务中更新。任何身份、行版本、基线或正文不变量
+/// 不满足时整体回滚，避免形成“中央已改但下一次同步又覆盖回去”的半状态。
+pub(crate) fn adopt_native_prompt(
+    database: &mut Database,
+    adoption: &NativePromptAdoption,
+) -> Result<PromptProfileRecord, AppError> {
+    if adoption.body.trim().is_empty() || adoption.body.contains('\0') {
+        return Err(AppError::invalid_input(
+            "body",
+            "提示词正文不能为空且不能包含 NUL",
+        ));
+    }
+    if !is_sha256_hex(&adoption.observed_full_hash)
+        || !is_sha256_hex(&adoption.observed_managed_hash)
+    {
+        return Err(AppError::invalid_input(
+            "observedHash",
+            "原生 Prompt observation hash 无效",
+        ));
+    }
+    if crate::sync::hash_json(&serde_json::Value::String(adoption.body.clone()))
+        != adoption.observed_managed_hash
+    {
+        return Err(AppError::invalid_input(
+            "observedManagedHash",
+            "原生 Prompt 正文与 observation hash 不一致",
+        ));
+    }
+
+    let database_path = database.path().to_string_lossy().into_owned();
+    let transaction = database
+        .connection_mut()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| {
+            AppError::database(&database_path, "begin_adopt_native_prompt").with_source(error)
+        })?;
+
+    let profile = transaction
+        .query_row(
+            "SELECT id, name, body, is_active_claude, is_active_codex, is_active_zcode,
+                    is_active_cursor, is_active_opencode, is_active_pi, imported_from_path,
+                    row_version
+             FROM prompt_profiles WHERE id = ?1",
+            [&adoption.profile_id],
+            prompt_from_row,
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(&database_path, "load_adopt_native_prompt_profile")
+                .with_source(error)
+        })?
+        .ok_or_else(|| AppError::stale_preview("adoptPromptNative", &adoption.profile_id))?;
+    if profile.row_version != adoption.profile_row_version {
+        return Err(AppError::stale_preview(
+            "adoptPromptNative",
+            &adoption.profile_id,
+        ));
+    }
+    let active_count = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM prompt_profiles
+             WHERE (CASE WHEN ?1 = 'claude' THEN is_active_claude
+                         WHEN ?1 = 'zcode' THEN is_active_zcode
+                         WHEN ?1 = 'cursor' THEN is_active_cursor
+                         WHEN ?1 = 'opencode' THEN is_active_opencode
+                         WHEN ?1 = 'pi' THEN is_active_pi
+                         ELSE is_active_codex END) = 1",
+            [adoption.tool.as_str()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            AppError::database(&database_path, "count_adopt_native_prompt_profiles")
+                .with_source(error)
+        })?;
+    if active_count != 1 || !prompt_profile_is_active(&profile, adoption.tool) {
+        return Err(AppError::stale_preview(
+            "adoptPromptNative",
+            &adoption.profile_id,
+        ));
+    }
+
+    let target = transaction
+        .query_row(
+            "SELECT tool, artifact_kind, scope, project_id, target_path, row_version,
+                    baseline_full_hash, baseline_managed_hash, baseline_projection_json
+             FROM managed_targets WHERE id = ?1",
+            [&adoption.target_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(&database_path, "load_adopt_native_prompt_target").with_source(error)
+        })?
+        .ok_or_else(|| AppError::stale_preview("adoptPromptNative", &adoption.target_id))?;
+    if target.0 != adoption.tool.as_str()
+        || target.1 != ArtifactKind::Prompt.as_str()
+        || target.2 != "global"
+        || target.3.is_some()
+        || target.4 != adoption.target_path
+        || target.5 != adoption.target_row_version
+    {
+        return Err(AppError::stale_preview(
+            "adoptPromptNative",
+            &adoption.target_id,
+        ));
+    }
+
+    let (Some(baseline_full_hash), Some(baseline_managed_hash), Some(projection_json)) =
+        (target.6, target.7, target.8)
+    else {
+        // 没有完整应用基线就无法证明目标属于本应用；这不是首次导入/接管入口。
+        return Err(AppError::conflict(
+            "managedBaseline",
+            "Prompt 目标缺少完整受管基线，不能直接采纳",
+        ));
+    };
+    let baseline_projection =
+        serde_json::from_str::<serde_json::Value>(&projection_json).map_err(|error| {
+            AppError::database(&database_path, "parse_adopt_native_prompt_baseline")
+                .with_source(error)
+        })?;
+    if baseline_projection.as_str().is_none()
+        || crate::sync::hash_json(&baseline_projection) != baseline_managed_hash
+        || !is_sha256_hex(&baseline_full_hash)
+    {
+        return Err(AppError::conflict(
+            "managedBaseline",
+            "Prompt 目标受管基线无法验证",
+        ));
+    }
+    if profile.body == adoption.body || baseline_managed_hash == adoption.observed_managed_hash {
+        // 采纳必须真正改变中央实体；正文未变时不能退化成只刷新 baseline 的
+        // readopt。调用方应重新生成外部变化计划或走普通同步流程。
+        return Err(AppError::conflict(
+            "adoptPromptNative",
+            "原生 Prompt 没有可采纳的受管正文变化",
+        ));
+    }
+
+    let updated_profile = transaction
+        .execute(
+            "UPDATE prompt_profiles
+             SET body = ?2
+             WHERE id = ?1 AND row_version = ?3",
+            params![
+                adoption.profile_id,
+                adoption.body,
+                adoption.profile_row_version,
+            ],
+        )
+        .map_err(|error| {
+            map_profile_write_error(error, &database_path, "adopt_native_prompt_profile")
+        })?;
+    if updated_profile != 1 {
+        return Err(AppError::stale_preview(
+            "adoptPromptNative",
+            &adoption.profile_id,
+        ));
+    }
+
+    let projection_json = serde_json::to_string(&serde_json::Value::String(adoption.body.clone()))
+        .map_err(|error| {
+            AppError::database(&database_path, "serialize_adopt_native_prompt_baseline")
+                .with_source(error)
+        })?;
+    let updated_target = transaction
+        .execute(
+            "UPDATE managed_targets
+             SET baseline_full_hash = ?2, baseline_managed_hash = ?3,
+                 baseline_projection_json = ?4, last_status = 'in_sync'
+             WHERE id = ?1 AND tool = ?5 AND artifact_kind = ?6 AND scope = 'global'
+               AND project_id IS NULL AND target_path = ?7 AND row_version = ?8",
+            params![
+                adoption.target_id,
+                adoption.observed_full_hash,
+                adoption.observed_managed_hash,
+                projection_json,
+                adoption.tool.as_str(),
+                ArtifactKind::Prompt.as_str(),
+                adoption.target_path,
+                adoption.target_row_version,
+            ],
+        )
+        .map_err(|error| {
+            AppError::database(&database_path, "adopt_native_prompt_baseline").with_source(error)
+        })?;
+    if updated_target != 1 {
+        return Err(AppError::stale_preview(
+            "adoptPromptNative",
+            &adoption.target_id,
+        ));
+    }
+
+    transaction.commit().map_err(|error| {
+        AppError::database(&database_path, "commit_adopt_native_prompt").with_source(error)
+    })?;
+    get_prompt_profile(database, &adoption.profile_id)
+}
+
+fn prompt_profile_is_active(profile: &PromptProfileRecord, tool: Tool) -> bool {
+    match tool {
+        Tool::Claude => profile.is_active_claude,
+        Tool::Codex => profile.is_active_codex,
+        Tool::Zcode => profile.is_active_zcode,
+        Tool::Cursor => profile.is_active_cursor,
+        Tool::Opencode => profile.is_active_opencode,
+        Tool::Pi => profile.is_active_pi,
+    }
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 pub fn list_provider_profiles(
     database: &Database,
     tool: Tool,

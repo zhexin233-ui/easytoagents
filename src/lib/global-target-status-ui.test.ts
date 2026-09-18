@@ -7,7 +7,6 @@ describe("首次 Skills 接管状态", () => {
     const result = globalTargetStatusPresentation(
       "external_owned_change",
       "SKILL_TARGET_INITIAL_TAKEOVER_REQUIRED",
-      { directApply: true },
     );
     expect(result.label).toBe("已有同名安装，待接管");
     expect(result.description).toContain("检测并接管");

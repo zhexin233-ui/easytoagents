@@ -1,6 +1,10 @@
 //! 不依赖桌面壳与具体配置文件格式的领域模型。
 
-use std::{collections::HashSet, fmt, path::Path};
+use std::{
+    collections::{BTreeSet, HashSet},
+    fmt,
+    path::Path,
+};
 
 use serde::{de, Deserialize, Deserializer, Serialize};
 use specta::Type;
@@ -141,6 +145,44 @@ string_enum! {
         Hook => "hook",
         Agent => "agent",
     }
+}
+
+/// 中央意图 mutation 影响的一个精确原生同步目标。
+///
+/// `project_id = None` 代表全局目标；它不代表所有项目目标。只有显式
+/// 项目 assignment 才会产生项目 scope，避免把全局继承误算成项目文件所有权。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncScopeDto {
+    pub artifact_kind: ArtifactKind,
+    pub tool: Tool,
+    pub project_id: Option<String>,
+}
+
+impl SyncScopeDto {
+    pub fn new(artifact_kind: ArtifactKind, tool: Tool, project_id: Option<String>) -> Self {
+        Self {
+            artifact_kind,
+            tool,
+            project_id,
+        }
+    }
+
+    pub fn global(artifact_kind: ArtifactKind, tool: Tool) -> Self {
+        Self::new(artifact_kind, tool, None)
+    }
+
+    pub fn project(artifact_kind: ArtifactKind, tool: Tool, project_id: impl Into<String>) -> Self {
+        Self::new(artifact_kind, tool, Some(project_id.into()))
+    }
+}
+
+/// 去重并按 artifact → tool → project（全局先于项目）稳定排序。
+pub fn stable_sync_scopes<I>(scopes: I) -> Vec<SyncScopeDto>
+where
+    I: IntoIterator<Item = SyncScopeDto>,
+{
+    BTreeSet::from_iter(scopes).into_iter().collect()
 }
 
 string_enum! {
@@ -705,11 +747,11 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        tool_capabilities, validate_global_assignment, validate_project_assignment,
-        validate_single_active_profile, validate_unique_names, AgentName, ArtifactKind,
-        ArtifactName, ChangeKind, EntityId, HookEvent, McpTransport, ProjectRoot, Scope,
-        SkillStatus, SyncRunKind, SyncRunStatus, SyncStatus, TargetType, Tool, ToolCapabilities,
-        TrustStatus,
+        stable_sync_scopes, tool_capabilities, validate_global_assignment,
+        validate_project_assignment, validate_single_active_profile, validate_unique_names,
+        AgentName, ArtifactKind, ArtifactName, ChangeKind, EntityId, HookEvent, McpTransport,
+        ProjectRoot, Scope, SkillStatus, SyncRunKind, SyncRunStatus, SyncScopeDto, SyncStatus,
+        TargetType, Tool, ToolCapabilities, TrustStatus,
     };
 
     /// 字符串→`Tool` 的映射只允许经 `Tool::from_stable_str`（`string_enum!` 生成）。
@@ -1080,5 +1122,30 @@ mod tests {
         assert!(validate_project_assignment(false).is_ok());
         assert!(validate_global_assignment(true).is_err());
         assert!(validate_global_assignment(false).is_ok());
+    }
+
+    #[test]
+    fn sync_scope_dto_serializes_exact_identity_and_is_stable() {
+        let scopes = stable_sync_scopes([
+            SyncScopeDto::project(ArtifactKind::Mcp, Tool::Codex, "project-b"),
+            SyncScopeDto::global(ArtifactKind::Mcp, Tool::Claude),
+            SyncScopeDto::project(ArtifactKind::Mcp, Tool::Codex, "project-a"),
+            SyncScopeDto::project(ArtifactKind::Mcp, Tool::Codex, "project-a"),
+        ]);
+        assert_eq!(scopes.len(), 3);
+        assert_eq!(
+            scopes[0],
+            SyncScopeDto::global(ArtifactKind::Mcp, Tool::Claude)
+        );
+        assert_eq!(scopes[1].project_id.as_deref(), Some("project-a"));
+        assert_eq!(scopes[2].project_id.as_deref(), Some("project-b"));
+        assert_eq!(
+            serde_json::to_value(&scopes[0]).unwrap(),
+            serde_json::json!({
+                "artifactKind": "mcp",
+                "tool": "claude",
+                "projectId": null
+            })
+        );
     }
 }

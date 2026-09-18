@@ -66,7 +66,6 @@ const hookTargetPreview: PreviewPlan = makePreviewPlan({
       redactedDiff: { before: {}, after: { hooks: {} } },
       warningCodes: [],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,
@@ -149,7 +148,6 @@ beforeEach(() => {
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
     data: {
-      applyMode: "preview_confirm",
       enabledTools: ["claude", "codex", "cursor", "zcode"],
     },
   });
@@ -175,7 +173,6 @@ describe("HooksPage 中央列表", () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "preview_confirm",
         enabledTools: ["codex", "cursor", "zcode"],
       },
     });
@@ -432,55 +429,19 @@ describe("HooksPage 事件分组分配", () => {
 });
 
 describe("HooksPage 全局同步", () => {
-  it("生成全局预览后打开持久化预览并按参数 Apply", async () => {
+  it("全局状态卡不再暴露手动预览，只保留导入入口", async () => {
     vi.mocked(commands.listHooks).mockResolvedValue({
       status: "ok",
       data: [hook],
     });
     renderPage();
     const card = await statusCard("claude");
-    fireEvent.click(within(card).getByRole("button", { name: "生成全局预览" }));
-    await waitFor(() => {
-      expect(commands.previewHookSync).toHaveBeenCalledWith({
-        tool: "claude",
-        projectId: null,
-        excludeFromGit: false,
-      });
-    });
-    const dialog = await screen.findByRole("dialog", {
-      name: "确认原生配置变更",
-    });
-    expect(dialog).toBeInTheDocument();
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "应用这份预览" }),
-    );
-    await waitFor(() => {
-      expect(commands.applyHookPreview).toHaveBeenCalledWith({
-        previewId: hookTargetPreview.previewId,
-        tool: "claude",
-        projectId: null,
-      });
-    });
-  });
-
-  it("中央库为空时提示先创建或导入，不生成空目标", async () => {
-    vi.mocked(commands.previewHookSync).mockResolvedValueOnce({
-      status: "ok",
-      data: { ...hookTargetPreview, targets: [] },
-    });
-    renderPage();
-    const card = await statusCard("claude");
-    fireEvent.click(within(card).getByRole("button", { name: "生成全局预览" }));
-    await waitFor(() => {
-      expect(commands.previewHookSync).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(
-        screen.getByText(/暂无启用且已分配到该工具的中央 Hook/),
-      ).toBeInTheDocument();
-    });
     expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
+      within(card).getByRole("button", { name: "检测并导入已有 Hooks" }),
+    ).toBeEnabled();
+    expect(
+      within(card).queryByRole("button", { name: "生成全局预览" }),
     ).not.toBeInTheDocument();
+    expect(commands.previewHookSync).not.toHaveBeenCalled();
   });
 });

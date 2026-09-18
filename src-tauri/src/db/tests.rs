@@ -26,6 +26,8 @@ mod tests {
     const RUN_TWO_ID: &str = "00000000-0000-4000-8000-000000000008";
     const MCP_TWO_ID: &str = "00000000-0000-4000-8000-000000000009";
     const SKILL_TWO_ID: &str = "00000000-0000-4000-8000-000000000010";
+    const HOOK_ID: &str = "00000000-0000-4000-8000-000000000011";
+    const AGENT_ID: &str = "00000000-0000-4000-8000-000000000012";
 
     fn open_isolated_database() -> (tempfile::TempDir, AppPaths, Database) {
         let temporary = tempdir().unwrap();
@@ -3755,5 +3757,103 @@ mod tests {
             "consumed"
         );
         assert_eq!(paths.database().extension().unwrap(), "sqlite3");
+    }
+
+    #[test]
+    fn resource_sync_scope_queries_include_project_only_and_never_invent_inheritance() {
+        let (_temporary, _paths, database) = open_isolated_database();
+        let connection = database.connection();
+        insert_project(connection, PROJECT_ONE_ID, "/fixture/project-one");
+        insert_project(connection, PROJECT_TWO_ID, "/fixture/project-two");
+        insert_mcp(connection, MCP_ID, "scope-mcp");
+        insert_skill(connection, SKILL_ID, "scope-skill");
+        connection
+            .execute(
+                "INSERT INTO hooks(id, name, event, command) VALUES (?1, 'scope-hook', 'PreToolUse', 'echo hook')",
+                [HOOK_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO agents(id, name, description, prompt) VALUES (?1, 'scope-agent', 'description', 'prompt')",
+                [AGENT_ID],
+            )
+            .unwrap();
+
+        // 全局 Claude + 两个 project-only Codex assignments：结果必须保留
+        // project-only 项目，且不因为全局项虚构其它项目 scope。
+        connection
+            .execute(
+                "INSERT INTO mcp_global_assignments(tool, mcp_id) VALUES ('claude', ?1)",
+                [MCP_ID],
+            )
+            .unwrap();
+        for project_id in [PROJECT_ONE_ID, PROJECT_TWO_ID] {
+            connection
+                .execute(
+                    "INSERT INTO mcp_project_assignments(project_id, tool, mcp_id) VALUES (?1, 'codex', ?2)",
+                    params![project_id, MCP_ID],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO skill_project_assignments(project_id, tool, skill_id) VALUES (?1, 'codex', ?2)",
+                params![PROJECT_ONE_ID, SKILL_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO hook_global_assignments(tool, hook_id, event) VALUES ('claude', ?1, 'PreToolUse')",
+                [HOOK_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO hook_project_assignments(project_id, tool, hook_id, event) VALUES (?1, 'codex', ?2, 'PreToolUse')",
+                params![PROJECT_TWO_ID, HOOK_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO agent_global_assignments(tool, agent_id) VALUES ('cursor', ?1)",
+                [AGENT_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO agent_project_assignments(project_id, tool, agent_id) VALUES (?1, 'codex', ?2)",
+                params![PROJECT_ONE_ID, AGENT_ID],
+            )
+            .unwrap();
+
+        let mcp_scopes = super::mcp::sync_scopes_for_mcp(&database, MCP_ID).unwrap();
+        assert_eq!(mcp_scopes.len(), 3);
+        assert!(mcp_scopes.iter().any(|scope| {
+            scope.tool == crate::domain::Tool::Claude && scope.project_id.is_none()
+        }));
+        assert!(mcp_scopes.iter().any(|scope| {
+            scope.tool == crate::domain::Tool::Codex
+                && scope.project_id.as_deref() == Some(PROJECT_ONE_ID)
+        }));
+        assert!(mcp_scopes.iter().all(|scope| {
+            scope.tool != crate::domain::Tool::Claude || scope.project_id.is_none()
+        }));
+
+        let skill_scopes = super::skills::sync_scopes_for_skill(&database, SKILL_ID).unwrap();
+        assert_eq!(skill_scopes.len(), 1);
+        assert_eq!(skill_scopes[0].project_id.as_deref(), Some(PROJECT_ONE_ID));
+        assert_eq!(
+            super::hooks::sync_scopes_for_hook(&database, HOOK_ID)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            super::agents::sync_scopes_for_agent(&database, AGENT_ID)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 }

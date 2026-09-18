@@ -254,15 +254,17 @@ pub(super) fn find_agent_target_baseline(
         })
 }
 
-/// 判断一个尚未登记基线的原生文件，是否至少在中央交集字段上代表同一个
-/// Agent。匹配成功时首次同步沿用原文件投影，保留导入时的未知字段与排版；
-/// 后续中央编辑再回到确定性的中央投影。
+/// 判断一个原生文件是否至少在中央交集字段上代表同一个 Agent。首次导入
+/// 已由用户明确接受时，`allow_dropped_fields` 允许沿用原文件投影，保留其
+/// 未建模字段与排版；完整基线上的普通同步则传 false，未知字段会回到匹配/
+/// 导入或 fail-closed 路径，不被静默携带。
 pub(super) fn agent_observed_matches_central(
     tool: Tool,
     descriptor: &TargetDescriptor,
     record: &AgentRecord,
     settings: Option<&Value>,
     observed: &crate::sync::ObservedTarget,
+    allow_dropped_fields: bool,
 ) -> bool {
     match (tool, observed.document()) {
         (
@@ -272,6 +274,12 @@ pub(super) fn agent_observed_matches_central(
             let Ok(parsed) = parse_markdown_agent_file(text, tool) else {
                 return false;
             };
+            // 只有完整、无损的交集字段才能作为既有原生文档的稳定投影。
+            // 未知 frontmatter 会在采纳时进入匹配/导入，不能被普通同步
+            // 静默携带到下一次中央投影。
+            if !allow_dropped_fields && !parsed.dropped_fields.is_empty() {
+                return false;
+            }
             let fallback_name = descriptor.path.as_deref().and_then(file_stem_of);
             let name = parsed.name.or(fallback_name);
             if name.as_deref() != Some(record.name.as_str())
@@ -290,30 +298,22 @@ pub(super) fn agent_observed_matches_central(
             };
             normalized.map(|value| value.value) == settings.cloned()
         }
-        (Tool::Codex, crate::adapters::ObservedDocument::Toml { semantic, .. }) => {
-            let Some(object) = semantic.as_object() else {
+        (Tool::Codex, crate::adapters::ObservedDocument::Toml { document, .. }) => {
+            let text = document.to_string();
+            let Ok(parsed) = parse_codex_agent_file(&text) else {
                 return false;
             };
-            if object.get("name").and_then(Value::as_str) != Some(record.name.as_str())
-                || object.get("description").and_then(Value::as_str)
-                    != Some(record.description.as_str())
-                || object.get("developer_instructions").and_then(Value::as_str)
-                    != Some(record.prompt.as_str())
+            if parsed.name.as_deref() != Some(record.name.as_str())
+                || parsed.description.as_deref() != Some(record.description.as_str())
+                || parsed.prompt != record.prompt
             {
                 return false;
             }
-            let mut retained = serde_json::Map::new();
-            for (source_key, central_key) in [
-                ("model", "model"),
-                ("model_reasoning_effort", "modelReasoningEffort"),
-                ("features", "features"),
-            ] {
-                if let Some(value) = object.get(source_key) {
-                    retained.insert(central_key.to_owned(), value.clone());
-                }
+            if !allow_dropped_fields && !parsed.dropped_fields.is_empty() {
+                return false;
             }
             let Ok(normalized) =
-                validate_agent_tool_settings(Tool::Codex, &Value::Object(retained))
+                validate_agent_tool_settings(Tool::Codex, &Value::Object(parsed.retained))
             else {
                 return false;
             };
@@ -321,6 +321,424 @@ pub(super) fn agent_observed_matches_central(
         }
         _ => false,
     }
+}
+
+/// 将被动扫描绑定的 Markdown/Codex Agent 原生内容采纳为中央 Agent。
+///
+/// 该入口只接受已有 managed target、完整 baseline、精确文件路径和唯一
+/// assignment。它不会创建/删除中央 Agent、改变 enabled 或 assignment，也不
+/// 调用旧的 baseline-only `readopt_agent_target`。中央字段、工具设置与目标
+/// baseline 交由 `db::agents::adopt_native_agent` 在同一事务中提交。
+pub fn adopt_agent_native(
+    database: &mut Database,
+    environment: &crate::adapters::ExplicitEnvironment,
+    redactor: &mut SecretRedactor,
+    input: AdoptAgentNativeInput,
+) -> Result<AdoptAgentNativeResultDto, AppError> {
+    if !ASSIGNABLE_AGENT_TOOLS.contains(&input.tool) {
+        return Err(unsupported_agent_tool(input.tool, Scope::Global));
+    }
+    if input.target_path.trim().is_empty() || input.target_id.trim().is_empty() {
+        return Err(AppError::invalid_input(
+            "targetPath",
+            "Agent 采纳缺少目标身份",
+        ));
+    }
+    let project = input
+        .project_id
+        .as_deref()
+        .map(|id| mcp_repository::get_project(database, id))
+        .transpose()?;
+    let scope = if project.is_some() {
+        Scope::Project
+    } else {
+        Scope::Global
+    };
+    agent_scope_supported(input.tool, scope)?;
+    let project_root = project
+        .as_ref()
+        .map(|project| canonical_project(&project.root_path))
+        .transpose()?;
+    let directory_descriptor =
+        agent_directory_descriptor(environment, input.tool, project_root.as_ref())?;
+    let file_descriptor =
+        agent_file_descriptor(&directory_descriptor, &input.target_path, input.tool)?;
+    let target_path = file_descriptor
+        .path
+        .as_deref()
+        .ok_or_else(|| AppError::stale_preview("externalChangePlan", "agentTarget"))?;
+    if target_path != input.target_path {
+        return Err(AppError::stale_preview(
+            "externalChangePlan",
+            &input.target_path,
+        ));
+    }
+    let target = repository::find_agent_managed_target(
+        database,
+        input.tool,
+        scope,
+        project.as_ref().map(|project| project.id.as_str()),
+        target_path,
+    )?
+    .ok_or_else(|| AppError::invalid_input("agentAdopt", "MATCH_OR_IMPORT_REQUIRED"))?;
+    if target.id != input.target_id || target.row_version != i64::from(input.target_row_version) {
+        return Err(AppError::stale_preview(
+            "externalChangePlan",
+            &input.target_path,
+        ));
+    }
+    let baseline = target.to_baseline()?;
+    if baseline.full_hash.is_none() || baseline.managed_hash.is_none() {
+        return Err(AppError::conflict("agentAdopt", "MATCH_OR_IMPORT_REQUIRED"));
+    }
+
+    let scan = scan_target(
+        input.tool.adapter(),
+        &file_descriptor,
+        &ManagedOwnership::WholeDocument,
+    );
+    let assessment = assess_drift(&file_descriptor, &baseline, &scan);
+    match assessment.status {
+        SyncStatus::ExternalOwnedChange if assessment.can_merge => {}
+        // 无受管字段变化时不需要写任何一侧；尤其不能以“采纳”名义只刷新
+        // full baseline，否则会把只读扫描变成隐式授权。
+        SyncStatus::InSync | SyncStatus::ExternalNonOwnedChange => {
+            return Ok(AdoptAgentNativeResultDto {
+                tool: input.tool,
+                project_id: input.project_id,
+                adopted: Vec::new(),
+                affected_sync_scopes: Some(Vec::new()),
+            });
+        }
+        _ => {
+            return Err(agent_adoption_scan_error(
+                &input,
+                &file_descriptor,
+                &scan,
+                &assessment,
+            ))
+        }
+    }
+
+    let expected_full_hash = input
+        .observed_full_hash
+        .as_deref()
+        .ok_or_else(|| AppError::stale_preview("externalChangePlan", &input.target_path))?;
+    let expected_managed_hash = input
+        .observed_managed_hash
+        .as_deref()
+        .ok_or_else(|| AppError::stale_preview("externalChangePlan", &input.target_path))?;
+    let observed = match &scan {
+        TargetScan::Observed(observed)
+            if observed.full_hash == expected_full_hash
+                && observed.managed_hash == expected_managed_hash =>
+        {
+            observed
+        }
+        TargetScan::Observed(_) => {
+            return Err(AppError::stale_preview(
+                "externalChangePlan",
+                &input.target_path,
+            ));
+        }
+        _ => {
+            return Err(agent_adoption_scan_error(
+                &input,
+                &file_descriptor,
+                &scan,
+                &assessment,
+            ))
+        }
+    };
+
+    let parsed = parse_observed_agent_file(input.tool, observed)
+        .map_err(|code| agent_adoption_parse_error(&input.target_path, input.tool, code))?;
+    if !parsed.dropped_fields.is_empty() {
+        return Err(AppError::invalid_input(
+            "agentAdopt",
+            "MATCH_OR_IMPORT_REQUIRED",
+        ));
+    }
+    let stem = file_stem_of(&input.target_path)
+        .ok_or_else(|| AppError::invalid_input("agentAdopt", "MATCH_OR_IMPORT_REQUIRED"))?;
+    let native_name = parsed.name.as_deref().unwrap_or(stem.as_str());
+    if native_name != stem {
+        return Err(AppError::invalid_input(
+            "agentAdopt",
+            "MATCH_OR_IMPORT_REQUIRED",
+        ));
+    }
+    let records = assigned_agents_for_scope(
+        database,
+        input.tool,
+        scope,
+        project.as_ref().map(|project| project.id.as_str()),
+    )?;
+    let matching = records
+        .into_iter()
+        .filter(|record| record.name == stem && record.enabled)
+        .collect::<Vec<_>>();
+    let [record] = matching.as_slice() else {
+        // 0 = 重命名/新增/未分配，>1 = 同 stem 歧义；两者都必须由应用内
+        // 匹配/导入处理，不能按相似名称猜测中央记录。
+        return Err(AppError::invalid_input(
+            "agentAdopt",
+            "MATCH_OR_IMPORT_REQUIRED",
+        ));
+    };
+    if parsed.description.as_deref().is_none() {
+        return Err(AppError::invalid_input(
+            "agentAdopt",
+            "MATCH_OR_IMPORT_REQUIRED",
+        ));
+    }
+    let description = parsed.description.as_deref().unwrap_or_default();
+    let validated =
+        validate_agent_definition(&record.name, description, &parsed.prompt, record.enabled)?;
+    let settings = match input.tool {
+        Tool::Claude | Tool::Codex if !parsed.retained.is_empty() => Some(
+            validate_agent_tool_settings(input.tool, &Value::Object(parsed.retained.clone()))?
+                .ok_or_else(|| AppError::invalid_input("settings", AGENT_FIELD_INVALID))?,
+        ),
+        Tool::Claude | Tool::Codex => None,
+        Tool::Cursor | Tool::Zcode | Tool::Opencode => None,
+        Tool::Pi => return Err(unsupported_agent_tool(input.tool, scope)),
+    };
+    let settings_json = settings
+        .as_ref()
+        .map(|settings| {
+            serde_json::to_string(settings.value())
+                .map_err(|_| AppError::invalid_input("settings", AGENT_FIELD_INVALID))
+        })
+        .transpose()?;
+    let baseline_projection_json = safe_agent_adoption_baseline(
+        input.tool,
+        &validated.name,
+        &validated.description,
+        &validated.prompt,
+        settings.as_ref().map(|settings| settings.value()),
+        redactor,
+    )?;
+    let agent_row_version = input
+        .row_versions
+        .iter()
+        .find(|row| row.entity_type == DatabaseEntityType::Agent && row.entity_id == record.id)
+        .map(|row| row.row_version)
+        .ok_or_else(|| AppError::stale_preview("externalChangePlan", &record.id))?;
+    if agent_row_version != safe_row_version(record.row_version)? {
+        return Err(AppError::stale_preview("externalChangePlan", &record.id));
+    }
+    // 通用中央字段会影响该 Agent 在所有工具/范围的投影；如果本次只改了
+    // 当前工具的覆盖层，则只需刷新该工具的 scopes。assignment 本身不由
+    // 采纳动作改变，范围查询只用于返回后续同步执行器的精确触发集合。
+    let central_fields_changed =
+        record.description != validated.description || record.prompt != validated.prompt;
+    // 原生文件没有数据库锁；在中央事务开始前再做一次只读 hash 复核，
+    // 缩短“解析后、写库前”的 TOCTOU 窗口。若外部进程在这里编辑文件，
+    // 采纳停止且不写入中央记录或 baseline。
+    let final_observed = match scan_target(
+        input.tool.adapter(),
+        &file_descriptor,
+        &ManagedOwnership::WholeDocument,
+    ) {
+        TargetScan::Observed(observed)
+            if observed.full_hash == expected_full_hash
+                && observed.managed_hash == expected_managed_hash =>
+        {
+            observed
+        }
+        TargetScan::Observed(_) => {
+            return Err(AppError::stale_preview(
+                "externalChangePlan",
+                &input.target_path,
+            ));
+        }
+        scan => {
+            return Err(agent_adoption_scan_error(
+                &input,
+                &file_descriptor,
+                &scan,
+                &assessment,
+            ));
+        }
+    };
+    let updated = repository::adopt_native_agent(
+        database,
+        &crate::db::agents::NativeAgentAdoption {
+            target_id: input.target_id,
+            target_row_version: input.target_row_version,
+            target_path: input.target_path.clone(),
+            tool: input.tool,
+            scope,
+            project_id: input.project_id.clone(),
+            agent_id: record.id.clone(),
+            agent_name: record.name.clone(),
+            agent_row_version,
+            description: validated.description,
+            prompt: validated.prompt,
+            settings_json,
+            observed_full_hash: final_observed.full_hash.clone(),
+            observed_managed_hash: final_observed.managed_hash.clone(),
+            row_versions: input.row_versions,
+            baseline_projection_json,
+        },
+    )?;
+    let affected_sync_scopes = repository::sync_scopes_for_agent(database, &updated.id)?;
+    let affected_sync_scopes = if central_fields_changed {
+        affected_sync_scopes
+    } else {
+        affected_sync_scopes
+            .into_iter()
+            .filter(|scope| scope.tool == input.tool)
+            .collect()
+    };
+    Ok(AdoptAgentNativeResultDto {
+        tool: input.tool,
+        project_id: input.project_id.clone(),
+        adopted: vec![updated.name],
+        affected_sync_scopes: Some(crate::domain::stable_sync_scopes(affected_sync_scopes)),
+    })
+}
+
+fn assigned_agents_for_scope(
+    database: &Database,
+    tool: Tool,
+    scope: Scope,
+    project_id: Option<&str>,
+) -> Result<Vec<AgentRecord>, AppError> {
+    let mut records = repository::list_assigned_agents(database, tool, project_id)?;
+    if scope == Scope::Project {
+        records.extend(repository::list_assigned_agents(database, tool, None)?);
+    }
+    records.sort_by(|left, right| left.id.cmp(&right.id));
+    records.dedup_by(|left, right| left.id == right.id);
+    Ok(records)
+}
+
+fn parse_observed_agent_file(
+    tool: Tool,
+    observed: &crate::sync::ObservedTarget,
+) -> Result<ParsedAgentFile, &'static str> {
+    match (tool, observed.document()) {
+        (Tool::Codex, crate::adapters::ObservedDocument::Toml { document, .. }) => {
+            let text = document.to_string();
+            if text.len() > crate::agents::MAX_AGENT_FILE_BYTES as usize {
+                return Err(AGENT_FILE_TOO_LARGE);
+            }
+            parse_codex_agent_file(&text)
+        }
+        (
+            Tool::Claude | Tool::Cursor | Tool::Zcode | Tool::Opencode,
+            crate::adapters::ObservedDocument::Markdown(text),
+        ) => {
+            if text.len() > crate::agents::MAX_AGENT_FILE_BYTES as usize {
+                return Err(AGENT_FILE_TOO_LARGE);
+            }
+            parse_markdown_agent_file(text, tool)
+        }
+        _ => Err(AGENT_FRONTMATTER_INVALID),
+    }
+}
+
+fn agent_adoption_parse_error(target_path: &str, tool: Tool, code: &'static str) -> AppError {
+    match code {
+        AGENT_FRONTMATTER_INVALID | AGENT_FILE_TOO_LARGE => AppError::parse(
+            target_path,
+            if tool == Tool::Codex {
+                "toml"
+            } else {
+                "markdown"
+            },
+        ),
+        AGENT_FIELD_INVALID => AppError::invalid_input("settings", AGENT_FIELD_INVALID),
+        AGENT_REQUIRED_FIELD_MISSING | AGENT_NAME_INVALID | AGENT_NAME_CONFLICT => {
+            AppError::invalid_input("agentAdopt", "MATCH_OR_IMPORT_REQUIRED")
+        }
+        _ => AppError::invalid_input("agentAdopt", "MATCH_OR_IMPORT_REQUIRED"),
+    }
+}
+
+fn agent_adoption_scan_error(
+    input: &AdoptAgentNativeInput,
+    descriptor: &TargetDescriptor,
+    scan: &TargetScan,
+    assessment: &crate::sync::DriftAssessment,
+) -> AppError {
+    // Policy/trust are descriptor-level gates and take precedence over a
+    // malformed body.  Do not let a readable but forbidden file turn a
+    // policy/trust block into an import hint.
+    match assessment.status {
+        SyncStatus::PolicyBlocked => {
+            return AppError::policy_blocked(
+                descriptor.tool.as_str(),
+                &input.target_path,
+                "blocked",
+            )
+        }
+        SyncStatus::Untrusted => {
+            return AppError::untrusted_project(descriptor.tool.as_str(), &input.target_path)
+        }
+        _ => {}
+    }
+    match scan {
+        TargetScan::Missing => AppError::stale_preview("externalChangePlan", &input.target_path),
+        TargetScan::PermissionDenied => AppError::permission(&input.target_path, "read_agent"),
+        TargetScan::ParseError => AppError::parse(
+            &input.target_path,
+            if input.tool == Tool::Codex {
+                "toml"
+            } else {
+                "markdown"
+            },
+        ),
+        TargetScan::TargetTypeChanged(_) => {
+            AppError::conflict("targetPath", "Agent 原生目标类型已变化")
+        }
+        TargetScan::ManagedItemBaselineMismatch => {
+            AppError::conflict("agentAdopt", "MATCH_OR_IMPORT_REQUIRED")
+        }
+        TargetScan::Failed | TargetScan::Unavailable => AppError::io_from(
+            &input.target_path,
+            "read_agent",
+            &std::io::Error::other("target unreadable"),
+        ),
+        TargetScan::Observed(_) => match assessment.status {
+            SyncStatus::ExternalOwnedChange => {
+                AppError::conflict("agentAdopt", "MATCH_OR_IMPORT_REQUIRED")
+            }
+            _ => AppError::stale_preview("externalChangePlan", &input.target_path),
+        },
+    }
+}
+
+fn safe_agent_adoption_baseline(
+    tool: Tool,
+    name: &str,
+    description: &str,
+    prompt: &str,
+    settings: Option<&Value>,
+    redactor: &SecretRedactor,
+) -> Result<String, AppError> {
+    let mut projection = serde_json::Map::new();
+    projection.insert("name".to_owned(), Value::String(name.to_owned()));
+    projection.insert(
+        "description".to_owned(),
+        Value::String(description.to_owned()),
+    );
+    projection.insert("prompt".to_owned(), Value::String(prompt.to_owned()));
+    if let Some(settings) = settings {
+        projection.insert("toolSettings".to_owned(), settings.clone());
+    }
+    // `tool` is deliberately part of the private evidence shape so a malformed
+    // baseline can never be mistaken for another tool's projection. It is not
+    // emitted in the result DTO.
+    projection.insert("tool".to_owned(), Value::String(tool.as_str().to_owned()));
+    serde_json::to_string(
+        &redactor
+            .redact_structure(&Value::Object(projection))
+            .into_value(),
+    )
+    .map_err(|_| AppError::invalid_input("managedBaseline", "Agent 采纳基线无法序列化"))
 }
 
 fn canonical_project(path: &str) -> Result<ProjectRoot, AppError> {
@@ -361,6 +779,7 @@ fn agent_dto_with_assignments(
         tool_settings: tool_settings_dto(&tool_settings)?,
         // 整文件目标没有 managed items，行版本直接取中央记录。
         row_version: safe_row_version(record.row_version)?,
+        affected_sync_scopes: None,
     })
 }
 
@@ -536,52 +955,68 @@ pub(crate) fn parse_markdown_agent_file(
             let mut dropped_fields = Vec::new();
             let mut retained = serde_json::Map::new();
             for key in mapping.keys() {
-                if let Some(key) = key.as_str() {
-                    if key == "name" || key == "description" {
+                let Some(key) = key.as_str() else {
+                    // YAML allows arbitrary scalar keys.  A non-string key is
+                    // not part of the Agent contract and must not disappear
+                    // silently from the dropped-field evidence (it may carry
+                    // an unsupported value or a credential).
+                    dropped_fields.push("<non-string-key>".to_owned());
+                    continue;
+                };
+                if key == "name" || key == "description" {
+                    continue;
+                }
+                // OpenCode 的文件级 Agent 由文件名命名，且中央投影固定
+                // 使用 `mode: subagent`。把这个不可变身份字段纳入可映射
+                // 交集；其他 mode（或错误类型）必须留给匹配/导入处理。
+                if tool == Tool::Opencode && key == "mode" {
+                    let value = mapping
+                        .get(serde_yaml_ng::Value::String(key.to_owned()))
+                        .ok_or(AGENT_FIELD_INVALID)?;
+                    if value.as_str() == Some("subagent") {
                         continue;
                     }
-                    if tool == Tool::Claude && matches!(key, "model" | "color" | "tools") {
-                        let Some(value) = mapping.get(serde_yaml_ng::Value::String(key.to_owned()))
-                        else {
-                            continue;
-                        };
-                        match key {
-                            "model" | "color" => {
-                                let string = value.as_str().ok_or(AGENT_FIELD_INVALID)?;
-                                retained.insert(
-                                    key.to_owned(),
-                                    Value::String(string.trim().to_owned()),
-                                );
-                            }
-                            "tools" => {
-                                let values = match value {
-                                    serde_yaml_ng::Value::String(string) => {
-                                        if string.trim().is_empty() {
-                                            Vec::new()
-                                        } else {
-                                            string
-                                                .split(',')
-                                                .map(|item| Value::String(item.trim().to_owned()))
-                                                .collect()
-                                        }
-                                    }
-                                    serde_yaml_ng::Value::Sequence(values) => values
-                                        .iter()
-                                        .map(|item| {
-                                            item.as_str()
-                                                .map(|item| Value::String(item.trim().to_owned()))
-                                                .ok_or(AGENT_FIELD_INVALID)
-                                        })
-                                        .collect::<Result<Vec<_>, _>>()?,
-                                    _ => return Err(AGENT_FIELD_INVALID),
-                                };
-                                retained.insert("tools".to_owned(), Value::Array(values));
-                            }
-                            _ => unreachable!(),
+                    return Err(AGENT_FIELD_INVALID);
+                }
+                if tool == Tool::Claude && matches!(key, "model" | "color" | "tools") {
+                    let Some(value) = mapping.get(serde_yaml_ng::Value::String(key.to_owned()))
+                    else {
+                        continue;
+                    };
+                    match key {
+                        "model" | "color" => {
+                            let string = value.as_str().ok_or(AGENT_FIELD_INVALID)?;
+                            retained
+                                .insert(key.to_owned(), Value::String(string.trim().to_owned()));
                         }
-                    } else {
-                        dropped_fields.push(key.to_owned());
+                        "tools" => {
+                            let values = match value {
+                                serde_yaml_ng::Value::String(string) => {
+                                    if string.trim().is_empty() {
+                                        Vec::new()
+                                    } else {
+                                        string
+                                            .split(',')
+                                            .map(|item| Value::String(item.trim().to_owned()))
+                                            .collect()
+                                    }
+                                }
+                                serde_yaml_ng::Value::Sequence(values) => values
+                                    .iter()
+                                    .map(|item| {
+                                        item.as_str()
+                                            .map(|item| Value::String(item.trim().to_owned()))
+                                            .ok_or(AGENT_FIELD_INVALID)
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?,
+                                _ => return Err(AGENT_FIELD_INVALID),
+                            };
+                            retained.insert("tools".to_owned(), Value::Array(values));
+                        }
+                        _ => unreachable!(),
                     }
+                } else {
+                    dropped_fields.push(key.to_owned());
                 }
             }
             dropped_fields.sort();

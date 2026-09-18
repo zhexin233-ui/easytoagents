@@ -5,8 +5,8 @@ use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use crate::{
     db::{column_tool, Database},
     domain::{
-        validate_global_assignment, validate_project_assignment, EntityId, McpTransport, Tool,
-        TrustStatus,
+        stable_sync_scopes, validate_global_assignment, validate_project_assignment, ArtifactKind,
+        EntityId, McpTransport, SyncScopeDto, Tool, TrustStatus,
     },
     error::AppError,
     mcp::ValidatedMcpConfiguration,
@@ -246,6 +246,41 @@ pub fn global_tools_for_mcp(database: &Database, mcp_id: &str) -> Result<Vec<Too
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| AppError::database(&path, "decode_mcp_global_tools").with_source(error))?;
     Ok(tools)
+}
+
+/// 返回 MCP 当前所有显式 assignment 对应的同步 scope。
+/// 全局继承不会展开成项目 scope；项目 scope 只来自 project assignment 表。
+pub fn sync_scopes_for_mcp(
+    database: &Database,
+    mcp_id: &str,
+) -> Result<Vec<SyncScopeDto>, AppError> {
+    let path = database.path().to_string_lossy();
+    let mut statement = database
+        .connection()
+        .prepare_cached(
+            "SELECT tool, NULL FROM mcp_global_assignments WHERE mcp_id = ?1
+             UNION ALL
+             SELECT tool, project_id FROM mcp_project_assignments WHERE mcp_id = ?1
+             UNION ALL
+             SELECT target.tool, target.project_id
+             FROM managed_items AS item
+             JOIN managed_targets AS target ON target.id = item.target_id
+             WHERE item.resource_kind = 'mcp' AND item.resource_id = ?1
+             ORDER BY tool, project_id",
+        )
+        .map_err(|error| AppError::database(&path, "prepare_mcp_sync_scopes").with_source(error))?;
+    let scopes = statement
+        .query_map([mcp_id], |row| {
+            Ok(SyncScopeDto::new(
+                ArtifactKind::Mcp,
+                column_tool(row, 0)?,
+                row.get(1)?,
+            ))
+        })
+        .map_err(|error| AppError::database(&path, "query_mcp_sync_scopes").with_source(error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppError::database(&path, "decode_mcp_sync_scopes").with_source(error))?;
+    Ok(stable_sync_scopes(scopes))
 }
 
 pub fn set_global_assignment(
@@ -598,14 +633,14 @@ pub(crate) fn touch_versioned_row(
     Ok(())
 }
 
-struct SerializedConfiguration {
-    args: String,
-    headers: String,
-    env: String,
-    extra: String,
+pub(crate) struct SerializedConfiguration {
+    pub(crate) args: String,
+    pub(crate) headers: String,
+    pub(crate) env: String,
+    pub(crate) extra: String,
 }
 
-fn serialize_configuration_json(
+pub(crate) fn serialize_configuration_json(
     value: &ValidatedMcpConfiguration,
 ) -> Result<SerializedConfiguration, AppError> {
     Ok(SerializedConfiguration {

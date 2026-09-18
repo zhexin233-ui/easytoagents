@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Power, PowerOff, Trash2 } from "lucide-react";
 
 import { commands, type McpServerDto, type Tool } from "@/bindings/commands";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import {
   CentralList,
   CentralListCard,
@@ -34,7 +33,6 @@ import {
   toolMetadata,
 } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
-import { appSettingsQueryOptions } from "@/lib/settings-api";
 import { McpFormDialog } from "@/features/mcp/mcp-form-dialog";
 import {
   createMcpInput,
@@ -44,18 +42,16 @@ import {
   updateMcpInput,
 } from "@/features/mcp/mcp-form";
 import { McpImportDialog } from "@/features/mcp/mcp-import-dialog";
+import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 
 interface McpSaveVariables {
   state: McpFormState;
-  globalTools: Tool[];
 }
 
 export function McpPage() {
   const queryClient = useQueryClient();
   const serversQuery = useQuery(mcpServersQueryOptions());
   const statusesQuery = useQuery(globalMcpStatusesQueryOptions());
-  const settingsQuery = useQuery(appSettingsQueryOptions());
-  const directApply = settingsQuery.data?.applyMode === "direct";
   const enabledTools = useEnabledTools();
   const visibleStatuses = statusesQuery.data?.filter((status) =>
     enabledTools.has(status.tool),
@@ -82,23 +78,21 @@ export function McpPage() {
         await commands.createMcpServer(createMcpInput(state)),
       );
     },
-    onSuccess: async (_result, { globalTools }) => {
+    onSuccess: async (result) => {
       await invalidateMcp();
       setFormOpen(false);
       setFormInitial(emptyMcpForm);
-      if (directApply && globalTools.length > 0) {
+      if ((result.affectedSyncScopes?.length ?? 0) > 0) {
         notify({
           kind: "success",
           message: "中央 MCP 已保存；正在自动同步已分配工具。",
         });
-        for (const tool of globalTools) requestPreview(tool, true);
+        await requestPreview(result.affectedSyncScopes ?? []);
         return;
       }
       notify({
         kind: "success",
-        message: directApply
-          ? "中央 MCP 已保存；尚未分配到任何工具，分配后会自动同步。"
-          : "中央 MCP 已保存；原生配置尚未修改。请生成预览后再 Apply。",
+        message: "中央 MCP 已保存；未分配工具不会写入原生配置。",
       });
     },
     onSettled: () => {
@@ -128,11 +122,9 @@ export function McpPage() {
           !server.enabled,
         ),
       ),
-    onSuccess: async (_result, server) => {
+    onSuccess: async (result) => {
       await invalidateMcp();
-      if (!directApply) return;
-      // 启停改变已分配工具的期望投影；逐个工具自动同步，未分配则无需同步。
-      for (const tool of server.globalTools) requestPreview(tool, true);
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -150,21 +142,19 @@ export function McpPage() {
           rowVersion: server.rowVersion,
         }),
       ),
-    onSuccess: async (_result, server) => {
+    onSuccess: async (result) => {
       await invalidateMcp();
-      if (directApply && server.globalTools.length > 0) {
+      if ((result.affectedSyncScopes?.length ?? 0) > 0) {
         notify({
           kind: "success",
           message: "中央 MCP 已删除；正在自动清理旧受管条目。",
         });
-        for (const tool of server.globalTools) requestPreview(tool, true);
+        await requestPreview(result.affectedSyncScopes ?? []);
         return;
       }
       notify({
         kind: "success",
-        message: directApply
-          ? "中央 MCP 已删除；该条目未分配到任何工具，无需同步清理。"
-          : "中央 MCP 已删除；仍需预览并 Apply 才会安全清理旧受管条目。",
+        message: "中央 MCP 已删除；该条目未分配到任何工具，无需同步清理。",
       });
     },
     onError: (error) => {
@@ -191,11 +181,9 @@ export function McpPage() {
           rowVersion: server.rowVersion,
         }),
       ),
-    onSuccess: async (_result, { tool }) => {
+    onSuccess: async (result) => {
       await invalidateMcp();
-      if (directApply) {
-        requestPreview(tool, true);
-      }
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -205,45 +193,28 @@ export function McpPage() {
     },
   });
 
-  const {
-    openPreview,
-    requestPreview,
-    previewMutation,
-    applyMutation,
-    readoptMutation,
-    closePreview,
-  } = useSyncPreviewFlow({
+  const { requestPreview } = useSyncPreviewFlow({
     artifactKind: "mcp",
-    directApply,
-    preview: (tool) =>
+    preview: (tool, projectId) =>
       commands.previewMcpSync({
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
         excludeFromGit: false,
       }),
-    apply: ({ previewId, tool }) =>
+    apply: ({ previewId, tool, projectId }) =>
       commands.applyMcpPreview({
         previewId,
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
       }),
-    readopt: (tool) => commands.readoptMcpTarget({ tool, projectId: null }),
     invalidate: invalidateMcp,
     messages: {
       previewFailed: "生成 MCP 全局预览失败。",
       applyFailed: "应用 MCP 全局同步失败。",
-      readoptFailed: "重新接管 MCP 目标失败。",
       empty:
         "暂无启用且已分配到该工具的中央 MCP。已有原生配置可通过“检测并导入已有 MCP”纳入管理，也可先创建并分配 MCP。",
       applied: (result) =>
         `已应用 ${result.appliedTargets} 个 MCP 目标，并创建 ${result.snapshotCount} 份快照。`,
-    },
-    onReadopted: (result, tool) => {
-      notify({
-        kind: "success",
-        message: `已以当前内容重新接管（刷新 ${result.updatedItemCount} 个、清理 ${result.removedItemCount} 个条目基线）；正在重新生成预览。`,
-      });
-      requestPreview(tool, directApply);
     },
   });
 
@@ -458,7 +429,6 @@ export function McpPage() {
                 const presentation = globalTargetStatusPresentation(
                   status.status,
                   status.diagnosticCode,
-                  { directApply },
                 );
                 return (
                   <article
@@ -488,6 +458,16 @@ export function McpPage() {
                         诊断码：<code>{status.diagnosticCode}</code>
                       </p>
                     ) : null}
+                    <ExternalChangeActions
+                      artifactKind="mcp"
+                      tool={status.tool}
+                      status={status.status}
+                      onInvalidate={invalidateMcp}
+                      onMatchOrImport={() => {
+                        if (importDialog.state) return;
+                        importDialog.open(status.tool);
+                      }}
+                    />
                     <Button
                       className="mt-3 mr-2"
                       size="sm"
@@ -500,21 +480,6 @@ export function McpPage() {
                     >
                       检测并导入已有 MCP
                     </Button>
-                    {!directApply ? (
-                      <Button
-                        className="mt-3"
-                        size="sm"
-                        disabled={
-                          previewMutation.isPending ||
-                          presentation.previewBlocked
-                        }
-                        onClick={() => requestPreview(status.tool, directApply)}
-                      >
-                        {previewMutation.isPending
-                          ? "正在生成…"
-                          : "生成全局预览"}
-                      </Button>
-                    ) : null}
                   </article>
                 );
               })}
@@ -527,7 +492,6 @@ export function McpPage() {
             // 按记录 id 重挂载：切换编辑对象时草稿与本地校验错误必定重置，不依赖弹窗先关闭。
             key={formInitial.id ?? "new"}
             initialState={formInitial}
-            directApply={directApply}
             pending={saveMutation.isPending}
             saveError={profileErrorText(saveMutation.error)}
             onClose={closeForm}
@@ -537,10 +501,6 @@ export function McpPage() {
               if (!submitGuard.begin()) return;
               saveMutation.mutate({
                 state,
-                globalTools: state.id
-                  ? (serversQuery.data?.find((item) => item.id === state.id)
-                      ?.globalTools ?? [])
-                  : [],
               });
             }}
           />
@@ -557,43 +517,14 @@ export function McpPage() {
               importDialog.close();
               await invalidateMcp();
               const summary = `已导入 ${result.createdCount + result.reusedCount} 项 MCP（新建 ${result.createdCount} 项，复用 ${result.reusedCount} 项），已分配到 ${toolMetadata(result.tool).label} 全局。`;
-              if (!directApply) {
-                notify({
-                  kind: "success",
-                  message: `${summary}原生配置未改写，请单独生成全局预览。`,
-                });
-                return;
-              }
               notify({
                 kind: "success",
                 message: `${summary}正在自动同步写入。`,
               });
-              requestPreview(result.tool, true);
+              await requestPreview(result.affectedSyncScopes ?? []);
             }}
           />
         ) : null}
-
-        <ChangePreviewDialog
-          preview={openPreview?.plan ?? null}
-          tool={openPreview?.tool ?? "claude"}
-          artifactKind="mcp"
-          applying={applyMutation.isPending}
-          readopting={readoptMutation.isPending}
-          onReadopt={() => {
-            if (openPreview) {
-              readoptMutation.mutate({ tool: openPreview.tool });
-            }
-          }}
-          onClose={closePreview}
-          onApply={() => {
-            if (openPreview) {
-              applyMutation.mutate({
-                previewId: openPreview.plan.previewId,
-                tool: openPreview.tool,
-              });
-            }
-          }}
-        />
       </main>
     </>
   );

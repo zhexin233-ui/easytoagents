@@ -6,11 +6,12 @@ import {
   within,
 } from "@testing-library/react";
 import { useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/app/app-shell";
 import { commands } from "@/bindings/commands";
 import { themeStorageKey } from "@/components/use-theme";
+import { mcpKeys } from "@/lib/mcp-api";
 import { makeProject } from "@/test/fixtures/dtos";
 import { renderWithProviders } from "@/test/render";
 
@@ -96,10 +97,14 @@ describe("AppShell 侧边栏设置入口", () => {
     vi.mocked(commands.getAppSettings).mockReset();
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     localStorage.clear();
     document.documentElement.classList.remove("dark");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("收到 environment-ready 事件后重新拉取依赖环境的查询", async () => {
@@ -108,6 +113,27 @@ describe("AppShell 侧边栏设置入口", () => {
     expect(environmentEvents.handlers).toHaveLength(1);
     act(() => environmentEvents.handlers[0]?.(true));
     await waitFor(() => expect(commands.listProjects).toHaveBeenCalledTimes(2));
+  });
+
+  it("窗口恢复焦点时节流失效当前页面的状态查询", () => {
+    vi.useFakeTimers();
+    const { queryClient } = renderShell("/mcp");
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+    expect(invalidateSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(299);
+    });
+    expect(invalidateSpy).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: mcpKeys.globalStatuses(),
+    });
   });
 
   it("按总览、提示词、MCP、Hooks、Skills、Agents、项目的顺序渲染一级导航", () => {
@@ -175,7 +201,7 @@ describe("AppShell 侧边栏设置入口", () => {
   it("顶栏只渲染启用的工具入口", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm", enabledTools: ["claude"] },
+      data: { enabledTools: ["claude"] },
     });
     renderShell();
 

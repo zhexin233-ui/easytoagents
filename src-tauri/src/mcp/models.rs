@@ -7,7 +7,7 @@ use serde_json::Value;
 use specta::Type;
 
 use crate::{
-    domain::{ArtifactName, McpTransport, SyncStatus, Tool, TrustStatus},
+    domain::{ArtifactName, McpTransport, SyncScopeDto, SyncStatus, Tool, TrustStatus},
     error::AppError,
     security::contains_detectable_secret,
 };
@@ -99,6 +99,10 @@ pub struct McpServerDto {
     pub enabled: bool,
     pub global_tools: Vec<Tool>,
     pub row_version: u32,
+    /// 仅中央 mutation 返回；列表/详情响应省略该字段。
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -106,6 +110,9 @@ pub struct McpServerDto {
 pub struct DeleteMcpResultDto {
     pub id: String,
     pub deleted: bool,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -259,6 +266,11 @@ pub struct McpImportResultDto {
     pub created_count: u32,
     pub reused_count: u32,
     pub assigned_count: u32,
+    /// 导入过程中新增全局 assignment 时返回精确的同步目标；全部条目已
+    /// 分配时为空，避免前端凭 `tool` 猜测是否需要触发原生同步。
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

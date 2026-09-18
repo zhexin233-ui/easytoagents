@@ -292,10 +292,6 @@ mod tests {
         .unwrap();
         let preview_json = serde_json::to_string(&preview).unwrap();
         assert!(!preview_json.contains(secret));
-        assert!(preview
-            .warning_codes
-            .iter()
-            .any(|code| code == "PROJECT_NATIVE_RESOURCE_REQUIRES_CONFIRMATION"));
         apply_project_native_resource_preview(
             &fixture.write_operations,
             &mut fixture.database,

@@ -8,13 +8,11 @@ import {
   type ProjectDto,
   type Tool,
 } from "@/bindings/commands";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import { Button } from "@/components/ui/button";
 import { useSyncPreviewFlow } from "@/features/sync/use-sync-preview-flow";
 import { hookProjectOptionsQueryOptions } from "@/lib/hooks-api";
 import { profileErrorText, unwrapResult } from "@/lib/profile-api";
 import { invalidateProjectScope } from "@/lib/projects-api";
-import { toolMetadata } from "@/lib/tool-metadata";
 import {
   HOOK_EVENT_GROUPS,
   hookEventSupportedByTool,
@@ -27,12 +25,10 @@ import { projectBlocked } from "./shared";
 export function ProjectHookAssignments({
   project,
   tool,
-  directApply,
   onMessage,
 }: {
   project: ProjectDto;
   tool: Tool;
-  directApply: boolean;
   onMessage: (message: string) => void;
 }) {
   const queryClient = useQueryClient();
@@ -47,26 +43,19 @@ export function ProjectHookAssignments({
   const invalidate = async () => {
     await invalidateProjectScope(queryClient, ["project", "hook"]);
   };
-  const {
-    openPreview,
-    requestPreview,
-    previewMutation,
-    applyMutation,
-    closePreview,
-  } = useSyncPreviewFlow({
+  const { requestPreview } = useSyncPreviewFlow({
     artifactKind: "hook",
-    directApply,
-    preview: () =>
+    preview: (previewTool, projectId) =>
       commands.previewHookSync({
-        tool,
-        projectId: project.id,
+        tool: previewTool,
+        projectId: projectId ?? project.id,
         excludeFromGit,
       }),
-    apply: ({ previewId, tool: previewTool }) =>
+    apply: ({ previewId, tool: previewTool, projectId }) =>
       commands.applyHookPreview({
         previewId,
         tool: previewTool,
-        projectId: project.id,
+        projectId: projectId ?? project.id,
       }),
     invalidate,
     messages: {
@@ -95,13 +84,9 @@ export function ProjectHookAssignments({
           projectRowVersion: project.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await invalidate();
-      if (directApply) {
-        requestPreview(tool, true);
-        return;
-      }
-      onMessage("Hook 项目追加意图已更新；原生配置尚未写入。");
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
   });
   const blocked = projectBlocked(project, tool);
@@ -117,144 +102,115 @@ export function ProjectHookAssignments({
       })).filter((group) => group.events.length > 0),
     [tool],
   );
-  const previewPending = previewMutation.isPending || applyMutation.isPending;
-
   return (
-    <>
-      <ProjectAssignmentsSection
-        title="Hooks"
-        description="全局 Hook 只读继承；项目可追加其他 Hook。"
-        blocked={blocked}
-        directApply={directApply}
-        error={profileErrorText(optionsQuery.error ?? assignmentMutation.error)}
-        pending={optionsQuery.isPending}
-        empty={options.length === 0}
-        excludeFromGit={excludeFromGit}
-        onExcludeFromGit={setExcludeFromGit}
-        previewPending={previewPending}
-        previewLabel={
-          directApply
-            ? `${toolMetadata(tool).label} Hooks 直接应用`
-            : `${toolMetadata(tool).label} Hooks 同步预览`
-        }
-        onPreview={() => requestPreview(tool, true)}
-      >
-        {inherited.length > 0 ? (
-          <p className="text-muted-foreground text-xs">
-            全局继承（只读）：
-            {inherited.map((option) => option.name).join("、")}
-          </p>
-        ) : null}
-        <div className="space-y-4">
-          {visibleEventGroups.map((group) => (
-            <div key={group.label}>
-              <h4 className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
-                {group.label}
-              </h4>
-              <div className="mt-2 space-y-2">
-                {group.events.map(({ event, label }) => {
-                  const assigned = options.filter(
-                    (option) =>
-                      option.state === "selected" &&
-                      option.assignedEvent === event,
-                  );
-                  return (
-                    <article
-                      key={event}
-                      className="rounded-lg border p-3 text-sm"
-                      aria-label={`项目 ${label}（${event}）分组`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-xs font-medium">
-                          {label}
-                          <span className="text-muted-foreground ml-2">
-                            {event}
-                          </span>
-                        </p>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          aria-label={`往项目 ${label} 分组添加 Hook`}
-                          onClick={() =>
-                            setOpenPicker({ event, eventLabel: label })
-                          }
-                        >
-                          从中央列表添加
-                        </Button>
-                      </div>
-                      {assigned.length === 0 ? (
-                        <p className="text-muted-foreground mt-2 text-xs">
-                          该分组暂无项目追加。
-                        </p>
-                      ) : (
-                        <ul className="mt-2 space-y-2">
-                          {assigned.map((option) => (
-                            <li
-                              key={option.hookId}
-                              className="rounded-control bg-muted/40 flex items-center justify-between gap-3 border px-3 py-2 text-xs"
+    <ProjectAssignmentsSection
+      title="Hooks"
+      description="全局 Hook 只读继承；项目可追加其他 Hook。"
+      blocked={blocked}
+      error={profileErrorText(optionsQuery.error ?? assignmentMutation.error)}
+      pending={optionsQuery.isPending}
+      empty={options.length === 0}
+      excludeFromGit={excludeFromGit}
+      onExcludeFromGit={setExcludeFromGit}
+    >
+      {inherited.length > 0 ? (
+        <p className="text-muted-foreground text-xs">
+          全局继承（只读）：
+          {inherited.map((option) => option.name).join("、")}
+        </p>
+      ) : null}
+      <div className="space-y-4">
+        {visibleEventGroups.map((group) => (
+          <div key={group.label}>
+            <h4 className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
+              {group.label}
+            </h4>
+            <div className="mt-2 space-y-2">
+              {group.events.map(({ event, label }) => {
+                const assigned = options.filter(
+                  (option) =>
+                    option.state === "selected" &&
+                    option.assignedEvent === event,
+                );
+                return (
+                  <article
+                    key={event}
+                    className="rounded-lg border p-3 text-sm"
+                    aria-label={`项目 ${label}（${event}）分组`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs font-medium">
+                        {label}
+                        <span className="text-muted-foreground ml-2">
+                          {event}
+                        </span>
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label={`往项目 ${label} 分组添加 Hook`}
+                        onClick={() =>
+                          setOpenPicker({ event, eventLabel: label })
+                        }
+                      >
+                        从中央列表添加
+                      </Button>
+                    </div>
+                    {assigned.length === 0 ? (
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        该分组暂无项目追加。
+                      </p>
+                    ) : (
+                      <ul className="mt-2 space-y-2">
+                        {assigned.map((option) => (
+                          <li
+                            key={option.hookId}
+                            className="rounded-control bg-muted/40 flex items-center justify-between gap-3 border px-3 py-2 text-xs"
+                          >
+                            <span className="min-w-0 truncate">
+                              {option.name}
+                              {!option.enabled ? "（已停用）" : ""}
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              aria-label={`从项目 ${label} 分组移除 ${option.name}`}
+                              disabled={assignmentMutation.isPending}
+                              onClick={() =>
+                                assignmentMutation.mutate({
+                                  option,
+                                  assigned: false,
+                                })
+                              }
                             >
-                              <span className="min-w-0 truncate">
-                                {option.name}
-                                {!option.enabled ? "（已停用）" : ""}
-                              </span>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                aria-label={`从项目 ${label} 分组移除 ${option.name}`}
-                                disabled={assignmentMutation.isPending}
-                                onClick={() =>
-                                  assignmentMutation.mutate({
-                                    option,
-                                    assigned: false,
-                                  })
-                                }
-                              >
-                                移除
-                              </Button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
+                              移除
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </article>
+                );
+              })}
             </div>
-          ))}
-        </div>
-        {openPicker ? (
-          <ProjectHookPickerDialog
-            project={project}
-            tool={tool}
-            event={openPicker.event}
-            eventLabel={openPicker.eventLabel}
-            options={options}
-            onClose={() => setOpenPicker(null)}
-            onAssigned={(message) => {
-              setOpenPicker(null);
-              onMessage(message);
-              if (directApply) requestPreview(tool, true);
-            }}
-          />
-        ) : null}
-      </ProjectAssignmentsSection>
-      <ChangePreviewDialog
-        preview={openPreview?.plan ?? null}
-        tool={openPreview?.tool ?? tool}
-        artifactKind="hook"
-        applying={applyMutation.isPending}
-        onClose={() => {
-          if (!applyMutation.isPending) closePreview();
-        }}
-        onApply={() => {
-          if (openPreview) {
-            applyMutation.mutate({
-              previewId: openPreview.plan.previewId,
-              tool: openPreview.tool,
-            });
-          }
-        }}
-      />
-    </>
+          </div>
+        ))}
+      </div>
+      {openPicker ? (
+        <ProjectHookPickerDialog
+          project={project}
+          tool={tool}
+          event={openPicker.event}
+          eventLabel={openPicker.eventLabel}
+          options={options}
+          onClose={() => setOpenPicker(null)}
+          onAssigned={async (message, scopes) => {
+            setOpenPicker(null);
+            onMessage(message);
+            await requestPreview(scopes);
+          }}
+        />
+      ) : null}
+    </ProjectAssignmentsSection>
   );
 }

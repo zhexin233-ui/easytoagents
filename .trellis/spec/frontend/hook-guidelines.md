@@ -58,38 +58,34 @@ element; keep that logic and its boundary checks when changing the hook.
 ### Persisted preview and synchronous form guards
 
 `useSyncPreviewFlow` is the shared lifecycle for global and project artifact
-preview/apply flows. Its typed boundary is:
+scope execution. Its typed boundary is:
 
 ```ts
 useSyncPreviewFlow({
   artifactKind,
-  preview: (tool) => Promise<Result<PreviewPlan, AppError>>,
-  apply: ({ previewId, tool }) => Promise<Result<ApplyResult, AppError>>,
+  scopes,
+  preview: (tool, projectId) => Promise<Result<PreviewPlan, AppError>>,
+  apply: ({ previewId, tool, projectId }) => Promise<Result<ApplyResult, AppError>>,
   invalidate,
   messages,
-  directApply,
-  readopt?,
 });
 ```
 
-The hook always creates a persisted preview first. A non-empty, conflict-free
-plan may auto-apply only when `directApply && autoApply`; empty plans notify and
-never call Apply; conflicts and errors remain in the review dialog. Apply closes
-the dialog, awaits the supplied invalidation, and then notifies. `readopt` is
-optional and must invalidate before regenerating a preview. Provider and MCP pages
-pass the exact target identity (Provider path or MCP tool/project), and the success
-callback must request a fresh Preview with the original `directApply` value. Project-native
-disable/restore keeps its dedicated resource mutation because its request is
-keyed by `ProjectNativeResourceDto` rather than a `Tool`; it follows the same
-no-implicit-write and post-Apply invalidation contract.
+The hook always creates a persisted Preview first and serially consumes every stable,
+deduplicated scope. A non-empty safe plan is applied immediately; empty plans notify
+as no-op; conflicts, hard errors, and the second stale result remain in structured
+in-app error state with retry. Apply awaits the supplied invalidation before notifying.
+Provider and MCP pages pass exact tool/project identity from the backend scope result.
+Project-native disable/restore and Skill takeover keep dedicated typed commands, but
+consume their prepared persisted Preview immediately and use the same stale/hash,
+snapshot, and post-Apply invalidation contract.
 
 Every preview request must enter `requestPreview`; pages must not call the
 returned `previewMutation.mutateAsync` directly. The hook serializes persisted
-preview → Apply chains because each preview snapshots the same mutable database
-row versions. In direct mode, an Apply that returns `STALE_PREVIEW` is retried
-once from a freshly persisted preview; a second stale result is surfaced, and a
-conflict or error still opens the review dialog instead of bypassing safety
-checks.
+Preview → Apply chains because each Preview snapshots the same mutable database
+row versions. An Apply that returns `STALE_PREVIEW` is retried once from a freshly
+persisted Preview; a second stale result is surfaced without a write, and a hard
+error remains available through the in-app retry path.
 
 `useImportDialogState()` owns `{ tool, requestId }` and changes the request ID
 on every rescan so discovery results cannot be reused accidentally.

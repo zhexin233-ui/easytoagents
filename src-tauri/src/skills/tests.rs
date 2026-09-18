@@ -12,7 +12,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        adopt_skill_content, apply_skill_preview_with_policy_probe, delete_skill,
+        adopt_skill_content, adopt_skill_native, apply_skill_preview_with_policy_probe, delete_skill,
         import_downloaded_github_skill, import_skill, list_skill_project_options,
         preview_skill_content, preview_skill_sync_with_policy_probe, set_global_skill_assignment,
         set_project_skill_assignment,
@@ -27,11 +27,14 @@ mod tests {
         error::ErrorCode,
         security::SecretRedactor,
         skills::{
-            ApplySkillPreviewInput, ImportSkillInput, PreviewSkillSyncInput,
+            AdoptSkillNativeInput, ApplySkillPreviewInput, ImportSkillInput, PreviewSkillSyncInput,
             SetGlobalSkillAssignmentInput, SetProjectSkillAssignmentInput, SkillDto,
             SkillProjectOptionsInput, SkillProjectSelectionState, VersionedSkillInput,
         },
-        sync::{hash_json, list_snapshots, preview_restore, restore_snapshot},
+        sync::{
+            hash_json, list_snapshots, preview_restore, restore_snapshot, DatabaseEntityType,
+            DatabaseRowVersion,
+        },
     };
 
     const CONTENT_MARKER: &str = "phase6-private-content-marker";
@@ -1012,6 +1015,385 @@ mod tests {
             .unwrap()
     }
 
+    struct NativeSkillAdoptionEvidence {
+        target: std::path::PathBuf,
+        target_id: String,
+        target_row_version: u32,
+        observed_full_hash: String,
+        observed_managed_hash: String,
+        row_versions: Vec<DatabaseRowVersion>,
+    }
+
+    fn native_skill_adoption_input(
+        fixture: &Fixture,
+        skill_id: &str,
+    ) -> NativeSkillAdoptionEvidence {
+        let target = fixture.home.join(".claude/skills");
+        let target_path = target.to_string_lossy().into_owned();
+        let (entries, observed_full_hash) = crate::sync::read_directory_target(&target).unwrap();
+        let skill_name: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT name FROM skills WHERE id = ?1",
+                [skill_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut observed_managed_projection = serde_json::Map::new();
+        observed_managed_projection.insert(
+            skill_name,
+            serde_json::to_value(entries.values().next().unwrap()).unwrap(),
+        );
+        let observed_managed_hash =
+            crate::sync::hash_json(&serde_json::Value::Object(observed_managed_projection));
+        let (target_id, target_row_version): (String, i64) = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT id, row_version FROM managed_targets
+                 WHERE tool = 'claude' AND artifact_kind = 'skill'
+                   AND scope = 'global' AND project_id IS NULL AND target_path = ?1",
+                [&target_path],
+                |row| Ok((row.get(0)?, row.get(1)?),),
+            )
+            .unwrap();
+        let (item_id, item_row_version): (String, i64) = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT id, row_version FROM managed_items
+                 WHERE target_id = ?1 AND resource_kind = 'skill' AND resource_id = ?2",
+                rusqlite::params![target_id, skill_id],
+                |row| Ok((row.get(0)?, row.get(1)?),),
+            )
+            .unwrap();
+        let skill_row_version: i64 = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT row_version FROM skills WHERE id = ?1",
+                [skill_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let rows = vec![
+            DatabaseRowVersion {
+                entity_type: DatabaseEntityType::ManagedItem,
+                entity_id: item_id,
+                row_version: item_row_version.try_into().unwrap(),
+            },
+            DatabaseRowVersion {
+                entity_type: DatabaseEntityType::Skill,
+                entity_id: skill_id.to_owned(),
+                row_version: skill_row_version.try_into().unwrap(),
+            },
+        ];
+        NativeSkillAdoptionEvidence {
+            target,
+            target_id,
+            target_row_version: target_row_version.try_into().unwrap(),
+            observed_full_hash,
+            observed_managed_hash,
+            row_versions: rows,
+        }
+    }
+
+    fn native_skill_adoption_request(
+        evidence: NativeSkillAdoptionEvidence,
+    ) -> AdoptSkillNativeInput {
+        AdoptSkillNativeInput {
+            tool: Tool::Claude,
+            project_id: None,
+            target_id: evidence.target_id,
+            target_row_version: evidence.target_row_version,
+            target_path: evidence.target.to_string_lossy().into_owned(),
+            row_versions: evidence.row_versions,
+            observed_full_hash: Some(evidence.observed_full_hash),
+            observed_managed_hash: Some(evidence.observed_managed_hash),
+        }
+    }
+
+    fn apply_global_skill_fixture(fixture: &mut Fixture, name: &str) -> SkillDto {
+        let skill = fixture.import(name);
+        let skill = set_global_skill_assignment(
+            &mut fixture.database,
+            &fixture.paths,
+            &SetGlobalSkillAssignmentInput {
+                tool: Tool::Claude,
+                skill_id: skill.id,
+                assigned: true,
+                row_version: skill.row_version,
+            },
+        )
+        .unwrap();
+        let policy = fixture.allowed_policy();
+        let redactor = SecretRedactor::default();
+        let preview = preview_skill_sync_with_policy_probe(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &PreviewSkillSyncInput {
+                tool: Tool::Claude,
+                project_id: None,
+                exclude_from_git: false,
+            },
+            &policy,
+        )
+        .unwrap();
+        apply_skill_preview_with_policy_probe(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &redactor,
+            &ApplySkillPreviewInput {
+                preview_id: preview.preview_id,
+                tool: Tool::Claude,
+                project_id: None,
+            },
+            &policy,
+        )
+        .unwrap();
+        super::list_skills(&fixture.database, &fixture.paths)
+            .unwrap()
+            .into_iter()
+            .find(|value| value.id == skill.id)
+            .unwrap()
+    }
+
+    fn replace_global_skill_entry_with_directory(
+        fixture: &Fixture,
+        skill: &SkillDto,
+        description: &str,
+        body: &str,
+    ) -> std::path::PathBuf {
+        let entry = fixture.home.join(".claude/skills").join(&skill.name);
+        fs::remove_file(&entry).unwrap();
+        fs::create_dir(&entry).unwrap();
+        fs::write(
+            entry.join("SKILL.md"),
+            format!("---\nname: {}\ndescription: {description}\n---\n\n# Native\n\n{body}\n", skill.name),
+        )
+        .unwrap();
+        fs::write(entry.join("asset.txt"), "native asset").unwrap();
+        entry
+    }
+
+    #[test]
+    fn adopt_native_skill_copies_tree_updates_central_and_returns_in_sync() {
+        let mut fixture = Fixture::new();
+        let skill = apply_global_skill_fixture(&mut fixture, "native-adopt-skill");
+        let entry = replace_global_skill_entry_with_directory(
+            &fixture,
+            &skill,
+            "原生采纳描述",
+            "native adopted body",
+        );
+        let evidence = native_skill_adoption_input(&fixture, &skill.id);
+        let result = adopt_skill_native(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &native_skill_adoption_request(evidence),
+        )
+        .unwrap();
+        assert_eq!(result.adopted, vec![skill.name.clone()]);
+        assert!(entry.is_symlink());
+        assert_eq!(fs::canonicalize(&entry).unwrap(), Path::new(&skill.central_path));
+        assert!(fs::read_to_string(Path::new(&skill.central_path).join("SKILL.md"))
+            .unwrap()
+            .contains("native adopted body"));
+        let stored = stored_skill_fingerprint(&fixture, &skill.id);
+        assert_eq!(stored.3, "ready");
+        assert_ne!(stored.0, skill.content_hash);
+        let status = super::list_global_skill_target_statuses_with_policy_probe(
+            &fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &fixture.allowed_policy(),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|value| value.tool == Tool::Claude)
+        .unwrap();
+        assert_eq!(status.status, SyncStatus::InSync);
+        assert_eq!(fs::read_dir(fixture.paths.staging()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn adopt_native_skill_rejects_central_store_drift_instead_of_treating_it_as_takeover() {
+        let mut fixture = Fixture::new();
+        let skill = apply_global_skill_fixture(&mut fixture, "native-central-drift-skill");
+        let evidence = native_skill_adoption_input(&fixture, &skill.id);
+        let central_skill_md = Path::new(&skill.central_path).join("SKILL.md");
+        fs::write(
+            &central_skill_md,
+            "---\nname: native-central-drift-skill\ndescription: central drift\n---\n\n# Central drift\n",
+        )
+        .unwrap();
+        let before = stored_skill_fingerprint(&fixture, &skill.id);
+        let error = adopt_skill_native(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &native_skill_adoption_request(evidence),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::Conflict);
+        assert!(fs::read_link(
+            fixture.home.join(".claude/skills").join(&skill.name)
+        )
+        .is_ok());
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+        assert_eq!(fs::read_dir(fixture.paths.staging()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn adopt_native_skill_rejects_stale_hash_before_copying_or_writing() {
+        let mut fixture = Fixture::new();
+        let skill = apply_global_skill_fixture(&mut fixture, "native-stale-skill");
+        let entry = replace_global_skill_entry_with_directory(
+            &fixture,
+            &skill,
+            "第一次原生描述",
+            "first native body",
+        );
+        let evidence = native_skill_adoption_input(&fixture, &skill.id);
+        // SymlinkDirectory 的目标 full hash 绑定目标直属入口元数据；新增未知
+        // 兄弟模拟计划生成后目标自身发生变化（目录内部内容由 tree hash
+        // 复核覆盖）。
+        fs::create_dir(evidence.target.join("plan-race-sibling")).unwrap();
+        fs::write(
+            entry.join("SKILL.md"),
+            format!(
+                "---\nname: {}\ndescription: 第二次变化\n---\n\n# Native\n\nsecond native body\n",
+                skill.name
+            ),
+        )
+        .unwrap();
+        let before = stored_skill_fingerprint(&fixture, &skill.id);
+        let error = adopt_skill_native(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &native_skill_adoption_request(evidence),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::StalePreview);
+        assert!(entry.is_dir());
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+        assert_eq!(fs::read_dir(fixture.paths.staging()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn adopt_native_skill_rejects_stale_row_version_before_copying_or_writing() {
+        let mut fixture = Fixture::new();
+        let skill = apply_global_skill_fixture(&mut fixture, "native-stale-row-skill");
+        let entry = replace_global_skill_entry_with_directory(
+            &fixture,
+            &skill,
+            "行版本变化前",
+            "native body",
+        );
+        let evidence = native_skill_adoption_input(&fixture, &skill.id);
+        fixture
+            .database
+            .connection()
+            .execute(
+                "UPDATE skills SET updated_at = updated_at WHERE id = ?1",
+                [&skill.id],
+            )
+            .unwrap();
+        let before = stored_skill_fingerprint(&fixture, &skill.id);
+        let error = adopt_skill_native(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &native_skill_adoption_request(evidence),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::StalePreview);
+        assert!(entry.is_dir());
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id), before);
+        assert_eq!(fs::read_dir(fixture.paths.staging()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn adopt_native_skill_db_failure_restores_native_directory_and_cleans_staging() {
+        let mut fixture = Fixture::new();
+        let skill = apply_global_skill_fixture(&mut fixture, "native-rollback-skill");
+        let entry = replace_global_skill_entry_with_directory(
+            &fixture,
+            &skill,
+            "回滚描述",
+            "rollback body",
+        );
+        let original_native = fs::read(entry.join("SKILL.md")).unwrap();
+        let evidence = native_skill_adoption_input(&fixture, &skill.id);
+        fixture
+            .database
+            .connection()
+            .execute_batch(
+                "CREATE TRIGGER fail_native_skill_adoption
+                 BEFORE UPDATE ON skills
+                 BEGIN SELECT RAISE(ABORT, 'native skill adoption test failure'); END;",
+            )
+            .unwrap();
+        let error = adopt_skill_native(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &native_skill_adoption_request(evidence),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::DatabaseError);
+        assert!(entry.is_dir());
+        assert_eq!(fs::read(entry.join("SKILL.md")).unwrap(), original_native);
+        assert_eq!(stored_skill_fingerprint(&fixture, &skill.id).0, skill.content_hash);
+        assert_eq!(fs::read_dir(fixture.paths.staging()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn adopt_native_skill_external_symlink_never_deletes_real_source() {
+        let mut fixture = Fixture::new();
+        let skill = apply_global_skill_fixture(&mut fixture, "native-link-skill");
+        let source = fixture
+            .home
+            .parent()
+            .unwrap()
+            .join("external-native-link-source");
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            format!(
+                "---\nname: {}\ndescription: 外部链接采纳\n---\n\n# Link\n\nlink body\n",
+                skill.name
+            ),
+        )
+        .unwrap();
+        fs::write(source.join("asset.txt"), "source asset").unwrap();
+        let entry = fixture.home.join(".claude/skills").join(&skill.name);
+        fs::remove_file(&entry).unwrap();
+        std::os::unix::fs::symlink(&source, &entry).unwrap();
+        let source_skill_md = fs::read(source.join("SKILL.md")).unwrap();
+        let evidence = native_skill_adoption_input(&fixture, &skill.id);
+        let result = adopt_skill_native(
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &native_skill_adoption_request(evidence),
+        )
+        .unwrap();
+        assert_eq!(result.adopted, vec![skill.name.clone()]);
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), source_skill_md);
+        assert!(source.join("asset.txt").is_file());
+        assert!(entry.is_symlink());
+        assert_eq!(fs::canonicalize(&entry).unwrap(), Path::new(&skill.central_path));
+        assert_eq!(fs::read_dir(fixture.paths.staging()).unwrap().count(), 0);
+    }
+
     #[test]
     fn adopting_drifted_central_files_restores_ready_without_rewriting_disk_or_symlinks() {
         let mut fixture = Fixture::new();
@@ -1950,7 +2332,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             drift.targets[0].change_kind,
-            crate::domain::ChangeKind::Conflict
+            crate::domain::ChangeKind::Update
         );
         assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), source_skill_md);
         assert!(Path::new(&skill.central_path).is_dir());

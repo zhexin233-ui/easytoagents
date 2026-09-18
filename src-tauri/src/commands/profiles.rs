@@ -8,11 +8,10 @@ use crate::{
     domain::Tool,
     error::AppError,
     profiles::{
-        self, AdoptProviderNativeInput, AdoptProviderNativeResultDto, ApplyProfilePreviewInput,
-        ConfirmImportInput, ConfirmProviderImportInput, CopyProviderProfileInput,
-        DeleteProfileResultDto, PromptImportPreviewDto, PromptProfileDto, PromptProfileInput,
-        ProviderImportPreviewDto, ProviderImportResultDto, ProviderProfileDto,
-        ProviderProfileInput, ReadoptProviderTargetInput, ReadoptProviderTargetResultDto,
+        self, ApplyProfilePreviewInput, ConfirmImportInput, ConfirmProviderImportInput,
+        CopyProviderProfileInput, DeleteProfileResultDto, ProfileTargetStatusDto,
+        PromptImportPreviewDto, PromptProfileDto, PromptProfileInput, ProviderImportPreviewDto,
+        ProviderImportResultDto, ProviderProfileDto, ProviderProfileInput,
         SetGlobalPromptAssignmentInput, ToolProfileStatusDto, UpdatePromptProfileInput,
         UpdateProviderProfileInput, VersionedProfileInput,
     },
@@ -147,6 +146,17 @@ pub fn get_tool_profile_status(
 
 #[tauri::command(async)]
 #[specta::specta]
+pub fn list_global_profile_target_statuses(
+    state: State<'_, AppState>,
+    tool: Tool,
+) -> Result<Vec<ProfileTargetStatusDto>, AppError> {
+    with_db(&state, |database| {
+        profiles::list_global_profile_target_statuses(database, &*state.environment()?, tool)
+    })
+}
+
+#[tauri::command(async)]
+#[specta::specta]
 pub fn discover_provider_import(
     state: State<'_, AppState>,
     tool: Tool,
@@ -164,17 +174,6 @@ pub fn confirm_provider_import(
 ) -> Result<ProviderImportResultDto, AppError> {
     with_db_and_redactor(&state, |database, redactor| {
         profiles::confirm_provider_import(database, &*state.environment()?, redactor, input)
-    })
-}
-
-#[tauri::command(async)]
-#[specta::specta]
-pub fn adopt_provider_native(
-    state: State<'_, AppState>,
-    input: AdoptProviderNativeInput,
-) -> Result<AdoptProviderNativeResultDto, AppError> {
-    with_db_and_redactor(&state, |database, redactor| {
-        profiles::adopt_provider_native(database, &*state.environment()?, redactor, input)
     })
 }
 
@@ -208,19 +207,6 @@ pub fn preview_provider_sync(
 ) -> Result<PreviewPlan, AppError> {
     with_db_and_redactor(&state, |database, redactor| {
         profiles::preview_provider_sync(database, &*state.environment()?, redactor, tool)
-    })
-}
-
-#[tauri::command(async)]
-#[specta::specta]
-pub fn readopt_provider_target(
-    state: State<'_, AppState>,
-    input: ReadoptProviderTargetInput,
-) -> Result<ReadoptProviderTargetResultDto, AppError> {
-    with_db(&state, |database| {
-        // 与 Apply 互斥：接管期间不允许在途 Apply 同时改写目标或基线。
-        let _write_guard = state.lock_write_operations();
-        profiles::readopt_provider_target(database, &*state.environment()?, &input)
     })
 }
 

@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   commands,
+  type ExternalChangePlanDto,
   type PreviewPlan,
   type ProviderProfileDto,
 } from "@/bindings/commands";
@@ -18,10 +19,12 @@ import { Link, Route, Routes } from "react-router-dom";
 import { ToolProfilesPage } from "@/features/tool-profiles/tool-profiles-page";
 import { renderWithProviders } from "@/test/render";
 import {
+  globalSyncScope,
   makeOfficialLoginStatus,
   makeProviderImportCandidate,
   makeProviderImportPreview,
   makeProviderProfile,
+  withAffectedSyncScopes,
 } from "@/test/fixtures/dtos";
 import { makePreviewPlan, makeTarget } from "@/test/fixtures/preview-plan";
 
@@ -110,7 +113,6 @@ const preview: PreviewPlan = makePreviewPlan({
       },
       warningCodes: [],
       baselineMismatchedItems: [],
-      readoptAvailable: false,
       errorCode: null,
       git: null,
       excludeFromGit: false,
@@ -192,7 +194,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(commands.getAppSettings).mockResolvedValue({
     status: "ok",
-    data: { applyMode: "preview_confirm", enabledTools: ["claude", "codex"] },
+    data: { enabledTools: ["claude", "codex"] },
   });
   vi.mocked(commands.listProviderProfiles).mockResolvedValue({
     status: "ok",
@@ -214,6 +216,10 @@ beforeEach(() => {
       newSessionNotice: "新会话生效",
       bearerTokenWarning: null,
     },
+  });
+  vi.mocked(commands.listGlobalProfileTargetStatuses).mockResolvedValue({
+    status: "ok",
+    data: [],
   });
   vi.mocked(commands.discoverProviderImport).mockResolvedValue({
     status: "ok",
@@ -248,6 +254,68 @@ beforeEach(() => {
 });
 
 describe("ToolProfilesPage", () => {
+  it("Provider 外部变化状态卡提供基于计划的采纳动作", async () => {
+    const targetPath = "/isolated/home/.claude/settings.json";
+    const plan: ExternalChangePlanDto = {
+      previewId: "00000000-0000-4000-8000-000000000477",
+      artifactKind: "provider",
+      tool: "claude",
+      projectId: null,
+      status: "external_owned_change",
+      targetPaths: [targetPath],
+      observedFullHashes: ["a".repeat(64)],
+      observedManagedHashes: ["b".repeat(64)],
+      rowVersions: [],
+      redactedDiff: { before: {}, after: {} },
+      canAdoptNative: true,
+      adoptBlockedReason: null,
+      canOverwriteCentral: true,
+      overwriteBlockedReason: null,
+    };
+    vi.mocked(commands.listGlobalProfileTargetStatuses).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          artifactKind: "provider",
+          tool: "claude",
+          targetPath,
+          status: "external_owned_change",
+          diagnosticCode: null,
+        },
+      ],
+    });
+    vi.mocked(commands.prepareExternalChangePlan).mockResolvedValue({
+      status: "ok",
+      data: plan,
+    });
+    vi.mocked(commands.applyExternalChangePlan).mockResolvedValue({
+      status: "ok",
+      data: {
+        runId: plan.previewId,
+        status: "succeeded",
+        appliedTargets: 1,
+        snapshotCount: 0,
+      },
+    });
+
+    renderPage();
+
+    const action = await screen.findByRole("button", {
+      name: "采纳原生更改",
+    });
+    fireEvent.click(action);
+
+    await waitFor(() => {
+      expect(commands.applyExternalChangePlan).toHaveBeenCalledWith({
+        previewId: plan.previewId,
+        artifactKind: "provider",
+        tool: "claude",
+        projectId: null,
+        action: "adopt_native",
+      });
+    });
+  });
+
   it("Cursor 渠道渲染状态区但不渲染 Provider 面板，且不读取或写入 Provider", async () => {
     renderPage("cursor");
 
@@ -303,7 +371,7 @@ describe("ToolProfilesPage", () => {
       fireEvent.click(trigger);
       dialog = screen.getByRole("dialog", { name: `新增 ${toolName} ${kind}` });
       expect(dialog).toHaveAttribute("aria-modal", "true");
-      expect(dialog).toHaveAccessibleDescription(/保存只更新中央/);
+      expect(dialog).toHaveAccessibleDescription(/当前生效档案会自动同步/);
       expect(within(dialog).getByLabelText("名称")).toHaveValue("");
       const submit = within(dialog).getByRole("button", {
         name: `创建${kind}`,
@@ -400,7 +468,10 @@ describe("ToolProfilesPage", () => {
     const refresh = deferred<void>();
     vi.mocked(commands.createProviderProfile).mockImplementation(async () => {
       await pending.promise;
-      return { status: "ok", data: provider };
+      return {
+        status: "ok",
+        data: withAffectedSyncScopes(provider, []),
+      };
     });
     renderPage();
     const section = sectionByHeading("渠道");
@@ -472,10 +543,12 @@ describe("ToolProfilesPage", () => {
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
-  it("创建渠道时使用遮罩密钥输入并只调用生成 command", async () => {
+  it("创建并激活渠道时使用遮罩密钥输入并按返回范围同步", async () => {
     vi.mocked(commands.createProviderProfile).mockResolvedValue({
       status: "ok",
-      data: { ...provider, isActive: true },
+      data: withAffectedSyncScopes({ ...provider, isActive: true }, [
+        globalSyncScope("provider", "claude"),
+      ]),
     });
     renderPage();
     const section = sectionByHeading("渠道");
@@ -521,9 +594,16 @@ describe("ToolProfilesPage", () => {
         activate: true,
       }),
     );
-    expect(
-      await screen.findByText("中央渠道档案已保存，原生配置尚未修改。"),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(commands.previewProviderSync).toHaveBeenCalledWith("claude"),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
+      }),
+    );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(within(section).getByRole("listitem")).toHaveTextContent("新渠道");
     expect(within(section).getByText("当前生效")).toHaveClass(
@@ -531,13 +611,16 @@ describe("ToolProfilesPage", () => {
       "border-emerald-200",
       "bg-emerald-50",
     );
-    expect(commands.listProviderProfiles).toHaveBeenCalledTimes(2);
-    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
+    expect(commands.listProviderProfiles).toHaveBeenCalledTimes(3);
+    expect(
+      await screen.findByText("已应用 1 个目标，可从快照恢复。"),
+    ).toBeVisible();
   });
 
-  it("编辑已存在渠道时默认保留遮罩密钥", async () => {
+  it("编辑当前生效渠道时默认保留遮罩密钥并按返回范围同步", async () => {
     const providerWithExtraEnv: ProviderProfileDto = makeProviderProfile({
       ...provider,
+      isActive: true,
       options: {
         ...provider.options,
         extraEnv: {
@@ -552,7 +635,10 @@ describe("ToolProfilesPage", () => {
     });
     vi.mocked(commands.updateProviderProfile).mockResolvedValue({
       status: "ok",
-      data: { ...provider, name: "已重命名" },
+      data: withAffectedSyncScopes(
+        { ...provider, name: "已重命名", isActive: true },
+        [globalSyncScope("provider", "claude")],
+      ),
     });
     renderPage();
     const section = sectionByHeading("渠道");
@@ -589,6 +675,16 @@ describe("ToolProfilesPage", () => {
           opencodeApi: null,
         },
         rowVersion: provider.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewProviderSync).toHaveBeenCalledWith("claude"),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
       }),
     );
   });
@@ -687,22 +783,25 @@ describe("ToolProfilesPage", () => {
     });
     vi.mocked(commands.createProviderProfile).mockResolvedValue({
       status: "ok",
-      data: makeProviderProfile({
-        name: "Claude 官方账号",
-        apiBaseUrl: "",
-        defaultModel: "",
-        options: {
-          authKind: "official_login",
-          credentialEnvKey: null,
-          extraEnv: {},
-          providerId: null,
-          wireApi: null,
-          zcodeKind: null,
-          opencodeNpm: null,
-          opencodeApi: null,
-        },
-        isActive: true,
-      }),
+      data: withAffectedSyncScopes(
+        makeProviderProfile({
+          name: "Claude 官方账号",
+          apiBaseUrl: "",
+          defaultModel: "",
+          options: {
+            authKind: "official_login",
+            credentialEnvKey: null,
+            extraEnv: {},
+            providerId: null,
+            wireApi: null,
+            zcodeKind: null,
+            opencodeNpm: null,
+            opencodeApi: null,
+          },
+          isActive: true,
+        }),
+        [],
+      ),
     });
     renderPage();
     const section = sectionByHeading("渠道");
@@ -923,7 +1022,7 @@ describe("ToolProfilesPage", () => {
     ).toBeVisible();
   });
 
-  it("切换档案后打开统一预览并消费持久化 preview", async () => {
+  it("切换档案后按返回范围自动同步并消费持久化 preview", async () => {
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
       data: [provider],
@@ -932,24 +1031,26 @@ describe("ToolProfilesPage", () => {
       status: "ok",
       data: { ...preview, warningCodes: ["FIXTURE_PLAN_WARNING"] },
     });
+    vi.mocked(commands.setActiveProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(provider, [
+        globalSyncScope("provider", "claude"),
+      ]),
+    });
     renderPage();
     const section = sectionByHeading("渠道");
     fireEvent.click(
-      await within(section).findByRole("button", { name: "切换并预览" }),
+      await within(section).findByRole("button", { name: "切换并同步" }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    expect(commands.setActiveProviderProfile).toHaveBeenCalledWith("claude", {
-      id: provider.id,
-      rowVersion: provider.rowVersion,
-    });
-    expect(screen.getByText("FIXTURE_PLAN_WARNING")).toBeVisible();
-    expect(
-      screen.getByText("/isolated/home/.claude/settings.json"),
-    ).toBeVisible();
-    expect(screen.getAllByText(/\[REDACTED\]/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "应用这份预览" }));
+    await waitFor(() =>
+      expect(commands.setActiveProviderProfile).toHaveBeenCalledWith("claude", {
+        id: provider.id,
+        rowVersion: provider.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewProviderSync).toHaveBeenCalledWith("claude"),
+    );
     await waitFor(() =>
       expect(commands.applyProfilePreview).toHaveBeenCalledWith({
         previewId: preview.previewId,
@@ -974,10 +1075,16 @@ describe("ToolProfilesPage", () => {
         action: "rescan",
       },
     });
+    vi.mocked(commands.setActiveProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(provider, [
+        globalSyncScope("provider", "claude"),
+      ]),
+    });
     renderPage();
     const section = sectionByHeading("渠道");
     const activateButton = await within(section).findByRole("button", {
-      name: "切换并预览",
+      name: "切换并同步",
     });
     listProviderProfiles.mockClear();
 
@@ -987,9 +1094,9 @@ describe("ToolProfilesPage", () => {
       "POLICY_BLOCKED：宿主策略禁止生成预览",
     );
     expect(
-      screen.getAllByText("POLICY_BLOCKED：宿主策略禁止生成预览"),
+      screen.getAllByText(/POLICY_BLOCKED：宿主策略禁止生成预览/),
     ).toHaveLength(1);
-    await waitFor(() => expect(listProviderProfiles).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(listProviderProfiles).toHaveBeenCalledTimes(2));
   });
 
   it("分别显示 RPC 错误码与错误状态", async () => {
@@ -1023,17 +1130,13 @@ describe("ToolProfilesPage", () => {
     );
   });
 
-  it("直接应用模式下无冲突渠道预览跳过对话框立即 Apply", async () => {
-    vi.mocked(commands.getAppSettings).mockResolvedValue({
-      status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
-    });
+  it("手动同步直接消费持久化预览并 Apply", async () => {
     renderPage();
     const section = sectionByHeading("渠道");
 
     fireEvent.click(
       await within(section).findByRole("button", {
-        name: "直接应用渠道同步",
+        name: "同步当前配置",
       }),
     );
     await waitFor(() =>
@@ -1044,18 +1147,11 @@ describe("ToolProfilesPage", () => {
       }),
     );
     expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
-    expect(
       await screen.findByText("已应用 1 个目标，可从快照恢复。"),
     ).toBeVisible();
   });
 
-  it("直接应用模式下冲突渠道预览回退为人工确认且 Apply 禁用", async () => {
-    vi.mocked(commands.getAppSettings).mockResolvedValue({
-      status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
-    });
+  it("手动同步遇到真实冲突时反馈错误且不写入", async () => {
     const baseTarget = preview.targets[0];
     if (!baseTarget) throw new Error("预览 fixture 缺少目标");
     vi.mocked(commands.previewProviderSync).mockResolvedValue({
@@ -1076,261 +1172,68 @@ describe("ToolProfilesPage", () => {
 
     fireEvent.click(
       await within(section).findByRole("button", {
-        name: "直接应用渠道同步",
+        name: "同步当前配置",
       }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "应用这份预览" })).toBeDisabled();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "应用渠道预览失败。",
+    );
     expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 
-  it("直接应用模式下重新接管会刷新预览并自动 Apply 新预览", async () => {
-    vi.mocked(commands.getAppSettings).mockResolvedValue({
-      status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
-    });
-    const baseTarget = preview.targets[0];
-    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
-    vi.mocked(commands.previewProviderSync).mockReset();
-    const conflictPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000410",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "conflict" as const,
-          status: "external_owned_change" as const,
-          readoptAvailable: true,
-          errorCode: "CONFLICT" as const,
-        },
-      ],
-    };
-    const recoveredPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000411",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "update" as const,
-          status: "in_sync" as const,
-          readoptAvailable: false,
-          errorCode: null,
-        },
-      ],
-    };
-    vi.mocked(commands.previewProviderSync)
-      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
-      .mockResolvedValueOnce({ status: "ok", data: recoveredPreview });
-    vi.mocked(commands.readoptProviderTarget).mockResolvedValue({
-      status: "ok",
-      data: { targetPath: baseTarget.descriptor.path ?? "" },
-    });
-    renderPage();
-    const section = sectionByHeading("渠道");
-
-    fireEvent.click(
-      await within(section).findByRole("button", {
-        name: "直接应用渠道同步",
-      }),
-    );
-    const dialog = await screen.findByRole("dialog", {
-      name: "确认原生配置变更",
-    });
-    const readopt = within(dialog).getByRole("button", {
-      name: /以当前内容重新接管/,
-    });
-    expect(readopt).toBeVisible();
-    expect(
-      within(dialog).getByRole("button", { name: "应用这份预览" }),
-    ).toBeDisabled();
-
-    fireEvent.click(readopt);
-    await waitFor(() =>
-      expect(commands.readoptProviderTarget).toHaveBeenCalledWith({
-        tool: "claude",
-        targetPath: baseTarget.descriptor.path,
-      }),
-    );
-    await waitFor(() =>
-      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
-        previewId: recoveredPreview.previewId,
-        tool: "claude",
-        artifactKind: "provider",
-      }),
-    );
-    expect(commands.applyProfilePreview).not.toHaveBeenCalledWith({
-      previewId: conflictPreview.previewId,
-      tool: "claude",
-      artifactKind: "provider",
-    });
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
-    expect(commands.previewProviderSync).toHaveBeenCalledTimes(2);
-  });
-
-  it("预览确认模式下重新接管只生成新预览并保留最终确认", async () => {
-    const baseTarget = preview.targets[0];
-    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
-    vi.mocked(commands.previewProviderSync).mockReset();
-    const conflictPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000420",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "conflict" as const,
-          status: "external_owned_change" as const,
-          readoptAvailable: true,
-          errorCode: "CONFLICT" as const,
-        },
-      ],
-    };
-    const recoveredPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000421",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "update" as const,
-          status: "in_sync" as const,
-          readoptAvailable: false,
-          errorCode: null,
-        },
-      ],
-    };
-    vi.mocked(commands.previewProviderSync)
-      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
-      .mockResolvedValueOnce({ status: "ok", data: recoveredPreview });
-    vi.mocked(commands.readoptProviderTarget).mockResolvedValue({
-      status: "ok",
-      data: { targetPath: baseTarget.descriptor.path ?? "" },
-    });
-    renderPage();
-    const section = sectionByHeading("渠道");
-    fireEvent.click(
-      await within(section).findByRole("button", { name: "预览渠道同步" }),
-    );
-    const firstDialog = await screen.findByRole("dialog", {
-      name: "确认原生配置变更",
-    });
-    fireEvent.click(
-      within(firstDialog).getByRole("button", {
-        name: /以当前内容重新接管/,
-      }),
-    );
-    await waitFor(() =>
-      expect(commands.previewProviderSync).toHaveBeenCalledTimes(2),
-    );
-    const secondDialog = await screen.findByRole("dialog", {
-      name: "确认原生配置变更",
-    });
-    expect(secondDialog).toBeVisible();
-    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
-    fireEvent.click(
-      within(secondDialog).getByRole("button", { name: "应用这份预览" }),
-    );
-    await waitFor(() =>
-      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
-        previewId: recoveredPreview.previewId,
-        tool: "claude",
-        artifactKind: "provider",
-      }),
-    );
-  });
-
-  it("重新接管失败时保留冲突弹窗并允许重试或取消", async () => {
-    const baseTarget = preview.targets[0];
-    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
-    vi.mocked(commands.previewProviderSync).mockReset();
-    const conflictPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000430",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "conflict" as const,
-          status: "external_owned_change" as const,
-          readoptAvailable: true,
-          errorCode: "CONFLICT" as const,
-        },
-      ],
-    };
-    const recoveredPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000431",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "update" as const,
-          status: "in_sync" as const,
-          readoptAvailable: false,
-          errorCode: null,
-        },
-      ],
-    };
-    vi.mocked(commands.previewProviderSync)
-      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
-      .mockResolvedValueOnce({ status: "ok", data: recoveredPreview });
-    vi.mocked(commands.readoptProviderTarget)
-      .mockRejectedValueOnce(new Error("fixture readopt failure"))
-      .mockResolvedValueOnce({
-        status: "ok",
-        data: { targetPath: baseTarget.descriptor.path ?? "" },
-      });
-    renderPage();
-    const section = sectionByHeading("渠道");
-    fireEvent.click(
-      await within(section).findByRole("button", { name: "预览渠道同步" }),
-    );
-    const dialog = await screen.findByRole("dialog", {
-      name: "确认原生配置变更",
-    });
-    const readopt = () =>
-      within(dialog).getByRole("button", { name: /以当前内容重新接管/ });
-
-    fireEvent.click(readopt());
-    await waitFor(() =>
-      expect(commands.readoptProviderTarget).toHaveBeenCalledTimes(1),
-    );
-    expect(await screen.findByText("fixture readopt failure")).toBeVisible();
-    expect(
-      screen.getByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    expect(commands.previewProviderSync).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(readopt());
-    await waitFor(() =>
-      expect(commands.readoptProviderTarget).toHaveBeenCalledTimes(2),
-    );
-    await waitFor(() =>
-      expect(commands.previewProviderSync).toHaveBeenCalledTimes(2),
-    );
-    expect(
-      await screen.findByRole("dialog", { name: "确认原生配置变更" }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("直接应用模式下切换生效渠道自动同步并 Apply", async () => {
-    vi.mocked(commands.getAppSettings).mockResolvedValue({
-      status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
-    });
+  it("切换生效渠道消费返回范围并自动同步 Apply", async () => {
     vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
       data: [provider],
     });
+    vi.mocked(commands.setActiveProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(provider, [
+        globalSyncScope("provider", "claude"),
+      ]),
+    });
     renderPage();
     const section = sectionByHeading("渠道");
 
     fireEvent.click(
-      await within(section).findByRole("button", { name: "切换并直接应用" }),
+      await within(section).findByRole("button", { name: "切换并同步" }),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "claude",
+        artifactKind: "provider",
+      }),
+    );
+  });
+
+  it("删除当前生效渠道按返回范围自动清理并 Apply", async () => {
+    const activeProvider = { ...provider, isActive: true };
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
+      status: "ok",
+      data: [activeProvider],
+    });
+    vi.mocked(commands.deleteProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes({ id: activeProvider.id, deleted: true }, [
+        globalSyncScope("provider", "claude"),
+      ]),
+    });
+    const confirmSpy = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    renderPage();
+    const section = sectionByHeading("渠道");
+
+    fireEvent.click(
+      await within(section).findByRole("button", { name: "删除" }),
+    );
+    await waitFor(() =>
+      expect(commands.deleteProviderProfile).toHaveBeenCalledWith({
+        id: activeProvider.id,
+        rowVersion: activeProvider.rowVersion,
+      }),
+    );
+    await waitFor(() =>
+      expect(commands.previewProviderSync).toHaveBeenCalledWith("claude"),
     );
     await waitFor(() =>
       expect(commands.applyProfilePreview).toHaveBeenCalledWith({
@@ -1340,8 +1243,9 @@ describe("ToolProfilesPage", () => {
       }),
     );
     expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
+      await screen.findByText("已应用 1 个目标，可从快照恢复。"),
+    ).toBeVisible();
+    confirmSpy.mockRestore();
   });
 
   it("无生效渠道且无受管基线时把预览 NOT_FOUND 显示为可操作空状态", async () => {
@@ -1359,7 +1263,7 @@ describe("ToolProfilesPage", () => {
     const section = sectionByHeading("渠道");
 
     fireEvent.click(
-      await within(section).findByRole("button", { name: "预览渠道同步" }),
+      await within(section).findByRole("button", { name: "同步当前配置" }),
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -1367,7 +1271,7 @@ describe("ToolProfilesPage", () => {
     );
     expect(
       screen.getAllByText(
-        "尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。",
+        /尚无生效渠道档案，也没有可清理的受管基线；请先检测已有配置或创建并激活渠道。/,
       ),
     ).toHaveLength(1);
   });
@@ -1596,72 +1500,45 @@ describe("ToolProfilesPage", () => {
     ).toBeVisible();
   });
 
-  it("按原生内容接管漂移渠道并带上预览绑定的行版本", async () => {
-    const baseTarget = preview.targets[0];
-    if (!baseTarget) throw new Error("预览 fixture 缺少目标");
-    vi.mocked(commands.previewProviderSync).mockReset();
-    const conflictPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000440",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "conflict" as const,
-          status: "external_owned_change" as const,
-          readoptAvailable: true,
-          errorCode: "CONFLICT" as const,
-        },
-      ],
-    };
-    const settledPreview = {
-      ...preview,
-      previewId: "00000000-0000-0000-0000-000000000441",
-      targets: [
-        {
-          ...baseTarget,
-          changeKind: "unchanged" as const,
-          status: "in_sync" as const,
-          readoptAvailable: false,
-          errorCode: null,
-        },
-      ],
-    };
-    vi.mocked(commands.previewProviderSync)
-      .mockResolvedValueOnce({ status: "ok", data: conflictPreview })
-      .mockResolvedValueOnce({ status: "ok", data: settledPreview });
-    vi.mocked(commands.adoptProviderNative).mockResolvedValue({
+  it("Pi 多 provider 参与档案编辑按后端返回范围立即同步", async () => {
+    const piProvider = makeProviderProfile({
+      ...provider,
+      tool: "pi",
+      name: "cc",
+      isActive: false,
+      pi: {
+        apiFormat: "openai-completions",
+        models: [{ id: "deepseek/v4.1-flash", name: null }],
+      },
+    });
+    vi.mocked(commands.listProviderProfiles).mockResolvedValue({
       status: "ok",
-      data: { tool: "claude", adopted: ["主渠道"] },
+      data: [piProvider],
+    });
+    vi.mocked(commands.updateProviderProfile).mockResolvedValue({
+      status: "ok",
+      data: withAffectedSyncScopes(piProvider, [
+        globalSyncScope("provider", "pi"),
+      ]),
     });
 
-    renderPage();
+    renderPage("pi");
     const section = sectionByHeading("渠道");
     fireEvent.click(
-      await within(section).findByRole("button", { name: "预览渠道同步" }),
+      await within(section).findByRole("button", { name: "编辑" }),
     );
-    const dialog = await screen.findByRole("dialog", {
-      name: "确认原生配置变更",
-    });
-    // 两个入口并存：只刷新基线的重新接管，与把文件内容写回档案的接管。
-    expect(
-      within(dialog).getByRole("button", { name: /以当前内容重新接管/ }),
-    ).toBeVisible();
-
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: /按原生内容接管渠道档案/ }),
-    );
+    const dialog = screen.getByRole("dialog", { name: "编辑 Pi 渠道" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存编辑" }));
 
     await waitFor(() =>
-      expect(commands.adoptProviderNative).toHaveBeenCalledWith({
-        tool: "claude",
-        targetPath: baseTarget.descriptor.path,
-        rowVersions: baseTarget.rowVersions,
+      expect(commands.previewProviderSync).toHaveBeenCalledWith("pi"),
+    );
+    await waitFor(() =>
+      expect(commands.applyProfilePreview).toHaveBeenCalledWith({
+        previewId: preview.previewId,
+        tool: "pi",
+        artifactKind: "provider",
       }),
     );
-    // 成功后重新生成预览，供用户确认已经一致。
-    await waitFor(() =>
-      expect(commands.previewProviderSync).toHaveBeenCalledTimes(2),
-    );
-    expect(commands.applyProfilePreview).not.toHaveBeenCalled();
   });
 });

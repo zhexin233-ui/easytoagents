@@ -8,7 +8,11 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings/commands";
 import { toolMetadata } from "@/lib/tool-metadata";
-import { makeSkill } from "@/test/fixtures";
+import {
+  globalSyncScope,
+  makeSkill,
+  withAffectedSyncScopes,
+} from "@/test/fixtures";
 import {
   deferred,
   nativeImport,
@@ -25,10 +29,10 @@ vi.mock("@/bindings/commands", async (importOriginal) => {
 });
 beforeEach(setupMocks);
 describe("SkillsPage", () => {
-  it("直接应用模式下分配切换自动同步并 Apply", async () => {
+  it("分配切换自动同步并 Apply", async () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "direct", enabledTools: ["claude", "codex"] },
+      data: { enabledTools: ["claude", "codex"] },
     });
     const updatedSkill = makeSkill({
       ...skill,
@@ -40,7 +44,9 @@ describe("SkillsPage", () => {
       .mockResolvedValue({ status: "ok", data: [updatedSkill] });
     vi.mocked(commands.setGlobalSkillAssignment).mockResolvedValue({
       status: "ok",
-      data: updatedSkill,
+      data: withAffectedSyncScopes(updatedSkill, [
+        globalSyncScope("skill", "codex"),
+      ]),
     });
     renderPage();
     fireEvent.click(
@@ -60,9 +66,6 @@ describe("SkillsPage", () => {
         projectId: null,
       }),
     );
-    expect(
-      screen.queryByRole("dialog", { name: "确认原生配置变更" }),
-    ).not.toBeInTheDocument();
     expect(await screen.findByText(/已应用 1 个 Skills 目标/)).toBeVisible();
   });
   it.each([
@@ -104,11 +107,9 @@ describe("SkillsPage", () => {
       expect(within(card).getByText(label)).toHaveClass(toneClass);
       expect(within(card).getByText(description)).toBeVisible();
       expect(within(card).getByText(diagnosticCode)).toBeVisible();
-      const button = within(card).getByRole("button", {
-        name: "预览全局同步",
-      });
-      expect(button).toBeDisabled();
-      fireEvent.click(button);
+      expect(
+        within(card).queryByRole("button", { name: "预览全局同步" }),
+      ).not.toBeInTheDocument();
       const importButton = within(card).getByRole("button", {
         name: "检测并导入 Claude 全局 Skills",
       });
@@ -276,7 +277,6 @@ describe("全局 Skills 检测与复制导入", () => {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
       data: {
-        applyMode: "preview_confirm",
         enabledTools: ["claude", "codex", "cursor", "pi"],
       },
     });

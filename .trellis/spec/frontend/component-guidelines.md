@@ -23,25 +23,20 @@ loading, empty, error, blocked, and success states rather than collapsing them.
 4. Keep small domain-only subcomponents in the page file; move reusable
    interaction contracts to `src/components/`.
 
-`ChangePreviewDialog` is the reference shape:
+`ExternalChangeActions` is the reference shape for non-modal native status actions:
 
 ```tsx
-interface ChangePreviewDialogProps {
-  preview: PreviewPlan | null;
+interface ExternalChangeActionsProps {
   tool: Tool;
   artifactKind: ArtifactKind;
-  applying: boolean;
-  onClose: () => void;
-  onApply: (previewId: string, tool: Tool, artifactKind: ArtifactKind) => void;
+  projectId?: string;
+  status: SyncStatus;
+  onInvalidate: () => Promise<void>;
 }
 
-export function ChangePreviewDialog(props: ChangePreviewDialogProps) {
-  const { dialogRef, onKeyDown } = useDialogFocus(
-    props.preview !== null,
-    props.onClose,
-  );
-  if (!props.preview) return null;
-  // Render the typed preview with shared status components.
+export function ExternalChangeActions(props: ExternalChangeActionsProps) {
+  // Prepare an ExternalChangePlan, then consume its exact persisted preview ID.
+  // Hash, descriptor, ownership, and row versions are rechecked by the backend.
 }
 ```
 
@@ -315,10 +310,10 @@ rules.
 
 - Calling raw `invoke`, asserting an ad-hoc payload, or exposing secret-bearing
   native data from a component.
-- Applying native configuration directly after CRUD instead of opening the
-  persisted `ChangePreviewDialog` flow.
-- Auto-applying a project-native disable/restore because settings `applyMode` is
-  `"direct"`. That path always opens `ChangePreviewDialog`, same as Skill takeover.
+- Applying native configuration directly after CRUD instead of consuming the
+  backend-returned scope through the persisted Preview → Apply flow.
+- Writing from a status DTO without preparing an `ExternalChangePlan` and checking
+  its observed hash, descriptor, ownership, and row versions.
 - Reimplementing `Button`, dialog focus, sync badges, or blocking-state language
   inside a feature.
 - Hiding loading, empty, policy, conflict, and RPC failure behind one generic

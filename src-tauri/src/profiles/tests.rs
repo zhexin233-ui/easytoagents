@@ -6,7 +6,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        adopt_provider_native, apply_profile_preview, confirm_prompt_import,
+        adopt_prompt_native, adopt_provider_native, apply_profile_preview, confirm_prompt_import,
         confirm_provider_import, copy_provider_profile, create_prompt_profile,
         create_provider_profile, discover_prompt_import, discover_provider_import,
         get_tool_profile_status, list_provider_profiles, preview_prompt_sync,
@@ -26,9 +26,11 @@ mod tests {
         },
         app::AppPaths,
         db::Database,
-        domain::{ArtifactKind, Tool},
+        domain::{ArtifactKind, SyncScopeDto, Tool},
         error::AppError,
-        profiles::{ConfirmImportInput, ConfirmProviderImportItem, SecretUpdate},
+        profiles::{
+            AdoptPromptNativeInput, ConfirmImportInput, ConfirmProviderImportItem, SecretUpdate,
+        },
         security::SecretRedactor,
     };
 
@@ -86,6 +88,23 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn prompt_native_input(plan: &crate::sync::PreviewPlan, tool: Tool) -> AdoptPromptNativeInput {
+        let target = plan.targets.first().expect("Prompt 预览应包含目标");
+        AdoptPromptNativeInput {
+            tool,
+            target_id: target.target_id.clone(),
+            target_row_version: target.target_row_version,
+            target_path: target
+                .descriptor
+                .path
+                .clone()
+                .expect("Prompt 目标应包含路径"),
+            row_versions: target.row_versions.clone(),
+            observed_full_hash: target.current_full_hash.clone(),
+            observed_managed_hash: target.current_managed_hash.clone(),
+        }
     }
 
     fn provider(tool: Tool, name: &str, key: &str, activate: bool) -> ProviderProfileInput {
@@ -175,6 +194,111 @@ mod tests {
     }
 
     #[test]
+    fn opencode_provider_initial_sync_can_overwrite_owned_selectors_without_baseline() {
+        let mut fixture = fixture();
+        let directory = fixture.environment.opencode_config_dir();
+        fs::create_dir_all(directory).unwrap();
+        let settings = directory.join("opencode.json");
+        fs::write(
+            &settings,
+            r#"{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/native-model",
+  "provider": {
+    "ccgo": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Native only",
+      "options": {"baseURL": "https://native.invalid/v1", "apiKey": "native-secret"},
+      "models": {"native-model": {"name": "Native model"}}
+    }
+  },
+  "unmanaged": {"keep": true}
+}
+"#,
+        )
+        .unwrap();
+        assert!(
+            super::discover_native_providers(&fixture.environment, Tool::Opencode)
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut redactor = SecretRedactor::default();
+        let profile = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            ProviderProfileInput {
+                tool: Tool::Opencode,
+                name: "中央渠道".to_owned(),
+                api_base_url: "https://central.invalid/v1".to_owned(),
+                api_key: "central-secret".to_owned(),
+                default_model: "central-model".to_owned(),
+                options: ProviderOptionsInput {
+                    opencode_npm: Some("@ai-sdk/openai-compatible".to_owned()),
+                    opencode_api: Some("openai-compatible".to_owned()),
+                    ..ProviderOptionsInput::default()
+                },
+                activate: true,
+            },
+        )
+        .unwrap();
+        let provider_id = profile.options.provider_id.clone().unwrap();
+
+        let preview = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Opencode,
+        )
+        .unwrap();
+        let target = &preview.targets[0];
+        assert_eq!(target.status, crate::domain::SyncStatus::ExternalNonOwnedChange);
+        assert_eq!(target.change_kind, crate::domain::ChangeKind::Update);
+        assert_eq!(target.error_code, None);
+        assert_eq!(target.warning_codes, vec!["EXTERNAL_NON_OWNED_CHANGE"]);
+        assert!(!target.readopt_available);
+        let external_plan = crate::sync::ExternalChangePlanDto::from_preview(
+            &preview,
+            ArtifactKind::Provider,
+            Tool::Opencode,
+        );
+        assert!(external_plan.can_overwrite_central);
+        assert!(!external_plan.can_adopt_native);
+        assert_eq!(
+            external_plan.adopt_blocked_reason.as_deref(),
+            Some("MATCH_OR_IMPORT_REQUIRED")
+        );
+
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut redactor,
+            &preview.preview_id,
+            Tool::Opencode,
+            ArtifactKind::Provider,
+        )
+        .unwrap();
+
+        let native: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(native["model"], format!("{provider_id}/central-model"));
+        assert_eq!(native["provider"]["ccgo"]["name"], "Native only");
+        assert_eq!(native["provider"][&provider_id]["options"]["baseURL"], "https://central.invalid/v1");
+        assert_eq!(native["unmanaged"]["keep"], true);
+
+        let settled = preview_provider_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut redactor,
+            Tool::Opencode,
+        )
+        .unwrap();
+        assert_eq!(settled.targets[0].status, crate::domain::SyncStatus::InSync);
+        assert_eq!(settled.targets[0].change_kind, crate::domain::ChangeKind::Unchanged);
+    }
+
+    #[test]
     fn provider_copy_is_independent_and_revalidated_for_target_tool() {
         let mut fixture = fixture();
         let mut redactor = SecretRedactor::default();
@@ -203,6 +327,61 @@ mod tests {
             .as_deref()
             .is_some_and(|id| id.starts_with("easytoagents_")));
         assert_eq!(copied.options.credential_env_key, None);
+    }
+
+    #[test]
+    fn profile_status_scan_skips_unowned_provider_without_central_intent() {
+        let fixture = fixture();
+        let statuses = super::list_global_profile_target_statuses(
+            &fixture.database,
+            &fixture.environment,
+            Tool::Codex,
+        )
+        .unwrap();
+        assert!(statuses
+            .iter()
+            .all(|status| status.artifact_kind == ArtifactKind::Prompt));
+    }
+
+    #[test]
+    fn inactive_pi_provider_mutations_return_the_global_sync_scope() {
+        let mut fixture = fixture();
+        let mut redactor = SecretRedactor::default();
+        let expected = Some(vec![SyncScopeDto::global(ArtifactKind::Provider, Tool::Pi)]);
+
+        let created = create_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            provider(Tool::Pi, "Pi 非当前渠道", "fixture-pi-secret", false),
+        )
+        .unwrap();
+        assert_eq!(created.affected_sync_scopes, expected);
+
+        let updated = update_provider_profile(
+            &mut fixture.database,
+            &mut redactor,
+            UpdateProviderProfileInput {
+                id: created.id.clone(),
+                name: "Pi 非当前渠道（已编辑）".to_owned(),
+                api_base_url: created.api_base_url.clone(),
+                api_key: SecretUpdate::Keep,
+                default_model: "fixture-updated-model".to_owned(),
+                options: ProviderOptionsInput::default(),
+                row_version: created.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.affected_sync_scopes, expected);
+
+        let deleted = super::delete_provider_profile(
+            &mut fixture.database,
+            &crate::profiles::VersionedProfileInput {
+                id: updated.id,
+                row_version: updated.row_version,
+            },
+        )
+        .unwrap();
+        assert_eq!(deleted.affected_sync_scopes, expected);
     }
 
     #[test]
@@ -542,7 +721,7 @@ mod tests {
         )
         .unwrap();
         let target = conflicted.targets.first().expect("Provider 预览应包含目标");
-        assert_eq!(target.change_kind, crate::domain::ChangeKind::Conflict);
+        assert_eq!(target.change_kind, crate::domain::ChangeKind::Update);
         assert_eq!(
             target.status,
             crate::domain::SyncStatus::ExternalOwnedChange
@@ -592,7 +771,7 @@ mod tests {
             ArtifactKind::Provider,
         )
         .unwrap_err();
-        assert_eq!(old_apply.code(), crate::error::ErrorCode::Conflict);
+        assert_eq!(old_apply.code(), crate::error::ErrorCode::StalePreview);
         assert_eq!(fs::read(&settings).unwrap(), native_before_readopt);
 
         let recovered = preview_provider_sync(
@@ -2496,6 +2675,233 @@ tenant = "fixture"
     }
 
     #[test]
+    fn prompt_native_adopt_updates_profile_and_baseline_and_returns_in_sync() {
+        let mut fixture = fixture();
+        let profile =
+            create_enabled_prompt(&mut fixture, Tool::Codex, "可采纳提示词", "# 中央正文\n");
+        let initial = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Codex,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut SecretRedactor::default(),
+            &initial.preview_id,
+            Tool::Codex,
+            ArtifactKind::Prompt,
+        )
+        .unwrap();
+
+        let prompt_path = fixture.home.join(".codex/AGENTS.md");
+        fs::write(&prompt_path, "# 原生正文\n\n保留未知空白  \n").unwrap();
+        let plan = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Codex,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.targets[0].status,
+            crate::domain::SyncStatus::ExternalOwnedChange
+        );
+        let result = adopt_prompt_native(
+            &mut fixture.database,
+            &fixture.environment,
+            prompt_native_input(&plan, Tool::Codex),
+        )
+        .unwrap();
+        assert_eq!(result.adopted, vec![profile.name.clone()]);
+        assert_eq!(
+            result.affected_sync_scopes,
+            Some(vec![SyncScopeDto::global(
+                ArtifactKind::Prompt,
+                Tool::Codex
+            )])
+        );
+        let adopted = super::list_prompt_profiles(&fixture.database)
+            .unwrap()
+            .into_iter()
+            .find(|value| value.id == profile.id)
+            .expect("采纳后中央档案应仍存在");
+        assert_eq!(adopted.body, "# 原生正文\n\n保留未知空白  \n");
+        assert_eq!(adopted.row_version, profile.row_version + 1);
+
+        let in_sync = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Codex,
+        )
+        .unwrap();
+        assert_eq!(in_sync.targets[0].status, crate::domain::SyncStatus::InSync);
+        assert_eq!(
+            in_sync.targets[0].change_kind,
+            crate::domain::ChangeKind::Unchanged
+        );
+        let in_sync_adopt = adopt_prompt_native(
+            &mut fixture.database,
+            &fixture.environment,
+            prompt_native_input(&in_sync, Tool::Codex),
+        )
+        .unwrap();
+        assert_eq!(
+            in_sync_adopt.adopted,
+            Vec::<String>::new(),
+            "in-sync 采纳应为幂等 no-op"
+        );
+    }
+
+    #[test]
+    fn prompt_native_adopt_rejects_stale_hash_and_target_row() {
+        let mut fixture = fixture();
+        let profile =
+            create_enabled_prompt(&mut fixture, Tool::Codex, "采纳证据提示词", "# 初始正文\n");
+        let initial = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Codex,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut SecretRedactor::default(),
+            &initial.preview_id,
+            Tool::Codex,
+            ArtifactKind::Prompt,
+        )
+        .unwrap();
+        let prompt_path = fixture.home.join(".codex/AGENTS.md");
+        fs::write(&prompt_path, "# 外部第一版\n").unwrap();
+        let plan = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Codex,
+        )
+        .unwrap();
+        let evidence = prompt_native_input(&plan, Tool::Codex);
+
+        fs::write(&prompt_path, "# 外部竞态版\n").unwrap();
+        let stale_hash = adopt_prompt_native(
+            &mut fixture.database,
+            &fixture.environment,
+            evidence.clone(),
+        )
+        .unwrap_err();
+        assert_eq!(stale_hash.code(), crate::error::ErrorCode::StalePreview);
+        let unchanged = super::list_prompt_profiles(&fixture.database)
+            .unwrap()
+            .into_iter()
+            .find(|value| value.id == profile.id)
+            .unwrap();
+        assert_eq!(unchanged.body, profile.body);
+
+        fs::write(&prompt_path, "# 外部第一版\n").unwrap();
+        let stale_row = evidence;
+        fixture
+            .database
+            .connection_mut()
+            .execute(
+                "UPDATE managed_targets SET last_status = 'external_owned_change' WHERE id = ?1",
+                [&stale_row.target_id],
+            )
+            .unwrap();
+        let stale_target =
+            adopt_prompt_native(&mut fixture.database, &fixture.environment, stale_row)
+                .unwrap_err();
+        assert_eq!(stale_target.code(), crate::error::ErrorCode::StalePreview);
+    }
+
+    #[test]
+    fn cursor_prompt_native_adopt_strips_frontmatter_and_rejects_malformed_text() {
+        let mut fixture = fixture();
+        fs::create_dir_all(fixture.home.join(".cursor/rules")).unwrap();
+        let profile = create_enabled_prompt(
+            &mut fixture,
+            Tool::Cursor,
+            "Cursor 原生采纳",
+            "# 中央 Cursor 规则\n",
+        );
+        let initial = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Cursor,
+        )
+        .unwrap();
+        apply_profile_preview(
+            &Mutex::new(()),
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &mut SecretRedactor::default(),
+            &initial.preview_id,
+            Tool::Cursor,
+            ArtifactKind::Prompt,
+        )
+        .unwrap();
+        let prompt_path = fixture.home.join(".cursor/rules/easytoagents.mdc");
+        fs::write(
+            &prompt_path,
+            "---\nalwaysApply: false\n---\n\n# 原生 Cursor 规则\n",
+        )
+        .unwrap();
+        let plan = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Cursor,
+        )
+        .unwrap();
+        adopt_prompt_native(
+            &mut fixture.database,
+            &fixture.environment,
+            prompt_native_input(&plan, Tool::Cursor),
+        )
+        .unwrap();
+        let adopted = super::list_prompt_profiles(&fixture.database)
+            .unwrap()
+            .into_iter()
+            .find(|value| value.id == profile.id)
+            .unwrap();
+        assert_eq!(adopted.body, "# 原生 Cursor 规则\n");
+
+        fs::write(
+            &prompt_path,
+            "---\nalwaysApply: false\n# 缺少闭合 frontmatter\n",
+        )
+        .unwrap();
+        let malformed = preview_prompt_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &SecretRedactor::default(),
+            Tool::Cursor,
+        )
+        .unwrap();
+        let error = adopt_prompt_native(
+            &mut fixture.database,
+            &fixture.environment,
+            prompt_native_input(&malformed, Tool::Cursor),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), crate::error::ErrorCode::ParseError);
+        assert!(!serde_json::to_string(&error)
+            .unwrap()
+            .contains("缺少闭合 frontmatter"));
+    }
+
+    #[test]
     fn cursor_prompt_writes_official_mdc_contract_and_import_strips_frontmatter() {
         let mut fixture = fixture();
         // 导入路径：预置带 frontmatter 的官方 `.mdc` 规则文件。
@@ -3183,7 +3589,7 @@ tenant = "fixture"
         .unwrap();
         assert_eq!(
             conflicted.targets[0].change_kind,
-            crate::domain::ChangeKind::Conflict
+            crate::domain::ChangeKind::Update
         );
         assert!(conflicted.targets[0].readopt_available);
 
@@ -3193,9 +3599,13 @@ tenant = "fixture"
             &fixture.environment,
             &mut redactor,
             AdoptProviderNativeInput {
+                preview_id: None,
                 tool: Tool::Pi,
+                target_id: conflicted.targets[0].target_id.clone(),
+                target_row_version: conflicted.targets[0].target_row_version,
                 target_path: models_path.to_str().unwrap().to_owned(),
                 row_versions: conflicted.targets[0].row_versions.clone(),
+                observed_full_hash: None,
             },
         )
         .unwrap();
@@ -3301,9 +3711,13 @@ tenant = "fixture"
             &fixture.environment,
             &mut redactor,
             AdoptProviderNativeInput {
+                preview_id: None,
                 tool: Tool::Pi,
+                target_id: plan.targets[0].target_id.clone(),
+                target_row_version: plan.targets[0].target_row_version,
                 target_path: models_path.to_str().unwrap().to_owned(),
                 row_versions: preview_versions,
+                observed_full_hash: None,
             },
         )
         .unwrap_err();

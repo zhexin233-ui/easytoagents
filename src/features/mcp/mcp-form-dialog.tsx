@@ -7,7 +7,6 @@ import { validateMcpForm, type McpFormState } from "@/features/mcp/mcp-form";
 interface McpFormDialogProps {
   /** 打开时的初始草稿；组件只在挂载时读取一次，页面通过重新挂载来换草稿。 */
   initialState: McpFormState;
-  directApply: boolean;
   pending: boolean;
   /** 保存 RPC 的错误文案；表单自身的校验错误由组件内部持有。 */
   saveError: string | null;
@@ -19,7 +18,6 @@ interface McpFormDialogProps {
 /** MCP 新增/编辑弹窗。表单草稿与校验错误留在这里，击键不会触发整页重渲染。 */
 export function McpFormDialog({
   initialState,
-  directApply,
   pending,
   saveError,
   onClose,
@@ -32,11 +30,7 @@ export function McpFormDialog({
     <FormDialog
       open
       title={form.id ? "编辑 MCP" : "新增 MCP"}
-      description={
-        directApply
-          ? "保存只更新中央 MCP；已分配工具会按直接应用模式自动同步。"
-          : "保存只更新中央 MCP，不会修改原生配置。"
-      }
+      description="保存中央 MCP 后，已分配工具会自动同步；未分配工具不会写入原生配置。"
       submitLabel="保存中央意图"
       pending={pending}
       error={formError ?? saveError}

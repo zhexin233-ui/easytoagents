@@ -437,9 +437,11 @@ fn read_native(environment: &ExplicitEnvironment, tool: Tool) -> Result<NativeMc
     }
 }
 
-type CandidateError = (Status, String);
+pub(super) type CandidateError = (Status, String);
 
-fn parse_native_item(
+/// 解析单个原生 MCP 条目。导入与外部变化采纳必须共用这一入口，避免两条
+/// 路径对 transport、disabled、环境变量引用和可移植扩展字段得出不同结论。
+pub(super) fn parse_native_item(
     tool: Tool,
     name: &str,
     raw: &Value,
@@ -561,7 +563,7 @@ fn parse_native_item(
             &mut object,
             // Pi 与 Claude/Cursor 一致使用 `headers`（适配器不写 `type`，
             // HTTP 与 stdio 靠 `url`/`command` 字段存在性区分）。
-            if matches!(tool, Tool::Claude | Tool::Cursor | Tool::Pi) {
+            if matches!(tool, Tool::Claude | Tool::Cursor | Tool::Zcode | Tool::Pi) {
                 "headers"
             } else {
                 "http_headers"
@@ -823,5 +825,21 @@ mod tests {
             .into_value();
         assert_eq!(redacted["fixture"]["environment"]["API_KEY"], "[REDACTED]");
         assert_eq!(redacted["fixture"]["oauth"]["clientSecret"], "[REDACTED]");
+    }
+
+    #[test]
+    fn zcode_http_mcp_uses_native_headers_without_losing_the_mapping() {
+        let raw = json!({
+            "url": "https://mcp.example.test/rpc",
+            "headers": {"Authorization": "Bearer zcode-fixture"}
+        });
+        let redactor = SecretRedactor::default();
+        let parsed = parse_native_item(Tool::Zcode, "fixture", &raw, &redactor).unwrap();
+        assert_eq!(parsed.transport, McpTransport::StreamableHttp);
+        assert_eq!(parsed.headers["Authorization"], "Bearer zcode-fixture");
+        assert!(parsed
+            .extra
+            .as_object()
+            .is_some_and(|extra| extra.is_empty()));
     }
 }

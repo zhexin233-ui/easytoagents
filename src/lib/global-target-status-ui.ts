@@ -96,9 +96,7 @@ const globalPreviewBlockingStatuses = new Set<SyncStatus>([
 export function globalTargetStatusPresentation(
   status: SyncStatus,
   diagnosticCode: string | null,
-  options: { directApply?: boolean } = {},
 ): GlobalTargetStatusPresentation {
-  const { directApply = false } = options;
   const previewBlocked = globalPreviewBlockingStatuses.has(status);
   const agentDiagnostic = diagnosticCode
     ? agentDiagnosticPresentations[diagnosticCode]
@@ -119,7 +117,7 @@ export function globalTargetStatusPresentation(
     return {
       label: "已有同名安装，待接管",
       description:
-        "工具目录中已有同名技能，可检测并接管；内容不同需先处理差异。",
+        "工具目录中已有同名技能，可检测并接管；选择接管后会由应用安全替换入口。",
       tone: "warning",
       previewBlocked,
     };
@@ -130,9 +128,7 @@ export function globalTargetStatusPresentation(
   ) {
     return {
       label: "已分配，待同步",
-      description: directApply
-        ? "分配已写入，尚未写入工具目录；重新切换分配可触发自动同步。"
-        : "分配已写入，尚未写入工具目录；点击“预览全局同步”并确认应用。",
+      description: "分配已写入，尚未写入工具目录；当前主操作会自动完成同步。",
       tone: "warning",
       previewBlocked,
     };
@@ -141,7 +137,8 @@ export function globalTargetStatusPresentation(
     if (diagnosticCode === "SKILL_TARGET_INITIAL_EMPTY") {
       return {
         label: "空目录，待配置",
-        description: "目标目录为空；可先导入技能到中央库，再分配并预览同步。",
+        description:
+          "目标目录为空；可先导入技能到中央库，再分配；分配后会自动同步。",
         tone: "warning",
         previewBlocked,
       };
@@ -159,9 +156,7 @@ export function globalTargetStatusPresentation(
   if (status === "missing") {
     return {
       label: "待初始化",
-      description: directApply
-        ? "尚未写入受管目标；分配条目后会自动初始化。"
-        : "尚未写入受管目标；生成预览会在确认后初始化。",
+      description: "尚未写入受管目标；分配条目后会自动初始化。",
       tone: "warning",
       previewBlocked,
     };

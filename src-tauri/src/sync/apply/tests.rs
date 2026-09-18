@@ -38,7 +38,7 @@ mod tests {
         sync::{
             build_preview_plan, load_managed_target_baseline, persist_preview, scan_target,
             ManagedTargetBaseline, PreviewTargetRequest, SkillTakeoverEntry,
-            SkillTakeoverEntryType, TargetScan, WARNING_SKILL_TAKEOVER_CONFIRMATION,
+            SkillTakeoverEntryType, TargetScan,
         },
     };
 
@@ -2587,10 +2587,6 @@ mod tests {
                 plan.targets[0].change_kind,
                 crate::domain::ChangeKind::Update
             );
-            assert!(plan
-                .warning_codes
-                .iter()
-                .any(|code| code == WARNING_SKILL_TAKEOVER_CONFIRMATION));
             let preview_id = plan.preview_id.clone();
             persist_preview(&mut fixture.database, &plan).unwrap();
             apply_persisted_preview(

@@ -255,10 +255,12 @@ fn persist_prepared_preview(
     redactor: &SecretRedactor,
 ) -> Result<PreviewPlan, AppError> {
     let readopt_available = prepared.descriptor.artifact_kind == ArtifactKind::Provider
+        && prepared.baseline.full_hash.is_some()
+        && prepared.baseline.managed_hash.is_some()
         && crate::sync::assess_drift(&prepared.descriptor, &prepared.baseline, &prepared.scan)
             .status
             == crate::domain::SyncStatus::ExternalOwnedChange;
-    let plan = build_preview_plan(
+    let plan = build_profile_preview_plan(
         prepared.descriptor.scope,
         None,
         vec![PreviewTargetRequest {
@@ -286,6 +288,126 @@ fn persist_prepared_preview(
 struct ManagedProfileTarget {
     baseline: ManagedTargetBaseline,
     projection: Option<Value>,
+}
+
+/// 只读查找 Provider/Prompt 的托管目标；现场状态扫描不得因为目标尚未登记而
+/// 写入 `managed_targets`，因此与会创建身份行的 `ensure_profile_target` 分开。
+fn find_profile_target(
+    database: &Database,
+    descriptor: &TargetDescriptor,
+) -> Result<Option<ManagedProfileTarget>, AppError> {
+    let target_path = descriptor_path(descriptor)?;
+    let database_path = database.path().to_string_lossy().into_owned();
+    let row = database
+        .connection()
+        .query_row(
+            "SELECT id, row_version, baseline_full_hash, baseline_managed_hash,
+                    baseline_projection_json
+             FROM managed_targets
+             WHERE tool = ?1 AND artifact_kind = ?2 AND scope = ?3
+               AND project_id IS NULL AND target_path = ?4",
+            params![
+                descriptor.tool.as_str(),
+                descriptor.artifact_kind.as_str(),
+                descriptor.scope.as_str(),
+                target_path,
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(&database_path, "find_profile_managed_target").with_source(error)
+        })?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let projection = row
+        .4
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|error| {
+                AppError::database(&database_path, "parse_profile_managed_baseline")
+                    .with_source(error)
+            })
+        })
+        .transpose()?;
+    Ok(Some(ManagedProfileTarget {
+        baseline: ManagedTargetBaseline {
+            target_id: row.0,
+            target_row_version: row.1,
+            full_hash: row.2,
+            managed_hash: row.3,
+        },
+        projection,
+    }))
+}
+
+/// Provider/Prompt 全局目标的现场扫描。这里只读数据库与原生文件；执行覆盖或
+/// 采纳时必须再请求 `ExternalChangePlan`，以绑定最新 observation/hash/版本。
+pub fn list_global_profile_target_statuses(
+    database: &Database,
+    environment: &ExplicitEnvironment,
+    tool: Tool,
+) -> Result<Vec<ProfileTargetStatusDto>, AppError> {
+    let mut statuses = Vec::new();
+    for artifact_kind in [ArtifactKind::Provider, ArtifactKind::Prompt] {
+        if artifact_kind == ArtifactKind::Provider
+            && tool.adapter().provider_codec().is_none()
+        {
+            continue;
+        }
+        let mut descriptor = descriptor_for(environment, tool, artifact_kind)?;
+        if artifact_kind == ArtifactKind::Provider {
+            refine_claude_provider_policy(&mut descriptor);
+        }
+        let target = find_profile_target(database, &descriptor)?;
+        let baseline = target
+            .as_ref()
+            .map(|target| target.baseline.clone())
+            .unwrap_or_else(|| ManagedTargetBaseline {
+                target_id: "status-only".to_owned(),
+                target_row_version: 0,
+                full_hash: None,
+                managed_hash: None,
+            });
+        let ownership = match artifact_kind {
+            ArtifactKind::Provider => {
+                let intent = provider_sync_intent(database, tool)?;
+                // 没有中央 Provider 意图且目标也没有历史 baseline 时，原生文件
+                // 尚不属于本应用的受管目标；不要让 codec 因无 selector 而把
+                // 状态扫描升级成 RPC 错误。用户仍可从 Provider 导入入口接管。
+                if intent.active.is_none() && baseline.full_hash.is_none() {
+                    continue;
+                }
+                provider_ownership(
+                    tool,
+                    target.as_ref().and_then(|value| value.projection.as_ref()),
+                    &intent.desired_projection,
+                )?
+            }
+            ArtifactKind::Prompt => {
+                ManagedOwnership::WholeDocument
+            }
+            _ => unreachable!("profile status only supports Provider/Prompt"),
+        };
+        let scan = scan_target(tool.adapter(), &descriptor, &ownership);
+        let assessment = crate::sync::assess_drift(&descriptor, &baseline, &scan);
+        statuses.push(ProfileTargetStatusDto {
+            artifact_kind,
+            tool,
+            target_path: descriptor.path.clone(),
+            status: assessment.status,
+            diagnostic_code: assessment.diagnostic_codes.first().cloned(),
+        });
+    }
+    Ok(statuses)
 }
 
 fn ensure_profile_target(

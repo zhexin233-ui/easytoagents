@@ -20,16 +20,18 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use super::{
-    models::validate_hook_definition, ApplyHookPreviewInput, CreateHookInput, DeleteHookResultDto,
-    HookDto, HookProjectDto, HookProjectOptionDto, HookProjectOptionsInput,
-    HookProjectSelectionState, HookTargetStatusDto, PreviewHookSyncInput, ReadoptHookTargetInput,
-    ReadoptHookTargetResultDto, SetGlobalHookAssignmentInput, SetProjectHookAssignmentInput,
-    UpdateHookInput, VersionedHookInput,
+    models::validate_hook_definition, AdoptHookNativeInput, AdoptHookNativeResultDto,
+    ApplyHookPreviewInput, CreateHookInput, DeleteHookResultDto, HookDto, HookProjectDto,
+    HookProjectOptionDto, HookProjectOptionsInput, HookProjectSelectionState, HookTargetStatusDto,
+    PreviewHookSyncInput, ReadoptHookTargetInput, ReadoptHookTargetResultDto,
+    SetGlobalHookAssignmentInput, SetProjectHookAssignmentInput, UpdateHookInput,
+    VersionedHookInput,
 };
 use crate::{
     adapters::{
         canonicalize_project_root, descriptor_allowed_root, find_descriptor, projection_value_at,
-        DiscoveryContext, ManagedOwnership, TargetDescriptor, ASSIGNABLE_HOOK_TOOLS,
+        CapabilityState, DiscoveryContext, ManagedOwnership, PolicyState, TargetDescriptor,
+        TargetTrustState, ASSIGNABLE_HOOK_TOOLS,
     },
     app::AppPaths,
     db::{
@@ -37,19 +39,29 @@ use crate::{
         mcp::{self as mcp_repository, McpProjectRecord},
         Database,
     },
-    domain::{ArtifactKind, EntityId, HookEvent, ProjectRoot, Scope, SyncStatus, Tool},
+    domain::{
+        ArtifactKind, EntityId, HookEvent, ProjectRoot, Scope, SyncScopeDto, SyncStatus, Tool,
+    },
     error::AppError,
     git::inspect_path,
-    security::{create_private_file, ensure_private_directory, SecretRedactor},
+    security::{
+        contains_detectable_secret, create_private_file, ensure_private_directory,
+        ensure_private_file, reject_symlink_components, SecretRedactor,
+    },
     sync::hash_bytes,
     sync::{
-        apply_persisted_preview, assess_drift, build_preview_plan, hash_json,
-        load_managed_target_baseline, load_persisted_preview, persist_preview, safe_row_version,
-        scan_target, ApplyResult, ApplyTargetInput, DatabaseRowVersion, ManagedItemApply,
+        apply_persisted_preview, build_preview_plan, hash_json, load_managed_target_baseline,
+        load_persisted_preview, persist_preview, safe_row_version, scan_target, ApplyResult,
+        ApplyTargetInput, DatabaseEntityType, DatabaseRowVersion, ManagedItemApply,
         ManagedTargetBaseline, NoApplyFault, ObservedTarget, PreviewPlan, PreviewTargetRequest,
         TargetScan,
     },
 };
+
+fn with_affected_sync_scopes(mut dto: HookDto, scopes: Vec<SyncScopeDto>) -> HookDto {
+    dto.affected_sync_scopes = Some(crate::domain::stable_sync_scopes(scopes));
+    dto
+}
 
 // ---------------------------------------------------------------------------
 // 中央库 CRUD 与分配

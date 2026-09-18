@@ -5,16 +5,17 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        apply_agent_preview, create_agent, delete_agent, get_agent, list_agent_project_options,
-        list_global_agent_target_statuses, preview_agent_sync, readopt_agent_target,
-        set_agent_enabled, set_agent_tool_settings, set_global_agent_assignment,
-        set_project_agent_assignment, update_agent,
-        ApplyAgentPreviewInput, CreateAgentInput, PreviewAgentSyncInput, ReadoptAgentTargetInput,
-        SetGlobalAgentAssignmentInput, SetProjectAgentAssignmentInput, UpdateAgentInput,
-        SetAgentToolSettingsInput, VersionedAgentInput,
+        adopt_agent_native, apply_agent_preview, create_agent, delete_agent, get_agent,
+        list_agent_project_options, list_global_agent_target_statuses, preview_agent_sync,
+        readopt_agent_target, set_agent_enabled, set_agent_tool_settings,
+        set_global_agent_assignment, set_project_agent_assignment, update_agent,
+        AdoptAgentNativeInput, ApplyAgentPreviewInput, CreateAgentInput, PreviewAgentSyncInput,
+        ReadoptAgentTargetInput, SetAgentToolSettingsInput, SetGlobalAgentAssignmentInput,
+        SetProjectAgentAssignmentInput, UpdateAgentInput, VersionedAgentInput,
     };
     use crate::{
         adapters::{ExplicitEnvironment, ToolAvailability},
+        agents::{ClaudeAgentColor, CodexReasoningEffort},
         app::AppPaths,
         db::Database,
         domain::{ChangeKind, ManagedProjectSelectionState, Scope, SyncStatus, Tool},
@@ -198,6 +199,24 @@ mod tests {
         fs::read_to_string(path).unwrap()
     }
 
+    fn native_input(
+        plan: &crate::sync::PreviewPlan,
+        tool: Tool,
+        project_id: Option<String>,
+    ) -> AdoptAgentNativeInput {
+        let target = &plan.targets[0];
+        AdoptAgentNativeInput {
+            tool,
+            project_id,
+            target_id: target.target_id.clone(),
+            target_row_version: target.target_row_version,
+            target_path: target.descriptor.path.clone().unwrap(),
+            row_versions: target.row_versions.clone(),
+            observed_full_hash: target.current_full_hash.clone(),
+            observed_managed_hash: target.current_managed_hash.clone(),
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 中央库 CRUD 与名称校验
     // -----------------------------------------------------------------------
@@ -320,8 +339,7 @@ mod tests {
         // OpenCode：不写 name，固定 mode: subagent。
         let plan = fixture.preview_global(Tool::Opencode);
         fixture.apply_global(&plan, Tool::Opencode);
-        let opencode_text =
-            file_text(&fixture.opencode_agents_dir().join("code-reviewer.md"));
+        let opencode_text = file_text(&fixture.opencode_agents_dir().join("code-reviewer.md"));
         assert_eq!(
             opencode_text,
             "---\ndescription: 评审代码改动\nmode: subagent\n---\n\n你是代码评审助手。\n请逐条列出问题。\n",
@@ -338,7 +356,9 @@ mod tests {
         );
         assert!(codex_text.contains("name = \"code-reviewer\""));
         assert!(
-            codex_text.contains("developer_instructions = \"\"\"\n你是代码评审助手。\n请逐条列出问题。\"\"\""),
+            codex_text.contains(
+                "developer_instructions = \"\"\"\n你是代码评审助手。\n请逐条列出问题。\"\"\""
+            ),
             "多行 developer_instructions 必须由 toml_edit 多行字面量承载：{codex_text}"
         );
 
@@ -367,9 +387,24 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(updated.tool_settings.claude.as_ref().unwrap().model.as_deref(), Some("inherit"));
         assert_eq!(
-            updated.tool_settings.claude.as_ref().unwrap().tools.as_deref(),
+            updated
+                .tool_settings
+                .claude
+                .as_ref()
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("inherit")
+        );
+        assert_eq!(
+            updated
+                .tool_settings
+                .claude
+                .as_ref()
+                .unwrap()
+                .tools
+                .as_deref(),
             Some(["Read".to_owned(), "Bash".to_owned()].as_slice())
         );
         assert_eq!(updated.row_version, agent.row_version + 1);
@@ -397,14 +432,20 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(codex.tool_settings.codex.as_ref().unwrap().model.as_deref(), Some("gpt-5.6-terra"));
+        assert_eq!(
+            codex.tool_settings.codex.as_ref().unwrap().model.as_deref(),
+            Some("gpt-5.6-terra")
+        );
         fixture.assign_global(&codex, Tool::Codex);
         let plan = fixture.preview_global(Tool::Codex);
         fixture.apply_global(&plan, Tool::Codex);
         let text = file_text(&fixture.codex_agents_dir().join("settings-agent.toml"));
         assert!(text.contains("model = \"gpt-5.6-terra\""));
         assert!(text.contains("model_reasoning_effort = \"xhigh\""));
-        assert!(text.contains("[features]"), "Codex settings projection: {text}");
+        assert!(
+            text.contains("[features]"),
+            "Codex settings projection: {text}"
+        );
 
         let stale = set_agent_tool_settings(
             &mut fixture.database,
@@ -426,7 +467,10 @@ mod tests {
         for (tool, settings) in [
             (Tool::Cursor, serde_json::json!({"model": "x"})),
             (Tool::Claude, serde_json::json!({"color": 3})),
-            (Tool::Codex, serde_json::json!({"features": {"Bad-Key": true}})),
+            (
+                Tool::Codex,
+                serde_json::json!({"features": {"Bad-Key": true}}),
+            ),
         ] {
             let row_version = fixture.current(&agent.id).row_version;
             let error = set_agent_tool_settings(
@@ -466,7 +510,10 @@ mod tests {
         fixture.apply_global(&plan, Tool::Claude);
         assert!(!target_file.exists(), "停用后 Apply 必须删除受管文件");
         assert!(
-            crate::sync::list_snapshots(&fixture.database).unwrap().len() >= 2,
+            crate::sync::list_snapshots(&fixture.database)
+                .unwrap()
+                .len()
+                >= 2,
             "每次 Apply（新增 + 删除）都必须留下快照"
         );
 
@@ -516,7 +563,10 @@ mod tests {
             )
         );
         fixture.apply_global(&plan, Tool::Claude);
-        assert!(!fixture.claude_agents_dir().join("removed-agent.md").exists());
+        assert!(!fixture
+            .claude_agents_dir()
+            .join("removed-agent.md")
+            .exists());
         assert!(fixture.claude_agents_dir().join("kept-agent.md").exists());
     }
 
@@ -530,7 +580,11 @@ mod tests {
 
         // 外部改写受管文件 → external_owned_change，readopt 可用。
         let target_file = fixture.claude_agents_dir().join("code-reviewer.md");
-        fs::write(&target_file, "---\ndescription: 被外部改写\nname: code-reviewer\n---\n\n外部内容\n").unwrap();
+        fs::write(
+            &target_file,
+            "---\ndescription: 被外部改写\nname: code-reviewer\n---\n\n外部内容\n",
+        )
+        .unwrap();
         let plan = fixture.preview_global(Tool::Claude);
         assert_eq!(plan.targets[0].status, SyncStatus::ExternalOwnedChange);
         assert!(plan.targets[0].readopt_available);
@@ -557,10 +611,385 @@ mod tests {
     }
 
     #[test]
+    fn adopt_native_claude_updates_definition_settings_and_baseline() {
+        let mut fixture = Fixture::new();
+        let agent = fixture.create("code-reviewer");
+        fixture.assign_global(&agent, Tool::Claude);
+        let initial = fixture.preview_global(Tool::Claude);
+        fixture.apply_global(&initial, Tool::Claude);
+
+        let target_file = fixture.claude_agents_dir().join("code-reviewer.md");
+        let secret = "agent-native-secret";
+        fixture.redactor.register_secret(secret);
+        let native_text = format!(
+            "---\nname: code-reviewer\ndescription: 外部评审\nmodel: gpt-5.6-terra\ncolor: cyan\ntools: [Read, Bash]\n---\n\n外部正文 {secret}\n"
+        );
+        fs::write(&target_file, &native_text).unwrap();
+
+        let plan = fixture.preview_global(Tool::Claude);
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].status, SyncStatus::ExternalOwnedChange);
+        assert_eq!(plan.targets[0].change_kind, ChangeKind::Update);
+        let result = adopt_agent_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            native_input(&plan, Tool::Claude, None),
+        )
+        .unwrap();
+        assert_eq!(result.adopted, vec!["code-reviewer"]);
+        assert_eq!(file_text(&target_file), native_text);
+
+        let adopted = get_agent(&fixture.database, &agent.id).unwrap();
+        assert_eq!(adopted.description, "外部评审");
+        assert_eq!(adopted.prompt, format!("外部正文 {secret}"));
+        let settings = adopted.tool_settings.claude.unwrap();
+        assert_eq!(settings.model.as_deref(), Some("gpt-5.6-terra"));
+        assert_eq!(settings.color, Some(ClaudeAgentColor::Cyan));
+        assert_eq!(
+            settings.tools.as_deref(),
+            Some(["Read".to_owned(), "Bash".to_owned()].as_slice())
+        );
+
+        let stored_baseline: String = fixture
+            .database
+            .connection()
+            .query_row(
+                "SELECT baseline_projection_json FROM managed_targets WHERE id = ?1",
+                [&plan.targets[0].target_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!stored_baseline.contains(secret));
+        assert!(stored_baseline.contains("[REDACTED]"));
+
+        // 采纳写回中央字段和基线后，原生字节即使与确定性渲染不同，也应保持
+        // in-sync；下一次普通预览不能把刚采纳的内容立即改回去。
+        let after = fixture.preview_global(Tool::Claude);
+        assert_eq!(after.targets[0].status, SyncStatus::InSync);
+        assert_eq!(after.targets[0].change_kind, ChangeKind::Unchanged);
+        assert_eq!(
+            list_global_agent_target_statuses(&fixture.database, &fixture.environment)
+                .unwrap()
+                .into_iter()
+                .find(|status| status.tool == Tool::Claude)
+                .unwrap()
+                .aggregate_status,
+            SyncStatus::InSync
+        );
+    }
+
+    #[test]
+    fn adopt_native_codex_updates_definition_settings_and_baseline() {
+        let mut fixture = Fixture::new();
+        let agent = fixture.create("codex-agent");
+        fixture.assign_global(&agent, Tool::Codex);
+        let initial = fixture.preview_global(Tool::Codex);
+        fixture.apply_global(&initial, Tool::Codex);
+
+        let target_file = fixture.codex_agents_dir().join("codex-agent.toml");
+        fs::write(
+            &target_file,
+            "name = \"codex-agent\"\ndescription = \"外部 Codex\"\ndeveloper_instructions = \"\"\"\n外部 Codex 正文\n\"\"\"\nmodel = \"gpt-5.6-terra\"\nmodel_reasoning_effort = \"high\"\n\n[features]\nmulti_agent = true\n",
+        )
+        .unwrap();
+
+        let plan = fixture.preview_global(Tool::Codex);
+        assert_eq!(plan.targets[0].status, SyncStatus::ExternalOwnedChange);
+        let result = adopt_agent_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            native_input(&plan, Tool::Codex, None),
+        )
+        .unwrap();
+        assert_eq!(result.adopted, vec!["codex-agent"]);
+        let adopted = get_agent(&fixture.database, &agent.id).unwrap();
+        assert_eq!(adopted.description, "外部 Codex");
+        assert_eq!(adopted.prompt, "外部 Codex 正文");
+        let settings = adopted.tool_settings.codex.unwrap();
+        assert_eq!(settings.model.as_deref(), Some("gpt-5.6-terra"));
+        assert_eq!(
+            settings.model_reasoning_effort,
+            Some(CodexReasoningEffort::High)
+        );
+        assert_eq!(settings.features.unwrap().get("multi_agent"), Some(&true));
+
+        let after = fixture.preview_global(Tool::Codex);
+        assert_eq!(after.targets[0].status, SyncStatus::InSync);
+        assert_eq!(after.targets[0].change_kind, ChangeKind::Unchanged);
+    }
+
+    #[test]
+    fn adopt_native_project_agent_uses_project_identity_and_row_versions() {
+        let mut fixture = Fixture::new();
+        let project = register_project_fixture(&mut fixture);
+        let agent = fixture.create("project-agent");
+        set_project_agent_assignment(
+            &mut fixture.database,
+            &SetProjectAgentAssignmentInput {
+                project_id: project.id.clone(),
+                tool: Tool::Claude,
+                agent_id: agent.id.clone(),
+                assigned: true,
+                agent_row_version: agent.row_version,
+                project_row_version: project.row_version,
+            },
+        )
+        .unwrap();
+        let input = PreviewAgentSyncInput {
+            tool: Tool::Claude,
+            project_id: Some(project.id.clone()),
+            exclude_from_git: false,
+        };
+        let initial = preview_agent_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            &input,
+        )
+        .unwrap();
+        apply_agent_preview(
+            &fixture.write_operations,
+            &mut fixture.database,
+            &fixture.paths,
+            &fixture.environment,
+            &ApplyAgentPreviewInput {
+                preview_id: initial.preview_id.clone(),
+                tool: Tool::Claude,
+                project_id: Some(project.id.clone()),
+            },
+        )
+        .unwrap();
+
+        let target_file =
+            PathBuf::from(project.root_path.as_str()).join(".claude/agents/project-agent.md");
+        fs::write(
+            &target_file,
+            "---\nname: project-agent\ndescription: 项目原生描述\n---\n\n项目原生正文\n",
+        )
+        .unwrap();
+        let plan = preview_agent_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            &input,
+        )
+        .unwrap();
+        assert_eq!(plan.scope, Scope::Project);
+        assert_eq!(plan.targets.len(), 1);
+        let result = adopt_agent_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            native_input(&plan, Tool::Claude, Some(project.id.clone())),
+        )
+        .unwrap();
+        assert_eq!(result.adopted, vec!["project-agent"]);
+        let adopted = get_agent(&fixture.database, &agent.id).unwrap();
+        assert_eq!(adopted.description, "项目原生描述");
+        assert_eq!(adopted.prompt, "项目原生正文");
+
+        let after = preview_agent_sync(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            &input,
+        )
+        .unwrap();
+        assert_eq!(after.targets[0].status, SyncStatus::InSync);
+        assert_eq!(after.targets[0].change_kind, ChangeKind::Unchanged);
+    }
+
+    #[test]
+    fn adopt_native_rejects_stale_hash_and_row_without_mutating_central_or_baseline() {
+        let mut fixture = Fixture::new();
+        let agent = fixture.create("stale-agent");
+        fixture.assign_global(&agent, Tool::Claude);
+        let initial = fixture.preview_global(Tool::Claude);
+        fixture.apply_global(&initial, Tool::Claude);
+        let target_file = fixture.claude_agents_dir().join("stale-agent.md");
+
+        fs::write(
+            &target_file,
+            "---\nname: stale-agent\ndescription: 外部一\n---\n\n外部正文一\n",
+        )
+        .unwrap();
+        let hash_plan = fixture.preview_global(Tool::Claude);
+        let baseline_before = crate::sync::load_managed_target_baseline(
+            &fixture.database,
+            &hash_plan.targets[0].target_id,
+        )
+        .unwrap();
+        fs::write(
+            &target_file,
+            "---\nname: stale-agent\ndescription: 外部二\n---\n\n外部正文二\n",
+        )
+        .unwrap();
+        let stale_hash = adopt_agent_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            native_input(&hash_plan, Tool::Claude, None),
+        )
+        .unwrap_err();
+        assert_eq!(stale_hash.code(), ErrorCode::StalePreview);
+        assert_eq!(
+            get_agent(&fixture.database, &agent.id).unwrap().description,
+            "评审代码改动"
+        );
+        assert_eq!(
+            crate::sync::load_managed_target_baseline(
+                &fixture.database,
+                &hash_plan.targets[0].target_id,
+            )
+            .unwrap(),
+            baseline_before
+        );
+
+        // 重新生成 observation 后并发修改中央行；旧 Preview 的 Agent row
+        // version 必须阻止采纳，且原生内容/基线不被动作部分更新。
+        let row_plan = fixture.preview_global(Tool::Claude);
+        let current = get_agent(&fixture.database, &agent.id).unwrap();
+        update_agent(
+            &mut fixture.database,
+            &UpdateAgentInput {
+                id: current.id.clone(),
+                name: current.name.clone(),
+                description: "中央并发修改".to_owned(),
+                prompt: current.prompt.clone(),
+                enabled: current.enabled,
+                row_version: current.row_version,
+            },
+        )
+        .unwrap();
+        let stale_row = adopt_agent_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            native_input(&row_plan, Tool::Claude, None),
+        )
+        .unwrap_err();
+        assert_eq!(stale_row.code(), ErrorCode::StalePreview);
+        assert_eq!(
+            get_agent(&fixture.database, &agent.id).unwrap().description,
+            "中央并发修改"
+        );
+    }
+
+    #[test]
+    fn adopt_native_routes_renamed_and_dropped_fields_to_match_or_import() {
+        let mut fixture = Fixture::new();
+        let agent = fixture.create("rename-agent");
+        fixture.assign_global(&agent, Tool::Claude);
+        let initial = fixture.preview_global(Tool::Claude);
+        fixture.apply_global(&initial, Tool::Claude);
+        let target_file = fixture.claude_agents_dir().join("rename-agent.md");
+
+        // 文件路径/resource identity 保持原目标，但原生 name 改名，不能猜测
+        // 要不要重命名中央 Agent。
+        fs::write(
+            &target_file,
+            "---\nname: renamed-agent\ndescription: 外部描述\n---\n\n外部正文\n",
+        )
+        .unwrap();
+        let renamed = fixture.preview_global(Tool::Claude);
+        let error = adopt_agent_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            native_input(&renamed, Tool::Claude, None),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        assert_eq!(
+            error.details().and_then(|details| details.get("reason")),
+            Some(&serde_json::Value::String(
+                "MATCH_OR_IMPORT_REQUIRED".to_owned()
+            ))
+        );
+
+        // 未建模字段可能含凭据；采纳必须 fail closed，错误不得回传原始值。
+        fs::write(
+            &target_file,
+            "---\nname: rename-agent\ndescription: 外部描述\nhooks: sk-secret-should-not-leak\n---\n\n外部正文\n",
+        )
+        .unwrap();
+        let dropped = fixture.preview_global(Tool::Claude);
+        let error = adopt_agent_native(
+            &mut fixture.database,
+            &fixture.environment,
+            &mut fixture.redactor,
+            native_input(&dropped, Tool::Claude, None),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        assert!(!error.to_string().contains("sk-secret-should-not-leak"));
+        assert_eq!(
+            get_agent(&fixture.database, &agent.id).unwrap().description,
+            "评审代码改动"
+        );
+    }
+
+    #[test]
+    fn adopt_native_database_transaction_rolls_back_central_and_settings_on_baseline_failure() {
+        let mut fixture = Fixture::new();
+        let agent = fixture.create("rollback-agent");
+        fixture.assign_global(&agent, Tool::Claude);
+        let initial = fixture.preview_global(Tool::Claude);
+        fixture.apply_global(&initial, Tool::Claude);
+        let target_file = fixture.claude_agents_dir().join("rollback-agent.md");
+        fs::write(
+            &target_file,
+            "---\nname: rollback-agent\ndescription: 事务描述\ncolor: green\n---\n\n事务正文\n",
+        )
+        .unwrap();
+        let plan = fixture.preview_global(Tool::Claude);
+        let current = get_agent(&fixture.database, &agent.id).unwrap();
+        let target = &plan.targets[0];
+        let error = crate::db::agents::adopt_native_agent(
+            &mut fixture.database,
+            &crate::db::agents::NativeAgentAdoption {
+                target_id: target.target_id.clone(),
+                target_row_version: target.target_row_version,
+                target_path: target.descriptor.path.clone().unwrap(),
+                tool: Tool::Claude,
+                scope: Scope::Global,
+                project_id: None,
+                agent_id: current.id.clone(),
+                agent_name: current.name.clone(),
+                agent_row_version: current.row_version,
+                description: "事务描述".to_owned(),
+                prompt: "事务正文".to_owned(),
+                settings_json: Some(r#"{"color":"green"}"#.to_owned()),
+                observed_full_hash: target.current_full_hash.clone().unwrap(),
+                observed_managed_hash: target.current_managed_hash.clone().unwrap(),
+                row_versions: target.row_versions.clone(),
+                baseline_projection_json: "not-json".to_owned(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::DatabaseError);
+        let after = get_agent(&fixture.database, &agent.id).unwrap();
+        assert_eq!(after.description, current.description);
+        assert_eq!(after.prompt, current.prompt);
+        assert!(after.tool_settings.claude.is_none());
+        assert_eq!(
+            crate::sync::load_managed_target_baseline(&fixture.database, &target.target_id)
+                .unwrap(),
+            crate::sync::load_managed_target_baseline(
+                &fixture.database,
+                &initial.targets[0].target_id
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
     fn global_status_card_aggregates_files_per_tool() {
         let mut fixture = Fixture::new();
-        let statuses = list_global_agent_target_statuses(&fixture.database, &fixture.environment)
-            .unwrap();
+        let statuses =
+            list_global_agent_target_statuses(&fixture.database, &fixture.environment).unwrap();
         assert_eq!(statuses.len(), 5);
         for status in &statuses {
             assert_eq!(status.aggregate_status, SyncStatus::Missing);
@@ -576,8 +1005,8 @@ mod tests {
         assert_eq!(plan.targets.len(), 2);
         fixture.apply_global(&plan, Tool::Claude);
 
-        let statuses = list_global_agent_target_statuses(&fixture.database, &fixture.environment)
-            .unwrap();
+        let statuses =
+            list_global_agent_target_statuses(&fixture.database, &fixture.environment).unwrap();
         let claude = statuses.iter().find(|s| s.tool == Tool::Claude).unwrap();
         assert_eq!(claude.aggregate_status, SyncStatus::InSync);
         assert_eq!(claude.files.len(), 2);
@@ -619,7 +1048,10 @@ mod tests {
         // 服务层作用域门禁。
         let error = crate::agents::agent_scope_supported(Tool::Zcode, Scope::Project).unwrap_err();
         assert_eq!(
-            error.details().and_then(|details| details.get("reason")).and_then(serde_json::Value::as_str),
+            error
+                .details()
+                .and_then(|details| details.get("reason"))
+                .and_then(serde_json::Value::as_str),
             Some("ZCODE_PROJECT_AGENTS_UNSUPPORTED")
         );
 
@@ -724,9 +1156,7 @@ mod tests {
         );
         assert_eq!(
             plan.targets[1].descriptor.path.as_deref(),
-            project_root
-                .join(".claude/agents/project-only.md")
-                .to_str()
+            project_root.join(".claude/agents/project-only.md").to_str()
         );
         apply_agent_preview(
             &fixture.write_operations,
@@ -740,9 +1170,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(project_root
-            .join(".claude/agents/project-only.md")
-            .exists());
+        assert!(project_root.join(".claude/agents/project-only.md").exists());
         // 全局继承的 agent（code-reviewer）也一并写入项目目录。
         assert!(project_root
             .join(".claude/agents/code-reviewer.md")
@@ -934,15 +1362,16 @@ mod tests {
             let mut fixture = Fixture::new();
             let directory = fixture.claude_agents_dir();
             fs::create_dir_all(&directory).unwrap();
-            write_agent(&fixture, "valid.md", "---\ndescription: 描述\n---\n\n正文\n");
+            write_agent(
+                &fixture,
+                "valid.md",
+                "---\ndescription: 描述\n---\n\n正文\n",
+            );
             fs::create_dir_all(directory.join("subdir")).unwrap();
             fs::write(directory.join("notes.txt"), "不是 agent 文件").unwrap();
             #[cfg(unix)]
-            std::os::unix::fs::symlink(
-                directory.join("valid.md"),
-                directory.join("linked.md"),
-            )
-            .unwrap();
+            std::os::unix::fs::symlink(directory.join("valid.md"), directory.join("linked.md"))
+                .unwrap();
 
             let preview = discover_agent_import(
                 &mut fixture.database,
@@ -1147,7 +1576,7 @@ mod tests {
             .unwrap();
             let drifted = fixture.preview_global(Tool::Claude);
             assert_eq!(drifted.targets[0].status, SyncStatus::ExternalOwnedChange);
-            assert_eq!(drifted.targets[0].change_kind, ChangeKind::Conflict);
+            assert_eq!(drifted.targets[0].change_kind, ChangeKind::Update);
 
             // 名称冲突：再次导入同名（名称规则只允许小写，冲突即精确同名，
             // 由 agents.name 的 NOCASE 唯一索引拦截）→ CONFLICT。
@@ -1207,7 +1636,10 @@ mod tests {
             let agents = crate::agents::list_agents(&fixture.database).unwrap();
             let settings = agents[0].tool_settings.claude.as_ref().unwrap();
             assert_eq!(settings.color, Some(ClaudeAgentColor::Cyan));
-            assert_eq!(settings.tools.as_deref(), Some(["Read".to_owned()].as_slice()));
+            assert_eq!(
+                settings.tools.as_deref(),
+                Some(["Read".to_owned()].as_slice())
+            );
 
             fixture.assign_global(&agents[0], Tool::Claude);
             let plan = fixture.preview_global(Tool::Claude);

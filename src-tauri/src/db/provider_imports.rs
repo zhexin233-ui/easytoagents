@@ -232,6 +232,19 @@ pub(crate) struct NativeProviderAdoption {
     pub config_json: String,
 }
 
+/// Provider 原生接管的批次证据；把同一预览的目标、哈希和行版本作为一个不可拆分的请求传入。
+pub(crate) struct NativeProviderAdoptionRequest<'a> {
+    pub tool: Tool,
+    pub target_path: &'a str,
+    pub observed_full_hash: &'a str,
+    pub baseline_projection: &'a Value,
+    pub adoptions: &'a [NativeProviderAdoption],
+    pub expected_versions: &'a BTreeMap<String, u32>,
+    pub current_run_id: Option<&'a str>,
+    pub target_id: &'a str,
+    pub target_row_version: u32,
+}
+
 /// 把原生 Provider 内容采纳为中央档案权威内容，并同时刷新目标级基线。
 ///
 /// 两件事必须在同一个 `IMMEDIATE` 事务里完成：只改档案会把旧基线留在原地，
@@ -239,12 +252,7 @@ pub(crate) struct NativeProviderAdoption {
 /// 基线取全部中央渠道投影的并集（调用方传入），与 Provider 导入的写法一致。
 pub(crate) fn adopt_native_providers(
     database: &mut Database,
-    tool: Tool,
-    target_path: &str,
-    observed_full_hash: &str,
-    baseline_projection: &Value,
-    adoptions: &[NativeProviderAdoption],
-    expected_versions: &BTreeMap<String, u32>,
+    request: NativeProviderAdoptionRequest<'_>,
 ) -> Result<Vec<ProviderProfileRecord>, AppError> {
     let path = database.path().to_string_lossy().into_owned();
     let transaction = database
@@ -256,8 +264,10 @@ pub(crate) fn adopt_native_providers(
     let writer = transaction
         .query_row(
             "SELECT id, status FROM sync_runs
-             WHERE status IN ('applying', 'restoring', 'rollback_failed') LIMIT 1",
-            [],
+             WHERE status IN ('applying', 'restoring', 'rollback_failed')
+               AND (?1 IS NULL OR id <> ?1)
+             LIMIT 1",
+            [request.current_run_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
@@ -267,10 +277,44 @@ pub(crate) fn adopt_native_providers(
     if let Some((id, status)) = writer {
         return Err(AppError::write_in_progress(&id, &status));
     }
-    for adoption in adoptions {
+    let target = transaction
+        .query_row(
+            "SELECT tool, artifact_kind, scope, project_id, target_path, row_version
+             FROM managed_targets WHERE id = ?1",
+            [request.target_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| {
+            AppError::database(&path, "verify_adopt_native_provider_target").with_source(error)
+        })?
+        .ok_or_else(|| AppError::stale_preview("externalChangePlan", request.target_id))?;
+    if target.0 != request.tool.as_str()
+        || target.1 != crate::domain::ArtifactKind::Provider.as_str()
+        || target.2 != "global"
+        || target.3.is_some()
+        || target.4 != request.target_path
+        || u32::try_from(target.5).ok() != Some(request.target_row_version)
+    {
+        return Err(AppError::stale_preview(
+            "externalChangePlan",
+            request.target_id,
+        ));
+    }
+    for adoption in request.adoptions {
         // 接管来自用户正在看的预览：必须按预览绑定的行版本做乐观校验，否则
         // 另一个窗口的档案编辑会被静默覆盖。
-        let expected = expected_versions
+        let expected = request
+            .expected_versions
             .get(&adoption.id)
             .ok_or_else(|| AppError::invalid_input("rowVersions", "接管缺少渠道档案的行版本"))?;
         let actual = crate::db::sync::load_row_version(
@@ -307,19 +351,19 @@ pub(crate) fn adopt_native_providers(
             ));
         }
     }
-    let projection_json = serde_json::to_string(baseline_projection).map_err(|error| {
+    let projection_json = serde_json::to_string(request.baseline_projection).map_err(|error| {
         AppError::invalid_input("managedBaseline", "Provider 接管基线无法序列化").with_source(error)
     })?;
     let baseline = ImportedBaselineRecord {
         target_id: uuid::Uuid::new_v4().to_string(),
-        target_path: target_path.to_owned(),
-        full_hash: observed_full_hash.to_owned(),
-        managed_hash: hash_json(baseline_projection),
+        target_path: request.target_path.to_owned(),
+        full_hash: request.observed_full_hash.to_owned(),
+        managed_hash: hash_json(request.baseline_projection),
         projection_json,
     };
     adopt_baseline(
         &transaction,
-        tool,
+        request.tool,
         crate::domain::ArtifactKind::Provider,
         &baseline,
         &path,
@@ -327,7 +371,8 @@ pub(crate) fn adopt_native_providers(
     transaction.commit().map_err(|error| {
         AppError::database(&path, "commit_adopt_native_providers").with_source(error)
     })?;
-    adoptions
+    request
+        .adoptions
         .iter()
         .map(|adoption| crate::db::profiles::get_provider_profile(database, &adoption.id))
         .collect()

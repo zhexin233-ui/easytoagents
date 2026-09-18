@@ -4,11 +4,12 @@ import { Eye, FolderMinus, RefreshCw } from "lucide-react";
 
 import {
   commands,
+  type PreviewPlan,
   type SkillContentPreviewDto,
   type SkillDto,
+  type SkillTakeoverPreviewResultDto,
   type Tool,
 } from "@/bindings/commands";
-import { ChangePreviewDialog } from "@/components/change-preview-dialog";
 import {
   CentralList,
   CentralListCard,
@@ -45,7 +46,7 @@ import {
   toolMetadata,
 } from "@/lib/tool-metadata";
 import { globalTargetStatusPresentation } from "@/lib/global-target-status-ui";
-import { appSettingsQueryOptions } from "@/lib/settings-api";
+import { ExternalChangeActions } from "@/features/sync/external-change-actions";
 import {
   globalSkillStatusesQueryOptions,
   skillKeys,
@@ -56,8 +57,6 @@ export function SkillsPage() {
   const queryClient = useQueryClient();
   const skillsQuery = useQuery(skillsQueryOptions());
   const statusesQuery = useQuery(globalSkillStatusesQueryOptions());
-  const settingsQuery = useQuery(appSettingsQueryOptions());
-  const directApply = settingsQuery.data?.applyMode === "direct";
   const enabledTools = useEnabledTools();
   const visibleStatuses = statusesQuery.data?.filter((status) =>
     enabledTools.has(status.tool),
@@ -98,12 +97,13 @@ export function SkillsPage() {
           rowVersion: skill.rowVersion,
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await invalidateSkills();
       notify({
         kind: "success",
         message: "Skill 已安全移出中央库，来源目录保持不变。",
       });
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -164,17 +164,9 @@ export function SkillsPage() {
           rowVersion: skill.rowVersion,
         }),
       ),
-    onSuccess: async (_result, { tool }) => {
+    onSuccess: async (result) => {
       await invalidateSkills();
-      if (!directApply) {
-        notify({
-          kind: "success",
-          message:
-            "全局分配已更新；这只改变中央配置，分配或取消分配不会自动写入工具目录。请预览全局同步并确认应用。",
-        });
-        return;
-      }
-      requestPreview(tool, true);
+      await requestPreview(result.affectedSyncScopes ?? []);
     },
     onError: (error) => {
       notify({
@@ -184,27 +176,48 @@ export function SkillsPage() {
     },
   });
 
-  const {
-    openPreview,
-    requestPreview,
-    previewMutation,
-    applyMutation,
-    closePreview,
-    openPersistedPreview,
-  } = useSyncPreviewFlow({
+  const takeoverApplyMutation = useMutation({
+    mutationFn: async (result: SkillTakeoverPreviewResultDto) => {
+      if (!canApplyPreview(result.plan)) {
+        throw new Error("接管预览包含阻断目标，请重新检测后再试。");
+      }
+      return unwrapResult(
+        await commands.applySkillPreview({
+          previewId: result.plan.previewId,
+          tool: result.tool,
+          projectId: null,
+        }),
+      );
+    },
+    onSuccess: async (result) => {
+      await invalidateSkills();
+      importDialog.close();
+      notify({
+        kind: "success",
+        message: `已接管并应用 ${result.appliedTargets} 个 Skill 目标，并创建 ${result.snapshotCount} 份快照。`,
+      });
+    },
+    onError: (error) => {
+      notify({
+        kind: "error",
+        message: `接管 Skill 失败：${profileErrorText(error) ?? "未知错误"}`,
+      });
+    },
+  });
+
+  const { requestPreview } = useSyncPreviewFlow({
     artifactKind: "skill",
-    directApply,
-    preview: (tool) =>
+    preview: (tool, projectId) =>
       commands.previewSkillSync({
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
         excludeFromGit: false,
       }),
-    apply: ({ previewId, tool }) =>
+    apply: ({ previewId, tool, projectId }) =>
       commands.applySkillPreview({
         previewId,
         tool,
-        projectId: null,
+        projectId: projectId ?? null,
       }),
     invalidate: invalidateSkills,
     messages: {
@@ -438,7 +451,6 @@ export function SkillsPage() {
                 const presentation = globalTargetStatusPresentation(
                   status.status,
                   status.diagnosticCode,
-                  { directApply },
                 );
                 return (
                   <article
@@ -466,6 +478,16 @@ export function SkillsPage() {
                         诊断码：<code>{status.diagnosticCode}</code>
                       </p>
                     ) : null}
+                    <ExternalChangeActions
+                      artifactKind="skill"
+                      tool={status.tool}
+                      status={status.status}
+                      onInvalidate={invalidateSkills}
+                      onMatchOrImport={() => {
+                        if (importDialog.state) return;
+                        importDialog.open(status.tool);
+                      }}
+                    />
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         size="sm"
@@ -482,23 +504,6 @@ export function SkillsPage() {
                           ? "检测并接管已有 Skills"
                           : "检测并导入已有 Skills"}
                       </Button>
-                      {!directApply ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={
-                            previewMutation.isPending ||
-                            presentation.previewBlocked
-                          }
-                          onClick={() =>
-                            requestPreview(status.tool, directApply)
-                          }
-                        >
-                          {previewMutation.isPending
-                            ? "正在生成…"
-                            : "预览全局同步"}
-                        </Button>
-                      ) : null}
                     </div>
                   </article>
                 );
@@ -655,31 +660,22 @@ export function SkillsPage() {
                 { queryKey: skillKeys.all },
                 { throwOnError: true },
               );
-              notify({
-                kind: "success",
-                message: `已为 ${result.assignedCount + result.reusedCount} 项 Skill 准备接管；请审阅持久化预览后显式应用。`,
-              });
-              importDialog.close();
-              // 接管无条件进入预览，即使全局偏好是 direct 也不会自动 Apply。
-              openPersistedPreview(result.plan, result.tool);
+              // 选择接管所选项就是用户的授权边界。准备阶段已经持久化
+              // 完整的 takeover evidence，随后只消费这份精确 previewId。
+              await takeoverApplyMutation.mutateAsync(result);
             }}
           />
         ) : null}
-
-        <ChangePreviewDialog
-          preview={openPreview?.plan ?? null}
-          tool={openPreview?.tool ?? "claude"}
-          artifactKind="skill"
-          applying={applyMutation.isPending}
-          onClose={closePreview}
-          onApply={(previewId, tool) =>
-            applyMutation.mutate({
-              previewId,
-              tool,
-            })
-          }
-        />
       </main>
     </>
+  );
+}
+
+function canApplyPreview(plan: PreviewPlan): boolean {
+  return (
+    plan.targets.length > 0 &&
+    plan.targets.every(
+      (target) => target.changeKind !== "conflict" && target.errorCode === null,
+    )
   );
 }

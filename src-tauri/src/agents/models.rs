@@ -7,7 +7,7 @@ use serde_json::Value;
 use specta::Type;
 
 use crate::{
-    domain::{AgentName, ManagedProjectSelectionState, SyncStatus, Tool},
+    domain::{AgentName, ManagedProjectSelectionState, SyncScopeDto, SyncStatus, Tool},
     error::AppError,
 };
 
@@ -119,6 +119,9 @@ pub struct VersionedAgentInput {
 pub struct DeleteAgentResultDto {
     pub id: String,
     pub deleted: bool,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -132,6 +135,9 @@ pub struct AgentDto {
     pub global_assignments: Vec<Tool>,
     pub tool_settings: AgentToolSettingsDto,
     pub row_version: u32,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
@@ -205,6 +211,38 @@ pub struct ApplyAgentPreviewInput {
     pub preview_id: String,
     pub tool: Tool,
     pub project_id: Option<String>,
+}
+
+/// 被动扫描后按原生 Agent 内容更新中央记录所需的 Preview 证据。
+///
+/// 这些字段由后端从已持久化的 `PreviewPlan` 填充，而不是由前端猜测。目标
+/// 身份、目标行版本和两个磁盘 hash 都必须同时存在；`observed_*` 保留
+/// `Option` 只是为了让命令层可以把缺失观察统一映射为 `STALE_PREVIEW`。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptAgentNativeInput {
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub target_id: String,
+    pub target_row_version: u32,
+    pub target_path: String,
+    /// 用户所看预览绑定的 Agent/Project 行版本；缺少 Agent 行版本时拒绝。
+    pub row_versions: Vec<crate::sync::DatabaseRowVersion>,
+    pub observed_full_hash: Option<String>,
+    pub observed_managed_hash: Option<String>,
+}
+
+/// Agent 原生采纳结果。只返回稳定身份，不回传原生正文、frontmatter 或
+/// 工具设置，避免把敏感字段带入 RPC/通知。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptAgentNativeResultDto {
+    pub tool: Tool,
+    pub project_id: Option<String>,
+    pub adopted: Vec<String>,
+    #[specta(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_sync_scopes: Option<Vec<SyncScopeDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Type)]

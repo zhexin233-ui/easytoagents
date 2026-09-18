@@ -1,5 +1,10 @@
-import { Suspense, useEffect, useId, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Suspense, useEffect, useId, useRef, useState } from "react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   Bot,
   ChevronRight,
@@ -34,8 +39,10 @@ import { SettingsDialog } from "@/features/settings/settings-dialog";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { invalidateEnvironmentDependents } from "@/lib/environment-api";
 import { agentsKeys } from "@/lib/agents-api";
+import { dashboardKeys } from "@/lib/dashboard-api";
+import { hooksKeys } from "@/lib/hooks-api";
 import { mcpKeys } from "@/lib/mcp-api";
-import { profileErrorText, unwrapResult } from "@/lib/profile-api";
+import { profileErrorText, profileKeys, unwrapResult } from "@/lib/profile-api";
 import { projectKeys, projectsQueryOptions } from "@/lib/projects-api";
 import { skillKeys } from "@/lib/skills-api";
 import { subscribeEnvironmentReady } from "@/lib/tauri-events";
@@ -82,6 +89,26 @@ export function AppShell() {
       }),
     [queryClient],
   );
+  // 被动外部变化按“使用时机”扫描：窗口重新获得焦点时只失效当前可见页面
+  // 的状态查询，并做短暂节流，避免切换窗口/系统通知造成重复扫描。
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const onFocus = () => {
+      if (focusTimerRef.current !== null) return;
+      focusTimerRef.current = setTimeout(() => {
+        focusTimerRef.current = null;
+        void invalidateVisibleStatusQueries(queryClient, pathname);
+      }, 300);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      if (focusTimerRef.current !== null) {
+        clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
+    };
+  }, [pathname, queryClient]);
   const projectSectionOpen =
     projectsExpanded || pathname.startsWith("/projects/");
 
@@ -139,6 +166,45 @@ export function AppShell() {
       </div>
     </NotifyProvider>
   );
+}
+
+function invalidateVisibleStatusQueries(
+  queryClient: QueryClient,
+  pathname: string,
+) {
+  if (pathname.startsWith("/mcp")) {
+    return queryClient.invalidateQueries({
+      queryKey: mcpKeys.globalStatuses(),
+    });
+  }
+  if (pathname.startsWith("/hooks")) {
+    return queryClient.invalidateQueries({
+      queryKey: hooksKeys.globalStatuses(),
+    });
+  }
+  if (pathname.startsWith("/skills")) {
+    return queryClient.invalidateQueries({
+      queryKey: skillKeys.globalStatuses(),
+    });
+  }
+  if (pathname.startsWith("/agents")) {
+    return queryClient.invalidateQueries({
+      queryKey: agentsKeys.globalStatuses(),
+    });
+  }
+  if (pathname === "/projects" || pathname.startsWith("/projects/")) {
+    return queryClient.invalidateQueries({ queryKey: projectKeys.all });
+  }
+  if (
+    pathname.startsWith("/prompts") ||
+    PROFILE_TOOLS.some((tool) => pathname.startsWith(`/${tool}`))
+  ) {
+    return queryClient.invalidateQueries({ queryKey: profileKeys.all });
+  }
+  if (pathname === "/" || pathname.startsWith("/dashboard")) {
+    return queryClient.invalidateQueries({ queryKey: dashboardKeys.all });
+  }
+  return queryClient.invalidateQueries({ queryKey: dashboardKeys.all });
 }
 
 function PageLoading() {

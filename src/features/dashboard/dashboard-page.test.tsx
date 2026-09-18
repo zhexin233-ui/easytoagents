@@ -129,7 +129,7 @@ describe("DashboardPage", () => {
   function mockEnabledTools(enabledTools: AppSettingsDto["enabledTools"]) {
     vi.mocked(commands.getAppSettings).mockResolvedValue({
       status: "ok",
-      data: { applyMode: "preview_confirm", enabledTools },
+      data: { enabledTools },
     });
   }
 
